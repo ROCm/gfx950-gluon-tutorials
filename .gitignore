@@ -4,3 +4,7 @@ __pycache__/
 *$py.class
 
 myplot.tex
+
+# cache files
+*.hsaco
+*.source
