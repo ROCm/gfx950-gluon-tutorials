@@ -24,7 +24,7 @@ At a high level, the achieved memory bandwidth is determined by three factors:
 
 1. **How many memory requests each wave can keep in flight**
 2. **How large each memory request is**
-3. **How many waves can issue memory requests concurrently on a WGP**
+3. **How many waves can issue memory requests concurrently on a CU**
 
 These factors are not independent. In particular, increasing the number of concurrent waves
 can reduce the request issue rate of each wave due to shared compute resources.
@@ -120,8 +120,8 @@ with per-wave request counts.
 
 ### Why This Is Valid
 
-- Waves belonging to the same workgroup are guaranteed to be scheduled on the same WGP.
-- Memory requests issued by these waves contribute collectively to the same WGP-level
+- Waves belonging to the same workgroup are guaranteed to be scheduled on the same CU.
+- Memory requests issued by these waves contribute collectively to the same CU-level
   memory traffic.
 - Dividing the block size evenly across waves preserves the total amount of data requested
   while enabling a per-wave formulation.
@@ -134,18 +134,18 @@ the per-wave request size is simply a convenient way to distribute this cost acr
 
 ---
 
-## Part 3: Number of Concurrent Waves per WGP
+## Part 3: Number of Concurrent Waves per CU
 
 ### Static Resource Constraints
 
-The number of waves that can be resident on a WGP is constrained by per-wave resource usage:
+The number of waves that can be resident on a CU is constrained by per-wave resource usage:
 
 - **LDS usage**
   - Depends on block size and number of buffering stages (`num_stages`)
 - **VGPR usage**
   - Depends on block size and number of warps
 
-Given hardware limits, these determine the **occupancy**: `num_waves_per_WGP`
+Given hardware limits, these determine the **occupancy**: `num_waves_per_CU`
 
 This is the familiar static occupancy calculation.
 
@@ -153,7 +153,7 @@ This is the familiar static occupancy calculation.
 
 ### The Subtle Part: SIMD Sharing and Feedback
 
-Waves resident on the same WGP do not run independently.
+Waves resident on the same CU do not run independently.
 
 If multiple waves are scheduled on the same SIMD, they must time-share compute resources.
 As a result, the rate at which each wave can issue memory requests is reduced.
@@ -189,18 +189,18 @@ we can now combine these pieces to estimate the memory bandwidth requested by th
 
 ---
 
-### Workgroups per WGP
+### Workgroups per CU
 
 Given the kernel configuration and how work is partitioned, we can determine how many
-workgroups may reside on a single WGP.
+workgroups may reside on a single CU.
 
 For memory-bound kernels, the total amount of work is often limited, and kernels typically
 do not launch a large number of workgroups. As a result, it is common that:
 
-- each WGP hosts **at most one workgroup**, and
-- some WGPs may be idle if the total number of workgroups is small.
+- each CU hosts **at most one workgroup**, and
+- some CUs may be idle if the total number of workgroups is small.
 
-This simplifies the analysis, since all waves contributing to memory traffic on a WGP
+This simplifies the analysis, since all waves contributing to memory traffic on a CU
 belong to the same workgroup.
 
 ---
@@ -228,19 +228,19 @@ at any given time.
 
 ---
 
-### Per-WGP Hardware Limit
+### Per-CU Hardware Limit
 
-The actual amount of in-flight memory that can be sustained by a WGP is limited by hardware,
+The actual amount of in-flight memory that can be sustained by a CU is limited by hardware,
 such as:
 
-- per-WGP cache capacity,
+- per-CU cache capacity,
 - request queue depth,
 - internal buffering limits.
 
-Therefore, the effective in-flight memory per WGP is:
+Therefore, the effective in-flight memory per CU is:
 
 ```
-effective_inflight_bytes_per_WGP = min(inflight_bytes_per_WG, WGP_inflight_limit)
+effective_inflight_bytes_per_CU = min(inflight_bytes_per_WG, CU_inflight_limit)
 ```
 
 
@@ -249,19 +249,19 @@ the hardware may not be able to accept them.
 
 ---
 
-### Bandwidth Requested per WGP
+### Bandwidth Requested per CU
 
-Once the effective in-flight memory size is known, the bandwidth requested by a single WGP
+Once the effective in-flight memory size is known, the bandwidth requested by a single CU
 follows directly.
 
-The model assumes that a WGP issues its in-flight memory requests every iteration cycle:
+The model assumes that a CU issues its in-flight memory requests every iteration cycle:
 
 ```
-BW_per_WGP = effective_inflight_bytes_per_WGP / iter_latency
+BW_per_CU = effective_inflight_bytes_per_CU / iter_latency
 ```
 
 
-In other words, the WGP attempts to send the in-flight amount of memory every iteration.
+In other words, the CU attempts to send the in-flight amount of memory every iteration.
 If this requested bandwidth exceeds what the memory system can deliver, it will be
 clamped by hardware limits.
 
@@ -270,10 +270,10 @@ clamped by hardware limits.
 ### Total Requested Bandwidth
 
 Finally, the total bandwidth requested by the kernel is obtained by multiplying the
-per-WGP bandwidth by the number of active WGPs:
+per-CU bandwidth by the number of active CUs:
 
 ```
-BW_total = BW_per_WGP × num_active_WGP
+BW_total = BW_per_CU × num_active_CU
 ```
 
 This value represents the total memory bandwidth demand generated by the kernel across
@@ -286,8 +286,8 @@ the GPU.
 This formulation makes the data flow explicit:
 
 - Kernel parameters determine how much memory a workgroup attempts to keep in flight.
-- Hardware limits cap how much of that demand can be realized per WGP.
-- The number of active WGPs scales the total bandwidth demand.
+- Hardware limits cap how much of that demand can be realized per CU.
+- The number of active CUs scales the total bandwidth demand.
 
 As a result, overall memory performance is determined by whether the aggregate bandwidth
-requested by all active WGPs can saturate the available memory system.
+requested by all active CUs can saturate the available memory system.
