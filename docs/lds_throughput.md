@@ -106,6 +106,7 @@ Putting all stages together, we arrive at a clear picture:
 
 Therefore, in steady state:
 
+> [!IMPORTANT]
 > A SIMD should expect to issue one `ds_read_b128` every 16 cycles.
 
 This number describes **throughput**, not latency.
@@ -230,6 +231,11 @@ learning Gluon is learning layouts.
 Tools that visualize layouts and access patterns are invaluable, 
 not only for understanding correctness, 
 but also for ensuring that LDS accesses are bank-conflict free and capable of reaching peak throughput.
+
+> [!NOTE]
+> We validate this steady-state throughput model using a microbenchmark kernel that
+> issues back-to-back `ds_read_b128` instructions with controlled bank conflicts.
+> The experiment and ATTViewer traces are available [here](../experiments/lds_throughput_validation).
 
 
 ## Latency is real — but it is solved differently
