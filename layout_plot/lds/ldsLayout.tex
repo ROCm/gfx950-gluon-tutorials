@@ -372,7 +372,8 @@
       \ifthenelse{\hasSwizzle=3}{
         \pgfmathtruncatemacro{\offVecInt}{\offVec}
         \pgfmathsetmacro{\LDSRow}{\csname sharedrow\offVecInt\endcsname}
-        \pgfmathsetmacro{\LDSVec}{int(\csname sharedvec\offVecInt\endcsname*\vecsPerSwizzleVec+\vecIdInSwizzleVec)}
+        %% sharedvec is in swizzleVec units; convert to vec units for drawing.
+        \pgfmathsetmacro{\LDSVec}{(\csname sharedvec\offVecInt\endcsname*\swizzleVec)/\vec}
       }{}
 
       \coordinate (vec TL) at ($(TL)+(\LDSVec*\vecInBytes*\bsize, -\LDSRow*\elemH)$);
