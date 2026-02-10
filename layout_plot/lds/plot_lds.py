@@ -28,8 +28,6 @@ class LDSConfig:
         self.kWidth = kWidth
         self.padInterval = padInterval
         self.padAmount = padAmount
-        if self.swizzleVec < self.kWidth:
-            self.swizzleVec = self.kWidth
 
     def print(self):
         print(
@@ -77,8 +75,6 @@ def _build_shared_layout_lookup(dim0, dim1, vec, swizzle_vec, elem_type_in_bytes
         if 0 <= row < dim0 and 0 <= col < dim1:
             coord_to_off[(row, col)] = off
 
-    if swizzle_vec % vec != 0:
-        raise ValueError(f"swizzleVec ({swizzle_vec}) must be a multiple of vec ({vec})")
     for interval, amount in pads:
         if interval % swizzle_vec != 0 or amount % swizzle_vec != 0:
             raise ValueError(
