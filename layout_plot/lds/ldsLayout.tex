@@ -350,7 +350,7 @@
       % vector ID in the current LDS row
       \pgfmathsetmacro{\vecIdInLDSRow}{int(mod(\offVec,\vecsPerLDSRow))}
       % number of vec in swizzleVec
-      \pgfmathsetmacro{\vecsPerSwizzleVec}{int(\swizzleVec/\vec)}
+      \pgfmathsetmacro{\vecsPerSwizzleVec}{max(1, int(\swizzleVec/\vec))}
       \pgfmathsetmacro{\swizzleVecIdInLDSRow}{int(\vecIdInLDSRow/\vecsPerSwizzleVec)}
       \pgfmathsetmacro{\vecIdInSwizzleVec}{int(mod(\vecIdInLDSRow, \vecsPerSwizzleVec))}
       \pgfmathsetmacro{\newSwizzleVecId}{\bitwiseXor{\swizzleVecIdInLDSRow}{\phase}}
