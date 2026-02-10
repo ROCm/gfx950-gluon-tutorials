@@ -84,7 +84,7 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
     lds_row_bytes = int(banks * 4)
     vec_in_bytes = int(vec * elem_type_in_bytes)
 
-    abs_rows = []
+    row_start_offsets = [0 for _ in range(dim0)]
     for off_vec in range(max_off_vec):
         row = off_vec // vecs_per_row
         gp = off_vec % vecs_per_row
@@ -95,16 +95,12 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
         padded_elem_off = tensor_off + sum((tensor_off // interval) * amount for interval, amount in pads if interval > 0)
         padded_byte_off = int(padded_elem_off * elem_type_in_bytes)
         abs_row = padded_byte_off // lds_row_bytes
-        abs_rows.append(abs_row)
-        lookup_rows.append(abs_row)
+        if gp == 0:
+            row_start_offsets[row] = int(abs_row * lds_row_bytes)
+        lookup_rows.append(row)
         lookup_vecs.append((padded_byte_off % lds_row_bytes) // vec_in_bytes)
 
-    unique_abs_rows = sorted(set(abs_rows))
-    abs_to_compact = {abs_row: i for i, abs_row in enumerate(unique_abs_rows)}
-    compact_rows = [abs_to_compact[r] for r in lookup_rows]
-    row_start_offsets = [int(r * lds_row_bytes) for r in unique_abs_rows]
-
-    return compact_rows, lookup_vecs, row_start_offsets
+    return lookup_rows, lookup_vecs, row_start_offsets
 
 def typeToBytes(dtype):
     if dtype == 'bf16' or dtype == 'fp16':
@@ -237,7 +233,6 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
     sharedLayoutRows = ""
     sharedLayoutVecs = ""
     sharedLayoutRowStarts = ""
-    sharedLayoutRowCount = 0
     if sharedLayout is not None:
         pads, basis = sharedLayout
         lookupRows, lookupVecs, rowStartOffsets = _build_shared_layout_lookup(dim0, dim1, vec, elemTypeInBytes, banks, pads, basis)
@@ -250,7 +245,6 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
         sharedLayoutRowStarts = "\n".join(
             [f"\\expandafter\\def\\csname sharedrowstart{i}\\endcsname{{{v}}}" for i, v in enumerate(rowStartOffsets)]
         )
-        sharedLayoutRowCount = len(rowStartOffsets)
 
     return rf"""\begin{{document}}
                \begin{{tikzpicture}}
@@ -274,7 +268,6 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
                {sharedLayoutRows}
                {sharedLayoutVecs}
                {sharedLayoutRowStarts}
-               \def\sharedRowCount{{{sharedLayoutRowCount}}}
 
                \def\elemH{{0.18}}
                \def\elem{{0.18}}

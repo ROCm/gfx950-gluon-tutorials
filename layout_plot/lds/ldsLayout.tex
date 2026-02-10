@@ -362,6 +362,7 @@
 
       %% User-provided sharedLayout case: reverse-mapped in python and emitted
       %% as \sharedrow<offVec> and \sharedvec<offVec> lookup tables.
+      %% Here \LDSRow is the compact row id used for visualization.
       \ifthenelse{\hasSwizzle=3}{
         \pgfmathtruncatemacro{\offVecInt}{\offVec}
         \pgfmathsetmacro{\LDSRow}{\csname sharedrow\offVecInt\endcsname}
@@ -533,8 +534,8 @@
   %% In sharedLayout mode, rows are compacted for visualization.
   %% Mark each displayed LDS row with its real start byte offset.
   \ifthenelse{\hasSwizzle=3}{
-    \pgfmathtruncatemacro{\sharedRowCountMinusOne}{\sharedRowCount-1}
-    \foreach \rowCompact in {0,...,\sharedRowCountMinusOne}{
+    \pgfmathtruncatemacro{\rowsMinusOne}{\rows-1}
+    \foreach \rowCompact in {0,...,\rowsMinusOne}{
       \node [scale=0.5*\bankLabelScale*\scale, left] at ($(TL)+(0, -\rowCompact*\elemH-0.5*\elemH)$)
       {off=\csname sharedrowstart\rowCompact\endcsname};
     }
