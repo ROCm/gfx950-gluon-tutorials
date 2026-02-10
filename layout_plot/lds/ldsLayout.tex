@@ -372,12 +372,14 @@
       \draw [ultra thin, fill=\vecColor] (vec TL) rectangle ++(\vecInBytes*\bsize, -\elemH)
       node [pos=.5, scale=.6*\bankLabelScale*\scale, white] {#4\row,#5\colStart:\colEnd};
 
-      %% draw phase of each LDS row
+      %% draw phase of each LDS row (skip for user-provided sharedLayout)
       \pgfmathsetmacro{\lastVecId}{\vecsPerLDSRow-1}
-      \ifthenelse{\LDSVec=\lastVecId}{
-        \draw [ultra thin] ($(vec TL)+(\vec*\bytesPerElem*\bsize, -.5*\bsize)$) -- ++(\elemH, 0)
-        node [scale=0.6*\bankLabelScale*\scale, right] {\phase};
-      }{}
+      \ifthenelse{\hasSwizzle=3}{}{
+        \ifthenelse{\LDSVec=\lastVecId}{
+          \draw [ultra thin] ($(vec TL)+(\vec*\bytesPerElem*\bsize, -.5*\bsize)$) -- ++(\elemH, 0)
+          node [scale=0.6*\bankLabelScale*\scale, right] {\phase};
+        }{}
+      }
 
       %% For ds_read/write access patterns, we first decide the thread id that owns
       %% the current vector. And then we decide if the current vector is accessed
