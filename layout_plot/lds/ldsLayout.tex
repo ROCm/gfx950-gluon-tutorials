@@ -530,5 +530,15 @@
 
     }
   }
-  \node [scale=0.6*\bankLabelScale*\scale, above right] at($(TL)+(\banks*4*\bsize, 0)$) {phase};
+  %% In sharedLayout mode, rows are compacted for visualization.
+  %% Mark each displayed LDS row with its real start byte offset.
+  \ifthenelse{\hasSwizzle=3}{
+    \pgfmathtruncatemacro{\sharedRowCountMinusOne}{\sharedRowCount-1}
+    \foreach \rowCompact in {0,...,\sharedRowCountMinusOne}{
+      \node [scale=0.5*\bankLabelScale*\scale, left] at ($(TL)+(0, -\rowCompact*\elemH-0.5*\elemH)$)
+      {off=\csname sharedrowstart\rowCompact\endcsname};
+    }
+  }{
+    \node [scale=0.6*\bankLabelScale*\scale, above right] at($(TL)+(\banks*4*\bsize, 0)$) {phase};
+  }
 }
