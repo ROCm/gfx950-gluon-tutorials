@@ -151,11 +151,25 @@
   %% #2: threshold
   %% #3: label in vector
 
-  \pgfmathsetmacro{\tid}{#1}
-  \pgfmathsetmacro{\threshold}{#2}
+  \pgfmathtruncatemacro{\tid}{#1}
+  \pgfmathtruncatemacro{\threshold}{#2}
+  \pgfmathtruncatemacro{\vecInBitsInt}{\vecInBits}
+  \pgfmathtruncatemacro{\banksInt}{\banks}
   \def\bWidth{0.02}
 
-  \ifthenelse{\tid < \threshold}{
+  \pgfmathtruncatemacro{\isHighlighted}{0}
+  \ifnum\vecInBitsInt=128
+    \ifnum\banksInt=32
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=20 && \tid<=23)), 1, 0)}
+    \fi
+    \ifnum\banksInt=64
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=12 && \tid<=15) || (\tid>=20 && \tid<=27)), 1, 0)}
+    \fi
+  \else
+    \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tid < \threshold, 1, 0)}
+  \fi
+
+  \ifnum\isHighlighted=1
     \ifthenelse{\vecInBits=128}{\def\ratio{0.5}}{\def\ratio{1}}
     %% Highlight the vector in LDS
     \draw [thick, draw=white, fill=\vecColor] ($(vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\vecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
@@ -165,7 +179,7 @@
       \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }
     \node [scale=.5*\bankLabelScale*\scale, right] at ($(vec TL)+(0, -0.5*\elemH)$) {\textbf{t\tid}};
-  }{}
+  \fi
 }
 
 
@@ -180,11 +194,26 @@
   %% #2: threshold
   %% #3: label in vector
 
-  \pgfmathsetmacro{\tidRaw}{#1}
-  \pgfmathsetmacro{\threshold}{#2}
+  \pgfmathtruncatemacro{\tidRaw}{#1}
+  \pgfmathtruncatemacro{\threshold}{#2}
+  \pgfmathtruncatemacro{\vecInBitsInt}{\vecInBits}
+  \pgfmathtruncatemacro{\banksInt}{\banks}
   \def\bWidth{0.02}
 
-  \ifthenelse{\tidRaw < \threshold}{
+  %\ifthenelse{\tidRaw < \threshold}{
+  \pgfmathtruncatemacro{\isHighlighted}{0}
+  \ifnum\vecInBitsInt=128
+    \ifnum\banksInt=32
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=20 && \tidRaw<=23)), 1, 0)}
+    \fi
+    \ifnum\banksInt=64
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=12 && \tidRaw<=15) || (\tidRaw>=20 && \tidRaw<=27)), 1, 0)}
+    \fi
+  \else
+    \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tidRaw < \threshold, 1, 0)}
+  \fi
+
+  \ifnum\isHighlighted=1
     \ifthenelse{\vecInBits=128}{\def\ratio{0.5}}{\def\ratio{1}}
     %% Highlight the vector in global memory
     \coordinate (tile vec TL) at ($(tile TL)+(\gp*\vecInBytes*\bsize, -\row*\elemH)$);
@@ -196,7 +225,7 @@
     }
     \pgfmathsetmacro{\colorRatio}{40*mod(int(\row/\kPerGroup), 2)}
     \node [scale=.5*\bankLabelScale*\scale, right, white!\colorRatio!black] at ($(tile vec TL)+(0, -0.5*\elemH)$) {\textbf{t\tidRaw}};
-  }{}
+  \fi
 }
 
 \newcommand{\drawCoalescedGRAccess}[3]{
@@ -363,10 +392,10 @@
               %%% Special thread access pattern for ds_read_b128
               \ifthenelse{\banks=32}{
                 \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\vecInBits\ (t0$\sim$t\maxTid\ $\Leftrightarrow$\ t0$\sim$t3, t20$\sim$t23)};
+                {ds\_read\_b\vecInBits\ (t0$\sim$t3, t20$\sim$t23)};
               }{
                 \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\vecInBits\ (t0$\sim$t\maxTid\ $\Leftrightarrow$\ t0$\sim$t3, t12$\sim$t15, t23$\sim$t27)};
+                {ds\_read\_b\vecInBits\ (t0$\sim$t3, t12$\sim$t15, t20$\sim$t27)};
               }
             }{
               %%% Normal thread access pattern for ds_read_b64
