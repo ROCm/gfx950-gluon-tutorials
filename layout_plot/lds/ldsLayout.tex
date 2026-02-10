@@ -153,7 +153,7 @@
 
   \pgfmathtruncatemacro{\tid}{#1}
   \pgfmathtruncatemacro{\threshold}{#2}
-  \pgfmathtruncatemacro{\vecInBitsInt}{\vecInBits}
+  \pgfmathtruncatemacro{\vecInBitsInt}{int(\accessDrawVecInBytes*8)}
   \pgfmathtruncatemacro{\banksInt}{\banks}
   \def\bWidth{0.02}
 
@@ -170,13 +170,13 @@
   \fi
 
   \ifnum\isHighlighted=1
-    \ifthenelse{\vecInBits=128}{\def\ratio{0.5}}{\def\ratio{1}}
+    \ifthenelse{\vecInBitsInt=128}{\def\ratio{0.5}}{\def\ratio{1}}
     %% Highlight the vector in LDS
-    \draw [thick, draw=white, fill=\vecColor] ($(vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\vecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
-    \ifthenelse{\vecInBits=128}{
-      \node [scale=.6*\bankLabelScale*\scale, white] at ($(vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+    \draw [thick, draw=white, fill=\vecColor] ($(vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\accessDrawVecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
+    \ifthenelse{\vecInBitsInt=128}{
+      \node [scale=.6*\bankLabelScale*\scale, white] at ($(vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }{
-      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }
     \node [scale=.5*\bankLabelScale*\scale, right] at ($(vec TL)+(0, -0.5*\elemH)$) {\textbf{t\tid}};
   \fi
@@ -196,7 +196,7 @@
 
   \pgfmathtruncatemacro{\tidRaw}{#1}
   \pgfmathtruncatemacro{\threshold}{#2}
-  \pgfmathtruncatemacro{\vecInBitsInt}{\vecInBits}
+  \pgfmathtruncatemacro{\vecInBitsInt}{int(\accessDrawVecInBytes*8)}
   \pgfmathtruncatemacro{\banksInt}{\banks}
   \def\bWidth{0.02}
 
@@ -214,14 +214,14 @@
   \fi
 
   \ifnum\isHighlighted=1
-    \ifthenelse{\vecInBits=128}{\def\ratio{0.5}}{\def\ratio{1}}
+    \ifthenelse{\vecInBitsInt=128}{\def\ratio{0.5}}{\def\ratio{1}}
     %% Highlight the vector in global memory
     \coordinate (tile vec TL) at ($(tile TL)+(\gp*\vecInBytes*\bsize, -\row*\elemH)$);
-    \draw [thick, draw=white, fill=\vecColor] ($(tile vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\vecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
-    \ifthenelse{\vecInBits=128}{
-      \node [scale=.6*\bankLabelScale*\scale, white] at ($(tile vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+    \draw [thick, draw=white, fill=\vecColor] ($(tile vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\accessDrawVecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
+    \ifthenelse{\vecInBitsInt=128}{
+      \node [scale=.6*\bankLabelScale*\scale, white] at ($(tile vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }{
-      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(tile vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(tile vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }
     \pgfmathsetmacro{\colorRatio}{40*mod(int(\row/\kPerGroup), 2)}
     \node [scale=.5*\bankLabelScale*\scale, right, white!\colorRatio!black] at ($(tile vec TL)+(0, -0.5*\elemH)$) {\textbf{t\tidRaw}};
@@ -243,16 +243,17 @@
 
   \pgfmathsetmacro{\tid}{#1}
   \pgfmathsetmacro{\threshold}{#2}
+  \pgfmathtruncatemacro{\vecInBitsInt}{int(\accessDrawVecInBytes*8)}
   \def\bWidth{0.02}
 
   \ifthenelse{\tid < \threshold}{
-    \ifthenelse{\vecInBits=128}{\def\ratio{0.5}}{\def\ratio{1}}
+    \ifthenelse{\vecInBitsInt=128}{\def\ratio{0.5}}{\def\ratio{1}}
     \coordinate (tile vec TL) at ($(tile TL)+(\gp*\vecInBytes*\bsize, -\row*\elemH)$);
-    \draw [thick, draw=white, fill=\vecColor] ($(tile vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\vecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
-    \ifthenelse{\vecInBits=128}{
-      \node [scale=.6*\bankLabelScale*\scale, white] at ($(tile vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+    \draw [thick, draw=white, fill=\vecColor] ($(tile vec TL)+(\bWidth, -\bWidth)$) rectangle ++(\accessDrawVecInBytes*\bsize-2*\bWidth, -\elemH+2*\bWidth);
+    \ifthenelse{\vecInBitsInt=128}{
+      \node [scale=.6*\bankLabelScale*\scale, white] at ($(tile vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }{
-      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(tile vec TL)+(\ratio*\vecInBytes*\bsize, -0.5*\elemH)$) {#3};
+      \node [scale=.6*\bankLabelScale*\scale, white, left] at ($(tile vec TL)+(\ratio*\accessDrawVecInBytes*\bsize, -0.5*\elemH)$) {#3};
     }
     \node [scale=.5*\bankLabelScale*\scale, right] at ($(tile vec TL)+(0, -0.5*\elemH)$) {\textbf{t\tid}};
   }{}
@@ -307,9 +308,14 @@
   % \vecInBits: access width in bits (ds_read_b64 or ds_read_b128)
   % \numThreadsSameCycle: number of threads that will access LDS at the same cycle (8, 16, or 32)
   \pgfmathsetmacro{\vecInBits}{int(\vecInBytes*8)}
+  \pgfmathsetmacro{\readVecInBytes}{min(\vecInBytes, 16)}
+  \pgfmathsetmacro{\readVecInBits}{int(\readVecInBytes*8)}
   \pgfmathsetmacro{\elemInBits}{int(\bytesPerElem*8)}
-  \pgfmathsetmacro{\numThreadsSameCycle}{int(\banks*4/\vecInBytes)}
-  \pgfmathsetmacro{\maxTid}{int(\numThreadsSameCycle-1)}
+  \pgfmathsetmacro{\numThreadsSameCycleRead}{int(\banks*4/\readVecInBytes)}
+  \pgfmathsetmacro{\maxTidRead}{int(\numThreadsSameCycleRead-1)}
+  \pgfmathsetmacro{\numThreadsSameCycleWrite}{int(\banks*4/\vecInBytes)}
+  \pgfmathsetmacro{\maxTidWrite}{int(\numThreadsSameCycleWrite-1)}
+  \def\accessDrawVecInBytes{\vecInBytes}
 
   %% Parameters for swizzling
   %% perPhase = ceil(elemsPerLDSRow / K)
@@ -319,7 +325,7 @@
   \ifthenelse{\hasSwizzle=1}{
     %% When vec is small enough, we want 16/perPhase different swizzling patterns
     %% When vec is large, we can only have 64 / \vec different swizzling pattern at most
-    \pgfmathsetmacro{\maxPhase}{min(min(\mfmaNonKDim,\numThreadsSameCycle)/\perPhase,\banks*4/\bytesPerElem/\swizzleVec)}
+    \pgfmathsetmacro{\maxPhase}{min(min(\mfmaNonKDim,\numThreadsSameCycleRead)/\perPhase,\banks*4/\bytesPerElem/\swizzleVec)}
   }{
     %% When swizzling is disabled
     \pgfmathsetmacro{\maxPhase}{1}
@@ -397,26 +403,28 @@
           %%% compute thread id for current vec
           \pgfmathsetmacro{\tid}{int(\gp*\mfmaNonKDim+\row)}
           \pgfmathsetmacro{\kPerGroup}{\mfmaNonKDim}
-          \drawHighlightedAccessInTile{\tid}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+          \pgfmathsetmacro{\readColEnd}{int(\colStart+\readVecInBytes/\bytesPerElem-1)}
+          \def\accessDrawVecInBytes{\readVecInBytes}
+          \drawHighlightedAccessInTile{\tid}{\numThreadsSameCycleRead}{#4\row,#5\colStart:\readColEnd}
           %%% draw ds_read instruction name
           \ifthenelse{\tid=0}{
-            \ifthenelse{\vecInBits=128}{
+            \ifthenelse{\readVecInBits=128}{
               %%% Special thread access pattern for ds_read_b128
               \ifthenelse{\banks=32}{
                 \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\vecInBits\ (t0$\sim$t3, t20$\sim$t23)};
+                {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t20$\sim$t23)};
               }{
                 \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\vecInBits\ (t0$\sim$t3, t12$\sim$t15, t20$\sim$t27)};
+                {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t12$\sim$t15, t20$\sim$t27)};
               }
             }{
               %%% Normal thread access pattern for ds_read_b64
               \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-              {ds\_read\_b\vecInBits\ (t0$\sim$t\maxTid)};
+              {ds\_read\_b\readVecInBits\ (t0$\sim$t\maxTidRead)};
             }
            }{}
           %%% highlight vector of the threads that will access LDS at the same cycle
-          \drawHighlightedAccess{\tid}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+          \drawHighlightedAccess{\tid}{\numThreadsSameCycleRead}{#4\row,#5\colStart:\readColEnd}
         }{
           %%%%%%%%%%%%%%%%%%%%
           %% MN-contig case %%
@@ -487,7 +495,9 @@
               % draw highlighed vector in tile
               \pgfmathsetmacro{\rowOffRaw}{int(\row/\kPerGroup/2)*16+mod(\row, \kPerGroup)*\threadsPerGroupM}
               \pgfmathsetmacro{\tidRaw}{int(\rowOffRaw+\colOff)}
-              \drawHighlightedAccessInTile{\tidRaw}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+              \def\accessDrawVecInBytes{\readVecInBytes}
+              \pgfmathsetmacro{\readColEnd}{int(\colStart+\readVecInBytes/\bytesPerElem-1)}
+              \drawHighlightedAccessInTile{\tidRaw}{\numThreadsSameCycleRead}{#4\row,#5\colStart:\readColEnd}
             }{
               % nonKDim = 32
               \pgfmathsetmacro{\colOff}{int(\gp/\threadsPerGroupM)*16+mod(\gp,\threadsPerGroupM)}
@@ -496,14 +506,16 @@
               % draw highlighed vector in tile
               \pgfmathsetmacro{\rowOffRaw}{int(\row/\kPerGroup/2)*32+mod(\row, \kPerGroup)*\threadsPerGroupM}
               \pgfmathsetmacro{\tidRaw}{int(\rowOffRaw+\colOff)}
-              \drawHighlightedAccessInTile{\tidRaw}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+              \def\accessDrawVecInBytes{\readVecInBytes}
+              \pgfmathsetmacro{\readColEnd}{int(\colStart+\readVecInBytes/\bytesPerElem-1)}
+              \drawHighlightedAccessInTile{\tidRaw}{\numThreadsSameCycleRead}{#4\row,#5\colStart:\readColEnd}
             }
             %%% draw ds_read instruction name
             \ifthenelse{\tid=0}{
               \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-              {ds\_read\_b64\_tr\_b\elemInBits\ (t0$\sim$t\maxTid)};}{}
+              {ds\_read\_b64\_tr\_b\elemInBits\ (t0$\sim$t\maxTidRead)};}{}
             %%% highlight vector of the threads that will access LDS at the same cycle
-            \drawHighlightedAccess{\tid}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+            \drawHighlightedAccess{\tid}{\numThreadsSameCycleRead}{#4\row,#5\colStart:\readColEnd}
           } % End of MN-contig case
         } % End of trans/non-trans case
       }{} %% End draw ds_read
@@ -519,14 +531,15 @@
         \pgfmathsetmacro{\offBytes}{int(\row*\colSize*\bytesPerElem+\gp*\vecInBytes)}
         \pgfmathsetmacro{\tidRaw}{int(\offBytes/16)}
         \pgfmathsetmacro{\remTid}{int(mod(\offBytes,16))}
-        \drawCoalescedGRAccess{\tidRaw}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+        \def\accessDrawVecInBytes{\vecInBytes}
+        \drawCoalescedGRAccess{\tidRaw}{\numThreadsSameCycleWrite}{#4\row,#5\colStart:\colEnd}
         \ifthenelse{\remTid>0}{\pgfmathsetmacro{\tid}{int(\tidRaw+32)}}{\pgfmathsetmacro{\tid}{\tidRaw}}
         % draw ds_write instruction name
         \ifthenelse{\tid=0}{
           \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-          {ds\_write\_b\vecInBits\ (t0$\sim$t\maxTid)};}{}
+          {ds\_write\_b\vecInBits\ (t0$\sim$t\maxTidWrite)};}{}
         % highlight vector of the threads that will access LDS at the same cycle
-        \drawHighlightedAccess{\tid}{\numThreadsSameCycle}{#4\row,#5\colStart:\colEnd}
+        \drawHighlightedAccess{\tid}{\numThreadsSameCycleWrite}{#4\row,#5\colStart:\colEnd}
       }{} %% End draw ds_write
 
     }
