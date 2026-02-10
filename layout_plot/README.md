@@ -141,7 +141,7 @@ Notes
 >$ python plot_layout.py lds --help
 usage: Draw triton layouts lds [-h] [--tensorShape TENSORSHAPE TENSORSHAPE] [--kWidth {4,8,16,32}] [--dtype {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--nonKDim {16,32}]
                                [--banks {32,64}] [--layout {swizzle,padding,none}] [--access {read,write,none}] [--mnContig] [--mfma-trans-load]
-                               [--swizzleVec {4,8,16,32}] [--padInterval PADINTERVAL] [--padAmount PADAMOUNT]
+                               [--swizzleVec {4,8,16,32}] [--padInterval PADINTERVAL] [--padAmount PADAMOUNT] [--sharedLayout SHAREDLAYOUT]
 
 options:
   -h, --help                                 show this help message and exit
@@ -157,6 +157,7 @@ options:
   --swizzleVec {4,8,16,32}                   number of contiguous elements in a vector to swizzle (default: 4)
   --padInterval PADINTERVAL                  Add padding for every padInterval bytes (default: 1)
   --padAmount PADAMOUNT                      Pad padAmount bytes for every padInterval bytes (default: 0)
+  --sharedLayout SHAREDLAYOUT                Triton shared layout string: "[[padInterval, padAmount], ...], [[r,c], ...]" (default: )
 ```
 Examples:
 ```bash
@@ -169,6 +170,7 @@ python3 plot_layout.py lds --layout swizzle --access write --tensorShape 128 128
 python3 plot_layout.py lds --layout none --access read --tensorShape 128 32 --kWidth 4 --dtype fp16 --banks 64 --mnContig
 python3 plot_layout.py lds --layout swizzle --access read --tensorShape 128 32 --kWidth 16 --dtype fp8 --banks 64 --mnContig --mfma-trans-load
 python3 plot_layout.py lds --layout padding --access none --tensorShape 128 32 --kWidth 8 --dtype fp16 --banks 32 --padInterval 128 --padAmount 16
+python3 plot_layout.py lds --tensorShape 256 64 --kWidth 8 --dtype fp16 --banks 32 --sharedLayout "[[512,16], [1024,32]], [[0,1], [0,2], [0,4], [0,8], [0,16], [0,32], [16,0], [32,0], [64,0], [1,0], [2,0], [4,0], [8,0], [128,0]]"
 ```
 
 Knobs
@@ -181,6 +183,8 @@ Knobs
   - `padding`: pad `padAmount` bytes for every `padInterval` bytes of data
     - `padAmount`: default is 0
     - `padInterval`: default is 1
+  - `sharedLayout`: if provided, overrides `--layout`, `--padInterval`, and `--padAmount`
+    using a Triton shared layout string with multi-level padding and row swizzle basis
 - Three options for `--access`:
   - `none`: do not plot access pattern
   - `read`: plot accessed elements at the first cycle of ds_read
