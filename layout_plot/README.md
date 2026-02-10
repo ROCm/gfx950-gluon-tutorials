@@ -184,7 +184,7 @@ Knobs
     - `padAmount`: default is 0
     - `padInterval`: default is 1
   - `sharedLayout`: if provided, overrides `--layout`, `--padInterval`, and `--padAmount`
-    using a Triton shared layout string with multi-level padding (pad interval/amount are element counts) and row swizzle basis
+    using a Triton shared layout string with multi-level padding (pad interval/amount are element counts and must be multiples of swizzleVec) and row swizzle basis
 - Three options for `--access`:
   - `none`: do not plot access pattern
   - `read`: plot accessed elements at the first cycle of ds_read
