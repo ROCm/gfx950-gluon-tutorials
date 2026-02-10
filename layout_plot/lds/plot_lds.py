@@ -52,7 +52,7 @@ def _parse_shared_layout(shared_layout: str):
         raise ValueError("--sharedLayout must contain two list values")
     for item in pads:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise ValueError("Each padding entry must be [padInterval, padAmount]")
+            raise ValueError("Each padding entry must be [padInterval, padAmount] in elements")
     for item in basis:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise ValueError("Each swizzle basis entry must be [row, col]")
@@ -91,8 +91,8 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
         tensor_off = coord_to_off.get((row, col_start))
         if tensor_off is None:
             raise ValueError(f"Cannot map tensor coord ({row}, {col_start}) with provided shared layout")
-        byte_off = int(tensor_off * elem_type_in_bytes)
-        padded_byte_off = byte_off + sum((byte_off // interval) * amount for interval, amount in pads if interval > 0)
+        padded_elem_off = tensor_off + sum((tensor_off // interval) * amount for interval, amount in pads if interval > 0)
+        padded_byte_off = int(padded_elem_off * elem_type_in_bytes)
         lookup_rows.append(padded_byte_off // lds_row_bytes)
         lookup_vecs.append((padded_byte_off % lds_row_bytes) // vec_in_bytes)
 

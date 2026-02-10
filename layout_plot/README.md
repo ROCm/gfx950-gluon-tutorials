@@ -157,7 +157,7 @@ options:
   --swizzleVec {4,8,16,32}                   number of contiguous elements in a vector to swizzle (default: 4)
   --padInterval PADINTERVAL                  Add padding for every padInterval bytes (default: 1)
   --padAmount PADAMOUNT                      Pad padAmount bytes for every padInterval bytes (default: 0)
-  --sharedLayout SHAREDLAYOUT                Triton shared layout string: "[[padInterval, padAmount], ...], [[r,c], ...]" (default: )
+  --sharedLayout SHAREDLAYOUT                Triton shared layout string: "[[padInterval, padAmount], ...], [[r,c], ...]" where pads are in elements (default: )
 ```
 Examples:
 ```bash
@@ -184,7 +184,7 @@ Knobs
     - `padAmount`: default is 0
     - `padInterval`: default is 1
   - `sharedLayout`: if provided, overrides `--layout`, `--padInterval`, and `--padAmount`
-    using a Triton shared layout string with multi-level padding and row swizzle basis
+    using a Triton shared layout string with multi-level padding (pad interval/amount are element counts) and row swizzle basis
 - Three options for `--access`:
   - `none`: do not plot access pattern
   - `read`: plot accessed elements at the first cycle of ds_read
