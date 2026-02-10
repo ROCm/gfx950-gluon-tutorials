@@ -85,19 +85,22 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
     vec_in_bytes = int(vec * elem_type_in_bytes)
 
     row_start_offsets = [0 for _ in range(dim0)]
+    vecs_per_lds_row = int(lds_row_bytes / vec_in_bytes)
+
     for off_vec in range(max_off_vec):
-        row = off_vec // vecs_per_row
+        tensor_row = off_vec // vecs_per_row
         gp = off_vec % vecs_per_row
         col_start = gp * vec
-        tensor_off = coord_to_off.get((row, col_start))
+        tensor_off = coord_to_off.get((tensor_row, col_start))
         if tensor_off is None:
-            raise ValueError(f"Cannot map tensor coord ({row}, {col_start}) with provided shared layout")
+            raise ValueError(f"Cannot map tensor coord ({tensor_row}, {col_start}) with provided shared layout")
         padded_elem_off = tensor_off + sum((tensor_off // interval) * amount for interval, amount in pads if interval > 0)
         padded_byte_off = int(padded_elem_off * elem_type_in_bytes)
         abs_row = padded_byte_off // lds_row_bytes
+        compact_row = max(int(off_vec // vecs_per_lds_row), int(off_vec // vecs_per_row))
         if gp == 0:
-            row_start_offsets[row] = int(abs_row * lds_row_bytes)
-        lookup_rows.append(row)
+            row_start_offsets[compact_row] = int(abs_row * lds_row_bytes)
+        lookup_rows.append(compact_row)
         lookup_vecs.append((padded_byte_off % lds_row_bytes) // vec_in_bytes)
 
     return lookup_rows, lookup_vecs, row_start_offsets
