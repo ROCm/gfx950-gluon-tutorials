@@ -59,7 +59,7 @@ def _parse_shared_layout(shared_layout: str):
     return [[int(p[0]), int(p[1])] for p in pads], [[int(b[0]), int(b[1])] for b in basis]
 
 
-def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads, basis):
+def _build_shared_layout_lookup(dim0, dim1, vec, swizzle_vec, elem_type_in_bytes, banks, pads, basis):
     coord_to_off = {}
     total = dim0 * dim1
     for off in range(total):
@@ -77,12 +77,21 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
         if 0 <= row < dim0 and 0 <= col < dim1:
             coord_to_off[(row, col)] = off
 
+    if swizzle_vec % vec != 0:
+        raise ValueError(f"swizzleVec ({swizzle_vec}) must be a multiple of vec ({vec})")
+    for interval, amount in pads:
+        if interval % swizzle_vec != 0 or amount % swizzle_vec != 0:
+            raise ValueError(
+                f"sharedLayout padInterval/padAmount must be multiples of swizzleVec ({swizzle_vec}); got [{interval}, {amount}]"
+            )
+
     vecs_per_row = dim1 // vec
     max_off_vec = dim0 * vecs_per_row
     lookup_rows = []
     lookup_vecs = []
     lds_row_bytes = int(banks * 4)
     vec_in_bytes = int(vec * elem_type_in_bytes)
+    elems_per_lds_row = int(lds_row_bytes / elem_type_in_bytes)
 
     row_start_offsets = [0 for _ in range(dim0)]
     vecs_per_lds_row = int(lds_row_bytes / vec_in_bytes)
@@ -101,7 +110,7 @@ def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads
         if gp == 0:
             row_start_offsets[compact_row] = int(abs_row * lds_row_bytes)
         lookup_rows.append(compact_row)
-        lookup_vecs.append((padded_byte_off % lds_row_bytes) // vec_in_bytes)
+        lookup_vecs.append((padded_elem_off % elems_per_lds_row) // swizzle_vec)
 
     return lookup_rows, lookup_vecs, row_start_offsets
 
@@ -238,7 +247,7 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
     sharedLayoutRowStarts = ""
     if sharedLayout is not None:
         pads, basis = sharedLayout
-        lookupRows, lookupVecs, rowStartOffsets = _build_shared_layout_lookup(dim0, dim1, vec, elemTypeInBytes, banks, pads, basis)
+        lookupRows, lookupVecs, rowStartOffsets = _build_shared_layout_lookup(dim0, dim1, vec, swizzleVec, elemTypeInBytes, banks, pads, basis)
         sharedLayoutRows = "\n".join(
             [f"\\expandafter\\def\\csname sharedrow{i}\\endcsname{{{v}}}" for i, v in enumerate(lookupRows)]
         )
