@@ -275,6 +275,7 @@
   %% #1: hasSwizzle, 0 means no swizzling and no padding,
   %%                 1 means optimal swizzling
   %%                 2 means padding
+  %%                 3 means user-provided sharedLayout
   %% #2: access mode, 0 means draw nothing, 1 means ds_read, 2 means ds_write
   %% #3: number of banks
   %% #4: rowLabel
@@ -357,6 +358,14 @@
         \pgfmathsetmacro{\paddedVecStartByte}{int(\offVecStartByte/\padInterval)*\padAmount+\offVecStartByte}
         \pgfmathsetmacro{\LDSRow}{int(\paddedVecStartByte/\banks/4)}
         \pgfmathsetmacro{\LDSVec}{int(mod(int(\paddedVecStartByte), int(\banks*4))/\vecInBytes)}
+      }{}
+
+      %% User-provided sharedLayout case: reverse-mapped in python and emitted
+      %% as \sharedrow<offVec> and \sharedvec<offVec> lookup tables.
+      \ifthenelse{\hasSwizzle=3}{
+        \pgfmathtruncatemacro{\offVecInt}{\offVec}
+        \pgfmathsetmacro{\LDSRow}{\csname sharedrow\offVecInt\endcsname}
+        \pgfmathsetmacro{\LDSVec}{\csname sharedvec\offVecInt\endcsname}
       }{}
 
       \coordinate (vec TL) at ($(TL)+(\LDSVec*\vecInBytes*\bsize, -\LDSRow*\elemH)$);

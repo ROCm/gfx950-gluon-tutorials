@@ -91,6 +91,8 @@ def parse_args():
     lds_parser.add_argument("--banks", type=int, default=32, choices=[32, 64], help='choose the number of banks in LDS')
     lds_parser.add_argument("--layout", type=str, default="none", choices=['swizzle', 'padding', 'none'],
                             help='choose the LDS data layout')
+    lds_parser.add_argument("--sharedLayout", type=str, default="",
+                            help='Triton shared layout string: "[[padInterval, padAmount], ...], [[r,c], ...]"')
     lds_parser.add_argument("--access", type=str, default="none", choices=['read', 'write', 'none'],
                             help='choose LDS access mode')
     lds_parser.add_argument("--mnContig", action='store_true', default=False,

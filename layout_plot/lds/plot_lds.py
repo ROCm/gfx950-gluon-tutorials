@@ -1,3 +1,4 @@
+from ast import literal_eval
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,67 @@ class LDSConfig:
         )
 
 
+
+def _parse_shared_layout(shared_layout: str):
+    if not shared_layout:
+        return None
+    try:
+        parsed = literal_eval(f"[{shared_layout}]")
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"Invalid --sharedLayout format: {shared_layout}") from exc
+    if (not isinstance(parsed, list)) or len(parsed) != 2:
+        raise ValueError("--sharedLayout must contain two lists: padding and swizzle basis")
+    pads, basis = parsed
+    if not isinstance(pads, list) or not isinstance(basis, list):
+        raise ValueError("--sharedLayout must contain two list values")
+    for item in pads:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError("Each padding entry must be [padInterval, padAmount]")
+    for item in basis:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError("Each swizzle basis entry must be [row, col]")
+    return [[int(p[0]), int(p[1])] for p in pads], [[int(b[0]), int(b[1])] for b in basis]
+
+
+def _build_shared_layout_lookup(dim0, dim1, vec, elem_type_in_bytes, banks, pads, basis):
+    coord_to_off = {}
+    total = dim0 * dim1
+    for off in range(total):
+        row = col = 0
+        bit = 0
+        curr = off
+        while curr:
+            if curr & 1:
+                if bit >= len(basis):
+                    raise ValueError("Not enough swizzle basis entries for LDS offsets")
+                row += basis[bit][0]
+                col += basis[bit][1]
+            bit += 1
+            curr >>= 1
+        if 0 <= row < dim0 and 0 <= col < dim1:
+            coord_to_off[(row, col)] = off
+
+    vecs_per_row = dim1 // vec
+    max_off_vec = dim0 * vecs_per_row
+    lookup_rows = []
+    lookup_vecs = []
+    lds_row_bytes = int(banks * 4)
+    vec_in_bytes = int(vec * elem_type_in_bytes)
+
+    for off_vec in range(max_off_vec):
+        row = off_vec // vecs_per_row
+        gp = off_vec % vecs_per_row
+        col_start = gp * vec
+        tensor_off = coord_to_off.get((row, col_start))
+        if tensor_off is None:
+            raise ValueError(f"Cannot map tensor coord ({row}, {col_start}) with provided shared layout")
+        byte_off = int(tensor_off * elem_type_in_bytes)
+        padded_byte_off = byte_off + sum((byte_off // interval) * amount for interval, amount in pads if interval > 0)
+        lookup_rows.append(padded_byte_off // lds_row_bytes)
+        lookup_vecs.append((padded_byte_off % lds_row_bytes) // vec_in_bytes)
+
+    return lookup_rows, lookup_vecs
+
 def typeToBytes(dtype):
     if dtype == 'bf16' or dtype == 'fp16':
         return 2
@@ -59,8 +121,10 @@ def calcPerPhase(banks, dtype, K):
     return max(banks * bytesPerBank / (K * typeToBytes(dtype)), 1)
 
 
-def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig):
-    if ldsConfig.ldsLayout == 'swizzle':
+def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout):
+    if sharedLayout is not None:
+        hasSwizzle = 3
+    elif ldsConfig.ldsLayout == 'swizzle':
         hasSwizzle = 1
     elif ldsConfig.ldsLayout == 'padding':
         hasSwizzle = 2
@@ -162,37 +226,51 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig):
     kWidth = ldsConfig.kWidth
     vecInBytes = vec * elemTypeInBytes
 
-    return f"""\\begin{{document}}
-               \\begin{{tikzpicture}}
-               \\def\\scale{{1}}
-               \\def\\M{{{dim0}}}
-               \\def\\K{{{dim1}}}
-               \\def\\mfmaKWidth{{{kWidth}}}
-               \\def\\vec{{{vec}}}
-               \\def\\swizzleVec{{{swizzleVec}}}
-               \\def\\accessVec{{{accessVec}}}
-               \\def\\vecInBytes{{{vecInBytes}}}
-               \\def\\bytesPerElem{{{elemTypeInBytes}}}
-               \\def\\hasSwizzle{{{hasSwizzle}}}
-               \\def\\accessMode{{{accessMode}}}
-               \\def\\mfmaNonKDim{{{mfmaNonKDim}}}
-               \\def\\dtype{{{dtype}}}
-               \\def\\trans{{{trans}}}
-               \\def\\useMfmaTransLD{{{useMfmaTransLD}}}
-               \\def\\padInterval{{{padInterval}}}
-               \\def\\padAmount{{{padAmount}}}
+    sharedLayoutRows = ""
+    sharedLayoutVecs = ""
+    if sharedLayout is not None:
+        pads, basis = sharedLayout
+        lookupRows, lookupVecs = _build_shared_layout_lookup(dim0, dim1, vec, elemTypeInBytes, banks, pads, basis)
+        sharedLayoutRows = "\n".join(
+            [f"\\expandafter\\def\\csname sharedrow{i}\\endcsname{{{v}}}" for i, v in enumerate(lookupRows)]
+        )
+        sharedLayoutVecs = "\n".join(
+            [f"\\expandafter\\def\\csname sharedvec{i}\\endcsname{{{v}}}" for i, v in enumerate(lookupVecs)]
+        )
 
-               \\def\\elemH{{0.18}}
-               \\def\\elem{{0.18}}
-               \\def\\bsize{{{bsize}}}
-               \\def\\bankLabelScale{{{bankLabelScale}}}
-               \\coordinate (tile TL) at (0,0);
-               \\coordinate (TL) at (tile TL);
-               \\drawTensorLayoutGlobalMem{{{dim0Name}}}{{{dim1Name}}}{{{dim0Size}}}{{{dim1Size}}}
-               \\coordinate (TL) at ($(TL)+(0, -\drawRow-8*\\elemH)$);
-               \\drawLDSLayoutAndAccess{{\\hasSwizzle}}{{\\accessMode}}{{{banks}}}{{{dim0Name}}}{{{dim1Name}}}{{{dim1Size}}}
-               \\end{{tikzpicture}}
-               \\end{{document}}"""
+    return rf"""\begin{{document}}
+               \begin{{tikzpicture}}
+               \def\scale{{1}}
+               \def\M{{{dim0}}}
+               \def\K{{{dim1}}}
+               \def\mfmaKWidth{{{kWidth}}}
+               \def\vec{{{vec}}}
+               \def\swizzleVec{{{swizzleVec}}}
+               \def\accessVec{{{accessVec}}}
+               \def\vecInBytes{{{vecInBytes}}}
+               \def\bytesPerElem{{{elemTypeInBytes}}}
+               \def\hasSwizzle{{{hasSwizzle}}}
+               \def\accessMode{{{accessMode}}}
+               \def\mfmaNonKDim{{{mfmaNonKDim}}}
+               \def\dtype{{{dtype}}}
+               \def\trans{{{trans}}}
+               \def\useMfmaTransLD{{{useMfmaTransLD}}}
+               \def\padInterval{{{padInterval}}}
+               \def\padAmount{{{padAmount}}}
+               {sharedLayoutRows}
+               {sharedLayoutVecs}
+
+               \def\elemH{{0.18}}
+               \def\elem{{0.18}}
+               \def\bsize{{{bsize}}}
+               \def\bankLabelScale{{{bankLabelScale}}}
+               \coordinate (tile TL) at (0,0);
+               \coordinate (TL) at (tile TL);
+               \drawTensorLayoutGlobalMem{{{dim0Name}}}{{{dim1Name}}}{{{dim0Size}}}{{{dim1Size}}}
+               \coordinate (TL) at ($(TL)+(0, -\drawRow-8*\elemH)$);
+               \drawLDSLayoutAndAccess{{\hasSwizzle}}{{\accessMode}}{{{banks}}}{{{dim0Name}}}{{{dim1Name}}}{{{dim1Size}}}
+               \end{{tikzpicture}}
+               \end{{document}}"""
 
 
 def generate_lds_tex(args):
@@ -213,6 +291,7 @@ def generate_lds_tex(args):
     swizzleVec = args.swizzleVec
     padInterval = args.padInterval
     padAmount = args.padAmount
+    sharedLayout = _parse_shared_layout(args.sharedLayout)
 
     ldsConfig = LDSConfig(banks, ldsLayout, ldsAccess, mnContig, mfmaTransLD, swizzleVec, accessVec, kWidth,
                           padInterval, padAmount)
@@ -226,7 +305,7 @@ def generate_lds_tex(args):
             preamble = file.read()
 
         f_plot.write(preamble)
-        draw_lds_str = draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig)
+        draw_lds_str = draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
         func_ref = str(curr_dir / "ldsLayout")
         f_plot.write(f"\input{{ {func_ref} }}\n")
         f_plot.write(draw_lds_str)
