@@ -3,7 +3,12 @@ import torch
 import triton
 import argparse
 
-from v0_naive.matmul_kernel import matmul
+# from v0_naive.matmul_kernel import matmul
+# from v1_buffer_load.matmul import mamtul
+# from v2_async_copy.matmul import mamtul
+from v3_lds.matmul_kernel import matmul
+
+# from v7_beyond_hotloop.matmul import mamtul
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
