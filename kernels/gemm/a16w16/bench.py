@@ -4,10 +4,11 @@ import torch
 import triton
 
 # from v0_naive.matmul_kernel import matmul
-# from v1_buffer_load.matmul import mamtul
-# from v2_async_copy.matmul import mamtul
+# from v1_buffer_load.matmul_kernel import matmul
+# from v2_async_copy.matmul_kernel import matmul
 # from v3_lds.matmul_kernel import matmul
-from v4_global_prefetch.matmul_kernel import matmul
+# from v4_global_prefetch.matmul_kernel import matmul
+from v5_local_prefetch.matmul_kernel import matmul
 
 # from v7_beyond_hotloop.matmul import mamtul
 
