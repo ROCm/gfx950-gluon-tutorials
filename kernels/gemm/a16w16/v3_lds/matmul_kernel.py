@@ -241,7 +241,7 @@ def matmul(a, b):
     GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
     grid = (GRID_MN, 1)
     ## Change the following to v3_lds_swizzling to run the kernel with swizzling layout
-    v3_lds_swizzling[grid](
+    v3_lds_padding[grid](
         a,
         b,
         c,  #
