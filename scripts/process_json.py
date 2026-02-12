@@ -21,18 +21,18 @@ Description:
 import argparse
 import json
 import os
-import sys
 import re
+import sys
 from glob import glob
 
 # MFMA instruction cycle mapping for non-scaled versions
 MFMA_CYCLE_MAP = {
     "v_mfma_f32_16x16x32_f16": 16,
     "v_mfma_f32_32x32x16_f16": 32,
-    #"v_mfma_f32_4x4x4_f16": 4,
-    #"v_mfma_f32_16x16x4_f32": 16,
-    #"v_mfma_f32_32x32x2_f32": 32,
-    #"v_mfma_f32_4x4x1_f32": 4,
+    # "v_mfma_f32_4x4x4_f16": 4,
+    # "v_mfma_f32_16x16x4_f32": 16,
+    # "v_mfma_f32_32x32x2_f32": 32,
+    # "v_mfma_f32_4x4x1_f32": 4,
     # Add more standard MFMA instructions as needed
 }
 
@@ -54,8 +54,8 @@ def extract_cbsz_blgp(instruction):
     Returns:
         tuple: (cbsz_value, blgp_value) or (None, None) if not found
     """
-    cbsz_match = re.search(r'cbsz:(\d+)', instruction)
-    blgp_match = re.search(r'blgp:(\d+)', instruction)
+    cbsz_match = re.search(r"cbsz:(\d+)", instruction)
+    blgp_match = re.search(r"blgp:(\d+)", instruction)
 
     cbsz = int(cbsz_match.group(1)) if cbsz_match else None
     blgp = int(blgp_match.group(1)) if blgp_match else None
@@ -74,7 +74,7 @@ def get_mfma_opcode(instruction):
         str: The opcode (e.g., "v_mfma_f32_16x16x32_f16")
     """
     # Match pattern like "v_mfma_..." up to the first space or end
-    match = re.match(r'(v_mfma_\S+?)(?:\s|$)', instruction.strip())
+    match = re.match(r"(v_mfma_\S+?)(?:\s|$)", instruction.strip())
     if match:
         return match.group(1)
     return None
@@ -135,7 +135,7 @@ def get_mfma_cycles(instruction):
 
         # If not found, try to infer from dimensions
         # Pattern: v_mfma_<type>_<M>x<N>x<K>_<input_type>
-        match = re.search(r'v_mfma_\w+_(\d+)x(\d+)x\d+', opcode)
+        match = re.search(r"v_mfma_\w+_(\d+)x(\d+)x\d+", opcode)
         if match:
             m_dim = int(match.group(1))
             n_dim = int(match.group(2))
@@ -260,7 +260,9 @@ def analyze_waves(folder, loop_index, epilogue_index):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute average loop and per-iteration durations.")
+    parser = argparse.ArgumentParser(
+        description="Compute average loop and per-iteration durations."
+    )
     parser.add_argument("folder", help="Folder containing code.json and se0_sm0_sl0_wv*.json files")
     args = parser.parse_args()
 
@@ -274,11 +276,17 @@ def main():
             code_info["epilogue_first_index"],
         )
 
-        avg_iteration_duration = (avg_loop_duration / code_info["num_iterations"]
-                                  if code_info["num_iterations"] and code_info["num_iterations"] > 0 else None)
+        avg_iteration_duration = (
+            avg_loop_duration / code_info["num_iterations"]
+            if code_info["num_iterations"] and code_info["num_iterations"] > 0
+            else None
+        )
 
-        mfma_efficiency = (code_info["total_mfma_cycles_in_loop"] /
-                           avg_iteration_duration if avg_iteration_duration and avg_iteration_duration > 0 else None)
+        mfma_efficiency = (
+            code_info["total_mfma_cycles_in_loop"] / avg_iteration_duration
+            if avg_iteration_duration and avg_iteration_duration > 0
+            else None
+        )
         total_dur = avg_loop_duration + avg_pro + avg_epi
 
         result = {
@@ -291,7 +299,9 @@ def main():
             "loop_ratio": f"{avg_loop_duration / total_dur * 100:.2f}%",
             "epi_ratio": f"{avg_epi / total_dur * 100:.2f}%",
             "average_iteration_duration": avg_iteration_duration,
-            "mfma efficiency": f"{mfma_efficiency * 100:.2f}%" if mfma_efficiency is not None else "N/A",
+            "mfma efficiency": (
+                f"{mfma_efficiency * 100:.2f}%" if mfma_efficiency is not None else "N/A"
+            ),
         }
 
         print(json.dumps(result, indent=2))

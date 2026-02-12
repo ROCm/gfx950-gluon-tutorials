@@ -12,7 +12,7 @@ class DotConfig:
     tilesPerWarp: tuple
 
 
-matrixFormatTable = {'fp8': 0, 'bf8': 1, 'fp6': 2, 'bf6': 3, 'f4': 4}
+matrixFormatTable = {"fp8": 0, "bf8": 1, "fp6": 2, "bf6": 3, "f4": 4}
 
 
 def matrixFormat(dtypeA, dtypeB):
@@ -28,15 +28,15 @@ def matrixFormat(dtypeA, dtypeB):
 
 
 def isType4Or6Bit(dtype):
-    return dtype == 'fp6' or dtype == 'bf6' or dtype == 'f4'
+    return dtype == "fp6" or dtype == "bf6" or dtype == "f4"
 
 
 def isType8BitFloat(dtype):
-    return dtype == 'fp8' or dtype == 'bf8'
+    return dtype == "fp8" or dtype == "bf8"
 
 
 def isType16Bit(dtype):
-    return dtype == 'bf16' or dtype == 'fp16'
+    return dtype == "bf16" or dtype == "fp16"
 
 
 def isMixedPrecType(dtype):
@@ -44,8 +44,9 @@ def isMixedPrecType(dtype):
 
 
 def isMixedPrecBtwF8AndF4OrF6(dtypeA, dtypeB):
-    return (isType8BitFloat(dtypeA) and isType4Or6Bit(dtypeB)) or \
-           (isType8BitFloat(dtypeB) and isType4Or6Bit(dtypeA))
+    return (isType8BitFloat(dtypeA) and isType4Or6Bit(dtypeB)) or (
+        isType8BitFloat(dtypeB) and isType4Or6Bit(dtypeA)
+    )
 
 
 def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot_scale, dotConfig):
@@ -57,7 +58,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
     kGroup = dotConfig.kGroup
     scaleLabel = 0.7 if (kWidth == 4 or (kWidth == 8 and mfmaNonKDim == 32)) else 1
 
-    outType = 'i32' if dtypeA == 'i8' else 'f32'
+    outType = "i32" if dtypeA == "i8" else "f32"
     kWidth_a = kWidth_b = kWidth
     kGroup_a = kGroup_b = kGroup
     if isMixed864:
@@ -101,7 +102,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
                \\coordinate (C TL) at (0,0);
                \\drawDot{{{M}}}{{{N}}}{{{K}}}{{{mfmaNonKDim}}}{{{warpsPerCTA[0]}}}{{{warpsPerCTA[1]}}}{{{trans}}}
 
-               \\coordinate (C TL) at ($(C TL)+({N}*\elem+32*\elem, 0)$);
+               \\coordinate (C TL) at ($(C TL)+({N}*\\elem+32*\\elem, 0)$);
                \\def\\mfmaTrans{{{trans}}}
 
                %% Draw zoomed in view of mfma
@@ -112,9 +113,9 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
                \\pgfmathsetmacro{{\\gap}}{{\\elem*5}}
                \\pgfmathsetmacro{{\\nonTrans}}{{1-\\mfmaTrans}}
                \\pgfmathsetmacro{{\\groups}}{{64/{mfmaNonKDim}}}
-               \\coordinate (C TL) at ($(C TL)+({scaling}*0.3*\\gap+{scaling}*\\groups*4*\elemW+.5*\\gap+1.2*\\nonTrans*\\gap+\\groups*{kWidth_left}*{kGroup_left}*\\elemW, -{M}*\\oldElem+{mfmaNonKDim}*\\elem)$);
+               \\coordinate (C TL) at ($(C TL)+({scaling}*0.3*\\gap+{scaling}*\\groups*4*\\elemW+.5*\\gap+1.2*\\nonTrans*\\gap+\\groups*{kWidth_left}*{kGroup_left}*\\elemW, -{M}*\\oldElem+{mfmaNonKDim}*\\elem)$);
                \\coordinate (mfma instr) at ($(C TL)+(-.5*\\gap-0.6*\\nonTrans*\\gap-0.4*\\mfmaTrans*\\gap, 1.5*\\gap+.5*\\mfmaTrans*\\gap)$);
-               \\node [scale=\scaleLabel, above left, align=left, draw=black, fill=white] at (mfma instr) {{{mfma_inst_str}}};
+               \\node [scale=\\scaleLabel, above left, align=left, draw=black, fill=white] at (mfma instr) {{{mfma_inst_str}}};
                \\drawMFMAInstr{{{mfmaNonKDim}}}{{\\mfmaTrans}}{{{dtypeA}}}{{{dtypeB}}}{{{outType}}}{{{scaling}}}
 
                \\end{{tikzpicture}}
@@ -124,9 +125,9 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
 def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale):
     # Check input types
     # Mixed precision is only allowed within f8, f6 and f4
-    assert (isMixedPrecType(dtypeA) and isMixedPrecType(dtypeB)) or \
-           (dtypeA == dtypeB), \
-           f"Cannot do mixed precision mfma with {dtypeA} and {dtypeB}"
+    assert (isMixedPrecType(dtypeA) and isMixedPrecType(dtypeB)) or (
+        dtypeA == dtypeB
+    ), f"Cannot do mixed precision mfma with {dtypeA} and {dtypeB}"
     """
     Check mfma size according to data types
     * refers to newly added instructions on gfx950
@@ -160,46 +161,67 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
     kDim = 64 / mfmaNonKDim * kWidth * kGroup
     # Both dtyes are f4 or fp6 or bf6
     if isType4Or6Bit(dtypeA) and isType4Or6Bit(dtypeB):
-        assert kWidth == 32 and kGroup == 1, f"Only kWidth=32 and kGroup=1 is supported for {dtypeA} x {dtypeB}"
+        assert (
+            kWidth == 32 and kGroup == 1
+        ), f"Only kWidth=32 and kGroup=1 is supported for {dtypeA} x {dtypeB}"
         kpack = 1
         CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
         BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
-        scale_str = 'scale_' if scale else ''
-        return f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4", kpack, CBSZ, BLGP, scale
+        scale_str = "scale_" if scale else ""
+        return (
+            f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4",
+            kpack,
+            CBSZ,
+            BLGP,
+            scale,
+        )
 
     # Both dtypes are fp8 or bf8
     if isType8BitFloat(dtypeA) and isType8BitFloat(dtypeB):
         assert (kWidth == 8 and kGroup == 1) or (
-            kWidth == 16), f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
+            kWidth == 16
+        ), f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
         kpack = 2 if (kWidth == 16 and kGroup == 1) else 1
         if kGroup == 2:
             suffix = "f8f6f4"
             CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
             BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
             plot_scale = scale
-            scale_str = 'scale_' if scale else ''
+            scale_str = "scale_" if scale else ""
         else:
             suffix = f"{dtypeB}_{dtypeA}" if trans else f"{dtypeA}_{dtypeB}"
             CBSZ = -1
             BLGP = -1
             plot_scale = False
-            scale_str = ''
+            scale_str = ""
         kDim = kDim / 2 if kpack == 2 else kDim
-        return f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{suffix}", kpack, CBSZ, BLGP, plot_scale
+        return (
+            f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{suffix}",
+            kpack,
+            CBSZ,
+            BLGP,
+            plot_scale,
+        )
 
     # Both types are fp16 or bf16
     if isType16Bit(dtypeA) and isType16Bit(dtypeB):
-        assert (kWidth == 8 or kWidth == 4) and kGroup == 1, \
+        assert (
+            kWidth == 8 or kWidth == 4
+        ) and kGroup == 1, (
             f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
+        )
         kpack = 1
         CBSZ = -1
         BLGP = -1
         return f"mfma_f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}", kpack, CBSZ, BLGP, False
 
     # Both types are i8
-    if dtypeA == 'i8' and dtypeB == 'i8':
-        assert (kWidth == 16 or kWidth == 8) and kGroup == 1, \
+    if dtypeA == "i8" and dtypeB == "i8":
+        assert (
+            kWidth == 16 or kWidth == 8
+        ) and kGroup == 1, (
             f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
+        )
         kpack = 1
         CBSZ = -1
         BLGP = -1
@@ -209,8 +231,9 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
 
 
 def generate_dot_tex(args):
-    assert args.plot_type == "dot", \
-        f"parsing the wrong arguments. Want dot but have {args.plot_type}"
+    assert (
+        args.plot_type == "dot"
+    ), f"parsing the wrong arguments. Want dot but have {args.plot_type}"
     # preprocess the args
     dotShape = args.dotShape
     M = dotShape[0]
@@ -233,10 +256,17 @@ def generate_dot_tex(args):
         mfmaNonKDim * warpsPerCTA[0] * tilesPerWarp[0],
         mfmaNonKDim * warpsPerCTA[1] * tilesPerWarp[1],
     ]
-    print(f"Plotting dot operation with shapes {(M, N, K)=}, {kWidth=}, {kGroup=}, {warpsPerCTA=}, {CTAShape=}")
-    assert M != 0 and CTAShape[0] <= M and M % CTAShape[0] == 0 and \
-        N != 0 and CTAShape[1] <= N and N % CTAShape[1] == 0, \
-        f"block size ({M}, {N}) should equal to or be multiple of CTA shape ({CTAShape[0]}, {CTAShape[1]})"
+    print(
+        f"Plotting dot operation with shapes {(M, N, K)=}, {kWidth=}, {kGroup=}, {warpsPerCTA=}, {CTAShape=}"
+    )
+    assert (
+        M != 0
+        and CTAShape[0] <= M
+        and M % CTAShape[0] == 0
+        and N != 0
+        and CTAShape[1] <= N
+        and N % CTAShape[1] == 0
+    ), f"block size ({M}, {N}) should equal to or be multiple of CTA shape ({CTAShape[0]}, {CTAShape[1]})"
     if isMixedPrecBtwF8AndF4OrF6(dtypeA, dtypeB):
         # In the case of mixed precision between 8-bit and 4 or 6-bit,
         # ignore kWidth and kGroup since inA and inB have different kWidth and kGroup values
@@ -246,31 +276,37 @@ def generate_dot_tex(args):
             kDim = 64
         else:
             raise NotImplementedError("scaled dot only supports 32x32x64 or 16x16x128 for now")
-        assert K != 0 and K % kDim == 0, \
-            f"BLOCK_K = {K} should be spanned by one or multiple of MFMA instructions with KDim = {kDim}"
+        assert (
+            K != 0 and K % kDim == 0
+        ), f"BLOCK_K = {K} should be spanned by one or multiple of MFMA instructions with KDim = {kDim}"
         kpack = 1
         CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
         BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
-        scale_str = 'scale_' if scale else ''
+        scale_str = "scale_" if scale else ""
         mfma_inst_str = f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4"
         isMixed864 = True
         plot_scale = scale
     else:
         kDim = kWidth * kGroup * 64 // mfmaNonKDim
-        assert K % kDim == 0, f"one mfma instruction requires multiple of {kDim} elements along k dim but BLOCK_K = {K}"
-        mfma_inst_str, kpack, CBSZ, BLGP, plot_scale = checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB,
-                                                                         trans, scale)
+        assert (
+            K % kDim == 0
+        ), f"one mfma instruction requires multiple of {kDim} elements along k dim but BLOCK_K = {K}"
+        mfma_inst_str, kpack, CBSZ, BLGP, plot_scale = checkMfmaValidity(
+            mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale
+        )
         isMixed864 = False
-    flag = '' if CBSZ == -1 else f" with {CBSZ=},{BLGP=}"
-    scale_info = " (scale is not supported hence ignored)" if (scale and not plot_scale) else ''
+    flag = "" if CBSZ == -1 else f" with {CBSZ=},{BLGP=}"
+    scale_info = " (scale is not supported hence ignored)" if (scale and not plot_scale) else ""
     print(f"MFMA: {mfma_inst_str} x {kpack}{flag}{scale_info}", end="")
     mfma_inst_str = mfma_inst_str.replace("_", "\\_")
     mfma_inst_str = mfma_inst_str + flag
     if kpack == 2:
         mfma_inst_str = mfma_inst_str + " $\\times$ 2"
-    if ((dtypeA == 'fp16' or dtypeA == 'bf16') and kWidth == 8) or (dtypeA == 'i8' and kWidth == 16):
+    if ((dtypeA == "fp16" or dtypeA == "bf16") and kWidth == 8) or (
+        dtypeA == "i8" and kWidth == 16
+    ):
         kDim = 64 / mfmaNonKDim * kWidth / 2
-        outType = "i32" if dtypeA == 'i8' else "f32"
+        outType = "i32" if dtypeA == "i8" else "f32"
         old_instr = f"mfma_{outType}_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}"
         print(f" or {old_instr} x 2")
         old_instr = old_instr.replace("_", "\\_")
@@ -280,13 +316,14 @@ def generate_dot_tex(args):
 
     # write the tex file
     curr_dir = Path(__file__).resolve().parent
-    with open("myplot.tex", 'w') as f_plot:
+    with open("myplot.tex", "w") as f_plot:
         with open(curr_dir / "../utils/preamble.tex") as file:
             preamble = file.read()
 
         f_plot.write(preamble)
-        draw_dotLayout_str = draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot_scale,
-                                                 dotConfig)
+        draw_dotLayout_str = draw_dot_layout_cmd(
+            M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot_scale, dotConfig
+        )
         func_ref = str(curr_dir / "dotLayout")
-        f_plot.write(f"\input{{ {func_ref} }}\n")
+        f_plot.write(f"\\input{{ {func_ref} }}\n")
         f_plot.write(draw_dotLayout_str)

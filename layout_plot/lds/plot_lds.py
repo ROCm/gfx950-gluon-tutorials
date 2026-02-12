@@ -16,8 +16,19 @@ class LDSConfig:
     padInterval: int
     padAmount: int
 
-    def __init__(self, banks, ldsLayout, ldsAccess, mnContig, mfmaTransLD, swizzleVec, accessVec, kWidth, padInterval,
-                 padAmount):
+    def __init__(
+        self,
+        banks,
+        ldsLayout,
+        ldsAccess,
+        mnContig,
+        mfmaTransLD,
+        swizzleVec,
+        accessVec,
+        kWidth,
+        padInterval,
+        padAmount,
+    ):
         self.banks = banks
         self.ldsLayout = ldsLayout
         self.ldsAccess = ldsAccess
@@ -33,7 +44,6 @@ class LDSConfig:
         print(
             f"{self.banks=} {self.ldsLayout=} {self.ldsAccess=} {self.mnContig=} {self.mfmaTransLD=} {self.swizzleVec=} {self.accessVec=} {self.kWidth=} {self.padInterval} {self.padAmount}"
         )
-
 
 
 def _parse_shared_layout(shared_layout: str):
@@ -57,7 +67,9 @@ def _parse_shared_layout(shared_layout: str):
     return [[int(p[0]), int(p[1])] for p in pads], [[int(b[0]), int(b[1])] for b in basis]
 
 
-def _build_shared_layout_lookup(dim0, dim1, vec, swizzle_vec, elem_type_in_bytes, banks, pads, basis):
+def _build_shared_layout_lookup(
+    dim0, dim1, vec, swizzle_vec, elem_type_in_bytes, banks, pads, basis
+):
     coord_to_off = {}
     total = dim0 * dim1
     for off in range(total):
@@ -98,8 +110,12 @@ def _build_shared_layout_lookup(dim0, dim1, vec, swizzle_vec, elem_type_in_bytes
         col_start = gp * vec
         tensor_off = coord_to_off.get((tensor_row, col_start))
         if tensor_off is None:
-            raise ValueError(f"Cannot map tensor coord ({tensor_row}, {col_start}) with provided shared layout")
-        padded_elem_off = tensor_off + sum((tensor_off // interval) * amount for interval, amount in pads if interval > 0)
+            raise ValueError(
+                f"Cannot map tensor coord ({tensor_row}, {col_start}) with provided shared layout"
+            )
+        padded_elem_off = tensor_off + sum(
+            (tensor_off // interval) * amount for interval, amount in pads if interval > 0
+        )
         padded_byte_off = int(padded_elem_off * elem_type_in_bytes)
         abs_row = padded_byte_off // lds_row_bytes
         compact_row = max(int(off_vec // vecs_per_lds_row), int(off_vec // vecs_per_row))
@@ -110,20 +126,21 @@ def _build_shared_layout_lookup(dim0, dim1, vec, swizzle_vec, elem_type_in_bytes
 
     return lookup_rows, lookup_vecs, row_start_offsets
 
+
 def typeToBytes(dtype):
-    if dtype == 'bf16' or dtype == 'fp16':
+    if dtype == "bf16" or dtype == "fp16":
         return 2
-    if dtype == 'bf8' or dtype == 'fp8' or dtype == 'i8':
+    if dtype == "bf8" or dtype == "fp8" or dtype == "i8":
         return 1
-    if dtype == 'f4':
+    if dtype == "f4":
         return 0.5
-    if dtype == 'fp6' or dtype == 'bf6':
+    if dtype == "fp6" or dtype == "bf6":
         return 0.75
 
 
 def maxKDimInBytes(dtype, mfmaNonKDim, kWidth):
     groups = 64 / mfmaNonKDim
-    if (dtype == 'bf8' or dtype == 'fp8') and kWidth == 16:
+    if (dtype == "bf8" or dtype == "fp8") and kWidth == 16:
         groups *= 2
     return groups * kWidth * typeToBytes(dtype)
 
@@ -136,16 +153,16 @@ def calcPerPhase(banks, dtype, K):
 def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout):
     if sharedLayout is not None:
         hasSwizzle = 3
-    elif ldsConfig.ldsLayout == 'swizzle':
+    elif ldsConfig.ldsLayout == "swizzle":
         hasSwizzle = 1
-    elif ldsConfig.ldsLayout == 'padding':
+    elif ldsConfig.ldsLayout == "padding":
         hasSwizzle = 2
     else:
         hasSwizzle = 0
 
-    if ldsConfig.ldsAccess == 'read':
+    if ldsConfig.ldsAccess == "read":
         accessMode = 1
-    elif ldsConfig.ldsAccess == 'write':
+    elif ldsConfig.ldsAccess == "write":
         accessMode = 2
     else:
         accessMode = 0
@@ -157,11 +174,11 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
     padAmount = ldsConfig.padAmount
 
     if trans:
-        dim0Name = 'k'
-        dim1Name = 'n'
+        dim0Name = "k"
+        dim1Name = "n"
     else:
-        dim0Name = 'm'
-        dim1Name = 'k'
+        dim0Name = "m"
+        dim1Name = "k"
     dim0Size = dim0
     dim1Size = dim1
     """
@@ -243,15 +260,26 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
     sharedLayoutRowStarts = ""
     if sharedLayout is not None:
         pads, basis = sharedLayout
-        lookupRows, lookupVecs, rowStartOffsets = _build_shared_layout_lookup(dim0, dim1, vec, swizzleVec, elemTypeInBytes, banks, pads, basis)
+        lookupRows, lookupVecs, rowStartOffsets = _build_shared_layout_lookup(
+            dim0, dim1, vec, swizzleVec, elemTypeInBytes, banks, pads, basis
+        )
         sharedLayoutRows = "\n".join(
-            [f"\\expandafter\\def\\csname sharedrow{i}\\endcsname{{{v}}}" for i, v in enumerate(lookupRows)]
+            [
+                f"\\expandafter\\def\\csname sharedrow{i}\\endcsname{{{v}}}"
+                for i, v in enumerate(lookupRows)
+            ]
         )
         sharedLayoutVecs = "\n".join(
-            [f"\\expandafter\\def\\csname sharedvec{i}\\endcsname{{{v}}}" for i, v in enumerate(lookupVecs)]
+            [
+                f"\\expandafter\\def\\csname sharedvec{i}\\endcsname{{{v}}}"
+                for i, v in enumerate(lookupVecs)
+            ]
         )
         sharedLayoutRowStarts = "\n".join(
-            [f"\\expandafter\\def\\csname sharedrowstart{i}\\endcsname{{{v}}}" for i, v in enumerate(rowStartOffsets)]
+            [
+                f"\\expandafter\\def\\csname sharedrowstart{i}\\endcsname{{{v}}}"
+                for i, v in enumerate(rowStartOffsets)
+            ]
         )
 
     return rf"""\begin{{document}}
@@ -291,8 +319,9 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
 
 
 def generate_lds_tex(args):
-    assert args.plot_type == "lds", \
-        f"parsing the wrong arguments. Want lds but have {args.plot_type}"
+    assert (
+        args.plot_type == "lds"
+    ), f"parsing the wrong arguments. Want lds but have {args.plot_type}"
     # preprocess the args
     tShape = args.tensorShape
     dim0 = tShape[0]
@@ -310,19 +339,29 @@ def generate_lds_tex(args):
     padAmount = args.padAmount
     sharedLayout = _parse_shared_layout(args.sharedLayout)
 
-    ldsConfig = LDSConfig(banks, ldsLayout, ldsAccess, mnContig, mfmaTransLD, swizzleVec, accessVec, kWidth,
-                          padInterval, padAmount)
+    ldsConfig = LDSConfig(
+        banks,
+        ldsLayout,
+        ldsAccess,
+        mnContig,
+        mfmaTransLD,
+        swizzleVec,
+        accessVec,
+        kWidth,
+        padInterval,
+        padAmount,
+    )
 
     # checks and logging
     print(f"Plotting LDS access for tensor {dim0}x{dim1} with vec={kWidth}")
     # write the tex file
     curr_dir = Path(__file__).resolve().parent
-    with open("myplot.tex", 'w') as f_plot:
+    with open("myplot.tex", "w") as f_plot:
         with open(curr_dir / "../utils/preamble.tex") as file:
             preamble = file.read()
 
         f_plot.write(preamble)
         draw_lds_str = draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
         func_ref = str(curr_dir / "ldsLayout")
-        f_plot.write(f"\input{{ {func_ref} }}\n")
+        f_plot.write(f"\\input{{ {func_ref} }}\n")
         f_plot.write(draw_lds_str)

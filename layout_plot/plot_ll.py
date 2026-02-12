@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import argparse
 import ast
-from typing import List
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-import matplotlib as cm
-import matplotlib.colors as mcolors
-from io import StringIO
 from collections import defaultdict
+from io import StringIO
+from typing import List
+
+import matplotlib as cm
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.patches import Rectangle
+
 
 def get_color(i):
     """
@@ -20,15 +21,16 @@ def get_color(i):
         raise ValueError("threadsPerWarp must be in range [0, 63]")
 
     # Define 4 base colormaps (different hues)
-    hue_maps = ['Blues', 'Oranges', 'Greens', 'Reds']
+    hue_maps = ["Blues", "Oranges", "Greens", "Reds"]
 
-    hue_index = i // 16      # which hue group (0–3)
-    shade_index = i % 16     # how dark/light within the group
+    hue_index = i // 16  # which hue group (0–3)
+    shade_index = i % 16  # how dark/light within the group
 
     # Sample linearly from light (0.3) to dark (0.9)
     levels = np.linspace(0.3, 0.9, 16)
     cmap = cm.colormaps.get_cmap(hue_maps[hue_index])
     return cmap(levels[shade_index])
+
 
 class LinearLayout:
     def __init__(self, register_bases=None, lane_bases=None, warp_bases=None):
@@ -39,6 +41,7 @@ class LinearLayout:
 
     def apply(self, register_id: int = 0, lane_id: int = 0, warp_id: int = 0) -> List[int]:
         """Compute the tensor coordinates from given hardware indices."""
+
         def apply_domain(bases, idx):
             if not bases:
                 return np.zeros(self.output_dim(), dtype=int)
@@ -62,6 +65,7 @@ class LinearLayout:
 
     def print_layout(self):
         """Pretty print the layout."""
+
         def format_bases(name: str, bases: List[List[int]]):
             if not bases:
                 print(f"- {name}: <none>")
@@ -154,6 +158,7 @@ class LinearLayout:
 
         return None, 1
 
+
 def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize):
     x = shape[0] - dim0 - 1
     if vecDim == 0:
@@ -164,28 +169,33 @@ def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize):
 
     # Pick color based on first lane
     tid = lanes[0]
-    rect = Rectangle((y, x), width, height,
-                     facecolor=get_color(tid), edgecolor='black', lw=0.3)
+    rect = Rectangle((y, x), width, height, facecolor=get_color(tid), edgecolor="black", lw=0.3)
     ax.add_patch(rect)
 
     # Combine all lane IDs into one string
     lane_text = ", ".join(f"t{lane}" for lane in lanes)
-    ax.text(y+0.5*width, x+0.5*height,
-            lane_text,
-            ha='center', va='center', fontsize=fontSize, color='black')
+    ax.text(
+        y + 0.5 * width,
+        x + 0.5 * height,
+        lane_text,
+        ha="center",
+        va="center",
+        fontsize=fontSize,
+        color="black",
+    )
 
 
 def plot(layout, warpId, out_file):
     shape = layout.tensorSize()
     fig, ax = plt.subplots(figsize=(shape[0], shape[1]))
     cmap = cm.colormaps.get_cmap("Set1")
-    vecDim , vecSize = layout.vectorSize()
+    vecDim, vecSize = layout.vectorSize()
     fontSize = 40
-    ratio = max(shape[0]/shape[1], shape[1]/shape[0])
+    ratio = max(shape[0] / shape[1], shape[1] / shape[0])
     fontSize /= ratio
 
-    regSize = 2** len(layout.register_bases)
-    laneSize = 2** len(layout.lane_bases)
+    regSize = 2 ** len(layout.register_bases)
+    laneSize = 2 ** len(layout.lane_bases)
 
     coord_to_lanes = defaultdict(list)
 
@@ -197,32 +207,48 @@ def plot(layout, warpId, out_file):
     for (dim0, dim1), lanes in coord_to_lanes.items():
         drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize)
 
-    ax.text(-0.5, 0.5*shape[0],
-            f"{shape[0]}",
-            ha='center', va='center', fontsize=fontSize, color='black')
-    ax.text(0.5*shape[1], shape[0]+.5,
-            f"{shape[1]}",
-            ha='center', va='center', fontsize=fontSize, color='black')
+    ax.text(
+        -0.5,
+        0.5 * shape[0],
+        f"{shape[0]}",
+        ha="center",
+        va="center",
+        fontsize=fontSize,
+        color="black",
+    )
+    ax.text(
+        0.5 * shape[1],
+        shape[0] + 0.5,
+        f"{shape[1]}",
+        ha="center",
+        va="center",
+        fontsize=fontSize,
+        color="black",
+    )
 
     ax.set_xlim(0, shape[1])
     ax.set_ylim(0, shape[0])
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_aspect('equal')
+    ax.set_aspect("equal")
     plt.tight_layout()
     if out_file is None:
         out_file = "linear_layout_plot.pdf"
     else:
         out_file += ".pdf"
-    plt.savefig(out_file, format='pdf', bbox_inches='tight')
+    plt.savefig(out_file, format="pdf", bbox_inches="tight")
     plt.close(fig)
     print(f"✅ Layout visualization saved to: {out_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Parse and print a Triton linear layout.")
-    parser.add_argument("--regBase", help='Register bases, e.g. "[[0,1],[0,2],[0,4],[0,16],[0,32],[0,64]]"')
-    parser.add_argument("--laneBase", help='Lane bases, e.g. "[[1,0],[2,0],[4,0],[8,0],[16,0],[0,8]]"')
+    parser.add_argument(
+        "--regBase", help='Register bases, e.g. "[[0,1],[0,2],[0,4],[0,16],[0,32],[0,64]]"'
+    )
+    parser.add_argument(
+        "--laneBase", help='Lane bases, e.g. "[[1,0],[2,0],[4,0],[8,0],[16,0],[0,8]]"'
+    )
     parser.add_argument("--warpBase", help='Warp bases, e.g. "[[32,0],[64,0],[128,0]]"')
     parser.add_argument("--warpId", type=int, default=0)
     parser.add_argument("--o")
@@ -253,8 +279,7 @@ def main():
     else:
         print("No vectorized dimension found.")
 
-
-    warpSize = 2** len(layout.warp_bases)
+    warpSize = 2 ** len(layout.warp_bases)
     if warpId >= warpSize:
         print(f"warpId must be < {warpSize}, but got {warpId}")
         exit(0)

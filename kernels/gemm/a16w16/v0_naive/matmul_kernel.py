@@ -1,34 +1,46 @@
+import torch
 import triton
-import triton.language as tl
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
-import torch
+
 
 @gluon.jit
-def v0_naive(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stride_ak,  #
-       stride_bk, stride_bn,  #
-       stride_cm, stride_cn, BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr, BLOCK_K: gl.constexpr,  #
-       ):
+def v0_naive(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,  #
+    stride_bk,
+    stride_bn,  #
+    stride_cm,
+    stride_cn,
+    BLOCK_M: gl.constexpr,
+    BLOCK_N: gl.constexpr,
+    BLOCK_K: gl.constexpr,  #
+):
 
     pid = gl.program_id(axis=0)
-    num_pid_m = gl.cdiv(M, BLOCK_M)
     num_pid_n = gl.cdiv(N, BLOCK_N)
 
     pid_m = pid // num_pid_n
     pid_n = pid % num_pid_n
 
     gLoadLayoutA: gl.constexpr = gl.BlockedLayout(
-        [1, 8], # sizePerThread
-        [512 // BLOCK_K, BLOCK_K // 8], # threadsPerWarp
-        [4, 1], # warpsPerCTA
-        [1, 0]  # order
+        [1, 8],  # sizePerThread
+        [512 // BLOCK_K, BLOCK_K // 8],  # threadsPerWarp
+        [4, 1],  # warpsPerCTA
+        [1, 0],  # order
     )
 
     gLoadLayoutB: gl.constexpr = gl.BlockedLayout(
-        [8, 1], # sizePerThread
-        [BLOCK_K // 8, 512 // BLOCK_K], # threadsPerWarp
-        [1, 4], # warpsPerCTA
-        [0, 1]  # order
+        [8, 1],  # sizePerThread
+        [BLOCK_K // 8, 512 // BLOCK_K],  # threadsPerWarp
+        [1, 4],  # warpsPerCTA
+        [0, 1],  # order
     )
 
     offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gLoadLayoutA))
@@ -46,10 +58,9 @@ def v0_naive(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stride_ak,  #
     a_ptrs = a_base + a_offsets
     b_ptrs = b_base + b_offsets
 
-    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(version=4,
-                                                    instr_shape=[16, 16, 32],
-                                                    transposed=True,
-                                                    warps_per_cta=[2, 2])
+    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[2, 2]
+    )
 
     dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
     dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
@@ -91,11 +102,21 @@ def matmul(a, b):
     GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
     grid = (GRID_MN, 1)
     v0_naive[grid](
-        a, b, c,  #
-        M, N, K,  #
-        a.stride(0), a.stride(1),  #
-        b.stride(0), b.stride(1),  #
-        c.stride(0), c.stride(1),  #
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-        num_warps=num_warps)
+        a,
+        b,
+        c,  #
+        M,
+        N,
+        K,  #
+        a.stride(0),
+        a.stride(1),  #
+        b.stride(0),
+        b.stride(1),  #
+        c.stride(0),
+        c.stride(1),  #
+        BLOCK_M=BLOCK_M,
+        BLOCK_N=BLOCK_N,
+        BLOCK_K=BLOCK_K,
+        num_warps=num_warps,
+    )
     return c
