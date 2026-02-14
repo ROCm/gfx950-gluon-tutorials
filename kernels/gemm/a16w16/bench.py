@@ -9,7 +9,10 @@ import triton
 # from v3_lds.matmul_kernel import matmul
 # from v4_global_prefetch.matmul_kernel import matmul
 # from v5_local_prefetch.matmul_kernel import matmul
-from v6_loop_unroll.matmul_kernel import matmul
+# from v6_loop_unroll.matmul_kernel import matmul
+from v7_slice.matmul_kernel import matmul
+
+# from v9_old_version.matmul_kernel import matmul
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
