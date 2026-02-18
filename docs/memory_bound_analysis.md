@@ -99,8 +99,9 @@ issue at a high rate but becomes limited by the number of available buffers
 ### Request Size
 
 Although memory requests are issued by individual waves, the data being fetched is
-defined at the workgroup level: all waves in a workgroup collectively load one block
-per iteration. Each wave handles a disjoint fraction:
+defined at the workgroup level: all waves in a workgroup collectively load one or more
+blocks per iteration. We define `block_size` as the total size of all blocks that one
+workgroup loads per iteration. Each wave handles a disjoint fraction:
 
 ```
 data_per_request_per_wave = block_size / num_waves_per_workgroup
@@ -117,10 +118,10 @@ The number of resident waves on a CU (occupancy) is constrained by LDS and VGPR 
 However, occupancy alone does not determine bandwidth — waves sharing a SIMD must
 time-share its compute resources, which slows down each wave's issue rate.
 
-If `x` waves share a SIMD, each wave's effective compute time becomes:
+If `waves_per_simd` waves share a SIMD, each wave's effective compute time becomes:
 
 ```
-effective_compute_latency = x × compute_latency
+effective_compute_latency = waves_per_simd × compute_latency
 ```
 
 This feeds back into the in-flight count:
