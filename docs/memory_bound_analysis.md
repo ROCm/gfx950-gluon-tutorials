@@ -76,20 +76,25 @@ keep simultaneously in flight depends on how quickly it issues new requests rela
 how long each request takes to complete:
 
 ```
-num_req_per_wave = min(hbm_latency / iter_latency, num_stages)
+num_req_per_wave = min(hbm_latency / compute_latency, num_stages - 1)
 ```
 
 The three parameters here are:
 
 - **`hbm_latency`** — how long a memory request remains outstanding (hardware property).
-- **`iter_latency`** — cycles per loop iteration for a single wave. Determined by the
-  amount of work per iteration (block size, number of waves per workgroup).
-- **`num_stages`** — number of software pipeline stages (e.g., LDS buffers), which caps
-  the number of outstanding requests.
+- **`compute_latency`** — cycles required to execute the compute work in one iteration,
+  including LDS reads, MFMA, and any other non-memory instructions. This is not the same
+  as the total loop iteration time, which may be longer if the loop is HBM-latency bound.
+  `compute_latency` determines the fastest rate at which a wave *could* issue new memory
+  requests.
+- **`num_stages`** — number of software pipeline buffers (e.g., LDS buffers). Of these,
+  one buffer is always occupied by the consumer (compute reads from it), so at most
+  `num_stages - 1` buffers are available for in-flight memory requests.
 
-When `iter_latency` is large relative to `hbm_latency`, the wave issues requests too
-infrequently to fill the memory pipeline. When `iter_latency` is small, the wave can
-issue at a high rate but becomes limited by the number of available buffers (`num_stages`).
+When `compute_latency` is large relative to `hbm_latency`, the wave issues requests too
+infrequently to fill the memory pipeline. When `compute_latency` is small, the wave can
+issue at a high rate but becomes limited by the number of available buffers
+(`num_stages - 1`).
 
 ### Request Size
 
@@ -112,16 +117,16 @@ The number of resident waves on a CU (occupancy) is constrained by LDS and VGPR 
 However, occupancy alone does not determine bandwidth — waves sharing a SIMD must
 time-share its compute resources, which slows down each wave's issue rate.
 
-If `x` waves share a SIMD, each wave's effective iteration time becomes:
+If `x` waves share a SIMD, each wave's effective compute time becomes:
 
 ```
-effective_iter_latency = x × iter_latency
+effective_compute_latency = x × compute_latency
 ```
 
 This feeds back into the in-flight count:
 
 ```
-num_req_per_wave = min(hbm_latency / effective_iter_latency, num_stages)
+num_req_per_wave = min(hbm_latency / effective_compute_latency, num_stages - 1)
 ```
 
 This creates a tension: increasing occupancy adds more waves but slows each one down.
