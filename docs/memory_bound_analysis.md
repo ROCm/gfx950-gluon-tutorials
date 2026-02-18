@@ -20,7 +20,16 @@ If requests are not issued frequently enough, the memory system remains underuti
 
 ## High-Level View
 
-At a high level, the achieved memory bandwidth is determined by three factors:
+There are two complementary perspectives for analyzing the achieved memory bandwidth of a kernel:
+
+### 1. Steady-State Analysis
+
+Focus on the main loop of the kernel — the steady state.
+Given the kernel's memory access pattern, compute resources, and buffering strategy,
+how much bandwidth can the kernel sustain per cycle?
+
+This is the approach developed in detail below. It decomposes the achieved bandwidth
+into three interacting factors:
 
 1. **How many memory requests each wave can keep in flight**
 2. **How large each memory request is**
@@ -29,265 +38,130 @@ At a high level, the achieved memory bandwidth is determined by three factors:
 These factors are not independent. In particular, increasing the number of concurrent waves
 can reduce the request issue rate of each wave due to shared compute resources.
 
+### 2. End-to-End (E2E) Analysis
+
+Focus on the entire kernel execution — not just the loop.
+From the problem size, we know exactly how many bytes the kernel must transfer.
+The achieved bandwidth is then:
+
+```
+BW_achieved = total_bytes_transferred / total_execution_cycles
+```
+
+The total execution cycles include not only the steady-state loop,
+but also the prologue (pipeline fill) and epilogue (drain and store).
+For large problems, the prologue and epilogue are amortized and the steady-state
+analysis dominates. For smaller problems or kernels with expensive epilogues,
+the E2E view can reveal bottlenecks that steady-state analysis alone would miss.
+
+Both perspectives are useful. The steady-state model tells you the *peak sustainable bandwidth*
+of your loop design. The E2E model tells you the *actual bandwidth* you observe on a given problem size,
+and helps identify whether non-loop overhead is significant.
+
 ---
 
-## Part 1: In-Flight Memory Requests per Wave
+## Steady-State Analysis
 
-### Concept
+The steady-state analysis focuses on the main loop of the kernel.
+Given the kernel's memory access pattern, compute resources, and buffering strategy,
+how much bandwidth can the kernel sustain per cycle?
 
-Each wave attempts to issue memory requests as aggressively as possible in order to
-utilize available memory bandwidth. Whether this succeeds depends on how frequently
-the wave can issue new requests relative to how long previous requests remain in flight.
+We decompose this into three factors — in-flight request count, request size, and
+wave concurrency — then combine them to estimate the total bandwidth.
 
-The number of in-flight memory requests per wave is limited by:
+### In-Flight Memory Requests per Wave
 
-- The latency of HBM memory (how long each request occupies the memory system)
-- The request issue rate of the wave
-- The number of explicitly buffered requests (software pipelining depth)
-
-We model this as:
+Each wave issues one memory request per loop iteration. The number of requests it can
+keep simultaneously in flight depends on how quickly it issues new requests relative to
+how long each request takes to complete:
 
 ```
 num_req_per_wave = min(hbm_latency / iter_latency, num_stages)
 ```
 
+The three parameters here are:
 
-### Key Parameters
+- **`hbm_latency`** — how long a memory request remains outstanding (hardware property).
+- **`iter_latency`** — cycles per loop iteration for a single wave. Determined by the
+  amount of work per iteration (block size, number of waves per workgroup).
+- **`num_stages`** — number of software pipeline stages (e.g., LDS buffers), which caps
+  the number of outstanding requests.
 
-- **`hbm_latency`**
-  - Hardware property obtained from the GPU specification
-  - Determines how long a memory request remains outstanding
+When `iter_latency` is large relative to `hbm_latency`, the wave issues requests too
+infrequently to fill the memory pipeline. When `iter_latency` is small, the wave can
+issue at a high rate but becomes limited by the number of available buffers (`num_stages`).
 
-- **`iter_latency`**
-  - Cycles per loop iteration for a wave
-  - Determines how frequently the wave can issue memory requests
-  - Depends on the amount of work assigned to the wave
-  - Influenced by:
-    - block size
-    - number of waves per workgroup
+### Request Size
 
-- **`num_stages`**
-  - Number of software pipeline stages (e.g., number of LDS buffers)
-  - Upper bound on the number of outstanding requests per wave
-
-### Interpretation
-
-- If `iter_latency` is large, the wave issues memory requests too infrequently to
-  fully utilize the memory system.
-- If `iter_latency` is small, the wave can issue requests at a high rate and becomes
-  limited by buffering (`num_stages`) or hardware request queues.
-- This component answers:
-  > *Can a single wave generate enough memory traffic to saturate bandwidth?*
-
----
-
-## Part 2: Size of Each Memory Request
-
-### Concept
-
-Although memory requests are issued by individual waves, the data being requested is
-naturally defined at the **workgroup level**.
-
-All waves in a workgroup collectively request the data corresponding to a block (or tensor).
-Each wave typically operates on a disjoint portion of that block. As a result, the total
-amount of data requested per iteration is best viewed as a **block-level quantity**, not a
-per-wave one.
-
-### Block-Level View
-
-At the workgroup level:
+Although memory requests are issued by individual waves, the data being fetched is
+defined at the workgroup level: all waves in a workgroup collectively load one block
+per iteration. Each wave handles a disjoint fraction:
 
 ```
-data_per_request_per_workgroup = block_size (or tensor size)
+data_per_request_per_wave = block_size / num_waves_per_workgroup
 ```
 
+This per-wave accounting is valid because all waves in a workgroup are co-scheduled
+on the same CU, so their memory requests contribute collectively to the same CU-level
+traffic. The split is purely a bookkeeping convenience — the total data per iteration
+remains `block_size`.
 
-This represents the total amount of data that must be fetched from memory for one logical
-request of the block.
+### Concurrent Waves and SIMD Sharing
 
-### Per-Wave Accounting
+The number of resident waves on a CU (occupancy) is constrained by LDS and VGPR usage.
+However, occupancy alone does not determine bandwidth — waves sharing a SIMD must
+time-share its compute resources, which slows down each wave's issue rate.
 
-If a workgroup contains `n` waves, then each wave is responsible for a fraction of the block.
-In that case, the effective data size per request per wave is:
+If `x` waves share a SIMD, each wave's effective iteration time becomes:
 
 ```
-data_per_request_per_wave = block_size / n
+effective_iter_latency = x × iter_latency
 ```
 
+This feeds back into the in-flight count:
 
-This per-wave view is a convenient accounting choice that allows us to combine request size
-with per-wave request counts.
-
-### Why This Is Valid
-
-- Waves belonging to the same workgroup are guaranteed to be scheduled on the same CU.
-- Memory requests issued by these waves contribute collectively to the same CU-level
-  memory traffic.
-- Dividing the block size evenly across waves preserves the total amount of data requested
-  while enabling a per-wave formulation.
-
-As a result, we can reason about memory traffic either at the workgroup level or at the wave
-level without changing the final bandwidth calculation.
-
-Request size is fundamentally a workgroup-level property; 
-the per-wave request size is simply a convenient way to distribute this cost across waves.
-
----
-
-## Part 3: Number of Concurrent Waves per CU
-
-### Static Resource Constraints
-
-The number of waves that can be resident on a CU is constrained by per-wave resource usage:
-
-- **LDS usage**
-  - Depends on block size and number of buffering stages (`num_stages`)
-- **VGPR usage**
-  - Depends on block size and number of waves
-
-Given hardware limits, these determine the **occupancy**: `num_waves_per_CU`
-
-This is the familiar static occupancy calculation.
-
----
-
-### The Subtle Part: SIMD Sharing and Feedback
-
-Waves resident on the same CU do not run independently.
-
-If multiple waves are scheduled on the same SIMD, they must time-share compute resources.
-As a result, the rate at which each wave can issue memory requests is reduced.
-
-If `x` waves share a SIMD: `effective_iter_latency = x * iter_latency`
-
-This directly reduces the number of in-flight memory requests per wave:
 ```
 num_req_per_wave = min(hbm_latency / effective_iter_latency, num_stages)
 ```
 
-### Why This Matters
+This creates a tension: increasing occupancy adds more waves but slows each one down.
+Beyond a certain point, higher occupancy can actually *reduce* the total number of
+in-flight requests. This is why maximizing occupancy is not always optimal for
+memory-bound kernels.
 
-This creates a **feedback loop**:
+### Combining the Pieces
 
-- Increasing occupancy:
-  - Increases the number of waves that could issue memory requests
-  - But reduces the issue rate of each wave
-- Beyond a point, higher occupancy can *reduce* total in-flight memory requests
+For memory-bound kernels, it is common that each CU hosts at most one workgroup
+(and some CUs may be idle). Under this assumption, the total in-flight memory per CU is:
 
-This explains why maximizing occupancy is not always optimal for memory-bound kernels.
+```
+inflight_bytes_per_CU =
+  num_req_per_wave × data_per_request_per_wave × num_waves_per_workgroup
+```
+
+This is capped by hardware limits (cache capacity, request queue depth):
+
+```
+effective_inflight_bytes_per_CU = min(inflight_bytes_per_CU, CU_inflight_limit)
+```
+
+The bandwidth requested by the kernel follows from Little's Law — the in-flight bytes
+divided by the time each request spends in the memory system:
+
+```
+BW_per_CU = effective_inflight_bytes_per_CU / hbm_latency
+BW_total  = BW_per_CU × num_active_CUs
+```
+
+If this total exceeds the available memory bandwidth, the kernel saturates the memory
+system. If it falls short, the kernel is underutilizing memory and the gap points to
+which factor — issue rate, buffering, or concurrency — is the bottleneck.
 
 ---
 
-## Putting It All Together
+## End-to-End (E2E) Analysis
 
-After defining:
-1. the number of in-flight memory requests,
-2. the size of each request, and
-3. the available concurrency,
+*This section is a placeholder for future content.*
 
-we can now combine these pieces to estimate the memory bandwidth requested by the kernel.
-
----
-
-### Workgroups per CU
-
-Given the kernel configuration and how work is partitioned, we can determine how many
-workgroups may reside on a single CU.
-
-For memory-bound kernels, the total amount of work is often limited, and kernels typically
-do not launch a large number of workgroups. As a result, it is common that:
-
-- each CU hosts **at most one workgroup**, and
-- some CUs may be idle if the total number of workgroups is small.
-
-This simplifies the analysis, since all waves contributing to memory traffic on a CU
-belong to the same workgroup.
-
----
-
-### In-Flight Memory per Workgroup
-
-From the previous sections, we already have:
-
-- the number of in-flight memory requests per wave,
-- the size of each request (accounted at the workgroup level), and
-- the number of waves in the workgroup.
-
-Combining these gives the total in-flight memory request size per workgroup:
-
-```
-inflight_bytes_per_WG =
-  (in-flight requests per wave)
-  × (request size per wave)
-  × (number of waves per workgroup)
-```
-
-
-This value represents how much memory traffic the workgroup attempts to keep outstanding
-at any given time.
-
----
-
-### Per-CU Hardware Limit
-
-The actual amount of in-flight memory that can be sustained by a CU is limited by hardware,
-such as:
-
-- per-CU cache capacity,
-- request queue depth,
-- internal buffering limits.
-
-Therefore, the effective in-flight memory per CU is:
-
-```
-effective_inflight_bytes_per_CU = min(inflight_bytes_per_WG, CU_inflight_limit)
-```
-
-
-This captures the fact that even if the kernel attempts to issue more memory requests,
-the hardware may not be able to accept them.
-
----
-
-### Bandwidth Requested per CU
-
-Once the effective in-flight memory size is known, the bandwidth requested by a single CU
-follows directly.
-
-The model assumes that a CU issues its in-flight memory requests every iteration cycle:
-
-```
-BW_per_CU = effective_inflight_bytes_per_CU / iter_latency
-```
-
-
-In other words, the CU attempts to send the in-flight amount of memory every iteration.
-If this requested bandwidth exceeds what the memory system can deliver, it will be
-clamped by hardware limits.
-
----
-
-### Total Requested Bandwidth
-
-Finally, the total bandwidth requested by the kernel is obtained by multiplying the
-per-CU bandwidth by the number of active CUs:
-
-```
-BW_total = BW_per_CU × num_active_CU
-```
-
-This value represents the total memory bandwidth demand generated by the kernel across
-the GPU.
-
----
-
-### Interpretation
-
-This formulation makes the data flow explicit:
-
-- Kernel parameters determine how much memory a workgroup attempts to keep in flight.
-- Hardware limits cap how much of that demand can be realized per CU.
-- The number of active CUs scales the total bandwidth demand.
-
-As a result, overall memory performance is determined by whether the aggregate bandwidth
-requested by all active CUs can saturate the available memory system.
+The E2E analysis considers the full kernel execution — prologue, steady-state loop, and epilogue —
+to determine the actual achieved bandwidth for a given problem size.
