@@ -11,7 +11,7 @@ If you are familiar with Triton, think of this as:
 
 ## What This Repository Is
 
-- A **progressive sequence of GEMM kernels** (`v0` → `v7`)
+- A **progressive sequence of GEMM kernels** (`v0` → `v8`)
 - Each version introduces **one core optimization concept**
 - A focus on **analysis-driven performance engineering**
 - Deep coverage of AMD-specific features:
@@ -111,12 +111,20 @@ At this point, the **hot loop design is considered optimal at the Gluon level**.
 
 ---
 
-### v7_beyond_hotloop — Kernel-Level Optimization
+### v7_slice — Sliced Loads and Stores
+- Split B matrix into left/right halves for separate async copy
+- Sliced epilogue stores to reduce register pressure
+- Enables overlapping final DOT with store operations
+
+Focus: **reducing register pressure and improving epilogue efficiency**.
+
+---
+
+### v8_beyond_hotloop — Kernel-Level Optimization
 Once the hot loop is optimized, remaining bottlenecks lie elsewhere:
-- Epilogue optimization
 - PID remapping based on XCD configuration
-- L2 locality improvements
-- Backend-level instruction scheduling
+- Workgroup swizzling for L2 locality
+- Sliced epilogue with interleaved DOT and store
 
 Focus: **performance beyond what Gluon directly exposes**.
 
@@ -130,7 +138,8 @@ Focus: **performance beyond what Gluon directly exposes**.
 | v3 | LDS efficiency (codegen) |
 | v4–v5 | Prefetch & overlap (latency hiding) |
 | v6 | Loop cleanup (codegen) |
-| v7 | Kernel-level effects |
+| v7 | Sliced loads/stores (register pressure) |
+| v8 | Kernel-level effects |
 
 ---
 
