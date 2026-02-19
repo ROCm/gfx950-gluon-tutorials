@@ -79,6 +79,12 @@ how long each request takes to complete:
 num_req_per_wave = min(hbm_latency / compute_latency, num_stages - 1)
 ```
 
+Note that `num_req_per_wave` is the *average* number of in-flight memory requests over
+a period of `hbm_latency`. During that window, the wave issues
+`hbm_latency / compute_latency` requests (if not buffer-limited), and each request
+remains outstanding for `hbm_latency` cycles. The average occupancy of the memory
+pipeline is therefore this ratio, capped by the available buffers.
+
 The three parameters here are:
 
 - **`hbm_latency`** — how long a memory request remains outstanding (hardware property).
