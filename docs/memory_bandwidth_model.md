@@ -1,4 +1,4 @@
-# Mental Model for Analyzing Memory-Bound Kernels on AMD GPUs
+# Memory Bandwidth Model for AMD GFX9 Kernels
 
 This document describes a structured way to reason about **memory-bound kernels** on AMD GPUs.
 Rather than jumping directly to a single bandwidth equation, we decompose the problem into
