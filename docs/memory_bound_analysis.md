@@ -137,17 +137,22 @@ memory-bound kernels.
 
 ### Combining the Pieces
 
-For memory-bound kernels, it is common that each CU hosts at most one workgroup
-(and some CUs may be idle). Under this assumption, the total in-flight memory per CU is:
+The total in-flight memory per CU depends on how many waves are actively resident.
+The number of active waves per CU, `num_active_waves_per_CU`, is determined by the
+resource usage of each workgroup — registers (VGPRs) and LDS — together with the
+number of waves per workgroup and the CU's hardware limits.
 
 ```
 inflight_bytes_per_CU =
-  num_req_per_wave × data_per_request_per_wave × num_waves_per_workgroup
+  num_req_per_wave × data_per_request_per_wave × num_active_waves_per_CU
 ```
 
-This is capped by hardware limits (cache capacity, request queue depth):
+This is capped by a hardware limit. On GFX9, all memory requests pass through the
+L1 cache, also known as TCP (Texture Cache per Pipe), which is 32 KB per CU.
+This means at most 32 KB of memory requests can be in flight at any moment:
 
 ```
+CU_inflight_limit = 32 KB  (TCP size on GFX9)
 effective_inflight_bytes_per_CU = min(inflight_bytes_per_CU, CU_inflight_limit)
 ```
 
@@ -156,7 +161,14 @@ divided by the time each request spends in the memory system:
 
 ```
 BW_per_CU = effective_inflight_bytes_per_CU / hbm_latency
-BW_total  = BW_per_CU × num_active_CUs
+```
+
+The kernel is launched with a grid of workgroups, which are distributed to CUs in a
+round-robin manner. On GFX950, there are 256 CUs. The number of active CUs is simply:
+
+```
+num_active_CUs = min(num_workgroups, num_CUs)    (num_CUs = 256 on GFX950)
+BW_total       = BW_per_CU × num_active_CUs
 ```
 
 If this total exceeds the available memory bandwidth, the kernel saturates the memory
