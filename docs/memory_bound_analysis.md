@@ -272,6 +272,24 @@ BW_achieved = total_bytes / total_cycles
 
 For large problems (`num_iters` is large), the prologue and epilogue are
 amortized and `BW_achieved` converges to the steady-state bandwidth from
-Section 2. For smaller problems or kernels with deep pipelines, the fixed
-overhead of prologue and epilogue becomes significant and the E2E view
-reveals the actual performance gap.
+Section 2. To see why, note that per CU:
+
+```
+total_bytes_per_CU = num_iters × data_per_request_per_wave × num_active_waves_per_CU
+```
+
+As `num_iters → ∞`:
+
+```
+BW_achieved ≈ total_bytes_per_CU / (num_iters × iter_latency)
+            = data_per_request_per_wave × num_active_waves_per_CU / iter_latency
+```
+
+In the compute-bound case (`iter_latency = effective_compute_latency`), this equals
+`effective_inflight_bytes_per_CU / hbm_latency` from Section 2.4, since
+`num_req_per_wave = hbm_latency / effective_compute_latency`. In the memory-bound
+case (`iter_latency = hbm_latency / effective_pipeline_depth`), it likewise reduces
+to the same steady-state formula with `num_req_per_wave = effective_pipeline_depth`.
+
+For smaller problems or kernels with deep pipelines, the fixed overhead of prologue
+and epilogue becomes significant and the E2E view reveals the actual performance gap.
