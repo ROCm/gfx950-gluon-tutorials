@@ -11,7 +11,8 @@ The goal is to provide a **mental model** that helps answer questions such as:
 - Which kernel parameters matter most for latency hiding?
 
 In this model, memory performance is not viewed primarily as a latency-hiding problem.
-Instead, we focus on whether a kernel can issue memory requests at a sufficient rate to saturate the available memory bandwidth.
+Instead, we focus on whether a kernel can issue memory requests at a sufficient rate
+to saturate the available memory bandwidth.
 
 Memory latency matters only insofar as it limits how many requests can be outstanding at a given request issue rate. 
 If requests are not issued frequently enough, the memory system remains underutilized regardless of how many waves are resident.
@@ -148,6 +149,8 @@ The number of active waves per CU, `num_active_waves_per_CU`, is determined by t
 resource usage of each workgroup — registers (VGPRs) and LDS — together with the
 number of waves per workgroup and the CU's hardware limits.
 
+Using `num_req_per_wave` with `effective_compute_latency` from Section 2.3:
+
 ```
 inflight_bytes_per_CU =
   num_req_per_wave × data_per_request_per_wave × num_active_waves_per_CU
@@ -196,7 +199,7 @@ BW_achieved = total_bytes / total_cycles
 workgroups and waves — it is a property of the kernel launch configuration.
 
 `num_active_waves_per_CU` is determined by resource constraints as discussed in
-Section 2.3.
+Section 2.4.
 
 The key question is: how many cycles does it take for `num_active_waves_per_CU` to
 finish execution?
@@ -227,7 +230,7 @@ but the total in-flight bytes across all waves on a CU cannot exceed the TCP cap
 ```
 effective_pipeline_depth = min(
     num_stages - 1,
-    CU_inflight_limit / (num_active_waves_per_CU × data_per_request_per_wave)
+    floor(CU_inflight_limit / (num_active_waves_per_CU × data_per_request_per_wave))
 )
 ```
 
