@@ -185,7 +185,78 @@ which factor — issue rate, buffering, or concurrency — is the bottleneck.
 
 ## 3. End-to-End (E2E) Analysis
 
-*This section is a placeholder for future content.*
+The E2E analysis calculates the achieved bandwidth from the total bytes transferred
+and the total execution cycles of the waves on a CU:
 
-The E2E analysis considers the full kernel execution — prologue, steady-state loop, and epilogue —
-to determine the actual achieved bandwidth for a given problem size.
+```
+BW_achieved = total_bytes / total_cycles
+```
+
+`total_bytes` is determined by the problem size and how work is partitioned among
+workgroups and waves — it is a property of the kernel launch configuration.
+
+`num_active_waves_per_CU` is determined by resource constraints as discussed in
+Section 2.3.
+
+The key question is: how many cycles does it take for `num_active_waves_per_CU` to
+finish execution?
+
+### 3.1 Total Execution Cycles
+
+The total execution cycles consist of three stages:
+
+**Prologue** — The wave must issue the first memory load to fill the pipeline.
+The data is not available until it returns from HBM, so the prologue costs:
+
+```
+prologue_cycles = hbm_latency
+```
+
+**Steady state** — Each iteration, the wave performs compute and waits for
+memory data that was requested several iterations ahead. The per-iteration
+latency is:
+
+```
+iter_latency = max(hbm_latency / (num_stages - 1), effective_compute_latency)
+```
+
+The two terms reflect two possible bottlenecks. Each iteration, the wave must
+do its computation, which takes at least `effective_compute_latency` cycles.
+But the wave is also waiting for memory data that was issued `num_stages - 1`
+iterations ago. If that data has not yet returned — i.e., if `hbm_latency`
+is large relative to the pipeline depth — then the wave stalls until the data
+arrives. The iteration cannot begin until the awaited buffer is ready.
+
+For `num_iters` loop iterations, the steady-state cost is:
+
+```
+steady_state_cycles = num_iters × iter_latency
+```
+
+**Epilogue** — The wave stores the final result back to HBM. This store must
+complete before the wave finishes, so the epilogue costs:
+
+```
+epilogue_cycles = hbm_latency
+```
+
+### 3.2 Putting It Together
+
+The total execution cycles per CU are:
+
+```
+total_cycles = prologue_cycles + steady_state_cycles + epilogue_cycles
+             = hbm_latency + num_iters × iter_latency + hbm_latency
+```
+
+And the achieved bandwidth:
+
+```
+BW_achieved = total_bytes / total_cycles
+```
+
+For large problems (`num_iters` is large), the prologue and epilogue are
+amortized and `BW_achieved` converges to the steady-state bandwidth from
+Section 2. For smaller problems or kernels with deep pipelines, the fixed
+overhead of prologue and epilogue becomes significant and the E2E view
+reveals the actual performance gap.
