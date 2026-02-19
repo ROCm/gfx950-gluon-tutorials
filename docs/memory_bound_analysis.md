@@ -217,15 +217,27 @@ memory data that was requested several iterations ahead. The per-iteration
 latency is:
 
 ```
-iter_latency = max(hbm_latency / (num_stages - 1), effective_compute_latency)
+iter_latency = max(hbm_latency / effective_pipeline_depth, effective_compute_latency)
 ```
 
-The two terms reflect two possible bottlenecks. Each iteration, the wave must
-do its computation, which takes at least `effective_compute_latency` cycles.
-But the wave is also waiting for memory data that was issued `num_stages - 1`
-iterations ago. If that data has not yet returned — i.e., if `hbm_latency`
-is large relative to the pipeline depth — then the wave stalls until the data
-arrives. The iteration cannot begin until the awaited buffer is ready.
+where `effective_pipeline_depth` accounts for the TCP size limit (Section 2.4).
+The kernel has `num_stages - 1` buffers available for in-flight requests per wave,
+but the total in-flight bytes across all waves on a CU cannot exceed the TCP capacity:
+
+```
+effective_pipeline_depth = min(
+    num_stages - 1,
+    CU_inflight_limit / (num_active_waves_per_CU × data_per_request_per_wave)
+)
+```
+
+The two terms in `iter_latency` reflect two possible bottlenecks. Each iteration,
+the wave must do its computation, which takes at least `effective_compute_latency`
+cycles. But the wave is also waiting for memory data that was issued
+`effective_pipeline_depth` iterations ago. If that data has not yet returned —
+i.e., if `hbm_latency` is large relative to the effective pipeline depth — then
+the wave stalls until the data arrives. The iteration cannot begin until the
+awaited buffer is ready.
 
 For `num_iters` loop iterations, the steady-state cost is:
 
