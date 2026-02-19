@@ -2,183 +2,137 @@
 
 This directory presents a **step-by-step optimization journey of an FP16 GEMM kernel written in Gluon**, targeting **AMD GFX9 GPUs**.
 
-Rather than showing a single “final” kernel, this repository documents **how high performance is achieved**—from a naive baseline to a near-optimal design—covering **memory movement, layout design, latency hiding, and instruction scheduling** along the way.
+Rather than showing a single "final" kernel, this repository documents **how high performance is achieved**—from a naive baseline to a near-optimal design—covering **memory movement, layout design, latency hiding, and instruction scheduling** along the way.
 
 If you are familiar with Triton, think of this as:
-> **Learning Gluon by learning layouts, pipelines, and hardware behavior.**
 
----
+> [!IMPORTANT]
+> Learning Gluon by learning layouts, pipelines, and hardware behavior.
 
-## What This Repository Is
+## 1. Directory Structure
+
+```
+a16w16/
+├── bench.py              # Benchmark and correctness test
+├── images/               # Layout visualizations
+├── v0_naive/             # Baseline kernel
+├── v1_buffer_load/       # Buffer operations
+├── v2_async_copy/        # Async copy to LDS
+├── v3_lds/               # LDS performance tuning
+├── v4_global_prefetch/   # 2-stage pipeline
+├── v5_local_prefetch/    # 3-stage pipeline
+├── v6_loop_unroll/       # Hot loop finalization
+├── v7_slice/             # Sliced loads and stores
+└── v8_beyond_hotloop/    # Kernel-level optimization
+```
+
+## 2. How to Run
+
+From the `a16w16` directory:
+
+```bash
+# Edit bench.py to select the kernel version to test
+# Change the import line, e.g.:
+# from v0_naive.matmul_kernel import matmul
+
+python bench.py
+```
+
+This runs correctness checks against torch.matmul and reports TFLOPS.
+
+To run a specific shape and data type:
+
+```bash
+python bench.py --K 8192 --dtype fp16
+```
+
+## 3. What This Repository Is
 
 - A **progressive sequence of GEMM kernels** (`v0` → `v8`)
 - Each version introduces **one core optimization concept**
 - A focus on **analysis-driven performance engineering**
-- Deep coverage of AMD-specific features:
-  - MFMA
-  - LDS
-  - Buffer operations
-  - Async copy
-  - Software pipelining
+- Deep coverage of AMD-specific features: MFMA, LDS, buffer operations, async copy, software pipelining
 
 This is a **learning-oriented** repository, not a black-box kernel drop.
 
----
+## 4. Optimization Philosophy
 
-## Optimization Philosophy
+Writing a Gluon kernel is only the starting point. Real performance comes from:
 
-Writing a Gluon kernel is only the starting point.
-
-Real performance comes from:
 - **Codegen quality** (instruction count, register pressure)
 - **Latency hiding** (overlapping memory and compute)
 - **Instruction scheduling** (MFMA utilization inside the hot loop)
 - **Kernel-level effects** (epilogues, cache locality, PID mapping)
 
-Every intermediate kernel version is kept intentionally, so readers can see:
-- *What changed*
-- *Why it matters*
-- *How it affects hardware execution*
+Every intermediate kernel version is kept intentionally, so readers can see *what changed*, *why it matters*, and *how it affects hardware execution*.
 
----
-
-## Kernel Versions
+## 5. Kernel Versions
 
 Each version introduces **one new idea** and builds on the previous one.
 
-### v0_naive — Baseline
-- Global loads only
-- No prefetching
-- No latency hiding
+| Version | Name | Focus | Key Changes |
+|---------|------|-------|-------------|
+| v0 | naive | Baseline | Global loads only, no prefetching, no latency hiding |
+| v1 | buffer_load | Codegen | Replace `global_load` with `buffer_load` |
+| v2 | async_copy | Codegen | Async copy directly to LDS, eliminates register→LDS path |
+| v3 | lds | Codegen | LDS vectorization, addressing, issue vs execution latency |
+| v4 | global_prefetch | Latency hiding | 2-stage pipeline, software pipelining for global memory |
+| v5 | local_prefetch | Latency hiding | 3-stage pipeline, partial prefetch, op-level scheduling |
+| v6 | loop_unroll | Codegen | Unroll K loop, remove register copy overhead |
+| v7 | slice | Register pressure | Sliced B matrix loads, sliced epilogue stores |
+| v8 | beyond_hotloop | Kernel-level | PID remapping, workgroup swizzling, interleaved epilogue |
 
-Establishes baseline behavior and exposes raw memory latency.
+## 6. Performance Results
 
----
+Measured on MI355 with shape 4096×4096×8192, FP16:
 
-### v1_buffer_load — Buffer Operations
-- Replace `global_load` with `buffer_load`
-- Introduces AMD buffer ops
-- Discusses benefits and limitations
+![Performance Chart](images/performance_chart.png)
 
-Focus: **better codegen and memory access semantics**.
+| Version | TFLOPS | VGPRs | MFMA Eff. | Notes                      |
+|---------|--------|-------|-----------|----------------------------|
+| v0      |    500 |   428 |         — | Baseline                   |
+| v1      |    482 |   512 |         — |                            |
+| v2      |    647 |   353 |         — |                            |
+| v3      |    700 |   420 |       43% |                            |
+| v4      |    984 |   446 |       57% |                            |
+| v5      |   1000 |   452 |       59% |                            |
+| v5      |   1123 |     — |       76% | + llirSched                |
+| v6      |   1025 |   444 |       61% |                            |
+| v6      |   1105 |     — |       84% | + llirSched                |
+| v7      |   1088 |   494 |       64% |                            |
+| v7      |   1273 |     — |       77% | + llirSched                |
+| v7      |   1378 |     — |       97% | + llirSched + amdgcnSched  |
+| v8      |   1046 |   512 |       58% |                            |
+| v8      |   1262 |     — |       74% | + llirSched                |
+| v8      |   1449 |     — |       97% | + llirSched + amdgcnSched  |
 
----
+Performance is measured and explained using:
 
-### v2_async_copy — Global → LDS
-- Use async copy to load directly into LDS
-- Eliminates the register → LDS copy path
-- Requires explicit LDS control
-
-Focus: **instruction reduction and dataflow simplification**.
-
----
-
-### v3_LDS — LDS Performance Fundamentals
-- Deep dive into LDS behavior:
-  - Vectorization
-  - Addressing
-  - Issue vs execution latency
-- Supported by a standalone LDS document
-
-Focus: **writing LDS-efficient kernels**.
-
----
-
-### v4_global_prefetch — 2-Stage Pipeline
-- Introduces global data prefetch
-- Software pipelining to hide global memory latency
-- Discusses overlap and resource trade-offs
-
-Focus: **latency hiding via global prefetch**.
-
----
-
-### v5_local_prefetch — 3-Stage Pipeline
-- Adds LDS prefetch on top of global prefetch
-- Partial prefetch to control register pressure
-- Introduces op-level scheduling
-
-Focus: **hiding LDS latency and improving MFMA utilization**.
-
----
-
-### v6_loop_unroll — Hot Loop Finalization
-- Unroll the K loop
-- Remove register copy overhead
-- Reduce instruction count inside the hot loop
-
-At this point, the **hot loop design is considered optimal at the Gluon level**.
-
----
-
-### v7_slice — Sliced Loads and Stores
-- Split B matrix into left/right halves for separate async copy
-- Sliced epilogue stores to reduce register pressure
-- Enables overlapping final DOT with store operations
-
-Focus: **reducing register pressure and improving epilogue efficiency**.
-
----
-
-### v8_beyond_hotloop — Kernel-Level Optimization
-Once the hot loop is optimized, remaining bottlenecks lie elsewhere:
-- PID remapping based on XCD configuration
-- Workgroup swizzling for L2 locality
-- Sliced epilogue with interleaved DOT and store
-
-Focus: **performance beyond what Gluon directly exposes**.
-
----
-
-## Codegen vs Latency
-
-| Version | Primary Focus |
-|------|---------------|
-| v0–v2 | Instruction reduction (codegen) |
-| v3 | LDS efficiency (codegen) |
-| v4–v5 | Prefetch & overlap (latency hiding) |
-| v6 | Loop cleanup (codegen) |
-| v7 | Sliced loads/stores (register pressure) |
-| v8 | Kernel-level effects |
-
----
-
-## Performance Analysis
-
-Performance is always measured and explained using:
 - Microbenchmarking for throughput
 - `rocprofv3` traces for cycle-level analysis
 - A custom trace tool to compute **MFMA efficiency**
 
 Reference slides and talks are linked where deeper background is helpful.
 
----
-
-## Beyond FP16
+## 7. Beyond FP16
 
 Although this directory focuses on **FP16 compute-bound GEMM**, the same strategy applies to lower precision:
 
-| Data Type | Tile Size       |
-|-----------|-----------------|
-| 16-bit    | 256 × 256 × 64  |
-| 8-bit     | 256 × 256 × 128 |
-| 4-bit     | 256 × 256 × 256 |
+| Data Type | Tile Size |
+|-----------|-----------|
+| 16-bit | 256 × 256 × 64 |
+| 8-bit | 256 × 256 × 128 |
+| 4-bit | 256 × 256 × 256 |
 
 The optimization journey remains the same—only the tile shape changes.
 
----
-
-## How to Read This
+## 8. How to Read This
 
 Recommended order:
+
 1. Start with `v0_naive`
 2. Progress version by version
 3. Read code and accompanying explanations together
 4. Use traces and layout visualizations when available
 
-If you only want the fastest kernel, jump to the last version.
-If you want to understand **why** it is fast, start from the beginning.
-
----
-
-Happy hacking 🚀
+If you only want the fastest kernel, jump to the last version. If you want to understand **why** it is fast, start from the beginning.
