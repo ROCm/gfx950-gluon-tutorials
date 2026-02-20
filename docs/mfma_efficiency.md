@@ -2,17 +2,33 @@
 
 ## What is MFMA Efficiency?
 
-In the main loop, MFMA efficiency is the ratio of total cycles spent executing MFMA instructions over the total cycles of the loop per SIMD. The higher the MFMA efficiency, the better the utilization of the matrix core. An ideal compute-bound kernel should have MFMA efficiency very close to 100%.
+MFMA efficiency measures how well a kernel utilizes the matrix core. It is defined as the ratio of cycles spent executing MFMA instructions to the total cycles of the main loop, measured per SIMD.
+
+A higher MFMA efficiency means better matrix core utilization. For a compute-bound kernel, the ideal target is close to 100%.
 
 ## Why Measure MFMA Efficiency?
 
-TFLOPS is the typical end-to-end performance metric, but it can be affected by factors outside the kernel developer's control: temperature, cooling, system state, etc. MFMA efficiency is cycle-based and does not factor in frequency, making it more stable across runs. Since this metric is directly related to instruction scheduling and co-execution, it serves as a better guide for kernel developers and compilers.
+TFLOPS is the standard end-to-end performance metric, but it can vary due to factors outside the kernel developer's control—temperature, cooling, system load, and frequency scaling all affect the result.
+
+MFMA efficiency is cycle-based and independent of clock frequency, making it more stable and reproducible across runs. Because it directly reflects instruction scheduling and co-execution behavior, it provides clearer guidance for kernel optimization and compiler tuning.
 
 ## How to Measure It
 
-Collect thread traces via `rocprofv3`. Steps can be found at: [Triton Profiling with ATT](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744188574/Triton+Profiling+with+ATT)
+1. **Collect thread traces** using `rocprofv3`. Detailed steps are available at: [Triton Profiling with ATT](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744188574/Triton+Profiling+with+ATT)
 
-Then use the `process_json.py` script to process the generated `ui_` directory. Example output:
+2. **Process the traces** using the [`process_json.py`](../scripts/process_json.py) script on the generated `ui_` directory:
+
+```bash
+python scripts/process_json.py /path/to/ui_<kernel_name>
+```
+
+The script analyzes `code.json` and wave trace files (`se0_sm0_sl0_wv*.json`) to:
+- Identify the loop and epilogue boundaries based on instruction hit counts
+- Compute cycle durations for prologue, loop, and epilogue phases
+- Count MFMA instructions in the loop and calculate total MFMA cycles
+- Derive MFMA efficiency as `total_mfma_cycles / average_iteration_duration`
+
+Example output:
 
 ```json
 {
@@ -37,4 +53,9 @@ Then use the `process_json.py` script to process the generated `ui_` directory. 
 }
 ```
 
-This shows the cycle ratio of prologue, loop, and epilogue, along with MFMA efficiency in the loop. For deeper analysis, ATT Viewer can visualize thread traces to zoom into specific code regions. For MFMA efficiency as a metric, the script suffices.
+The output includes:
+- **Cycle ratios** for prologue, loop, and epilogue phases
+- **MFMA efficiency** within the main loop
+- **Iteration statistics** for performance analysis
+
+For deeper investigation, ATT Viewer can visualize thread traces and allow you to zoom into specific code regions. For routine performance tracking, the script output is sufficient.
