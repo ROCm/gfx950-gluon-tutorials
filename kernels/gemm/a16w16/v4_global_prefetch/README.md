@@ -148,6 +148,20 @@ python bench.py --K 8192 --dtype fp16
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
+### Bottleneck Analysis
+
+Despite the improvement, MFMA efficiency is only 57%. The thread trace below shows one iteration of the main loop:
+
+![v4 bottleneck](../images/v4_bottleneck.png)
+
+As we can see, MFMA executes only during the second half of the iteration:
+- **Red rectangle**: `buffer_load` instructions are issued at the beginning of the iteration
+- **Blue rectangle**: `ds_read` instructions follow
+
+Although `buffer_load` latency is hidden by pipelining and `ds_read` latency is partially hidden by issuing multiple `ds_read` instructions back-to-back, the kernel is not executing MFMA during the first half of the iteration.
+
+The key insight is that MFMA has no dependency on `buffer_load`—it does not wait for global loads to finish. However, **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from being issued back-to-back from the beginning of the iteration.
+
 ## 5. What Comes Next
 
-In `v5_local_prefetch`, we extend the pipeline to 3 stages by also prefetching the LDS → register transfer, further improving compute/memory overlap.
+In `v5_local_prefetch`, we address this bottleneck by prefetching the LDS → register transfer. By issuing `ds_read` for the next iteration while the current iteration's MFMA is executing, we break the dependency between MFMA and `ds_read` within the same iteration, allowing MFMA to execute earlier and improving MFMA efficiency.
