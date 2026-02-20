@@ -7,13 +7,9 @@ v4_global_prefetch/
 ├── matmul_kernel.py      # The kernel implementation
 ├── README.md             # This file
 └── ir_dump_K4096_fp16/   # IR dumps for analysis
-    ├── v4_global_prefetch.ttgir
-    ├── v4_global_prefetch.llir
-    ├── v4_global_prefetch.amdgcn
-    └── v4_global_prefetch.s
 ```
 
-## 2. Motivation: Hiding Global Memory Latency
+## 2. Motivation
 
 In all previous versions, the main loop follows a simple sequential pattern:
 
@@ -28,9 +24,13 @@ for k in range(0, K // BLOCK_K):
 This structure has a fundamental inefficiency: **MFMA execution cannot begin until data arrives from global memory**. Global memory latency (hundreds of cycles) directly stalls compute.
 
 > [!IMPORTANT]
-> Software pipelining overlaps memory operations with compute by starting the next iteration's loads before the current iteration's compute finishes.
+> **Software pipelining** restructures the loop to overlap memory latency with computation. The key idea is to **prefetch the next iteration's data while computing on the current iteration's data**.
 
-The key insight is that we can use **double buffering**: while MFMA consumes data from one LDS buffer, async copy fills the other buffer with the next iteration's data.
+The simplest form is a 2-stage pipeline:
+- Stage 0: Global memory → LDS (async copy)
+- Stage 1: LDS → registers + MFMA compute
+
+We use **double buffering** to implement this: while MFMA consumes data from one LDS buffer, async copy fills the other buffer with the next iteration's data.
 
 ## 3. Pipeline Design
 
@@ -162,15 +162,6 @@ VGPR count increases slightly from 420 to 446. This is expected because:
 
 This modest increase is a good trade-off for the significant performance gain.
 
-## 5. Key Concepts
-
-> [!IMPORTANT]
-> **Software pipelining** restructures the loop to overlap memory latency with computation. The key idea is to **prefetch the next iteration's data while computing on the current iteration's data**.
-
-The 2-stage pipeline in this kernel is the simplest form of software pipelining:
-- Stage 0: Global memory → LDS (async copy)
-- Stage 1: LDS → registers + MFMA compute
-
-## 6. What Comes Next
+## 5. What Comes Next
 
 In `v5_local_prefetch`, we extend the pipeline to 3 stages by also prefetching the LDS → register transfer, further improving compute/memory overlap.
