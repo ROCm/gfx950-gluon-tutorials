@@ -1,0 +1,10 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+myplot.tex
+
+# cache files
+*.hsaco
+*.source

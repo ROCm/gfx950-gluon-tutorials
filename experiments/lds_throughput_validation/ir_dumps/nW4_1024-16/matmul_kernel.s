@@ -1,0 +1,570 @@
+	.amdgcn_target "amdgcn-amd-amdhsa--gfx950"
+	.amdhsa_code_object_version 5
+	.text
+	.globl	matmul_kernel                   ; -- Begin function matmul_kernel
+	.p2align	8
+	.type	matmul_kernel,@function
+matmul_kernel:                          ; @matmul_kernel
+.Lfunc_begin0:
+	.cfi_sections .debug_frame
+	.cfi_startproc
+; %bb.1:
+	.file	1 "/root/OAI-triton/study_lds" "play_lds.py"
+	s_load_dwordx2 s[2:3], s[0:1], 0x0
+	s_load_dwordx8 s[4:11], s[0:1], 0x8
+	s_load_dwordx4 s[12:15], s[0:1], 0x28
+	s_waitcnt lgkmcnt(0)
+	s_branch .LBB0_0
+	.p2align	8
+; %bb.2:
+.LBB0_0:
+	v_readfirstlane_b32 s0, v0
+	s_ashr_i32 s1, s16, 31
+	s_lshr_b32 s1, s1, 29
+	s_add_i32 s1, s16, s1
+	s_ashr_i32 s1, s1, 3
+	s_lshl_b32 s13, s16, 8
+	s_mulk_i32 s1, 0xf801
+	s_add_i32 s1, s1, s13
+	.file	2 "/root/OAI-triton/python/triton/language" "standard.py"
+	s_addk_i32 s9, 0x1ff
+	s_ashr_i32 s13, s9, 31
+	s_lshr_b32 s13, s13, 23
+	s_add_i32 s9, s9, s13
+	s_ashr_i32 s9, s9, 9
+	s_add_i32 s8, s8, 15
+	s_ashr_i32 s13, s8, 31
+	s_lshr_b32 s13, s13, 28
+	s_add_i32 s8, s8, s13
+	s_ashr_i32 s8, s8, 4
+	s_bfe_u32 s15, s0, 0x20006
+	s_lshl_b32 s0, s9, 2
+	s_xor_b32 s9, s1, s9
+	s_ashr_i32 s9, s9, 31
+	s_abs_i32 s13, s1
+	s_abs_i32 s14, s0
+	v_cvt_f32_u32_e32 v1, s14
+	v_rcp_iflag_f32_e32 v1, v1
+	s_nop 0
+	v_mul_f32_e32 v1, 0x4f7ffffe, v1
+	v_cvt_u32_f32_e32 v1, v1
+	s_sub_i32 s16, 0, s14
+	v_readfirstlane_b32 s17, v1
+	s_mul_i32 s16, s16, s17
+	s_mul_hi_u32 s16, s17, s16
+	s_add_i32 s17, s17, s16
+	s_mul_hi_u32 s16, s13, s17
+	s_mul_i32 s17, s16, s14
+	s_sub_i32 s13, s13, s17
+	s_add_i32 s17, s16, 1
+	s_sub_i32 s18, s13, s14
+	s_cmp_ge_u32 s13, s14
+	s_cselect_b32 s16, s17, s16
+	s_cselect_b32 s13, s18, s13
+	s_add_i32 s17, s16, 1
+	s_cmp_ge_u32 s13, s14
+	s_cselect_b32 s13, s17, s16
+	s_xor_b32 s13, s13, s9
+	s_sub_i32 s9, s13, s9
+	s_lshl_b32 s13, s9, 2
+	s_sub_i32 s8, s8, s13
+	s_min_i32 s8, s8, 4
+	s_mul_i32 s9, s9, s0
+	s_sub_i32 s0, s1, s9
+	s_xor_b32 s1, s0, s8
+	s_ashr_i32 s1, s1, 31
+	s_abs_i32 s9, s0
+	s_abs_i32 s14, s8
+	v_cvt_f32_u32_e32 v1, s14
+	v_rcp_iflag_f32_e32 v1, v1
+	s_nop 0
+	v_mul_f32_e32 v1, 0x4f7ffffe, v1
+	v_cvt_u32_f32_e32 v1, v1
+	s_sub_i32 s16, 0, s14
+	v_readfirstlane_b32 s17, v1
+	s_mul_i32 s16, s16, s17
+	s_mul_hi_u32 s16, s17, s16
+	s_add_i32 s17, s17, s16
+	s_mul_hi_u32 s16, s9, s17
+	s_mul_i32 s17, s16, s14
+	s_sub_i32 s9, s9, s17
+	s_add_i32 s17, s16, 1
+	s_sub_i32 s18, s9, s14
+	s_cmp_ge_u32 s9, s14
+	s_cselect_b32 s16, s17, s16
+	s_cselect_b32 s9, s18, s9
+	s_add_i32 s17, s16, 1
+	s_cmp_ge_u32 s9, s14
+	s_cselect_b32 s9, s17, s16
+	s_xor_b32 s9, s9, s1
+	s_sub_i32 s1, s9, s1
+	s_mul_i32 s8, s1, s8
+	s_sub_i32 s0, s0, s8
+	s_add_i32 s0, s0, s13
+	v_and_b32_e32 v1, 48, v0
+	v_lshl_or_b32 v32, s15, 6, v1
+	v_and_b32_e32 v33, 15, v0
+	v_lshlrev_b32_e32 v1, 1, v0
+	v_and_b32_e32 v2, 0x60, v1
+	v_and_b32_e32 v1, 0x70, v1
+	v_or_b32_e32 v1, s15, v1
+	v_lshlrev_b32_e32 v0, 4, v0
+	v_and_b32_e32 v0, 0x70, v0
+	s_lshl_b32 s13, s0, 4
+	s_mul_i32 s0, s13, s10
+	s_ashr_i32 s8, s0, 31
+	s_add_u32 s0, s2, s0
+	s_addc_u32 s9, s3, s8
+	s_lshl_b32 s14, s1, 9
+	s_mul_i32 s1, s14, s11
+	s_ashr_i32 s2, s1, 31
+	s_add_u32 s8, s4, s1
+	s_addc_u32 s4, s5, s2
+	v_mad_u64_u32 v[2:3], s[2:3], s10, v33, v[2:3]
+	s_lshl_b32 s1, s11, 2
+	s_mul_i32 s5, s11, 0x74
+	v_mad_u64_u32 v[0:1], s[2:3], v1, s11, v[0:1]
+	v_add_u32_e32 v1, s1, v0
+	v_add_u32_e32 v3, s1, v1
+	v_add_u32_e32 v4, s1, v3
+	v_add_u32_e32 v5, s5, v4
+	v_add_u32_e32 v6, s1, v5
+	v_add_u32_e32 v7, s1, v6
+	v_add_u32_e32 v8, s1, v7
+	v_add_u32_e32 v9, s5, v8
+	v_add_u32_e32 v10, s1, v9
+	v_add_u32_e32 v11, s1, v10
+	v_add_u32_e32 v12, s1, v11
+	v_add_u32_e32 v13, s5, v12
+	v_add_u32_e32 v14, s1, v13
+	v_add_u32_e32 v15, s1, v14
+	v_add_u32_e32 v16, s1, v15
+	s_and_b32 s1, s9, 0xffff
+	s_mov_b32 s3, 0x27000
+	s_mov_b32 s2, 0x7ffffffe
+	buffer_load_dwordx4 v[34:37], v2, s[0:3], 0 offen
+	buffer_load_dwordx4 v[38:41], v2, s[0:3], 0 offen offset:16
+	s_and_b32 s9, s4, 0xffff
+	s_mov_b32 s10, s2
+	s_mov_b32 s11, s3
+	s_mulk_i32 s15, 0x410
+	s_add_i32 s0, s15, 0
+	s_mov_b32 m0, s0
+	s_nop 0
+	buffer_load_dwordx4 v0, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x1040
+	s_nop 0
+	buffer_load_dwordx4 v1, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x2080
+	s_nop 0
+	buffer_load_dwordx4 v3, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x30c0
+	s_nop 0
+	buffer_load_dwordx4 v4, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x4100
+	s_nop 0
+	buffer_load_dwordx4 v5, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x5140
+	s_nop 0
+	buffer_load_dwordx4 v6, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x6180
+	s_nop 0
+	buffer_load_dwordx4 v7, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x71c0
+	s_nop 0
+	buffer_load_dwordx4 v8, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x8200
+	s_nop 0
+	buffer_load_dwordx4 v9, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0x9240
+	s_nop 0
+	buffer_load_dwordx4 v10, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xa280
+	s_nop 0
+	buffer_load_dwordx4 v11, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xb2c0
+	s_nop 0
+	buffer_load_dwordx4 v12, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xc300
+	s_nop 0
+	buffer_load_dwordx4 v13, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xd340
+	s_nop 0
+	buffer_load_dwordx4 v14, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xe380
+	s_nop 0
+	buffer_load_dwordx4 v15, s[8:11], 0 offen lds
+	s_add_i32 m0, s0, 0xf3c0
+	s_nop 0
+	buffer_load_dwordx4 v16, s[8:11], 0 offen lds
+	s_waitcnt vmcnt(0) lgkmcnt(0)
+	s_barrier
+	v_lshl_add_u32 v0, v33, 10, 0
+	v_lshl_add_u32 v0, v32, 1, v0
+	v_lshl_add_u32 v0, v33, 4, v0
+	ds_read_b128 v[2:5], v0
+	ds_read_b128 v[6:9], v0 offset:16
+	ds_read_b128 v[14:17], v0 offset:528
+	ds_read_b128 v[10:13], v0 offset:512
+	ds_read_b128 v[22:25], v0 offset:16656
+	ds_read_b128 v[18:21], v0 offset:16640
+	ds_read_b128 v[46:49], v0 offset:17168
+	ds_read_b128 v[42:45], v0 offset:17152
+	ds_read_b128 v[54:57], v0 offset:33296
+	ds_read_b128 v[50:53], v0 offset:33280
+	ds_read_b128 v[62:65], v0 offset:33808
+	ds_read_b128 v[58:61], v0 offset:33792
+	ds_read_b128 v[70:73], v0 offset:49936
+	ds_read_b128 v[66:69], v0 offset:49920
+	ds_read_b128 v[78:81], v0 offset:50448
+	ds_read_b128 v[74:77], v0 offset:50432
+	v_mov_b32_e32 v28, 0x7f
+	s_waitcnt lgkmcnt(14)
+	s_nop 0
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[0:3], v[2:9], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(12)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[4:7], v[10:17], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(10)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[8:11], v[18:25], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(8)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[12:15], v[42:49], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(6)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[16:19], v[50:57], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(4)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[20:23], v[58:65], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(2)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[24:27], v[66:73], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	s_waitcnt lgkmcnt(0)
+	v_mfma_scale_f32_16x16x128_f8f6f4 v[28:31], v[74:81], v[34:41], 0, v28, v28 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+	v_cvt_pk_f16_f32 v0, v0, v1
+	v_cvt_pk_f16_f32 v1, v2, v3
+	v_cvt_pk_f16_f32 v2, v4, v5
+	v_cvt_pk_f16_f32 v3, v6, v7
+	v_cvt_pk_f16_f32 v4, v8, v9
+	v_cvt_pk_f16_f32 v5, v10, v11
+	v_cvt_pk_f16_f32 v6, v12, v13
+	v_cvt_pk_f16_f32 v7, v14, v15
+	v_cvt_pk_f16_f32 v8, v16, v17
+	v_cvt_pk_f16_f32 v9, v18, v19
+	v_cvt_pk_f16_f32 v10, v20, v21
+	v_cvt_pk_f16_f32 v11, v22, v23
+	v_cvt_pk_f16_f32 v12, v24, v25
+	v_cvt_pk_f16_f32 v13, v26, v27
+	v_cvt_pk_f16_f32 v14, v28, v29
+	v_cvt_pk_f16_f32 v15, v30, v31
+	v_lshrrev_b32_e32 v16, 2, v32
+	s_mul_i32 s0, s13, s12
+	s_ashr_i32 s1, s0, 31
+	s_lshl_b64 s[0:1], s[0:1], 1
+	s_add_u32 s4, s6, s0
+	s_addc_u32 s5, s7, s1
+	s_ashr_i32 s15, s14, 31
+	s_lshl_b64 s[0:1], s[14:15], 1
+	s_add_u32 s0, s4, s0
+	s_addc_u32 s1, s5, s1
+	v_mul_lo_u32 v17, s12, v33
+	s_and_b32 s1, s1, 0xffff
+	v_add_lshl_u32 v16, v16, v17, 1
+	buffer_store_dwordx2 v[0:1], v16, s[0:3], 0 offen
+	buffer_store_dwordx2 v[2:3], v16, s[0:3], 0 offen offset:128
+	buffer_store_dwordx2 v[4:5], v16, s[0:3], 0 offen offset:256
+	buffer_store_dwordx2 v[6:7], v16, s[0:3], 0 offen offset:384
+	buffer_store_dwordx2 v[8:9], v16, s[0:3], 0 offen offset:512
+	buffer_store_dwordx2 v[10:11], v16, s[0:3], 0 offen offset:640
+	buffer_store_dwordx2 v[12:13], v16, s[0:3], 0 offen offset:768
+	buffer_store_dwordx2 v[14:15], v16, s[0:3], 0 offen offset:896
+	s_endpgm
+	.section	.rodata,"a",@progbits
+	.p2align	6, 0x0
+	.amdhsa_kernel matmul_kernel
+		.amdhsa_group_segment_fixed_size 0
+		.amdhsa_private_segment_fixed_size 0
+		.amdhsa_kernarg_size 64
+		.amdhsa_user_sgpr_count 16
+		.amdhsa_user_sgpr_dispatch_ptr 0
+		.amdhsa_user_sgpr_queue_ptr 0
+		.amdhsa_user_sgpr_kernarg_segment_ptr 1
+		.amdhsa_user_sgpr_dispatch_id 0
+		.amdhsa_user_sgpr_kernarg_preload_length 14
+		.amdhsa_user_sgpr_kernarg_preload_offset 0
+		.amdhsa_user_sgpr_private_segment_size 0
+		.amdhsa_uses_dynamic_stack 0
+		.amdhsa_enable_private_segment 0
+		.amdhsa_system_sgpr_workgroup_id_x 1
+		.amdhsa_system_sgpr_workgroup_id_y 0
+		.amdhsa_system_sgpr_workgroup_id_z 0
+		.amdhsa_system_sgpr_workgroup_info 0
+		.amdhsa_system_vgpr_workitem_id 0
+		.amdhsa_next_free_vgpr 82
+		.amdhsa_next_free_sgpr 19
+		.amdhsa_accum_offset 84
+		.amdhsa_reserve_vcc 0
+		.amdhsa_reserve_xnack_mask 1
+		.amdhsa_float_round_mode_32 0
+		.amdhsa_float_round_mode_16_64 0
+		.amdhsa_float_denorm_mode_32 3
+		.amdhsa_float_denorm_mode_16_64 3
+		.amdhsa_dx10_clamp 1
+		.amdhsa_ieee_mode 1
+		.amdhsa_fp16_overflow 0
+		.amdhsa_tg_split 0
+		.amdhsa_exception_fp_ieee_invalid_op 0
+		.amdhsa_exception_fp_denorm_src 0
+		.amdhsa_exception_fp_ieee_div_zero 0
+		.amdhsa_exception_fp_ieee_overflow 0
+		.amdhsa_exception_fp_ieee_underflow 0
+		.amdhsa_exception_fp_ieee_inexact 0
+		.amdhsa_exception_int_div_zero 0
+	.end_amdhsa_kernel
+	.text
+.Lfunc_end0:
+	.size	matmul_kernel, .Lfunc_end0-matmul_kernel
+	.cfi_endproc
+                                        ; -- End function
+	.set matmul_kernel.num_vgpr, 82
+	.set matmul_kernel.num_agpr, 0
+	.set matmul_kernel.numbered_sgpr, 19
+	.set matmul_kernel.num_named_barrier, 0
+	.set matmul_kernel.private_seg_size, 0
+	.set matmul_kernel.uses_vcc, 0
+	.set matmul_kernel.uses_flat_scratch, 0
+	.set matmul_kernel.has_dyn_sized_stack, 0
+	.set matmul_kernel.has_recursion, 0
+	.set matmul_kernel.has_indirect_call, 0
+	.section	.AMDGPU.csdata,"",@progbits
+; Kernel info:
+; codeLenInByte = 1748
+; TotalNumSgprs: 25
+; NumVgprs: 82
+; NumAgprs: 0
+; TotalNumVgprs: 82
+; ScratchSize: 0
+; MemoryBound: 0
+; FloatMode: 240
+; IeeeMode: 1
+; LDSByteSize: 0 bytes/workgroup (compile time only)
+; SGPRBlocks: 3
+; VGPRBlocks: 10
+; NumSGPRsForWavesPerEU: 25
+; NumVGPRsForWavesPerEU: 82
+; AccumOffset: 84
+; Occupancy: 5
+; WaveLimiterHint : 0
+; COMPUTE_PGM_RSRC2:SCRATCH_EN: 0
+; COMPUTE_PGM_RSRC2:USER_SGPR: 16
+; COMPUTE_PGM_RSRC2:TRAP_HANDLER: 0
+; COMPUTE_PGM_RSRC2:TGID_X_EN: 1
+; COMPUTE_PGM_RSRC2:TGID_Y_EN: 0
+; COMPUTE_PGM_RSRC2:TGID_Z_EN: 0
+; COMPUTE_PGM_RSRC2:TIDIG_COMP_CNT: 0
+; COMPUTE_PGM_RSRC3_GFX90A:ACCUM_OFFSET: 20
+; COMPUTE_PGM_RSRC3_GFX90A:TG_SPLIT: 0
+	.text
+	.p2alignl 6, 3212836864
+	.fill 256, 4, 3212836864
+	.section	.AMDGPU.gpr_maximums,"",@progbits
+	.set amdgpu.max_num_vgpr, 0
+	.set amdgpu.max_num_agpr, 0
+	.set amdgpu.max_num_sgpr, 0
+	.set amdgpu.max_num_named_barrier, 0
+	.text
+	.section	.debug_abbrev,"",@progbits
+	.byte	1                               ; Abbreviation Code
+	.byte	17                              ; DW_TAG_compile_unit
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	37                              ; DW_AT_producer
+	.byte	14                              ; DW_FORM_strp
+	.byte	19                              ; DW_AT_language
+	.byte	5                               ; DW_FORM_data2
+	.byte	3                               ; DW_AT_name
+	.byte	14                              ; DW_FORM_strp
+	.byte	16                              ; DW_AT_stmt_list
+	.byte	23                              ; DW_FORM_sec_offset
+	.byte	27                              ; DW_AT_comp_dir
+	.byte	14                              ; DW_FORM_strp
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	2                               ; Abbreviation Code
+	.byte	46                              ; DW_TAG_subprogram
+	.byte	0                               ; DW_CHILDREN_no
+	.byte	3                               ; DW_AT_name
+	.byte	14                              ; DW_FORM_strp
+	.byte	32                              ; DW_AT_inline
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	3                               ; Abbreviation Code
+	.byte	46                              ; DW_TAG_subprogram
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	4                               ; Abbreviation Code
+	.byte	29                              ; DW_TAG_inlined_subroutine
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	85                              ; DW_AT_ranges
+	.byte	23                              ; DW_FORM_sec_offset
+	.byte	88                              ; DW_AT_call_file
+	.byte	11                              ; DW_FORM_data1
+	.byte	89                              ; DW_AT_call_line
+	.byte	11                              ; DW_FORM_data1
+	.byte	87                              ; DW_AT_call_column
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	5                               ; Abbreviation Code
+	.byte	29                              ; DW_TAG_inlined_subroutine
+	.byte	0                               ; DW_CHILDREN_no
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	88                              ; DW_AT_call_file
+	.byte	11                              ; DW_FORM_data1
+	.byte	89                              ; DW_AT_call_line
+	.byte	11                              ; DW_FORM_data1
+	.byte	87                              ; DW_AT_call_column
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	0                               ; EOM(3)
+	.section	.debug_info,"",@progbits
+.Lcu_begin0:
+	.long	.Ldebug_info_end0-.Ldebug_info_start0 ; Length of Unit
+.Ldebug_info_start0:
+	.short	4                               ; DWARF version number
+	.long	.debug_abbrev                   ; Offset Into Abbrev. Section
+	.byte	8                               ; Address Size (in bytes)
+	.byte	1                               ; Abbrev [1] 0xb:0x6d DW_TAG_compile_unit
+	.long	.Linfo_string0                  ; DW_AT_producer
+	.short	2                               ; DW_AT_language
+	.long	.Linfo_string1                  ; DW_AT_name
+	.long	.Lline_table_start0             ; DW_AT_stmt_list
+	.long	.Linfo_string2                  ; DW_AT_comp_dir
+	.quad	.Lfunc_begin0                   ; DW_AT_low_pc
+	.long	.Lfunc_end0-.Lfunc_begin0       ; DW_AT_high_pc
+	.byte	2                               ; Abbrev [2] 0x2a:0x6 DW_TAG_subprogram
+	.long	.Linfo_string3                  ; DW_AT_name
+	.byte	1                               ; DW_AT_inline
+	.byte	3                               ; Abbrev [3] 0x30:0x47 DW_TAG_subprogram
+	.quad	.Lfunc_begin0                   ; DW_AT_low_pc
+	.long	.Lfunc_end0-.Lfunc_begin0       ; DW_AT_high_pc
+	.long	42                              ; DW_AT_abstract_origin
+	.byte	4                               ; Abbrev [4] 0x41:0x35 DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.long	.Ldebug_ranges0                 ; DW_AT_ranges
+	.byte	1                               ; DW_AT_call_file
+	.byte	48                              ; DW_AT_call_line
+	.byte	71                              ; DW_AT_call_column
+	.byte	5                               ; Abbrev [5] 0x4d:0x14 DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.quad	.Ltmp3                          ; DW_AT_low_pc
+	.long	.Ltmp4-.Ltmp3                   ; DW_AT_high_pc
+	.byte	1                               ; DW_AT_call_file
+	.byte	15                              ; DW_AT_call_line
+	.byte	27                              ; DW_AT_call_column
+	.byte	5                               ; Abbrev [5] 0x61:0x14 DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.quad	.Ltmp4                          ; DW_AT_low_pc
+	.long	.Ltmp5-.Ltmp4                   ; DW_AT_high_pc
+	.byte	1                               ; DW_AT_call_file
+	.byte	14                              ; DW_AT_call_line
+	.byte	27                              ; DW_AT_call_column
+	.byte	0                               ; End Of Children Mark
+	.byte	0                               ; End Of Children Mark
+	.byte	0                               ; End Of Children Mark
+.Ldebug_info_end0:
+	.section	.debug_ranges,"",@progbits
+.Ldebug_ranges0:
+	.quad	.Ltmp2-.Lfunc_begin0
+	.quad	.Ltmp5-.Lfunc_begin0
+	.quad	.Ltmp6-.Lfunc_begin0
+	.quad	.Ltmp7-.Lfunc_begin0
+	.quad	0
+	.quad	0
+	.section	.debug_str,"MS",@progbits,1
+.Linfo_string0:
+	.asciz	"triton"                        ; string offset=0
+.Linfo_string1:
+	.asciz	"play_lds.py"                   ; string offset=7
+.Linfo_string2:
+	.asciz	"/root/OAI-triton/study_lds"    ; string offset=19
+.Linfo_string3:
+	.asciz	"matmul_kernel"                 ; string offset=46
+	.section	".note.GNU-stack","",@progbits
+	.amdgpu_metadata
+---
+amdhsa.kernels:
+  - .agpr_count:     0
+    .args:
+      - .address_space:  global
+        .offset:         0
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         8
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         16
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         24
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         28
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         32
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         36
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         40
+        .size:           4
+        .value_kind:     by_value
+      - .address_space:  global
+        .offset:         48
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         56
+        .size:           8
+        .value_kind:     global_buffer
+    .group_segment_fixed_size: 0
+    .kernarg_segment_align: 8
+    .kernarg_segment_size: 64
+    .max_flat_workgroup_size: 256
+    .name:           matmul_kernel
+    .private_segment_fixed_size: 0
+    .sgpr_count:     25
+    .sgpr_spill_count: 0
+    .symbol:         matmul_kernel.kd
+    .uniform_work_group_size: 1
+    .uses_dynamic_stack: false
+    .vgpr_count:     82
+    .vgpr_spill_count: 0
+    .wavefront_size: 64
+amdhsa.target:   amdgcn-amd-amdhsa--gfx950
+amdhsa.version:
+  - 1
+  - 2
+...
+
+	.end_amdgpu_metadata
+	.section	.debug_line,"",@progbits
+.Lline_table_start0:

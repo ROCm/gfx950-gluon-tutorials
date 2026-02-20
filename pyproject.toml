@@ -1,0 +1,43 @@
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | ir_dump.*
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+# Exclude IR dumps and generated files
+extend-exclude = [
+    "ir_dump*",
+    "*.ttgir",
+    "*.llir",
+    "*.amdgcn",
+]
+
+[tool.ruff.lint]
+# Enable pycodestyle (E), Pyflakes (F), and isort (I)
+select = ["E", "F", "I", "W"]
+
+# Ignore some common warnings
+ignore = [
+    "E501",  # Line too long (handled by black)
+    "E741",  # Ambiguous variable name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Unused imports in __init__.py files
