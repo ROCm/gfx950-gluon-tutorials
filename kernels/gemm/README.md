@@ -19,9 +19,8 @@ The goal is not just to provide fast kernels, but to **teach how to design, anal
 
 ```text
 kernels/gemm/
-├── a16w16/        # Full optimization journey (v0 → v7)
-├── a8w8/          # Final optimized kernel (f8)
-├── amxfp4wmxfp4/  # Final optimized kernel (mxfp4)
+├── a16w16/        # Full optimization journey (v0 → v8)
+├── a8w8/          # Final optimized kernel (FP8)
 └── README.md      # You are here
 ```
 
@@ -32,12 +31,14 @@ kernels/gemm/
 The FP16 GEMM directory is the heart of this repository.
 It presents a versioned progression of kernels, starting from a naive baseline and incrementally introducing:
 
-- Buffer operations
-- Async copy
-- LDS design fundamentals
-- Global and local prefetch pipelines
-- Loop unrolling
-- Kernel-level optimizations beyond the hot loop
+- Buffer operations (v1)
+- Async copy / direct-to-LDS (v2)
+- LDS layout design and bank conflict avoidance (v3)
+- Global prefetch with software pipelining (v4)
+- Local prefetch for 3-stage pipeline (v5)
+- Loop unrolling to eliminate register copy overhead (v6)
+- N-slicing to reduce register pressure (v7)
+- XCD-aware PID remapping, workgroup swizzling, interleaved epilogue (v8)
 
 Each version focuses on one new concept, allowing readers to understand:
 
@@ -52,23 +53,22 @@ kernels/gemm/a16w16/
 
 ---
 
-## 8-bit and 4-bit: Applying the Same Ideas
+## FP8: Applying the Same Ideas
 
-For 8-bit and 4-bit, this repository provides final optimized kernels only.
+For FP8, this repository provides the final optimized kernel only.
 
 Why?
 
-- The optimization principles are identical
-- The main difference is tile shape and data packing
+- The optimization principles are identical to FP16
+- The main differences are tile shape, MFMA instruction, and LDS padding
 - Repeating the full journey would add volume, not insight
 
 | Data Type | Tile Size       |
 |-----------|-----------------|
-| 16-bit    | 256 × 256 × 64  |
-| 8-bit     | 256 × 256 × 128 |
-| 4-bit     | 256 × 256 × 256 |
+| FP16      | 256 × 256 × 64  |
+| FP8       | 256 × 256 × 128 |
 
-If you understand the FP16 journey, you understand these kernels.
+If you understand the FP16 journey, you understand the FP8 kernel.
 
 ---
 
