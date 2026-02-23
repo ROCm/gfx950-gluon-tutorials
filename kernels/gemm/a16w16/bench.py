@@ -1,17 +1,20 @@
 import argparse
+import importlib
 
 import torch
 import triton
 
-# from v0_naive.matmul_kernel import matmul
-# from v1_buffer_load.matmul_kernel import matmul
-# from v2_async_copy.matmul_kernel import matmul
-# from v3_lds.matmul_kernel import matmul
-# from v4_global_prefetch.matmul_kernel import matmul
-# from v5_local_prefetch.matmul_kernel import matmul
-# from v6_loop_unroll.matmul_kernel import matmul
-# from v7_slice.matmul_kernel import matmul
-from v8_beyond_hotloop.matmul_kernel import matmul
+VERSION_MAP = {
+    0: "v0_naive",
+    1: "v1_buffer_load",
+    2: "v2_async_copy",
+    3: "v3_lds",
+    4: "v4_global_prefetch",
+    5: "v5_local_prefetch",
+    6: "v6_loop_unroll",
+    7: "v7_slice",
+    8: "v8_beyond_hotloop",
+}
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
@@ -29,10 +32,7 @@ def get_x_vals():
     ]
 
 
-def get_gemm_sizes():
-
-    args = parse_args()
-    selected_k = args.K
+def get_gemm_sizes(selected_k=None):
     sizes = get_x_vals()
 
     if selected_k is None:
@@ -49,11 +49,8 @@ def get_gemm_sizes():
     return filtered
 
 
-def get_dtypes():
+def get_dtypes(selected_dtype=None):
     default_dtypes = ["fp16", "bf16"]
-
-    args = parse_args()
-    selected_dtype = args.dtype
 
     if selected_dtype is None:
         return default_dtypes
@@ -81,16 +78,23 @@ def parse_args():
         default=None,
         help="Data type(s) to benchmark (default: fp16 bf16)",
     )
+    parser.add_argument(
+        "--version",
+        type=int,
+        default=8,
+        choices=range(0, 9),
+        help="Kernel version to benchmark (default: 8)",
+    )
     return parser.parse_args()
 
 
-def test_correctness(dtype):
+def test_correctness(matmul, dtype, gemm_sizes, version_dir):
     if dtype == "f8":
         torch_dtype = torch.float16
     else:
         torch_dtype = name_to_torch_type[dtype]
 
-    for M, N, K in get_gemm_sizes():
+    for M, N, K in gemm_sizes:
         a = torch.rand((M, K), device=DEVICE, dtype=torch_dtype) - 0.5
         b = torch.rand((N, K), device=DEVICE, dtype=torch_dtype).T - 0.5
         if dtype == "f8":
@@ -102,48 +106,59 @@ def test_correctness(dtype):
         else:
             torch_output = torch.matmul(a, b)
         if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
-            print(f"{M=} {N=} {K=} {dtype=}: ✅ Triton and Torch match")
+            print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: ✅ Triton and Torch match")
         else:
-            print(f"{M=} {N=} {K=} {dtype=}: ❌ Triton and Torch differ")
+            print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: ❌ Triton and Torch differ")
 
 
-configs = []
-configs.append(
-    triton.testing.Benchmark(
-        x_names=["M", "N", "K"],
-        x_vals=get_gemm_sizes(),
-        line_arg="dtype",
-        line_vals=get_dtypes(),
-        line_names=get_dtypes(),
-        styles=[("green", "-"), ("yellow", "--"), ("red", "--")],
-        ylabel="TFLOPS",
-        plot_name="matmul-performance",
-        args={},
-    )
-)
+def main():
+    args = parse_args()
+    version_dir = VERSION_MAP[args.version]
+    module = importlib.import_module(f"{version_dir}.matmul_kernel")
+    matmul = module.matmul
+
+    gemm_sizes = get_gemm_sizes(args.K)
+    dtypes = get_dtypes(args.dtype)
+
+    configs = [
+        triton.testing.Benchmark(
+            x_names=["M", "N", "K"],
+            x_vals=gemm_sizes,
+            line_arg="dtype",
+            line_vals=dtypes,
+            line_names=dtypes,
+            styles=[("green", "-"), ("yellow", "--"), ("red", "--")],
+            ylabel="TFLOPS",
+            plot_name=f"matmul-performance-{version_dir}",
+            args={},
+        )
+    ]
+
+    @triton.testing.perf_report(configs)
+    def benchmark(M, N, K, dtype):
+        if dtype == "f8":
+            torch_dtype = torch.float16
+        else:
+            torch_dtype = name_to_torch_type[dtype]
+        a = torch.randn((M, K), device=DEVICE, dtype=torch_dtype)
+        b = torch.randn((N, K), device=DEVICE, dtype=torch_dtype).T
+        if dtype == "f8":
+            a = a.to(torch.float8_e5m2)
+            b = b.to(torch.float8_e5m2)
+        quantiles = [0.5, 0.2, 0.8]
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
+
+        def perf(ms):
+            return 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
+        return perf(ms), perf(max_ms), perf(min_ms)
+
+    for dtype in dtypes:
+        test_correctness(matmul, dtype, gemm_sizes, version_dir)
+
+    print(f"\n{version_dir}:")
+    benchmark.run(show_plots=False, print_data=True)
 
 
-@triton.testing.perf_report(configs)
-def benchmark(M, N, K, dtype):
-    if dtype == "f8":
-        torch_dtype = torch.float16
-    else:
-        torch_dtype = name_to_torch_type[dtype]
-    a = torch.randn((M, K), device=DEVICE, dtype=torch_dtype)
-    b = torch.randn((N, K), device=DEVICE, dtype=torch_dtype).T
-    if dtype == "f8":
-        a = a.to(torch.float8_e5m2)
-        b = b.to(torch.float8_e5m2)
-    quantiles = [0.5, 0.2, 0.8]
-    ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
-
-    def perf(ms):
-        return 2 * M * N * K * 1e-12 / (ms * 1e-3)
-
-    return perf(ms), perf(max_ms), perf(min_ms)
-
-
-for dtype in get_dtypes():
-    test_correctness(dtype)
-
-benchmark.run(show_plots=False, print_data=True)
+if __name__ == "__main__":
+    main()
