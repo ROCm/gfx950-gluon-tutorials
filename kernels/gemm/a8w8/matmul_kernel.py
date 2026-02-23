@@ -54,7 +54,6 @@ def get_pids(
 
     return pid_m, pid_n
 
-
 @gluon.jit
 def a8w8_kernel(
     a_ptr,
@@ -77,41 +76,34 @@ def a8w8_kernel(
     GROUP_SIZE_M: gl.constexpr,  #
 ):
     """
-    FP8 GEMM kernel with 256x256x128 tiles.
-
-    Applies the same design principles as a16w16/v8_beyond_hotloop:
-    - XCD-aware PID remapping for L2 cache reuse
-    - Workgroup swizzling with GROUP_SIZE_M
-    - N-slicing with separate B0/B1 buffers
-    - Loop unrolling by factor of 2
-    - 3-stage pipeline with local prefetch
-    - Interleaved epilogue with extract_slice
+    Local prefetch pipeline design
 
     Prologue
 
-        AC A[0], B0[0], B1[0] --> buffer 0
-        AC A[1], B0[1], B1[1] --> buffer 1
+        AC A0, B0{left, right} --> buffer 0
+        AC A1, B1{left, right} --> buffer 1
         async_wait buffer 0
-        local_load (A+B0)[0] <-- buffer 0
+        local_load A0, B0{left} <-- buffer 0
 
     InLoop
 
-        DOT(A, B0)[0]
-        local_load B1[0] <-- buffer 0
-        AC (A+B0)[2] --> buffer 0
+        acc{left} = DOT(A0, B0{left})
+        local_load B0{right} <-- buffer 0
+        AC A2, B2{left} --> buffer 0
 
-        DOT(A, B1)[0]
+        acc{right} = DOT(A0, B0{right})
         async_wait buffer 1
-        local_load (A+B0)[1] <-- buffer 1
-        AC B1[2] --> buffer 0
+        local_load A1, B1{left} <-- buffer 1
+        AC B2{right} --> buffer 0
 
     Epilogue
 
-        local_load B1[n-1]
-        DOT(A{n-1}, B0{n-1})
-        store(acc0)
-        DOT(A{n-1}, B1{n-1})
-        store(acc1)
+        acc{left} = DOT(A0, B0{left})
+        local_load B0{right}
+        store(acc{left})
+
+        acc{right} = DOT(A0, B0{right})
+        store(acc{right})
     """
 
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
@@ -130,33 +122,6 @@ def a8w8_kernel(
         block_bases=[],
         shape=[BLOCK_K, BLOCK_N // 2],
     )
-
-    offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gLoadLayoutA))
-    offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, gLoadLayoutA))
-
-    offs_bn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gLoadLayoutB))
-    offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, gLoadLayoutB))
-
-    a_base = a_ptr + pid_m * BLOCK_M * stride_am
-    b_base = b_ptr + pid_n * BLOCK_N * stride_bn
-
-    a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
-    b0_init_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
-
-    b0_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn + BLOCK_K * stride_bk
-    b1_offsets = (
-        offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn + BLOCK_N * stride_bn // 2
-    )
-
-    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4,
-        instr_shape=[16, 16, 128],
-        transposed=True,
-        tiles_per_warp=[2, 2],
-        warps_per_cta=[2, 2],
-    )
-    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=32)
-    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=32)
 
     sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
         [[1024, 16], [2048, 32]],
@@ -206,215 +171,319 @@ def a8w8_kernel(
     smemA = gl.allocate_shared_memory(
         a_ptr.dtype.element_ty, [nBuffers, BLOCK_M, BLOCK_K], sharedLayoutA
     )
-    smemB0 = gl.allocate_shared_memory(
+    smemB_left = gl.allocate_shared_memory(
         b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB
     )
-    smemB1 = gl.allocate_shared_memory(
+    smemB_right = gl.allocate_shared_memory(
         b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB
     )
 
-    acc0 = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
-    acc1 = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
+    offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gLoadLayoutA))
+    offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, gLoadLayoutA))
+
+    offs_bn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gLoadLayoutB))
+    offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, gLoadLayoutB))
+
+    a_base = a_ptr + pid_m * BLOCK_M * stride_am
+    b_base = b_ptr + pid_n * BLOCK_N * stride_bn
+
+    a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    b_left_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+    b_right_offsets = b_left_offsets + BLOCK_N * stride_bn // 2
+
+    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[2, 2]
+    )
+
+    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=32)
+    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=32)
+
+    acc_left = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
+    acc_right = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
 
     iterMax = gl.cdiv(K, BLOCK_K)
 
     ## Prologue
-    ## AC A[0], B0[0], B1[0] --> buffer 0
-    ## AC A[1], B0[1], B1[1] --> buffer 1
+    ## AC A0, B0{left, right} --> buffer 0
+    ## AC A1, B1{left, right} --> buffer 1
     ## async_wait buffer 0
-    ## local_load (A+B0)[0] <-- buffer 0
+    ## local_load A0, B0{left} <-- buffer 0
     g_idx = 0
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB0.index(g_idx), b_base, b0_init_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
     gl.amd.cdna4.async_copy.commit_group()
 
-    a_base += BLOCK_K * stride_ak
-
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB1.index(g_idx), b_base, b1_offsets)
-    gl.amd.cdna4.async_copy.commit_group()
-
-    g_idx = 1
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB0.index(g_idx), b_base, b0_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
     gl.amd.cdna4.async_copy.commit_group()
 
     a_base += BLOCK_K * stride_ak
     b_base += BLOCK_K * stride_bk
 
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB1.index(g_idx), b_base, b1_offsets)
+    g_idx = 1
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
     gl.amd.cdna4.async_copy.commit_group()
+
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
+    gl.amd.cdna4.async_copy.commit_group()
+
+    a_base += BLOCK_K * stride_ak
+    b_base += BLOCK_K * stride_bk
 
     gl.amd.cdna4.async_copy.wait_group(3)
     l_idx = 0
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB0.index(l_idx), dotOpLayoutB)
+    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-    for k in range(0, iterMax - 1, 2):
+    gl.assume(iterMax > 3)
+
+    for k in range(0, iterMax - 2, 2):
+        ## In loop
+        ## g_idx: buffer id for async copy
+        ## l_idx: buffer id for local load
+        ##
+        ## Now with local prefetch, 3 independent things are happening in parallel:
+        ##   1. async copy is filling buffer g_idx
+        ##   2. local load is consuming data from buffer l_idx
+        ##   3. DOT is doing compute with data from buffer g_idx.
 
         ########################################
         ## Region 0
-        ## DOT(A, B0)[0]
-        ## LR B1[0]
-        ## AC (A+B0)[2]
         ########################################
-        acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
+        g_idx = 0
+        l_idx = 1
+
+        acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        b1 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB1.index(0), dotOpLayoutB)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx), dotOpLayoutB
+        )
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(0), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB0.index(0), b_base, b0_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        ########################################
+        ## Region 1
+        ########################################
+        acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
+
+        gl.amd.cdna4.async_copy.wait_group(2)
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
         b_base += BLOCK_K * stride_bk
-
-        ########################################
-        ## Region 1
-        ## DOT(A, B1)[0]
-        ## LR (A+B0)[1]
-        ## AC B1[2]
-        ########################################
-        acc1 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b1, None, "e5m2", acc1)
-
-        gl.amd.cdna4.async_copy.wait_group(2)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(1), dotOpLayoutA)
-        b0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB0.index(1), dotOpLayoutB)
-
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB1.index(0), b_base, b1_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.commit_group()
 
         ## ---------------------------------------------------------------------
         ## Loop unroll separator
         ## ---------------------------------------------------------------------
 
+        g_idx = 1
+        l_idx = 0
+
         ########################################
         ## Region 2
-        ## DOT(A, B0)[1]
-        ## LR B1[1]
-        ## AC (A+B0)[3]
         ########################################
-        acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
+
+        acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        b1 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB1.index(1), dotOpLayoutB)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx), dotOpLayoutB
+        )
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(1), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB0.index(1), b_base, b0_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        ########################################
+        ## Region 3
+        ########################################
+        acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
+
+        gl.amd.cdna4.async_copy.wait_group(2)
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
         b_base += BLOCK_K * stride_bk
 
-        ########################################
-        ## Region 3
-        ## DOT(A, B1)[1]
-        ## LR (A+B0)[0]
-        ## AC B1[3]
-        ########################################
-        acc1 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b1, None, "e5m2", acc1)
-
-        gl.amd.cdna4.async_copy.wait_group(2)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dotOpLayoutA)
-        b0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB0.index(0), dotOpLayoutB)
-
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB1.index(1), b_base, b1_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.commit_group()
-
     ## Epilogue
-    gl.amd.cdna4.async_copy.wait_group(0)
-
+    #gStoreLayoutC: gl.constexpr = mfmaLayout
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
-    offs_cm_slice = gl.arange(0, BLOCK_M // 4, gl.SliceLayout(1, gStoreLayoutC))
+    offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
+    c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
+    c_left_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_right_offsets = c_left_offsets + BLOCK_N * stride_cn // 2
 
-    c00_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
-    c01_base = c00_base + 64 * stride_cm
-    c02_base = c01_base + 64 * stride_cm
-    c03_base = c02_base + 64 * stride_cm
-    c_slice_offsets = stride_cm * offs_cm_slice[:, None] + stride_cn * offs_cn[None, :]
+    ## iterMax - 2
 
-    c10_base = c00_base + BLOCK_N * stride_cn // 2
-    c11_base = c10_base + 64 * stride_cm
-    c12_base = c11_base + 64 * stride_cm
-    c13_base = c12_base + 64 * stride_cm
+    ########################################
+    ## Region 0
+    ########################################
+    g_idx = 0
+    l_idx = 1
+    acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
+    gl.amd.cdna4.async_copy.wait_group(0)
+    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
-    l_idx = (iterMax - 1) % 2
+    ########################################
+    ## Region 1
+    ########################################
+    acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
+    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-    ## slice 0 m[0:64]n[0:128]
-    a0 = extract_slice(a, [64, 128], [0, 0])
-    acc00 = extract_slice(acc0, [64, 128], [0, 0])
-    acc00 = gl.amd.cdna4.mfma_scaled(a0, None, "e5m2", b0, None, "e5m2", acc00)
-    c00 = acc00.to(gl.float16)
-    c00 = gl.convert_layout(c00, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c00, ptr=c00_base, offsets=c_slice_offsets)
 
-    ## slice 1 m[64:128]n[0:128]
-    a1 = extract_slice(a, [64, 128], [64, 0])
-    acc01 = extract_slice(acc0, [64, 128], [64, 0])
-    acc01 = gl.amd.cdna4.mfma_scaled(a1, None, "e5m2", b0, None, "e5m2", acc01)
-    c01 = acc01.to(gl.float16)
-    c01 = gl.convert_layout(c01, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c01, ptr=c01_base, offsets=c_slice_offsets)
+    ## iterMax - 1
 
-    ## slice 2 m[128:192]n[0:128]
-    a2 = extract_slice(a, [64, 128], [128, 0])
-    acc02 = extract_slice(acc0, [64, 128], [128, 0])
-    acc02 = gl.amd.cdna4.mfma_scaled(a2, None, "e5m2", b0, None, "e5m2", acc02)
-    c02 = acc02.to(gl.float16)
-    c02 = gl.convert_layout(c02, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c02, ptr=c02_base, offsets=c_slice_offsets)
+    ########################################
+    ## Region 2
+    ########################################
+    g_idx = 1
+    l_idx = 0
 
-    ## slice 3 m[192:256]n[0:128]
-    a3 = extract_slice(a, [64, 128], [192, 0])
-    acc03 = extract_slice(acc0, [64, 128], [192, 0])
-    acc03 = gl.amd.cdna4.mfma_scaled(a3, None, "e5m2", b0, None, "e5m2", acc03)
-    c03 = acc03.to(gl.float16)
-    c03 = gl.convert_layout(c03, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c03, ptr=c03_base, offsets=c_slice_offsets)
+    acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
+    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
-    b1 = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB1.index(l_idx), dotOpLayoutB)
+    c_left = acc_left.to(gl.float16)
+    c_left = gl.convert_layout(c_left, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_left_offsets, stored_value=c_left)
 
-    ## slice 0 m[0:64]n[128:256]
-    acc10 = extract_slice(acc1, [64, 128], [0, 0])
-    acc10 = gl.amd.cdna4.mfma_scaled(a0, None, "e5m2", b1, None, "e5m2", acc10)
-    c10 = acc10.to(gl.float16)
-    c10 = gl.convert_layout(c10, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c10, ptr=c10_base, offsets=c_slice_offsets)
+    ########################################
+    ## Region 3
+    ########################################
+    acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
 
-    ## slice 1 m[64:128]n[128:256]
-    acc11 = extract_slice(acc1, [64, 128], [64, 0])
-    acc11 = gl.amd.cdna4.mfma_scaled(a1, None, "e5m2", b1, None, "e5m2", acc11)
-    c11 = acc11.to(gl.float16)
-    c11 = gl.convert_layout(c11, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c11, ptr=c11_base, offsets=c_slice_offsets)
+    c_right = acc_right.to(gl.float16)
+    c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_right_offsets, stored_value=c_right)
 
-    ## slice 2 m[128:192]n[128:256]
-    acc12 = extract_slice(acc1, [64, 128], [128, 0])
-    acc12 = gl.amd.cdna4.mfma_scaled(a2, None, "e5m2", b1, None, "e5m2", acc12)
-    c12 = acc12.to(gl.float16)
-    c12 = gl.convert_layout(c12, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c12, ptr=c12_base, offsets=c_slice_offsets)
-
-    ## slice 3 m[192:256]n[128:256]
-    acc13 = extract_slice(acc1, [64, 128], [192, 0])
-    acc13 = gl.amd.cdna4.mfma_scaled(a3, None, "e5m2", b1, None, "e5m2", acc13)
-    c13 = acc13.to(gl.float16)
-    c13 = gl.convert_layout(c13, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c13, ptr=c13_base, offsets=c_slice_offsets)
+    ## Epilogue
+    #gl.amd.cdna4.async_copy.wait_group(0)
+#
+    #gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
+#
+    #offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
+    #offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
+    #c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
+    #c_left_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    #c_right_offsets = c_left_offsets + BLOCK_N * stride_cn // 2
+#
+    ### iterMax - 2
+#
+    #########################################
+    ### Region 0
+    #########################################
+    #g_idx = 0
+    #l_idx = 1
+    #acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
+    #b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+#
+    #########################################
+    ### Region 1
+    #########################################
+    #acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
+    #a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+    #b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+#
+#
+    ### iterMax - 1
+#
+    #########################################
+    ### Region 2
+    #########################################
+    #g_idx = 1
+    #l_idx = 0
+#
+    #offs_cm_slice = gl.arange(0, BLOCK_M // 4, gl.SliceLayout(1, gStoreLayoutC))
+    #c_slice_offsets = stride_cm * offs_cm_slice[:, None] + stride_cn * offs_cn[None, :]
+    #c00_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
+    #c01_base = c00_base + 64 * stride_cm
+    #c02_base = c01_base + 64 * stride_cm
+    #c03_base = c02_base + 64 * stride_cm
+#
+    #c10_base = c00_base + BLOCK_N * stride_cn // 2
+    #c11_base = c10_base + 64 * stride_cm
+    #c12_base = c11_base + 64 * stride_cm
+    #c13_base = c12_base + 64 * stride_cm
+#
+#
+    ### slice 0 m[0:64]n[0:128]
+    #a0 = extract_slice(a, [64, 128], [0, 0])
+    #acc00 = extract_slice(acc_left, [64, 128], [0, 0])
+    #acc00 = gl.amd.cdna4.mfma_scaled(a0, None, "e5m2", b_left, None, "e5m2", acc00)
+    #b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+#
+    ### slice 1 m[64:128]n[0:128]
+    #a1 = extract_slice(a, [64, 128], [64, 0])
+    #acc01 = extract_slice(acc_left, [64, 128], [64, 0])
+    #acc01 = gl.amd.cdna4.mfma_scaled(a1, None, "e5m2", b_left, None, "e5m2", acc01)
+#
+    #c00 = acc00.to(gl.float16)
+    #c00 = gl.convert_layout(c00, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c00, ptr=c00_base, offsets=c_slice_offsets)
+#
+    ### slice 2 m[128:192]n[0:128]
+    #a2 = extract_slice(a, [64, 128], [128, 0])
+    #acc02 = extract_slice(acc_left, [64, 128], [128, 0])
+    #acc02 = gl.amd.cdna4.mfma_scaled(a2, None, "e5m2", b_left, None, "e5m2", acc02)
+    #c01 = acc01.to(gl.float16)
+    #c01 = gl.convert_layout(c01, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c01, ptr=c01_base, offsets=c_slice_offsets)
+#
+    ### slice 3 m[192:256]n[0:128]
+    #a3 = extract_slice(a, [64, 128], [192, 0])
+    #acc03 = extract_slice(acc_left, [64, 128], [192, 0])
+    #acc03 = gl.amd.cdna4.mfma_scaled(a3, None, "e5m2", b_left, None, "e5m2", acc03)
+    #c02 = acc02.to(gl.float16)
+    #c02 = gl.convert_layout(c02, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c02, ptr=c02_base, offsets=c_slice_offsets)
+#
+    #########################################
+    ### Region 3
+    #########################################
+    ### slice 0 m[0:64]n[128:256]
+    #acc10 = extract_slice(acc_right, [64, 128], [0, 0])
+    #acc10 = gl.amd.cdna4.mfma_scaled(a0, None, "e5m2", b_right, None, "e5m2", acc10)
+    #c03 = acc03.to(gl.float16)
+    #c03 = gl.convert_layout(c03, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c03, ptr=c03_base, offsets=c_slice_offsets)
+#
+    ### slice 1 m[64:128]n[128:256]
+    #acc11 = extract_slice(acc_right, [64, 128], [64, 0])
+    #acc11 = gl.amd.cdna4.mfma_scaled(a1, None, "e5m2", b_right, None, "e5m2", acc11)
+    #c10 = acc10.to(gl.float16)
+    #c10 = gl.convert_layout(c10, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c10, ptr=c10_base, offsets=c_slice_offsets)
+#
+    ### slice 2 m[128:192]n[128:256]
+    #acc12 = extract_slice(acc_right, [64, 128], [128, 0])
+    #acc12 = gl.amd.cdna4.mfma_scaled(a2, None, "e5m2", b_right, None, "e5m2", acc12)
+    #c11 = acc11.to(gl.float16)
+    #c11 = gl.convert_layout(c11, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c11, ptr=c11_base, offsets=c_slice_offsets)
+#
+    ### slice 3 m[192:256]n[128:256]
+    #acc13 = extract_slice(acc_right, [64, 128], [192, 0])
+    #acc13 = gl.amd.cdna4.mfma_scaled(a3, None, "e5m2", b_right, None, "e5m2", acc13)
+    #c12 = acc12.to(gl.float16)
+    #c12 = gl.convert_layout(c12, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c12, ptr=c12_base, offsets=c_slice_offsets)
+#
+    #c13 = acc13.to(gl.float16)
+    #c13 = gl.convert_layout(c13, layout=gStoreLayoutC)
+    #gl.amd.cdna3.buffer_store(stored_value=c13, ptr=c13_base, offsets=c_slice_offsets)
 
 
 def matmul(a, b):
@@ -429,7 +498,7 @@ def matmul(a, b):
     grid = (GRID_MN, 1)
     NUM_XCDS = 8
     GROUP_SIZE_M = 4
-    a8w8_kernel[grid](
+    v8_beyond_hotloop[grid](
         a,
         b,
         c,  #
