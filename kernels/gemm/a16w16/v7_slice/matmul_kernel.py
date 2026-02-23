@@ -43,13 +43,21 @@ def v7_slice(
         local_load A1, B1{left} <-- buffer 1
         AC B2{right} --> buffer 0
 
-    Epilogue
+    Epilogue (iterMax - 2)
 
-        acc{left} = DOT(A0, B0{left})
-        local_load B0{right}
+        acc{left} = DOT(A, B{left})
+        local_load B{right}
+
+        acc{right} = DOT(A, B{right})
+        local_load A, B{left} from next buffer
+
+    Epilogue (iterMax - 1)
+
+        acc{left} = DOT(A, B{left})
+        local_load B{right}
         store(acc{left})
 
-        acc{right} = DOT(A0, B0{right})
+        acc{right} = DOT(A, B{right})
         store(acc{right})
     """
 
@@ -184,7 +192,9 @@ def v7_slice(
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-    for k in range(0, iterMax - 1, 2):
+    gl.assume(iterMax > 3)
+
+    for k in range(0, iterMax - 2, 2):
         ## In loop
         ## g_idx: buffer id for async copy
         ## l_idx: buffer id for local load
@@ -192,7 +202,7 @@ def v7_slice(
         ## Now with local prefetch, 3 independent things are happening in parallel:
         ##   1. async copy is filling buffer g_idx
         ##   2. local load is consuming data from buffer l_idx
-        ##   3. DOT is doing compute with data from buffer g_idx.
+        ##   3. DOT is doing compute with data from the previous local load.
 
         ########################################
         ## Region 0
@@ -207,12 +217,8 @@ def v7_slice(
             smemB_right.index(g_idx), dotOpLayoutB
         )
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(g_idx), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_left.index(g_idx), b_base, b_left_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -224,9 +230,7 @@ def v7_slice(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_right.index(g_idx), b_base, b_right_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
@@ -250,12 +254,8 @@ def v7_slice(
             smemB_right.index(g_idx), dotOpLayoutB
         )
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(g_idx), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_left.index(g_idx), b_base, b_left_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -267,16 +267,13 @@ def v7_slice(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_right.index(g_idx), b_base, b_right_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
         b_base += BLOCK_K * stride_bk
 
     ## Epilogue
-    # gStoreLayoutC: gl.constexpr = mfmaLayout
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
     offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
@@ -285,20 +282,46 @@ def v7_slice(
     c_left_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
     c_right_offsets = c_left_offsets + BLOCK_N * stride_cn // 2
 
-    ## iterMax - 1
+    ## iterMax - 2
+
+    ########################################
+    ## Region 0
+    ########################################
     g_idx = 0
+    l_idx = 1
     acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+
+    ########################################
+    ## Region 1
+    ########################################
+    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+
+
+    ## iterMax - 1
+
+    ########################################
+    ## Region 2
+    ########################################
+    g_idx = 1
+
+    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+
     c_left = acc_left.to(a_ptr.dtype.element_ty)
     c_left = gl.convert_layout(c_left, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_left_offsets, stored_value=c_left)
 
+    ########################################
+    ## Region 3
+    ########################################
     acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
 
     c_right = acc_right.to(a_ptr.dtype.element_ty)
     c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)
-
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_right_offsets, stored_value=c_right)
 
 
