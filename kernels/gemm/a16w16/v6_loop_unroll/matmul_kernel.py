@@ -39,13 +39,14 @@ def v6_loop_unroll(
         local_load A1, B1 <-- buffer 1
         AC A2, B2 --> buffer 0
 
-    Epilogue
+    Epilogue (iterMax - 2)
 
-        DOT(A0, B0)
-        async_wait buffer 1
-        local_load A1, B1 <-- buffer 1
+        DOT(A, B)
+        local_load A, B from next buffer
 
-        DOT(A1, B1)
+    Epilogue (iterMax - 1)
+
+        DOT(A, B)
         store(acc)
     """
 
@@ -168,7 +169,9 @@ def v6_loop_unroll(
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
 
-    for k in range(0, iterMax - 1, 2):
+    gl.assume(iterMax > 3)
+
+    for k in range(0, iterMax - 2, 2):
         ## In loop
         ## g_idx: buffer id for async copy
         ## l_idx: buffer id for local load
@@ -176,7 +179,7 @@ def v6_loop_unroll(
         ## Now with local prefetch, 3 independent things are happening in parallel:
         ##   1. async copy is filling buffer g_idx
         ##   2. local load is consuming data from buffer l_idx
-        ##   3. DOT is doing compute with data from buffer g_idx.
+        ##   3. DOT is doing compute with data from the previous local load.
         g_idx = 0
         l_idx = 1
 
@@ -184,12 +187,8 @@ def v6_loop_unroll(
 
         gl.amd.cdna4.async_copy.wait_group(0)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(g_idx), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB.index(g_idx), b_base, b_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
@@ -205,12 +204,8 @@ def v6_loop_unroll(
 
         gl.amd.cdna4.async_copy.wait_group(0)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA.index(g_idx), a_base, a_offsets, mask=(k != (iterMax - 2))
-        )
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB.index(g_idx), b_base, b_offsets, mask=(k != (iterMax - 2))
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
@@ -220,11 +215,17 @@ def v6_loop_unroll(
         b_base += BLOCK_K * stride_bk
 
     ## Epilogue
-    ## iterMax - 1
+    ## iterMax - 2
+    l_idx = 1
     acc = gl.amd.cdna3.mfma(a, b, acc)
+    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+
+    ## iterMax - 1
+    acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
+
     c = acc.to(a_ptr.dtype.element_ty)
 
-    # gStoreLayoutC: gl.constexpr = mfmaLayout
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [2, 32], [4, 1], [1, 0])
     c = gl.convert_layout(c, layout=gStoreLayoutC)
     offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
