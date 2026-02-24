@@ -90,16 +90,15 @@ def clean_caches():
 def parse_tflops(output):
     """Parse TFLOPS from bench.py output.
 
-    The benchmark table has lines like:
-        (4096, 4096, 4096)     123.456
-    We grab the last float on the last such line.
+    The benchmark table (pandas-style) has lines like:
+        0  4096.0  4096.0  4096.0    123.456
+    We grab the last float on the last such data row.
     """
     tflops = None
     for line in output.splitlines():
-        # Match lines that start with a tuple like (M, N, K) and end with floats
-        m = re.search(r"\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)\s+(.+)", line)
+        # Match pandas-style data rows: index followed by M, N, K floats and TFLOPS
+        m = re.match(r"\s*\d+\s+([\d.]+\s+[\d.]+\s+[\d.]+\s+.+)", line)
         if m:
-            # The last number on the line is the TFLOPS value
             nums = re.findall(r"[\d.]+", m.group(1))
             if nums:
                 tflops = float(nums[-1])
