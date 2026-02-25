@@ -11,7 +11,7 @@ def v7_slice(
     c_ptr,
     M,
     N,
-    K,
+    K: gl.constexpr,
     stride_am,
     stride_ak,  #
     stride_bk,
