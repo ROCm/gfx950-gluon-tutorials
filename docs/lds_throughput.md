@@ -15,7 +15,7 @@ but they are solved in different ways and by different parts of the kernel desig
 In this tutorial, we focus on building an accurate mental model of `ds_read` throughput. 
 Latency will reappear in another doc, when we discuss prefetching and pipeline depth.
 
-## The basic mental model for throughput
+## 1. The basic mental model for throughput
 
 A `ds_read` instruction moves data through several stages before it becomes usable by the compute instructions. 
 Conceptually, the data flows in the following order:
@@ -31,7 +31,7 @@ The slowest stage determines the **steady-state throughput** of `ds_read`.
 For concreteness, we focus on `ds_read_b128`.
 
 
-### Instruction issue: SQ is not the bottleneck
+### 1.1. Instruction issue: SQ is not the bottleneck
 
 The first stage is instruction issue. 
 A `ds_read` is issued by the SQ to a wave executing on a SIMD. 
@@ -47,7 +47,7 @@ If nothing else applied back-pressure, the SQ would happily over-issue LDS loads
 This observation is important: any sustained throughput limit must come from downstream stages.
 
 
-### Address transfer: SIMD to LDS
+### 1.2. Address transfer: SIMD to LDS
 
 Before LDS can service a `ds_read` request, the addresses must be delivered from the SIMDs to LDS. 
 This address transfer is an explicit part of the dataflow and is worth understanding, 
@@ -64,7 +64,7 @@ This address transfer happens before LDS can service the request,
 but it is fast relative to the rest of the pipeline.
 
 
-### LDS service: the first real limit
+### 1.3. LDS service: the first real limit
 
 LDS is organized as 64 banks, each 4 bytes wide, 
 giving a total service bandwidth of 256 bytes per cycle.
@@ -80,7 +80,7 @@ at a rate faster than one per 16 cycles in steady state.
 At this point, LDS already looks like a throughput limiter.
 
 
-### Data return: bus bandwidth matches LDS
+### 1.4. Data return: bus bandwidth matches LDS
 
 After LDS services the request, data must be delivered back to the SIMDs. 
 The bus connecting each SP and LDS is bi-directional, with a bandwidth of 128 bytes per cycle in each direction. 
@@ -95,7 +95,7 @@ In other words, LDS and the LDS-to-SIMD bus are balanced,
 and together they define the steady-state throughput of `ds_read_b128`.
 
 
-### Steady-state throughput of `ds_read_b128`
+### 1.5. Steady-state throughput of `ds_read_b128`
 
 Putting all stages together, we arrive at a clear picture:
 
@@ -112,7 +112,7 @@ Therefore, in steady state:
 This number describes **throughput**, not latency.
 
 
-## Why this matters for instruction scheduling
+## 2. Why this matters for instruction scheduling
 
 Once the throughput of `ds_read_b128` is understood, 
 instruction scheduling becomes much more systematic. 
@@ -127,7 +127,7 @@ When done correctly, latency is hidden and throughput is fully utilized.
 This idea - separating latency hiding from throughput saturation - will reappear throughout the kernel optimization journey and is central to building high-performance LDS-heavy kernels.
 
 
-## `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
+## 3. `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
 
 So far, we have used `ds_read_b128` as the primary example. 
 The same mental model, however, also applies to `ds_read_b64`, 
@@ -149,7 +149,7 @@ Issuing one `ds_read_b128` is exactly equivalent to issuing two `ds_read_b64` in
 Both transfer the same total amount of data from LDS, 
 and both fully saturate the LDS system when issued at their respective rates.
 
-### Why the choice still matters
+### 3.1. Why the choice still matters
 
 Even though the bandwidth is the same, 
 `ds_read_b64` and `ds_read_b128` differ in how they interact with the rest of the kernel.
@@ -180,7 +180,7 @@ This trade-off is not theoretical -
 it shows up directly when tuning kernels that are transitioning from naive LDS usage to pipelined designs.
 
 
-## LDS bank conflicts and their impact on throughput
+## 4. LDS bank conflicts and their impact on throughput
 
 The LDS service rates discussed so far describe the peak capability of the hardware. 
 Achieving this peak requires that LDS accesses be bank-conflict free. 
@@ -238,7 +238,7 @@ but also for ensuring that LDS accesses are bank-conflict free and capable of re
 > The experiment and ATTViewer traces are available [here](../experiments/lds_throughput_validation).
 
 
-## Latency is real — but it is solved differently
+## 5. Latency is real — but it is solved differently
 
 None of the above implies that `ds_read` latency is unimportant. 
 On the contrary, a `ds_read_b128` has a long latency, 
@@ -257,7 +257,7 @@ such as over-issuing LDS loads in an attempt to hide latency,
 which only creates back-pressure without increasing bandwidth.
 
 
-## A note on future LDS designs
+## 6. A note on future LDS designs
 
 The throughput limits discussed so far are not fundamental properties of LDS as a concept; 
 they are properties of a specific hardware implementation.
