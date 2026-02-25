@@ -95,16 +95,16 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 | v2      |    647 |   353 |         — |                            |
 | v3      |    700 |   420 |       43% |                            |
 | v4      |    984 |   446 |       57% |                            |
-| v5      |   1000 |   452 |       59% |                            |
-| v5      |   1123 |     — |       76% | + llirSched                |
-| v6      |   1025 |   444 |       61% |                            |
-| v6      |   1105 |     — |       84% | + llirSched                |
-| v7      |   1088 |   494 |       64% |                            |
-| v7      |   1273 |     — |       77% | + llirSched                |
-| v7      |   1378 |     — |       97% | + llirSched + amdgcnSched  |
-| v8      |   1046 |   512 |       58% |                            |
-| v8      |   1262 |     — |       74% | + llirSched                |
-| v8      |   1449 |     — |       97% | + llirSched + amdgcnSched  |
+| v5      |    983 |   452 |       58% |                            |
+| v5      |   1119 |     — |       76% | + llirSched                |
+| v6      |   1015 |   512 |       61% |                            |
+| v6      |   1122 |     — |       88% | + llirSched                |
+| v7      |   1128 |   496 |       65% |                            |
+| v7      |   1244 |     — |       79% | + llirSched                |
+| v7      |   1341 |     — |       98% | + llirSched + amdgcnSched  |
+| v8      |   1137 |   466 |       67% |                            |
+| v8      |   1251 |     — |       77% | + llirSched                |
+| v8      |   1405 |     — |       99% | + llirSched + amdgcnSched  |
 
 Performance is measured and explained using:
 
