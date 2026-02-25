@@ -62,7 +62,7 @@ def v8_beyond_hotloop(
     c_ptr,
     M,
     N,
-    K,
+    K: gl.constexpr,
     stride_am,
     stride_ak,  #
     stride_bk,
