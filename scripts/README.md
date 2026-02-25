@@ -8,25 +8,27 @@ Automates running benchmarks across kernel versions and scheduler configs, colle
 
 ### Prerequisites
 
-- Must be run from the `kernels/gemm/a16w16/` directory
 - Requires `rocprofv3` and the ATT decoder library
-- Requires `bench.py` in the current directory
 
 ### Usage
 
 ```bash
-cd kernels/gemm/a16w16
-python ../../../scripts/run_perf_table.py [OPTIONS]
+# a16w16 kernels (run from anywhere):
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+
+# a8w8 kernel (run from anywhere):
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--versions` | `5 6 7 8` | Kernel versions to benchmark |
+| `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16` or `a8w8`) |
+| `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
 | `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
-| `--dtype` | `fp16` | Data type (`fp16` or `bf16`) |
+| `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 
 ### Configs
 
@@ -38,22 +40,28 @@ Each config sets different environment variables before running the benchmark:
 
 ### Examples
 
-Run all versions with all configs:
+Run all a16w16 versions with all configs:
 
 ```bash
-python ../../../scripts/run_perf_table.py
+python scripts/run_perf_table.py
 ```
 
 Compare v7 and v8 under base and llir configs:
 
 ```bash
-python ../../../scripts/run_perf_table.py --versions 7 8 --configs base llir
+python scripts/run_perf_table.py --versions 7 8 --configs base llir
 ```
 
 Run a single version with a specific K and dtype:
 
 ```bash
-python ../../../scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf16
+python scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf16
+```
+
+Run a8w8 kernel benchmark:
+
+```bash
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 ```
 
 ### Output
