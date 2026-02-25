@@ -182,10 +182,13 @@ it shows up directly when tuning kernels that are transitioning from naive LDS u
 
 ## 4. LDS bank conflicts and their impact on throughput
 
-The LDS service rates discussed so far describe the peak capability of the hardware. 
-Achieving this peak requires that LDS accesses be bank-conflict free. 
-In practice, this assumption does not always hold, and when it does not, 
+The LDS service rates discussed so far describe the peak capability of the hardware.
+Achieving this peak requires that LDS accesses be bank-conflict free.
+In practice, this assumption does not always hold, and when it does not,
 the effect on performance can be dramatic.
+
+For a practical demonstration of how layout design affects bank conflicts,
+see the [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md).
 
 LDS is organized into 64 banks, each servicing one 4-byte access per cycle. 
 When a `ds_read` instruction reaches LDS, the 64 threads in a wave are not serviced individually. 
@@ -279,3 +282,8 @@ but the mental model remains the same:
 steady-state throughput is determined by the slowest stage in the data path.
 
 Understanding that model today makes it much easier to reason about performance tomorrow.
+
+
+## 7. See Also
+
+- [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md) — Practical application of the throughput model to evaluate LDS layout designs (raw, swizzling, padding).

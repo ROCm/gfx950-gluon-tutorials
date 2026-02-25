@@ -1,5 +1,9 @@
 # v3_lds — Designing and Evaluating LDS Data Layouts
 
+> [!NOTE]
+> **Prerequisites:** This tutorial assumes familiarity with `ds_read` throughput concepts.
+> Before proceeding, read [Understanding ds_read Throughput](../../../../docs/lds_throughput.md).
+
 ## 1. Directory Structure
 
 ```
