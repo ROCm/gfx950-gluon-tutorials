@@ -6,8 +6,12 @@ Automates running benchmarks across kernel versions and scheduler configs,
 collecting TFLOPS, VGPR count, spills, and MFMA efficiency, then printing
 a markdown performance table.
 
-Usage (run from kernels/gemm/a16w16/):
-    python ../../../scripts/run_perf_table.py --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+Usage:
+    # a16w16 kernels (run from anywhere):
+    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+
+    # a8w8 kernel (run from anywhere):
+    python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 """
 
 import argparse
@@ -71,20 +75,22 @@ def get_git_root():
     return result.stdout.strip()
 
 
-def write_att_config(version_dir):
+def write_att_config(version_dir, work_dir=None):
     """Write att_matmul.json with kernel_include_regex set to the version dir name."""
     cfg = json.loads(json.dumps(ATT_MATMUL_TEMPLATE))
     cfg["jobs"][0]["kernel_include_regex"] = version_dir
-    with open("att_matmul.json", "w") as f:
+    att_path = os.path.join(work_dir, "att_matmul.json") if work_dir else "att_matmul.json"
+    with open(att_path, "w") as f:
         json.dump(cfg, f, indent=4)
 
 
-def clean_caches():
+def clean_caches(work_dir=None):
     """Remove triton cache and local tmp/ directory."""
     if os.path.isdir(TRITON_CACHE):
         shutil.rmtree(TRITON_CACHE)
-    if os.path.isdir("tmp"):
-        shutil.rmtree("tmp")
+    tmp_dir = os.path.join(work_dir, "tmp") if work_dir else "tmp"
+    if os.path.isdir(tmp_dir):
+        shutil.rmtree(tmp_dir)
 
 
 def parse_tflops(output):
@@ -139,18 +145,25 @@ def parse_amdgcn_metadata(version_dir):
     return vgprs, spills
 
 
-def run_benchmark(version, config, K, dtype):
-    """Run a single benchmark for the given version and config.
+def run_benchmark(version, config, K, dtype, kernel="a16w16"):
+    """Run a single benchmark for the given version, config, and kernel type.
 
     Returns a dict with keys: tflops, vgprs, spills, mfma_eff, or None values on failure.
     """
-    version_dir = VERSION_MAP[version]
+    git_root = get_git_root()
+
+    if kernel == "a8w8":
+        version_dir = "a8w8_kernel"
+        work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
+    else:
+        version_dir = VERSION_MAP[version]
+        work_dir = os.path.join(git_root, "kernels", "gemm", "a16w16")
+
     result = {"version_dir": version_dir, "tflops": None, "vgprs": None, "spills": None, "mfma_eff": None}
 
-    clean_caches()
-    write_att_config(version_dir)
+    clean_caches(work_dir)
+    write_att_config(version_dir, work_dir)
 
-    git_root = get_git_root()
     run_att_path = os.path.join(git_root, "scripts", "run_att.py")
 
     env = os.environ.copy()
@@ -166,17 +179,21 @@ def run_benchmark(version, config, K, dtype):
         "--att-output", "tmp",
         "python", "bench.py",
         "--K", str(K),
-        "--dtype", dtype,
-        "--version", str(version),
     ]
+    if kernel != "a8w8":
+        cmd.extend(["--dtype", dtype, "--version", str(version)])
 
-    print(f"  Running: v{version} ({version_dir}) config={config}")
+    if kernel == "a8w8":
+        print(f"  Running: a8w8 config={config}")
+    else:
+        print(f"  Running: v{version} ({version_dir}) config={config}")
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             env=env,
+            cwd=work_dir,
         )
         combined = proc.stdout + "\n" + proc.stderr
 
@@ -231,11 +248,17 @@ def parse_args():
         description="Run benchmarks across kernel versions and configs, print a performance table."
     )
     parser.add_argument(
+        "--kernel",
+        choices=["a16w16", "a8w8"],
+        default="a16w16",
+        help="Kernel type to benchmark (default: a16w16)",
+    )
+    parser.add_argument(
         "--versions",
         type=int,
         nargs="+",
         default=[5, 6, 7, 8],
-        help="Kernel versions to benchmark (default: 5 6 7 8)",
+        help="Kernel versions to benchmark (default: 5 6 7 8). Ignored for a8w8.",
     )
     parser.add_argument(
         "--configs",
@@ -254,7 +277,7 @@ def parse_args():
         "--dtype",
         default="fp16",
         choices=["fp16", "bf16"],
-        help="Data type for benchmark (default: fp16)",
+        help="Data type for benchmark (default: fp16). Ignored for a8w8.",
     )
     return parser.parse_args()
 
@@ -262,11 +285,16 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Validate versions
-    for v in args.versions:
-        if v not in VERSION_MAP:
-            print(f"Error: version {v} not in VERSION_MAP. Valid: {list(VERSION_MAP.keys())}")
-            sys.exit(1)
+    if args.kernel == "a8w8":
+        # a8w8 has a single kernel, --versions is ignored
+        versions = [None]
+    else:
+        # Validate versions for a16w16
+        for v in args.versions:
+            if v not in VERSION_MAP:
+                print(f"Error: version {v} not in VERSION_MAP. Valid: {list(VERSION_MAP.keys())}")
+                sys.exit(1)
+        versions = args.versions
 
     # Collect results grouped by config
     results = {}
@@ -275,8 +303,8 @@ def main():
         print(f"Config: {config}")
         print(f"{'='*60}")
         results[config] = []
-        for version in args.versions:
-            row = run_benchmark(version, config, args.K, args.dtype)
+        for version in versions:
+            row = run_benchmark(version, config, args.K, args.dtype, kernel=args.kernel)
             results[config].append(row)
 
     # Print summary tables
