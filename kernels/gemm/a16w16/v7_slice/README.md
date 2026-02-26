@@ -121,21 +121,21 @@ The pipeline now has 4 regions per unrolled iteration (2 sub-iterations × 2 sli
 ```
 Main Loop (step = 2):
     Region 0: MFMA(A, B_left) → acc_left       [registers: a, b_left]
-              load B_right from LDS             [registers: b_right_next]
+              load B_right from LDS             [registers: b_right]
               async_copy A, B_left for next
 
     Region 1: MFMA(A, B_right) → acc_right     [registers: a, b_right]
-              load A, B_left from LDS           [registers: a_next, b_left_next]
+              load A, B_left from LDS           [registers: a_next, b_left]
               async_copy B_right for next
 
     --- Loop unroll separator ---
 
-    Region 2: MFMA(A, B_left) → acc_left       [registers: a, b_left]
-              load B_right from LDS             [registers: b_right_next]
+    Region 2: MFMA(A, B_left) → acc_left       [registers: a_next, b_left]
+              load B_right from LDS             [registers: b_right]
               async_copy A, B_left for next
 
-    Region 3: MFMA(A, B_right) → acc_right     [registers: a, b_right]
-              load A, B_left from LDS           [registers: a_next, b_left_next]
+    Region 3: MFMA(A, B_right) → acc_right     [registers: a_next, b_right]
+              load A, B_left from LDS           [registers: a, b_left]
               async_copy B_right for next
 ```
 
