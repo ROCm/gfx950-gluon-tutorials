@@ -173,7 +173,7 @@ This allows the store for `acc_left` to overlap with the final MFMA for `acc_rig
 |--------------------------------|--------|-------|--------|-----------|
 | v6 + LLIR scheduler            |   1119 |   500 |     51 |       88% |
 | v7 + LLIR scheduler            |   1226 |   512 |    116 |       79% |
-| v7 + LLIR scheduler + amdgcnas |   1335 |     — |      0 |       98% |
+| v7 + LLIR scheduler + amdgcnas |   1335 |   465 |      0 |       98% |
 
 **Copies** counts `v_accvgpr_mov` and `v_mov` instructions inside the main loop — these are AGPR ↔ VGPR copy instructions that move data between accumulator registers and vector registers.
 
