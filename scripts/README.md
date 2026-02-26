@@ -81,12 +81,43 @@ If a run fails (e.g. an assertion in the scheduler), the row shows `FAIL` for th
 
 ## run_att.py
 
-Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then post-processes the trace with `process_json.py`.
+Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then automatically post-processes the trace with `process_json.py` to extract MFMA efficiency and timing breakdowns.
+
+### Prerequisites
+
+- Requires `rocprofv3` and the ATT decoder library
+- Requires an `att_matmul.json` config file in the current directory
+
+> [!IMPORTANT]
+> The script sets `ROCPROF_ATT_LIBRARY_PATH` to an example path that may not match your system.
+> Update the path in `run_att.py` at line 31 (in `run_rocprof_att()`) to point to your ATT decoder library location.
+
+### Usage
+
+```bash
+python scripts/run_att.py --att-output <output_dir> <python_command>
+```
+
+### Options
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--att-output` | Yes | Output directory for rocprofv3 ATT traces |
+
+### Examples
+
+Profile a16w16 kernel v8:
 
 ```bash
 cd kernels/gemm/a16w16
 python ../../../scripts/run_att.py --att-output tmp python bench.py --K 4096 --dtype fp16 --version 8
 ```
+
+### What It Does
+
+1. Runs `rocprofv3 --att` with the specified Python command
+2. Locates the generated `ui_*` output directory
+3. Calls `process_json.py` to analyze the traces and print results
 
 ## process_json.py
 
