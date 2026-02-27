@@ -69,9 +69,10 @@ The gfx9 architecture provides exactly 512 registers per SIMD. Beyond the tile d
 
 The 512-register count is a block-level upper bound. At the instruction level, the register allocator reuses registers when live ranges do not overlap. For example, if a `ds_read` is scheduled *after* the MFMA that consumes its previous result, they can share registers. This explains why the generated code avoids spills even when the block-level analysis suggests we exceed the budget.
 
-In [v3_lds](../v3_lds/README.md), we introduced the principle of reasoning at the block level rather than the instruction level. The same principle applies here: we analyze register requirements at the block level and let the backend handle fine-grained scheduling and reuse. Instruction-level optimizations can recover a few registers at the margins, but we should not rely on them to fit a tight budget — and we don't have to.
-
-This may seem counter-intuitive, but register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom, and the backend executes. This separation of concerns — block-level design, instruction-level execution — is central to the Gluon approach.
+> [!IMPORTANT]
+> In [v3_lds](../v3_lds/README.md), we introduced the principle of reasoning at the block level rather than the instruction level. The same principle applies here: we analyze register requirements at the block level and let the backend handle fine-grained scheduling and reuse. Instruction-level optimizations can recover a few registers at the margins, but we should not rely on them to fit a tight budget — and we don't have to.
+>
+> This may seem counter-intuitive, but register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom, and the backend executes. This separation of concerns — block-level design, instruction-level execution — is central to the Gluon approach.
 
 ### 2.3. The Need for Slicing
 
@@ -81,7 +82,7 @@ Although register reuse prevents spills, the pressure remains high, leaving litt
 
 Reuse alone is insufficient. We need to reduce register usage **by design**.
 
-> [!IMPORTANT]
+> [!TIP]
 > Slicing along M or N halves the register usage for one input tile:
 > - Slice along M → halve A tile registers
 > - Slice along N → halve B tile registers
