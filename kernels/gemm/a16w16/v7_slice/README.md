@@ -202,7 +202,7 @@ For compute-bound GEMM with large K dimension, approximately 95% of kernel time 
 
 Removing all `v_accvgpr` copy instructions inside the loop increases MFMA efficiency to 96%.
 
-![v7 RA-only bottleneck](images/v7_RAonly_bottleneck.png)
+![v7 RA-only bottleneck](../images/v7_RAonly_bottleneck.png)
 
 The trace shows that removing `v_accvgpr` copies also eliminates the long stalls from VALU instructions due to DIDT protection. The remaining bottleneck is scattered non-MFMA execution regions — typically several SALU instructions issued back-to-back, especially across iteration boundaries.
 
