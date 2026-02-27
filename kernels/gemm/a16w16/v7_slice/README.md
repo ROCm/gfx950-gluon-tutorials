@@ -111,7 +111,7 @@ smemB_right = gl.allocate_shared_memory(
 )
 ```
 
-Similarly, we maintain two separate accumulators:
+Similarly, two separate accumulators are maintained:
 
 ```python
 acc_left = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
@@ -120,7 +120,7 @@ acc_right = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfmaLayout)
 
 ### 3.2. Pipeline Structure
 
-The pipeline now has 4 regions per unrolled iteration (2 sub-iterations × 2 slices):
+The pipeline contains 4 regions per unrolled iteration (2 sub-iterations × 2 slices):
 
 ```
 Main Loop (step = 2):
@@ -145,13 +145,13 @@ Main Loop (step = 2):
 
 ### 3.3. Key Insight: Staggered B Loads
 
-The critical optimization is that we don't load both B_left and B_right at the same time:
+The critical optimization is staggering B_left and B_right loads:
 
-1. Load A and B_left together (they're needed for the first MFMA)
+1. Load A and B_left together (required for the first MFMA)
 2. While MFMA computes with B_left, load B_right
 3. While MFMA computes with B_right, load next iteration's A and B_left
 
-This staggered loading reduces the peak register usage for B operands by half.
+This staggered pattern halves peak register usage for B operands.
 
 ### 3.4. Sliced Epilogue
 
@@ -169,7 +169,7 @@ c_right = acc_right.to(a_ptr.dtype.element_ty)
 gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_right_offsets, stored_value=c_right)
 ```
 
-This allows the store for `acc_left` to overlap with the final MFMA for `acc_right`.
+Storing `acc_left` overlaps with the final MFMA computing `acc_right`.
 
 ## 4. Performance Analysis
 
