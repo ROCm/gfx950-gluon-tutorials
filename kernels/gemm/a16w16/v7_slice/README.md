@@ -231,4 +231,4 @@ The trace below shows tightly packed MFMA instructions with minimal gaps between
 
 ## 5. What Comes Next
 
-In `v8_beyond_hotloop`, we explore optimizations beyond the main loop, including prologue/epilogue improvements and additional scheduling techniques.
+With 98% MFMA efficiency, the main loop is essentially complete. In `v8_beyond_hotloop`, we shift focus to optimizations outside the loop — prologue, epilogue, and other regions that now dominate the remaining overhead.
