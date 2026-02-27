@@ -212,7 +212,7 @@ We developed **amdgcnas**, an assembly processor that applies peephole optimizat
 TRITON_ENABLE_AMDGCN_AS=1
 ```
 
-The amdgcnas pass includes the RA flags described above, plus additional peephole optimizations. The RA-only configuration achieves higher TFLOPS (1405 vs 1335) due to better instruction cache behavior, while amdgcnas achieves higher MFMA efficiency (98% vs 96%) by eliminating more non-MFMA gaps. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
+The amdgcnas pass includes the RA flags described above, plus additional peephole optimizations. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
 
 ### 4.4. Performance Collection
 
