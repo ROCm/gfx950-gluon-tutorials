@@ -177,7 +177,7 @@ This allows the store for `acc_left` to overlap with the final MFMA for `acc_rig
 | v7 + LLIR scheduler + RA       |   1405 |   460 |      0 |       96% |
 | v7 + LLIR scheduler + amdgcnas |   1335 |   460 |      0 |       98% |
 
-**Copies** counts `v_accvgpr_mov` and `v_mov` instructions inside the main loop — these are AGPR ↔ VGPR copy instructions that move data between accumulator registers and vector registers.
+**Copies** counts `v_accvgpr_*` and `v_mov` instructions inside the main loop — these are AGPR ↔ VGPR copy instructions that move data between accumulator registers and vector registers.
 
 ### 4.1. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
 
@@ -212,7 +212,7 @@ We developed **amdgcnas**, an assembly processor that applies peephole optimizat
 TRITON_ENABLE_AMDGCN_AS=1
 ```
 
-The amdgcnas pass includes the RA workaround described above. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.
+The amdgcnas pass includes the RA flags described above, plus additional peephole optimizations. The RA-only configuration achieves higher TFLOPS (1405 vs 1335) due to better instruction cache behavior, while amdgcnas achieves higher MFMA efficiency (98% vs 96%) by eliminating more non-MFMA gaps. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
 
 ### 4.4. Performance Collection
 
