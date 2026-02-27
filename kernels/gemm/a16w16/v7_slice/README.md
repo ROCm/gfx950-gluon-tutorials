@@ -173,12 +173,45 @@ This allows the store for `acc_left` to overlap with the final MFMA for `acc_rig
 |--------------------------------|--------|-------|--------|-----------|
 | v6 + LLIR scheduler            |   1119 |   500 |     51 |       88% |
 | v7 + LLIR scheduler            |   1226 |   512 |    116 |       79% |
-| v7 + LLIR scheduler + RA       |   1405 |   465 |      0 |       96% |
-| v7 + LLIR scheduler + amdgcnas |   1335 |   465 |      0 |       98% |
+| v7 + LLIR scheduler + RA       |   1405 |   460 |      0 |       96% |
+| v7 + LLIR scheduler + amdgcnas |   1335 |   460 |      0 |       98% |
 
 **Copies** counts `v_accvgpr_mov` and `v_mov` instructions inside the main loop — these are AGPR ↔ VGPR copy instructions that move data between accumulator registers and vector registers.
 
-With full scheduling optimization (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum. The amdgcnas pass eliminates all copy instructions inside the loop, removing a significant source of overhead.
+### 4.1 v7 + LLIR scheduler vs v6 + LLIR scheduler
+
+The v7_slice kernel is designed to reduce register pressure through N-slicing. However, comparing the assembly code reveals that v7 actually uses *more* registers (512 vs 500) and has *more* copy instructions inside the loop (116 vs 51). This indicates that the backend register allocator did not find the optimal register assignment for v7_slice. Despite the kernel design requiring fewer registers, the backend's allocation strategy makes things worse.
+
+The LLIR scheduler addresses instruction scheduling based on the Gluon kernel design. Now we need something similar to address register allocation based on the Gluon kernel design.
+
+### 4.2 Register Allocation Workaround
+
+The RA row is achieved using the following LLVM flags to force the OpC (input accumulator) and Dst (output accumulator) registers to use the same AGPRs for each MFMA instruction:
+
+```
+-amdgpu-mfma-vgpr-form=False
+-amdgpu-agpr-alloc=256
+```
+
+By forcing all MFMA OpC and Dst operands to use the same AGPRs, the register allocator has more VGPRs available for other variables, which simplifies its allocation decisions. However, this is not the optimal solution — using AGPRs for all MFMA operands means the epilogue will have the maximum number of `v_accvgpr` copy instructions before the `v_cvt` instructions, which require MFMA results as input but can only read from VGPRs.
+
+For compute-bound GEMM with large K dimension, approximately 95% of kernel time is spent inside the loop, so the epilogue overhead is acceptable. This workaround allows us to explore other bottlenecks while the backend team works on proper solutions.
+
+As shown in the table, removing all `v_accvgpr` copy instructions inside the loop increases MFMA efficiency to 96%.
+
+![v7 RA-only bottleneck](images/v7_RAonly_bottleneck.png)
+
+The trace above shows that removing `v_accvgpr` copies also eliminates the long stalls from VALU instructions due to DIDT protection. The remaining bottleneck is scattered non-MFMA execution regions — typically several SALU instructions issued back-to-back, especially across iteration boundaries.
+
+### 4.3 amdgcnas Assembly Processor
+
+We developed **amdgcnas**, an assembly processor that applies peephole optimizations to squeeze the last percent of MFMA efficiency inside the loop. Enable it with:
+
+```bash
+TRITON_ENABLE_AMDGCN_AS=1
+```
+
+The amdgcnas pass includes the RA workaround described above. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.
 
 Performance is collected using:
 ```bash
