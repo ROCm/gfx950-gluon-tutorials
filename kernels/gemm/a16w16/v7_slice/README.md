@@ -19,9 +19,9 @@ In previous versions, each iteration computes a full 256×256 output tile, requi
 - B tile: 64×256
 - C tile (accumulator): 256×256
 
-As discussed in v5, local prefetch breaks the dependency between `ds_read` and MFMA by issuing `ds_read` for the next iteration while the current MFMA executes. The cost is higher register pressure: since `ds_read` and MFMA have overlapping live ranges, each input tile requires two sets of registers.
+As discussed in v5, local prefetch breaks the dependency between `ds_read` and MFMA by loading data for the next iteration while the current MFMA executes. The cost is higher register pressure: the overlapping live ranges of `ds_read` and MFMA mean each input tile requires two sets of registers.
 
-This section analyzes the register requirements and motivates the need for slicing.
+This section analyzes register requirements and motivates the need for slicing.
 
 ### 2.1. Register Usage Analysis
 
@@ -33,14 +33,14 @@ registers = (M × N × elemType × sharing_factor) / (num_warps × waveSize)
 
 Where:
 - `M × N`: tile size in elements
-- `elemType`: size in dwords (32-bit). fp16 = 0.5, fp32 = 1.0
-- `sharing_factor`: number of warps sharing the same data (from `warpsPerCTA` layout)
+- `elemType`: size in dwords (32-bit units). fp16 = 0.5, fp32 = 1.0
+- `sharing_factor`: number of warps sharing the same data (determined by `warpsPerCTA` layout)
 - `num_warps`: 4 in our kernel
 - `waveSize`: 64 for gfx9
 
 **Understanding sharing_factor:**
 
-The `warpsPerCTA` layout determines which warps share data:
+The `warpsPerCTA` layout determines how warps share data:
 - With `warpsPerCTA = [2, 2]` (our GEMM kernel):
   - A tile: waves 0,1 share; waves 2,3 share → `sharing_factor = 2`
   - B tile: waves 0,2 share; waves 1,3 share → `sharing_factor = 2`
@@ -60,20 +60,18 @@ The `warpsPerCTA` layout determines which warps share data:
 
 **Total: 128 + 128 + 256 = 512 registers**
 
-The gfx9 architecture provides exactly 512 registers per SIMD. Additional registers are needed for:
+The gfx9 architecture provides exactly 512 registers per SIMD. Beyond the tile data, additional registers are needed for:
 - `ds_read` addresses (1 per tensor)
 - `buffer_load` addresses (1 per load)
 - Temporaries and scalar values
 
 ### 2.2. Block-Level vs. Instruction-Level Analysis
 
-The 512-register count is a block-level upper bound. At the instruction level, the register allocator reuses registers when live ranges do not overlap.
+The 512-register count is a block-level upper bound. At the instruction level, the register allocator reuses registers when live ranges do not overlap. For example, if a `ds_read` is scheduled *after* the MFMA that consumes its previous result, they can share registers. This explains why the generated code avoids spills even when the block-level analysis suggests we exceed the budget.
 
-For example, if a `ds_read` is scheduled *after* the MFMA that consumes its previous result, they can share registers. This is why the generated code avoids spills despite the block-level analysis suggesting we exceed the budget.
+In [v3_lds](../v3_lds/README.md), we introduced the principle of reasoning at the block level rather than the instruction level. The same principle applies here: we analyze register requirements at the block level and let the backend handle fine-grained scheduling and reuse. Instruction-level optimizations can recover a few registers at the margins, but we should not rely on them to fit a tight budget — and we don't have to.
 
-In [v3_lds](../v3_lds/README.md), we introduced the idea of thinking at the block level rather than the instruction level. The same principle applies to register analysis: we reason about register requirements at the block level, and let the backend handle fine-grained scheduling and register reuse. Instruction-level optimizations can recover a few registers at the margins, but we should not rely on them to fit a tight budget — and we don't have to.
-
-This may seem counter-intuitive, but register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom, and the backend simply executes. This separation of concerns — block-level design, instruction-level execution — is a recurring theme in the Gluon approach.
+This may seem counter-intuitive, but register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom, and the backend executes. This separation of concerns — block-level design, instruction-level execution — is central to the Gluon approach.
 
 ### 2.3. The Need for Slicing
 
@@ -88,14 +86,14 @@ Reuse alone is insufficient. We need to reduce register usage **by design**.
 > - Slice along M → halve A tile registers
 > - Slice along N → halve B tile registers
 
-In this version, we slice along N. The B tile now requires 64 registers instead of 128:
+In this version, we slice along N, reducing the B tile from 128 to 64 registers:
 
 **New total: 128 + 64 + 256 = 448 registers**
 
 This provides sufficient headroom for the backend and future extensions.
 
 > [!NOTE]
-> M and N are output dimensions, not the accumulation dimension (K). Slicing along M or N doubles the number of output tiles without increasing the number of workgroups. This is the same principle underlying **persistent kernels**: each workgroup iterates over multiple output tiles rather than computing a single tile and terminating. The result is reduced register pressure per tile while maintaining the same total computation.
+> M and N are output dimensions, not the accumulation dimension (K). Slicing along M or N doubles the number of output tiles without increasing the number of workgroups. This is the principle underlying **persistent kernels**: each workgroup iterates over multiple output tiles rather than computing one and terminating. The result is reduced register pressure per tile while maintaining the same total computation.
 
 ## 3. Slicing Design
 
