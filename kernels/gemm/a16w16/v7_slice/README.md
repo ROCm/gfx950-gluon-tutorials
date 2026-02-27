@@ -8,6 +8,7 @@ v7_slice/
 ├── README.md                               # This file
 ├── ir_dump_K8192_fp16/                     # IR dumps for analysis
 ├── ir_dump_K8192_fp16_llirSched/           # IR dumps with LLIR scheduler
+├── ir_dump_K8192_fp16_llirSched_RA/        # IR dumps with LLIR scheduler + RA
 └── ir_dump_K8192_fp16_llirSched_amdgcnas/  # IR dumps with LLIR scheduler + amdgcnas
 ```
 
