@@ -197,7 +197,7 @@ The RA row is achieved using the following LLVM flags to force the OpC (input ac
 -amdgpu-agpr-alloc=256
 ```
 
-By forcing all MFMA OpC and Dst operands to use the same AGPRs, the register allocator has more VGPRs available for other variables, simplifying its allocation decisions. However, this is not the optimal solution — using AGPRs for all MFMA operands means the epilogue will have the maximum number of `v_accvgpr` copy instructions before the `v_cvt` instructions, which require MFMA results as input but can only read from VGPRs.
+By forcing all MFMA OpC and Dst operands to use the same AGPRs, the register allocator has more VGPRs available for other variables, simplifying its allocation decisions. However, this is not the optimal solution — using AGPRs for all MFMA Dst means the epilogue will have the maximum number of `v_accvgpr` copy instructions before the `v_cvt` instructions, which require MFMA results as input but can only read from VGPRs.
 
 For compute-bound GEMM with large K dimension, approximately 95% of kernel time is spent inside the loop, so the epilogue overhead is acceptable. This workaround allows us to explore other bottlenecks while the backend team works on proper solutions.
 
