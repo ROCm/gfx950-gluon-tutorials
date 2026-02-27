@@ -173,6 +173,16 @@ This allows the store for `acc_left` to overlap with the final MFMA for `acc_rig
 
 ## 4. Performance Analysis
 
+### 4.1. Performance Collection
+
+Performance is collected using:
+```bash
+python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+amdgcnas --K 8192 --dtype fp16
+```
+This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details.
+
+For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
+
 | Version                        | TFLOPS | VGPRs | Copies | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
 | v6 + LLIR scheduler            |   1119 |   500 |     51 |       88% |
@@ -182,13 +192,13 @@ This allows the store for `acc_left` to overlap with the final MFMA for `acc_rig
 
 **Copies** counts `v_accvgpr_*` and `v_mov` instructions inside the main loop — these are AGPR ↔ VGPR copy instructions that move data between accumulator registers and vector registers.
 
-### 4.1. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
+### 4.2. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
 
 The v7_slice kernel is designed to reduce register pressure through N-slicing. However, comparing the assembly code reveals that v7 uses *more* registers (512 vs 500) and has *more* copy instructions inside the loop (116 vs 51). This indicates that the backend register allocator did not find the optimal register assignment for v7_slice. Despite the kernel design requiring fewer registers, the backend's allocation strategy increases overhead.
 
 The LLIR scheduler addresses instruction scheduling based on the Gluon kernel design. Now we need something similar to address register allocation.
 
-### 4.2. Register Allocation Workaround
+### 4.3. Register Allocation Workaround
 
 The RA row is achieved using the following LLVM flags to force the OpC (input accumulator) and Dst (output accumulator) registers to use the same AGPRs for each MFMA instruction:
 
@@ -207,7 +217,7 @@ Removing all `v_accvgpr` copy instructions inside the loop increases MFMA effici
 
 The trace shows that removing `v_accvgpr` copies also eliminates the long stalls from VALU instructions due to DIDT protection. The remaining bottleneck is scattered non-MFMA execution regions — typically several SALU instructions issued back-to-back, especially across iteration boundaries.
 
-### 4.3. amdgcnas Assembly Processor
+### 4.4. amdgcnas Assembly Processor
 
 We developed **amdgcnas**, an assembly processor that applies peephole optimizations to eliminate the remaining gaps inside the loop. Enable it with:
 
@@ -216,16 +226,6 @@ TRITON_ENABLE_AMDGCN_AS=1
 ```
 
 The amdgcnas pass includes the RA flags described above, plus additional peephole optimizations. With full scheduling optimization (LLIR scheduler + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
-
-### 4.4. Performance Collection
-
-Performance is collected using:
-```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+amdgcnas --K 8192 --dtype fp16
-```
-This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details.
-
-For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
 ## 5. What Comes Next
 
