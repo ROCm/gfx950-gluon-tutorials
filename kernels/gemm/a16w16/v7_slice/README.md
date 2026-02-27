@@ -227,7 +227,7 @@ The amdgcnas pass incorporates the RA flags above plus additional optimizations.
 
 The trace below shows tightly packed MFMA instructions with minimal gaps between iterations:
 
-![v7 LLIR scheduler + amdgcnas bottleneck](../images/v7_llirSched_amdgcnas_bottleneck.png)
+![v7 amdgcnas bottleneck](../images/v7_amdgcnas_bottleneck.png)
 
 ## 5. What Comes Next
 
