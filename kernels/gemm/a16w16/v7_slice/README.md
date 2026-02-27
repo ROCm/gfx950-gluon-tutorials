@@ -14,14 +14,14 @@ v7_slice/
 
 ## 2. Motivation
 
-In previous versions, each iteration computes a full 256×256 output tile, requiring:
+Previous versions compute a full 256×256 output tile per iteration, requiring:
 - A tile: 256×64
 - B tile: 64×256
 - C tile (accumulator): 256×256
 
-As discussed in v5, local prefetch breaks the dependency between `ds_read` and MFMA by loading data for the next iteration while the current MFMA executes. The cost is higher register pressure: the overlapping live ranges of `ds_read` and MFMA mean each input tile requires two sets of registers.
+As discussed in v5, local prefetch decouples `ds_read` from MFMA by loading data for the next iteration while the current MFMA executes. The tradeoff is increased register pressure: overlapping live ranges require two sets of registers per input tile.
 
-This section analyzes register requirements and motivates the need for slicing.
+This section quantifies register requirements and motivates slicing as a solution.
 
 ### 2.1. Register Usage Analysis
 
@@ -32,25 +32,25 @@ registers = (M × N × elemType × sharing_factor) / (num_warps × waveSize)
 ```
 
 Where:
-- `M × N`: tile size in elements
-- `elemType`: size in dwords (32-bit units). fp16 = 0.5, fp32 = 1.0
-- `sharing_factor`: number of warps sharing the same data (determined by `warpsPerCTA` layout)
+- `M × N`: tile dimensions in elements
+- `elemType`: element size in dwords (fp16 = 0.5, fp32 = 1.0)
+- `sharing_factor`: number of warps sharing the tile (determined by `warpsPerCTA`)
 - `num_warps`: 4 in our kernel
-- `waveSize`: 64 for gfx9
+- `waveSize`: 64 on gfx9
 
 **Understanding sharing_factor:**
 
-The `warpsPerCTA` layout determines how warps share data:
-- With `warpsPerCTA = [2, 2]` (our GEMM kernel):
+The `warpsPerCTA` layout determines data sharing across warps:
+- `warpsPerCTA = [2, 2]` (GEMM):
   - A tile: waves 0,1 share; waves 2,3 share → `sharing_factor = 2`
   - B tile: waves 0,2 share; waves 1,3 share → `sharing_factor = 2`
   - C tile: no sharing → `sharing_factor = 1`
-- With `warpsPerCTA = [4, 1]` (FlashAttention):
+- `warpsPerCTA = [4, 1]` (FlashAttention):
   - A tile: `sharing_factor = 1`
   - B tile: `sharing_factor = 4`
   - C tile: `sharing_factor = 1`
 
-**Calculation for our GEMM kernel:**
+**Calculation for GEMM:**
 
 | Tile | Size | elemType | sharing_factor | Base | With prefetch |
 |------|------|----------|----------------|------|---------------|
@@ -60,41 +60,41 @@ The `warpsPerCTA` layout determines how warps share data:
 
 **Total: 128 + 128 + 256 = 512 registers**
 
-The gfx9 architecture provides exactly 512 registers per SIMD. Beyond the tile data, additional registers are needed for:
+The gfx9 architecture provides exactly 512 VGPRs per SIMD. Additional registers are required for:
 - `ds_read` addresses (1 per tensor)
 - `buffer_load` addresses (1 per load)
-- Temporaries and scalar values
+- Temporaries and loop variables
 
 ### 2.2. Block-Level vs. Instruction-Level Analysis
 
-The 512-register count is a block-level upper bound. At the instruction level, the register allocator reuses registers when live ranges do not overlap. For example, if a `ds_read` is scheduled *after* the MFMA that consumes its previous result, they can share registers. This explains why the generated code avoids spills even when the block-level analysis suggests we exceed the budget.
+The 512-register figure is a block-level upper bound. At the instruction level, the register allocator exploits non-overlapping live ranges to reuse registers. For instance, if `ds_read` is scheduled after the MFMA consuming its previous result, the two can share the same physical registers. This is why generated code avoids spills despite block-level analysis suggesting otherwise.
 
 > [!IMPORTANT]
-> In [v3_lds](../v3_lds/README.md), we introduced the principle of reasoning at the block level rather than the instruction level. The same principle applies here: we analyze register requirements at the block level and let the backend handle fine-grained scheduling and reuse. Instruction-level optimizations can recover a few registers at the margins, but we should not rely on them to fit a tight budget — and we don't have to.
+> In [v3_lds](../v3_lds/README.md), we established the principle of reasoning at the block level rather than the instruction level. The same applies to register analysis: we compute requirements at the block level and delegate fine-grained scheduling and reuse to the backend. Instruction-level optimizations may recover a few registers at the margins, but we should not depend on them to meet a tight budget — nor do we need to.
 >
-> This may seem counter-intuitive, but register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom, and the backend executes. This separation of concerns — block-level design, instruction-level execution — is central to the Gluon approach.
+> Register allocation is tractable at the block level. We design the kernel in Gluon with sufficient headroom; the backend handles execution. This separation — block-level design, instruction-level execution — is central to the Gluon methodology.
 
 ### 2.3. The Need for Slicing
 
-Although register reuse prevents spills, the pressure remains high, leaving little room for:
-- Additional operations (e.g., scales, bias)
+Register reuse prevents spills, but pressure remains high, leaving little margin for:
+- Auxiliary operations (scales, bias, activation)
 - Future kernel extensions
 
-Reuse alone is insufficient. We need to reduce register usage **by design**.
+Reuse alone is insufficient. Register usage must be reduced **by design**.
 
 > [!TIP]
-> Slicing along M or N halves the register usage for one input tile:
+> Slicing along M or N halves the register footprint for one input tile:
 > - Slice along M → halve A tile registers
 > - Slice along N → halve B tile registers
 
-In this version, we slice along N, reducing the B tile from 128 to 64 registers:
+In this version, we slice along N, reducing B tile registers from 128 to 64:
 
 **New total: 128 + 64 + 256 = 448 registers**
 
-This provides sufficient headroom for the backend and future extensions.
+This headroom accommodates backend allocation overhead and future extensions.
 
 > [!NOTE]
-> M and N are output dimensions, not the accumulation dimension (K). Slicing along M or N doubles the number of output tiles without increasing the number of workgroups. This is the principle underlying **persistent kernels**: each workgroup iterates over multiple output tiles rather than computing one and terminating. The result is reduced register pressure per tile while maintaining the same total computation.
+> M and N are output dimensions, not the reduction dimension K. Slicing along M or N doubles the number of output tiles per workgroup without increasing grid size. This is the principle behind **persistent kernels**: a workgroup iterates over multiple output tiles rather than terminating after one. The result is reduced per-tile register pressure with unchanged total computation.
 
 ## 3. Slicing Design
 
