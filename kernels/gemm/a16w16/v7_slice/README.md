@@ -225,6 +225,8 @@ TRITON_ENABLE_AMDGCN_AS=1
 
 The amdgcnas pass incorporates the RA flags above plus additional optimizations. With full scheduling (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.
 
+![v7 LLIR scheduler + amdgcnas bottleneck](../images/v7_llirSched_amdgcnas_bottleneck.png)
+
 ## 5. What Comes Next
 
 In `v8_beyond_hotloop`, we explore optimizations beyond the main loop, including prologue/epilogue improvements and additional scheduling techniques.
