@@ -109,14 +109,12 @@ Each slice is 64×128, small enough to process and store efficiently while maint
 
 ## 4. Performance Analysis
 
-| Version | TFLOPS | MFMA Eff. |
-|---------|--------|-----------|
-| v7 + llirSched + amdgcnas |   1378 |       97% |
-| v8      |   1046 |       58% |
-| v8 + llirSched |   1262 |       74% |
-| v8 + llirSched + amdgcnas |   1449 |       97% |
+| Version                        | TFLOPS | MFMA Eff. |
+|--------------------------------|--------|-----------|
+| v7 + LLIR scheduler + amdgcnas |   1523 |       98% |
+| v8 + LLIR scheduler + amdgcnas |   1610 |       99% |
 
-With full scheduling optimization, v8 achieves **1449 TFLOPS** at 97% MFMA efficiency—the highest performance in this tutorial series.
+With full scheduling optimization, v8 achieves **1610 TFLOPS** at 99% MFMA efficiency — the highest performance in this tutorial series.
 
 Performance is collected using:
 ```bash
