@@ -106,7 +106,7 @@ With the LLIR scheduler enabled, MFMA efficiency improves from 76% to 88% by eli
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --use-rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 

@@ -143,7 +143,7 @@ Software pipelining delivers a **44% performance improvement** (774 → 1113 TFL
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 3 4 --configs base --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 3 4 --configs base --K 8192 --dtype fp16 --use-rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 

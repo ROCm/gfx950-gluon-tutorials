@@ -144,7 +144,7 @@ The 3-stage pipeline provides a modest improvement in the baseline case (57% →
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --use-rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 
@@ -209,7 +209,7 @@ TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 8192 --dtype fp16 --version 5
 Or when using `run_perf_table.py`, use the `llir` config:
 
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --use-rocprof
 ```
 
 The implementation is at `third_party/amd/lib/TritonAMDGPUToLLVM/LLIRSchedule.cpp`.

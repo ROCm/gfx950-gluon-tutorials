@@ -118,7 +118,7 @@ With full scheduling optimization, v8 achieves **1610 TFLOPS** at 99% MFMA effic
 
 Performance is collected using:
 ```bash
-python bench.py --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
