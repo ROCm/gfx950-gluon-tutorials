@@ -90,16 +90,20 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 
 | Version | TFLOPS | VGPRs | MFMA Eff. | Notes                      |
 |---------|--------|-------|-----------|----------------------------|
-| v0      |    524 |     — |         — | Baseline                   |
+| v0      |    524 |     — |       25% | Baseline                   |
 | v1      |    514 |     — |       24% |                            |
-| v2      |    697 |     — |         — |                            |
+| v2      |    697 |     — |       36% |                            |
 | v3      |    774 |   420 |       42% |                            |
 | v4      |   1113 |   446 |       57% |                            |
 | v5      |   1134 |   452 |       59% |                            |
 | v5      |   1283 |   510 |       76% | + llirSched                |
+| v6      |   1088 |     — |         — |                            |
 | v6      |   1260 |   500 |       88% | + llirSched                |
+| v7      |   1279 |     — |         — |                            |
 | v7      |   1411 |   512 |       79% | + llirSched                |
 | v7      |   1523 |   460 |       98% | + llirSched + amdgcnas     |
+| v8      |   1336 |     — |         — |                            |
+| v8      |   1470 |     — |         — | + llirSched                |
 | v8      |   1610 |     — |       99% | + llirSched + amdgcnas     |
 
 Performance is measured and explained using:
