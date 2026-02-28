@@ -90,21 +90,15 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 
 | Version | TFLOPS | VGPRs | MFMA Eff. | Notes                      |
 |---------|--------|-------|-----------|----------------------------|
-| v0      |    500 |   428 |         — | Baseline                   |
-| v1      |    482 |   512 |         — |                            |
-| v2      |    647 |   353 |         — |                            |
-| v3      |    700 |   420 |       43% |                            |
-| v4      |    984 |   446 |       57% |                            |
-| v5      |    983 |   452 |       58% |                            |
-| v5      |   1119 |     — |       76% | + llirSched                |
-| v6      |   1015 |   512 |       61% |                            |
-| v6      |   1122 |     — |       88% | + llirSched                |
-| v7      |   1128 |   496 |       65% |                            |
-| v7      |   1244 |     — |       79% | + llirSched                |
-| v7      |   1341 |     — |       98% | + llirSched + amdgcnSched  |
-| v8      |   1137 |   466 |       67% |                            |
-| v8      |   1251 |     — |       77% | + llirSched                |
-| v8      |   1405 |     — |       99% | + llirSched + amdgcnSched  |
+| v3      |    774 |   420 |       42% |                            |
+| v4      |   1113 |   446 |       57% |                            |
+| v5      |   1134 |   452 |       59% |                            |
+| v5      |   1283 |   510 |       76% | + llirSched                |
+| v6      |   1260 |   500 |       88% | + llirSched                |
+| v7      |   1411 |   512 |       79% | + llirSched                |
+| v7      |   1508 |   460 |       96% | + llirSched + RA           |
+| v7      |   1523 |   460 |       98% | + llirSched + amdgcnas     |
+| v8      |   1610 |     — |       99% | + llirSched + amdgcnas     |
 
 Performance is measured and explained using:
 
