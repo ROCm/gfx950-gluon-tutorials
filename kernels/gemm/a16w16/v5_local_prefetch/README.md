@@ -136,9 +136,9 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |    967 |   446 |       57% |
-| v5             |    984 |   452 |       59% |
-| v5 + llirSched |   1119 |   510 |       76% |
+| v4             |   1113 |   446 |       57% |
+| v5             |   1134 |   452 |       59% |
+| v5 + llirSched |   1283 |   510 |       76% |
 
 The 3-stage pipeline provides a modest improvement in the baseline case (57% → 59%). However, when combined with the LLIR scheduler, MFMA efficiency increases to 76%.
 
