@@ -12,9 +12,13 @@ Usage:
 
     # a8w8 kernel (run from anywhere):
     python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+
+    # Use rocprofv3 for TFLOPS timing instead of do_bench:
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --use-rocprof
 """
 
 import argparse
+import csv
 import glob
 import json
 import os
@@ -145,7 +149,102 @@ def parse_amdgcn_metadata(version_dir):
     return vgprs, spills
 
 
-def run_benchmark(version, config, K, dtype, kernel="a16w16"):
+def find_kernel_trace_csv(trace_dir):
+    """Find the *_kernel_trace.csv file inside the rocprofv3 trace directory.
+
+    rocprofv3 creates a subdirectory named after the node hostname, e.g.
+    trace_dir/<hostname>/<pid>_kernel_trace.csv
+    """
+    pattern = os.path.join(trace_dir, "*", "*_kernel_trace.csv")
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    # Return the most recently modified one
+    return max(files, key=os.path.getmtime)
+
+
+def avg_kernel_time_ns(csv_path, kernel_name, last_n=100):
+    """Return the average elapsed time in nanoseconds for the last_n matching rows.
+
+    Early dispatches may have inflated times due to warmup effects.
+    Averaging only the last_n dispatches gives steady-state timing.
+    """
+    durations = []
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if kernel_name in row["Kernel_Name"]:
+                start = int(row["Start_Timestamp"])
+                end = int(row["End_Timestamp"])
+                durations.append(end - start)
+    if not durations:
+        return None, 0
+    tail = durations[-last_n:]
+    return sum(tail) / len(tail), len(durations)
+
+
+def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type="a16w16"):
+    """Run rocprofv3 --kernel-trace to collect kernel timestamps.
+
+    Returns TFLOPS computed from the average kernel time, or None on failure.
+    """
+    M, N = 4096, 4096
+    trace_dir = os.path.join(work_dir, f"{version_dir}_rocprof_trace")
+    if os.path.isdir(trace_dir):
+        shutil.rmtree(trace_dir)
+
+    cmd = [
+        "rocprofv3",
+        "--kernel-trace",
+        "--kernel-include-regex", version_dir,
+        "-d", trace_dir,
+        "--",
+        "python", "bench.py",
+        "--rocprof",
+        "--K", str(K),
+    ]
+    if kernel_type != "a8w8":
+        cmd.extend(["--dtype", dtype, "--version", str(version)])
+
+    rocprof_env = env.copy()
+    rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
+
+    print(f"  rocprofv3: collecting kernel trace for {version_dir} ...")
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=rocprof_env,
+            cwd=work_dir,
+        )
+        if proc.returncode != 0:
+            print(f"  rocprofv3 FAILED (exit code {proc.returncode})")
+            lines = (proc.stdout + "\n" + proc.stderr).strip().splitlines()
+            for line in lines[-5:]:
+                print(f"    {line}")
+            return None
+    except Exception as e:
+        print(f"  rocprofv3 FAILED: {e}")
+        return None
+
+    csv_path = find_kernel_trace_csv(trace_dir)
+    if csv_path is None:
+        print(f"  rocprofv3: no kernel_trace.csv found in {trace_dir}")
+        return None
+
+    avg_ns, count = avg_kernel_time_ns(csv_path, version_dir)
+    if avg_ns is None:
+        print(f"  rocprofv3: no rows matched kernel '{version_dir}' in {csv_path}")
+        return None
+
+    avg_us = avg_ns / 1e3
+    tflops = 2 * M * N * K * 1e-12 / (avg_ns * 1e-9)
+    print(f"  rocprofv3: {count} dispatches, avg={avg_us:.2f} us, tflops={tflops:.1f}")
+    return tflops
+
+
+def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False):
     """Run a single benchmark for the given version, config, and kernel type.
 
     Returns a dict with keys: tflops, vgprs, spills, mfma_eff, or None values on failure.
@@ -205,7 +304,8 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16"):
                 print(f"    {line}")
             return result
 
-        result["tflops"] = parse_tflops(combined)
+        if not use_rocprof:
+            result["tflops"] = parse_tflops(combined)
         result["mfma_eff"] = parse_mfma_efficiency(combined)
 
     except Exception as e:
@@ -215,6 +315,11 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16"):
     vgprs, spills = parse_amdgcn_metadata(version_dir)
     result["vgprs"] = vgprs
     result["spills"] = spills
+
+    # Run rocprofv3 to get TFLOPS from kernel timestamps
+    if use_rocprof:
+        tflops = run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type=kernel)
+        result["tflops"] = tflops
 
     return result
 
@@ -279,6 +384,11 @@ def parse_args():
         choices=["fp16", "bf16"],
         help="Data type for benchmark (default: fp16). Ignored for a8w8.",
     )
+    parser.add_argument(
+        "--use-rocprof",
+        action="store_true",
+        help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
+    )
     return parser.parse_args()
 
 
@@ -304,7 +414,7 @@ def main():
         print(f"{'='*60}")
         results[config] = []
         for version in versions:
-            row = run_benchmark(version, config, args.K, args.dtype, kernel=args.kernel)
+            row = run_benchmark(version, config, args.K, args.dtype, kernel=args.kernel, use_rocprof=args.use_rocprof)
             results[config].append(row)
 
     # Print summary tables

@@ -85,6 +85,19 @@ def parse_args():
         choices=range(0, 9),
         help="Kernel version to benchmark (default: 8)",
     )
+    parser.add_argument(
+        "--rocprof",
+        action="store_true",
+        help="Rocprof mode: run kernel 1000 times without do_bench. "
+        "Use with rocprofv3 --kernel-trace to measure timing externally.",
+    )
+    parser.add_argument(
+        "--rotating-buffer-size",
+        type=int,
+        default=512,
+        help="Total size (MB) of rotating tensors (a, b, c) for rocprof mode. "
+        "Should exceed GPU cache (L2+MALL) size. (default: 512)",
+    )
     return parser.parse_args()
 
 
@@ -111,6 +124,57 @@ def test_correctness(matmul, dtype, gemm_sizes, version_dir):
             print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: ❌ Triton and Torch differ")
 
 
+def gen_rotating_tensors(M, N, K, torch_dtype, rotating_buffer_size_mb=512):
+    """Allocate multiple copies of (a, b, c) tensors to exceed GPU cache size.
+
+    Each iteration of the benchmark loop uses a different copy via i % block_count,
+    so cached data from the previous iteration is useless and the kernel always
+    starts with cold caches.
+    """
+    elem_bytes = torch.tensor([], dtype=torch_dtype).element_size()
+    a_size = M * K * elem_bytes
+    b_size = K * N * elem_bytes
+    c_size = M * N * elem_bytes
+    total_size = a_size + b_size + c_size
+
+    block_count = max(1, rotating_buffer_size_mb * 1024 * 1024 // total_size)
+
+    a_list, b_list, c_list = [], [], []
+    for _ in range(block_count):
+        a_list.append(torch.randn((M, K), device=DEVICE, dtype=torch_dtype))
+        b_list.append(torch.randn((N, K), device=DEVICE, dtype=torch_dtype).T)
+        c_list.append(torch.empty((M, N), device=DEVICE, dtype=torch_dtype))
+
+    return a_list, b_list, c_list, block_count
+
+
+def run_rocprof_iterations(matmul, dtypes, gemm_sizes, version_dir, n_iters=1000,
+                           rotating_buffer_size_mb=512):
+    """Run the kernel n_iters times for each dtype/size combo using rotating tensors.
+
+    Rotating tensors ensure each iteration reads from different memory addresses,
+    defeating GPU cache and producing cold-cache timings similar to real workloads.
+    Designed to be wrapped by rocprofv3 --kernel-trace for external timing.
+    """
+    for dtype in dtypes:
+        torch_dtype = name_to_torch_type[dtype]
+        for M, N, K in gemm_sizes:
+            a_list, b_list, c_list, block_count = gen_rotating_tensors(
+                M, N, K, torch_dtype, rotating_buffer_size_mb
+            )
+            print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: "
+                  f"rotating tensors: {block_count} copies, "
+                  f"{block_count * (M*K + K*N + M*N) * a_list[0].element_size() / 1024**2:.0f} MB")
+            # Warmup
+            matmul(a_list[0], b_list[0], c_list[0])
+            torch.cuda.synchronize()
+            for i in range(n_iters):
+                idx = i % block_count
+                matmul(a_list[idx], b_list[idx], c_list[idx])
+            torch.cuda.synchronize()
+            print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: {n_iters} iterations done")
+
+
 def main():
     args = parse_args()
     version_dir = VERSION_MAP[args.version]
@@ -119,6 +183,14 @@ def main():
 
     gemm_sizes = get_gemm_sizes(args.K)
     dtypes = get_dtypes(args.dtype)
+
+    for dtype in dtypes:
+        test_correctness(matmul, dtype, gemm_sizes, version_dir)
+
+    if args.rocprof:
+        run_rocprof_iterations(matmul, dtypes, gemm_sizes, version_dir,
+                               rotating_buffer_size_mb=args.rotating_buffer_size)
+        return
 
     configs = [
         triton.testing.Benchmark(
@@ -152,9 +224,6 @@ def main():
             return 2 * M * N * K * 1e-12 / (ms * 1e-3)
 
         return perf(ms), perf(max_ms), perf(min_ms)
-
-    for dtype in dtypes:
-        test_correctness(matmul, dtype, gemm_sizes, version_dir)
 
     print(f"\n{version_dir}:")
     benchmark.run(show_plots=False, print_data=True)
