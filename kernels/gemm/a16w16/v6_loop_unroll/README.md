@@ -99,8 +99,8 @@ If the loop has an odd number of iterations, there will be only 1 iteration in t
 
 | Version              | TFLOPS | VGPRs | MFMA Eff. |
 |----------------------|--------|-------|-----------|
-| v5 + LLIR scheduler  |   1119 |   510 |       76% |
-| v6 + LLIR scheduler  |   1122 |   500 |       88% |
+| v5 + LLIR scheduler  |   1283 |   510 |       76% |
+| v6 + LLIR scheduler  |   1260 |   500 |       88% |
 
 With the LLIR scheduler enabled, MFMA efficiency improves from 76% to 88% by eliminating the copy overhead.
 
