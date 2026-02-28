@@ -183,10 +183,10 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                        | TFLOPS | VGPRs | Copies | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1119 |   500 |     51 |       88% |
-| v7 + LLIR scheduler            |   1226 |   512 |    116 |       79% |
-| v7 + LLIR scheduler + RA       |   1405 |   460 |      0 |       96% |
-| v7 + LLIR scheduler + amdgcnas |   1335 |   460 |      0 |       98% |
+| v6 + LLIR scheduler            |   1266 |   500 |     51 |       88% |
+| v7 + LLIR scheduler            |   1411 |   512 |    116 |       79% |
+| v7 + LLIR scheduler + RA       |   1508 |   460 |      0 |       96% |
+| v7 + LLIR scheduler + amdgcnas |   1523 |   460 |      0 |       98% |
 
 **Copies**: count of `v_accvgpr_*` and `v_mov` instructions inside the main loop. These AGPR ↔ VGPR copy instructions transfer data between accumulator and vector register files.
 
