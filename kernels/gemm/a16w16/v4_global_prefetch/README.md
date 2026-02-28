@@ -136,10 +136,10 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version            | TFLOPS | VGPRs | MFMA Eff. |
 |--------------------|--------|-------|-----------|
-| v3_lds             |    704 |   420 |       42% |
-| v4_global_prefetch |    971 |   446 |       57% |
+| v3_lds             |    774 |   420 |       42% |
+| v4_global_prefetch |   1113 |   446 |       57% |
 
-Software pipelining delivers a **38% performance improvement** (704 → 971 TFLOPS) by overlapping global memory latency with compute.
+Software pipelining delivers a **44% performance improvement** (774 → 1113 TFLOPS) by overlapping global memory latency with compute.
 
 Performance is collected using:
 ```bash
