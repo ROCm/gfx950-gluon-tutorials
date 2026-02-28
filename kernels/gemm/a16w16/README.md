@@ -96,7 +96,6 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 | v5      |   1283 |   510 |       76% | + llirSched                |
 | v6      |   1260 |   500 |       88% | + llirSched                |
 | v7      |   1411 |   512 |       79% | + llirSched                |
-| v7      |   1508 |   460 |       96% | + llirSched + RA           |
 | v7      |   1523 |   460 |       98% | + llirSched + amdgcnas     |
 | v8      |   1610 |     — |       99% | + llirSched + amdgcnas     |
 
