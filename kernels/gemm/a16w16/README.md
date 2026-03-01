@@ -88,23 +88,23 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 
 ![Performance Chart](images/performance_chart.png)
 
-| Version | TFLOPS | VGPRs | MFMA Eff. | Notes                      |
-|---------|--------|-------|-----------|----------------------------|
-| v0      |    524 |     — |       25% | Baseline                   |
-| v1      |    514 |     — |       24% |                            |
-| v2      |    697 |     — |       36% |                            |
-| v3      |    774 |   420 |       42% |                            |
-| v4      |   1113 |   446 |       57% |                            |
-| v5      |   1134 |   452 |       59% |                            |
-| v5      |   1283 |   510 |       76% | + llirSched                |
-| v6      |   1088 |   512 |       61% | 3 spills                   |
-| v6      |   1260 |   500 |       88% | + llirSched                |
-| v7      |   1279 |   496 |       65% |                            |
-| v7      |   1411 |   512 |       79% | + llirSched                |
-| v7      |   1523 |   460 |       98% | + llirSched + amdgcnas     |
-| v8      |   1336 |   466 |       67% |                            |
-| v8      |   1470 |   512 |       77% | + llirSched, 4 spills      |
-| v8      |   1610 |     — |       99% | + llirSched + amdgcnas     |
+| Version | TFLOPS | MFMA Eff. | Notes                      |
+|---------|--------|-----------|----------------------------|
+| v0      |    524 |       25% | Baseline                   |
+| v1      |    514 |       24% |                            |
+| v2      |    697 |       36% |                            |
+| v3      |    774 |       42% |                            |
+| v4      |   1113 |       57% |                            |
+| v5      |   1134 |       59% |                            |
+| v5      |   1283 |       76% | + llirSched                |
+| v6      |   1088 |       61% |                            |
+| v6      |   1260 |       88% | + llirSched                |
+| v7      |   1279 |       65% |                            |
+| v7      |   1411 |       79% | + llirSched                |
+| v7      |   1523 |       98% | + llirSched + amdgcnas     |
+| v8      |   1336 |       67% |                            |
+| v8      |   1470 |       77% | + llirSched                |
+| v8      |   1610 |       99% | + llirSched + amdgcnas     |
 
 Performance is measured and explained using:
 
