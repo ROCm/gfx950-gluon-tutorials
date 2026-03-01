@@ -23,13 +23,21 @@ Previous versions focused on optimizing the hot loop—pipelining, prefetching, 
 
 ## 3. Key Optimizations
 
-### 3.1 XCD-Aware PID Remapping
+### 3.1 L2 Cache Locality on Multi-XCD GPUs
 
 gfx942 and gfx950 have 8 XCDs (Accelerator Compute Dies), each with its own L2 cache. The hardware distributes workgroups across XCDs in round-robin order: workgroup 0 to XCD 0, workgroup 1 to XCD 1, and so on.
 
 This creates a problem for cache reuse. Adjacent output tiles often share the same A or B input tiles. With naive PID assignment, adjacent tiles go to consecutive workgroup IDs—and thus different XCDs. Since each XCD has a separate L2 cache, the shared input data must be reloaded from HBM on each XCD, wasting memory bandwidth.
 
-The `get_pids` function solves this by remapping PIDs so that adjacent tiles land on the **same XCD**:
+Consider v7 as an example with shape 4096×4096 and BLOCK_M=BLOCK_N=256. The output is divided into 16×16 = 256 tiles. With row-major PID assignment and round-robin XCD distribution, workgroups on XCD 0 are spread across all rows:
+
+![v7 Grid Layout](../images/v7_grid.png)
+
+As shown, XCD 0 receives workgroups from every row of the output grid. This means XCD 0 must load the **entire A matrix** (all 16 row-strips) but only 1/8 of the B matrix (2 column-strips). The same pattern applies to all XCDs—each requires the full A matrix, resulting in poor L2 cache reuse.
+
+### 3.2 XCD-Aware PID Remapping
+
+The `get_pids` function remaps PIDs so that consecutive tiles land on the **same XCD**:
 
 ```python
 @gluon.jit
@@ -50,11 +58,15 @@ def get_pids(M, N, BM, BN, GRID_MN, NUM_XCDS, GROUP_SIZE_M):
     ...
 ```
 
-By grouping adjacent tiles onto the same XCD, shared input tiles stay in L2 cache and can be reused without reloading from HBM.
+With XCD remapping alone (GROUP_M=1), each XCD receives a contiguous block of 32 tiles arranged in 2 rows × 16 columns:
 
-### 3.2 Workgroup Swizzling (GROUP_SIZE_M)
+![v8 Grid with XCD Remapping, GM=1](../images/v8_grid_xcd_GM1.png)
 
-In addition to XCD-aware remapping, the kernel uses `GROUP_SIZE_M` for further L2 cache locality:
+However, this layout still requires the **entire B matrix** (all 16 column-strips) and only 1/8 of the A matrix (2 row-strips) per XCD. The total data footprint per XCD is unchanged—we've simply swapped which matrix is fully loaded.
+
+### 3.3 Workgroup Swizzling (GROUP_SIZE_M)
+
+To reduce the data footprint per XCD, we reshape the workgroup layout using `GROUP_SIZE_M`:
 
 ```python
 if GROUP_SIZE_M == 1:
@@ -69,57 +81,68 @@ else:
     pid_n = (pid % num_pid_in_group) // group_size_m
 ```
 
-With `GROUP_SIZE_M=4`, workgroups are scheduled in groups that share rows, improving L2 cache reuse for the A matrix.
+With `GROUP_SIZE_M=4`, the 32 workgroups per XCD are arranged in a 4×8 grid:
 
-### 3.3 Choosing Optimal GROUP_SIZE_M
+![v8 Grid with XCD Remapping, GM=4](../images/v8_grid_xcd_GM4.png)
 
-XCD remapping and GROUP_SIZE_M work together to minimize L2 cache traffic. Given the total number of workgroups:
+Now each XCD only requires **1/4 of the A matrix** (4 row-strips) and **1/2 of the B matrix** (8 column-strips). The total data footprint per XCD is significantly reduced compared to either v7 or v8 with GM=1.
 
-```
-#wgs = M × N / BLOCK_M / BLOCK_N
-```
+### 3.4 Math Model for Optimal GROUP_SIZE_M
 
-Each XCD receives `P = #wgs / 8` workgroups. These P workgroups are arranged in a `GM × (P/GM)` grid, where `GM` is GROUP_SIZE_M.
+The three configurations can be analyzed mathematically. Given:
+- Total workgroups: 256
+- Workgroups per XCD: P = 32
+- Workgroup layout per XCD: GM × (P/GM)
 
-The P workgroups on each XCD read:
-- From A: GM row-strips, each of size K
-- From B: P/GM column-strips, each of size K
+Each XCD loads:
+- From A: GM row-strips
+- From B: ⌈P/GM⌉ column-strips
 
-Total data per XCD is proportional to `K × (GM + P/GM)`.
+Total data per XCD is proportional to GM + ⌈P/GM⌉.
 
-**Optimization Problem**: Given integer P, find integer GM that minimizes `GM + P/GM`.
+**Optimization Problem**: Find integer GM that minimizes $f(\text{GM}) = \text{GM} + \lceil P/\text{GM} \rceil$.
 
-For the continuous relaxation:
+For the continuous relaxation where GM divides P:
 
 $$f(x) = x + \frac{P}{x}$$
 
 $$f'(x) = 1 - \frac{P}{x^2} = 0 \quad \Rightarrow \quad x = \sqrt{P}$$
 
-**Solution**: GM should be the divisor of P closest to $\sqrt{P}$.
+For P = 32, $\sqrt{32} \approx 5.66$.
 
-```python
-import math
+Evaluating f(GM) for different values:
 
-def optimal_group_m(P):
-    """Find GM that minimizes (GM + P/GM)."""
-    sqrt_p = math.sqrt(P)
-    divisors = []
-    for i in range(1, int(sqrt_p) + 1):
-        if P % i == 0:
-            divisors.append(i)
-            if i != P // i:
-                divisors.append(P // i)
-    return min(divisors, key=lambda d: abs(d - sqrt_p))
-```
+| GM | ⌈P/GM⌉ | f(GM) = GM + ⌈P/GM⌉ | Configuration |
+|----|--------|---------------------|---------------|
+| 16 |      2 |                  18 | v7 (no XCD remapping) |
+|  2 |     16 |                  18 | v8 GM=1 (XCD remapping only) |
+|  4 |      8 |                  12 | v8 GM=4 |
+|  6 |      6 |                  12 | v8 GM=6 |
+|  8 |      4 |                  12 | v8 GM=8 |
 
-**Example**: For shape 4096×4096 with BLOCK_M=BLOCK_N=256:
-- Total workgroups: 16 × 16 = 256
-- Per XCD: P = 256 / 8 = 32
-- $\sqrt{32} \approx 5.66$
-- Divisors of 32: {1, 2, 4, 8, 16, 32}
-- Closest to 5.66: 4 or 8 (both give f(GM) = 12)
+The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model confirms:
+- v7 (GM=16) and v8 GM=1 (GM=2) have the same suboptimal data footprint
+- GM=4, 6, or 8 all achieve the minimum data footprint
 
-### 3.5 Interleaved Epilogue with extract_slice
+### 3.5 L2 Cache Measurements
+
+To validate the math model, we collected hardware counters for different configurations:
+
+| Configuration | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
+|---------------|------------------------|----------------------|
+| v7            |              4,754,139 |           16,777,216 |
+| v8 GM=1       |              4,870,303 |           16,777,216 |
+| v8 GM=4       |              3,148,321 |           16,777,216 |
+| v8 GM=6       |              3,147,765 |           16,777,216 |
+
+- **TCP_TCC_READ_REQ_sum**: Requests from L1 to L2. All configurations have identical values since all workgroups perform the same computation.
+- **TCC_EA0_RDREQ_DRAM_sum**: Requests from L2 to MALL (memory-side last-level cache), indicating L2 cache misses.
+
+As expected:
+- v7 and v8 GM=1 have similar L2 miss counts (~4.8M), confirming their equivalent data footprints
+- v8 GM=4 and GM=6 have similar and lower L2 miss counts (~3.1M), matching the math model prediction
+
+### 3.6 Interleaved Epilogue with extract_slice
 
 The epilogue is restructured to overlap MFMA with stores using `extract_slice`:
 
@@ -147,7 +170,7 @@ Instead of computing all MFMAs then storing all results, the epilogue interleave
 
 This allows stores to overlap with subsequent MFMA computations, hiding store latency.
 
-### 3.6 M-Dimension Slicing in Epilogue
+### 3.7 M-Dimension Slicing in Epilogue
 
 The epilogue slices the 256×256 output into 8 pieces (4 M-slices × 2 N-slices):
 - `acc00`, `acc01`, `acc02`, `acc03` for N=[0:128]
