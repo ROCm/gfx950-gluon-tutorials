@@ -90,12 +90,12 @@ Total data per XCD is proportional to `K × (GM + P/GM)`.
 **Optimization Problem**: Given integer P, find integer GM that minimizes `GM + P/GM`.
 
 For the continuous relaxation:
-```
-f(x) = x + P/x
-f'(x) = 1 - P/x² = 0  →  x = √P
-```
 
-**Solution**: GM should be the divisor of P closest to √P.
+$$f(x) = x + \frac{P}{x}$$
+
+$$f'(x) = 1 - \frac{P}{x^2} = 0 \quad \Rightarrow \quad x = \sqrt{P}$$
+
+**Solution**: GM should be the divisor of P closest to $\sqrt{P}$.
 
 ```python
 import math
@@ -115,7 +115,7 @@ def optimal_group_m(P):
 **Example**: For shape 4096×4096 with BLOCK_M=BLOCK_N=256:
 - Total workgroups: 16 × 16 = 256
 - Per XCD: P = 256 / 8 = 32
-- √32 ≈ 5.66
+- $\sqrt{32} \approx 5.66$
 - Divisors of 32: {1, 2, 4, 8, 16, 32}
 - Closest to 5.66: 4 or 8 (both give f(GM) = 12)
 
