@@ -71,7 +71,55 @@ else:
 
 With `GROUP_SIZE_M=4`, workgroups are scheduled in groups that share rows, improving L2 cache reuse for the A matrix.
 
-### 3.3 Interleaved Epilogue with extract_slice
+### 3.3 Choosing Optimal GROUP_SIZE_M
+
+XCD remapping and GROUP_SIZE_M work together to minimize L2 cache traffic. Given the total number of workgroups:
+
+```
+#wgs = M × N / BLOCK_M / BLOCK_N
+```
+
+Each XCD receives `P = #wgs / 8` workgroups. These P workgroups are arranged in a `GM × (P/GM)` grid, where `GM` is GROUP_SIZE_M.
+
+The P workgroups on each XCD read:
+- From A: GM row-strips, each of size K
+- From B: P/GM column-strips, each of size K
+
+Total data per XCD is proportional to `K × (GM + P/GM)`.
+
+**Optimization Problem**: Given integer P, find integer GM that minimizes `GM + P/GM`.
+
+For the continuous relaxation:
+```
+f(x) = x + P/x
+f'(x) = 1 - P/x² = 0  →  x = √P
+```
+
+**Solution**: GM should be the divisor of P closest to √P.
+
+```python
+import math
+
+def optimal_group_m(P):
+    """Find GM that minimizes (GM + P/GM)."""
+    sqrt_p = math.sqrt(P)
+    divisors = []
+    for i in range(1, int(sqrt_p) + 1):
+        if P % i == 0:
+            divisors.append(i)
+            if i != P // i:
+                divisors.append(P // i)
+    return min(divisors, key=lambda d: abs(d - sqrt_p))
+```
+
+**Example**: For shape 4096×4096 with BLOCK_M=BLOCK_N=256:
+- Total workgroups: 16 × 16 = 256
+- Per XCD: P = 256 / 8 = 32
+- √32 ≈ 5.66
+- Divisors of 32: {1, 2, 4, 8, 16, 32}
+- Closest to 5.66: 4 or 8 (both give f(GM) = 12)
+
+### 3.5 Interleaved Epilogue with extract_slice
 
 The epilogue is restructured to overlap MFMA with stores using `extract_slice`:
 
@@ -99,7 +147,7 @@ Instead of computing all MFMAs then storing all results, the epilogue interleave
 
 This allows stores to overlap with subsequent MFMA computations, hiding store latency.
 
-### 3.4 M-Dimension Slicing in Epilogue
+### 3.6 M-Dimension Slicing in Epilogue
 
 The epilogue slices the 256×256 output into 8 pieces (4 M-slices × 2 N-slices):
 - `acc00`, `acc01`, `acc02`, `acc03` for N=[0:128]
