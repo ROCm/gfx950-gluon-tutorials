@@ -19,16 +19,17 @@ However, the final performance reported as TFLOPS depends on both cycles and fre
 
 To reduce power consumption, we consider three strategies:
 
-- **Use power-efficient instructions**: MFMA 16×16 is more power-efficient than MFMA 32×32. Our kernel already uses the efficient variant.
-- **Use large tile sizes**: Workgroups computing different output tiles may request the same input data from A or B. Although these requests hit in cache and pipelining hides latency, every memory request consumes power. Larger tiles reduce redundant requests across workgroups.
+- **Use power-efficient instructions**: 16×16 MFMA instructions are more power-efficient than 32×32 MFMA instructions. Our kernel already uses the efficient variant.
+- **Use large tile sizes**: Workgroups computing different output tiles may request the same input data from A or B. Although these requests hit in cache and pipelining hides latency, every memory request consumes power. Larger tiles reduce redundant requests across workgroups. Our kernel uses 256×256 tiles, the largest feasible size given the register budget per SIMD and Triton's constraint that tile dimensions must be powers of 2.
 - **Optimize tile-to-workgroup mapping for L2 locality**: Reduce memory requests from L2 to MALL by ensuring workgroups on the same XCD share input data in L2 cache.
 
-> [!IMPORTANT]
-> This version focuses on the third strategy: XCD-aware PID remapping and workgroup swizzling to improve L2 cache locality and reduce power consumption.
+This version focuses on the third strategy: XCD-aware PID remapping and workgroup swizzling to improve L2 cache locality and reduce power consumption.
 
-## 3. Key Optimizations
+## 3. L2 Cache Locality
 
-### 3.1 L2 Cache Locality on Multi-XCD GPUs
+Throughout this section, we use **GM** as shorthand for **GROUP_SIZE_M**.
+
+### 3.1 The Problem: Poor L2 Reuse Across XCDs
 
 gfx942 and gfx950 have 8 XCDs (Accelerator Compute Dies), each with its own L2 cache. The hardware distributes workgroups across XCDs in round-robin order: workgroup 0 to XCD 0, workgroup 1 to XCD 1, and so on.
 
@@ -163,6 +164,11 @@ The following table shows performance, MFMA efficiency, and L2 cache behavior fo
 Performance is collected using:
 ```bash
 python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
+```
+
+Counters are collected using:
+```bash
+python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
