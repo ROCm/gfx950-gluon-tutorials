@@ -66,7 +66,51 @@ Each version introduces **one new idea** and builds on the previous one.
 | v7 | slice | Register pressure | N-slicing, register allocation workarounds |
 | v8 | beyond_hotloop | Power efficiency | XCD-aware PID remapping, GROUP_SIZE_M optimization |
 
-## 5. Performance Results
+## 5. The Optimization Journey
+
+This section tells the story of how we transformed a 524 TFLOPS naive kernel into a 1634 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
+
+### Act I: Getting the Basics Right (v0–v3)
+
+**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement is visible, and nothing is hidden. Performance? A modest 524 TFLOPS at 25% MFMA efficiency. But correctness comes first—this is our foundation.
+
+**v1 — The Branch Problem.** Looking at the generated assembly, we find 140 branch instructions. Why? Masked loads generate branches for out-of-bounds checking. The fix is elegant: `buffer_load` handles OOB in hardware. Branches drop from 140 to 4. The lesson: *sometimes the best optimization is choosing the right instruction.*
+
+**v2 — Eliminating the Middleman.** Data flows from HBM → registers → LDS → registers → MFMA. But why stage in registers? With `buffer_load ... lds`, data goes directly from HBM to LDS. We save 100+ VGPRs and eliminate all `ds_write` instructions. Performance jumps to 697 TFLOPS.
+
+**v3 — The Bank Conflict Detective.** LDS has 64 banks. When threads collide on the same bank, throughput drops. We design three layouts—raw, swizzled, and padded—and measure steady-state `ds_read` throughput. Raw layout: 4-way conflicts, 64-cycle issue latency. Padded layout: conflict-free, 16-cycle issue latency. The winner is clear, and we have a methodology for future designs.
+
+### Act II: Hiding Latency (v4–v5)
+
+**v4 — The Pipeline Revolution.** So far, our loop is embarrassingly sequential: load, wait, compute, repeat. Global memory latency (~400 cycles) stalls everything. The solution: *prefetch the next iteration's data while computing on the current iteration's data.* With double buffering and a 2-stage pipeline, we overlap memory latency with compute. Performance leaps to 1113 TFLOPS—a **44% jump** from the previous version.
+
+**v5 — One More Stage.** MFMA still waits for `ds_read`. We add a third pipeline stage: while MFMA computes iteration k, `ds_read` loads iteration k+1, and `buffer_load` prefetches iteration k+2. Now MFMA, `ds_read`, and `buffer_load` can all run concurrently—if only the compiler would schedule them that way.
+
+Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler that operates at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With LLIR scheduling, MFMA efficiency jumps from 59% to 76%.
+
+### Act III: Taming the Hardware (v6–v7)
+
+**v6 — Loop Unrolling and Power Surprises.** The trace reveals copy instructions at iteration boundaries—moving data between register sets for prefetch. The fix: unroll by 2, alternating register sets naturally. Copies eliminated, MFMA efficiency reaches 88%.
+
+But something strange appears: VALU instructions taking 40-80 cycles instead of 4. This is **DIDT** and **PIT**—power management mechanisms that throttle execution when power spikes. When low-power scalar operations are followed by high-power VALU/MFMA bursts, firmware inserts stalls to prevent voltage droops. The solution? Keep MFMA running continuously to maintain stable power draw.
+
+**v7 — The Register Budget.** With 256×256 tiles and prefetching, we need ~512 registers—exactly what gfx950 provides. No headroom. The kernel works, but the compiler struggles with allocation, inserting AGPR↔VGPR copies that hurt performance.
+
+We slice along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448. But the compiler still doesn't allocate optimally, so we add RA flags and **amdgcnas**—an assembly post-processor that applies peephole optimizations. The result: **98% MFMA efficiency**. The hot loop is essentially perfect.
+
+### Act IV: Beyond the Loop (v8)
+
+**v8 — The L2 Locality Puzzle.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the loop.
+
+MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD.
+
+A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**—the journey's destination.
+
+### The Moral
+
+Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
+
+## 6. Performance Results
 
 Measured on MI355 with shape 4096×4096×8192, FP16:
 
@@ -99,7 +143,7 @@ Performance is measured and explained using:
 
 For methodology details, see [MFMA Efficiency](../../../docs/mfma_efficiency.md).
 
-## 6. Tools and Infrastructure
+## 7. Tools and Infrastructure
 
 This tutorial relies on several tools:
 
@@ -111,7 +155,7 @@ This tutorial relies on several tools:
 
 See [scripts/README.md](../../../scripts/README.md) for usage details.
 
-## 7. Beyond FP16
+## 8. Beyond FP16
 
 Although this directory focuses on **FP16 compute-bound GEMM**, the same optimization strategy applies to other precisions:
 
@@ -122,7 +166,7 @@ Although this directory focuses on **FP16 compute-bound GEMM**, the same optimiz
 
 The optimization journey remains the same—only the tile shape and MFMA instruction variant change.
 
-## 8. How to Read This
+## 9. How to Read This
 
 Recommended order:
 
