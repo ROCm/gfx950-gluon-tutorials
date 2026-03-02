@@ -67,23 +67,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory is the heart of this repository. It documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement**.
-
-The journey progresses through 9 versions:
-
-| Version | Focus | Key Concept |
-|---------|-------|-------------|
-| v0 | Baseline | Explicit layouts, correctness-first |
-| v1 | Codegen | Hardware OOB checking, branch elimination |
-| v2 | Codegen | Direct-to-LDS async copy |
-| v3 | Codegen | LDS layout design (swizzling vs. padding) |
-| v4 | Latency hiding | 2-stage pipeline, double buffering |
-| v5 | Latency hiding | 3-stage pipeline, LLIR Scheduler |
-| v6 | Codegen | Loop unrolling, DIDT/PIT analysis |
-| v7 | Register pressure | N-slicing, amdgcnas post-processor |
-| v8 | Power efficiency | XCD-aware PID remapping, GROUP_SIZE_M |
-
-Each version focuses on one concept, with detailed analysis of what changed, why it matters, and how it affects hardware execution.
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 9 versions (v0–v8).
 
 **Start here** to learn how to write high-performance Gluon kernels.
 
