@@ -148,8 +148,9 @@ def gen_rotating_tensors(M, N, K, torch_dtype, rotating_buffer_size_mb=512):
     return a_list, b_list, c_list, block_count
 
 
-def run_rocprof_iterations(matmul, dtypes, gemm_sizes, version_dir, n_iters=1000,
-                           rotating_buffer_size_mb=512):
+def run_rocprof_iterations(
+    matmul, dtypes, gemm_sizes, version_dir, n_iters=1000, rotating_buffer_size_mb=512
+):
     """Run the kernel n_iters times for each dtype/size combo using rotating tensors.
 
     Rotating tensors ensure each iteration reads from different memory addresses,
@@ -162,9 +163,11 @@ def run_rocprof_iterations(matmul, dtypes, gemm_sizes, version_dir, n_iters=1000
             a_list, b_list, c_list, block_count = gen_rotating_tensors(
                 M, N, K, torch_dtype, rotating_buffer_size_mb
             )
-            print(f"[{version_dir}] {M=} {N=} {K=} {dtype=}: "
-                  f"rotating tensors: {block_count} copies, "
-                  f"{block_count * (M*K + K*N + M*N) * a_list[0].element_size() / 1024**2:.0f} MB")
+            print(
+                f"[{version_dir}] {M=} {N=} {K=} {dtype=}: "
+                f"rotating tensors: {block_count} copies, "
+                f"{block_count * (M*K + K*N + M*N) * a_list[0].element_size() / 1024**2:.0f} MB"
+            )
             # Warmup
             matmul(a_list[0], b_list[0], c_list[0])
             torch.cuda.synchronize()
@@ -188,8 +191,13 @@ def main():
         test_correctness(matmul, dtype, gemm_sizes, version_dir)
 
     if args.rocprof:
-        run_rocprof_iterations(matmul, dtypes, gemm_sizes, version_dir,
-                               rotating_buffer_size_mb=args.rotating_buffer_size)
+        run_rocprof_iterations(
+            matmul,
+            dtypes,
+            gemm_sizes,
+            version_dir,
+            rotating_buffer_size_mb=args.rotating_buffer_size,
+        )
         return
 
     configs = [
