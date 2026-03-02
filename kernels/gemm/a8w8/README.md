@@ -51,6 +51,28 @@ sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
 
 The dual padding `[[1024, 16], [2048, 32]]` ensures bank-conflict-free access for the 256×128 tile.
 
+The layout can be visualized using the layout plotting tool:
+
+![LDS Layout with Double Padding](images/lds_padding_1024-16_2048-32.png)
+
+<details>
+<summary>Command to generate this layout</summary>
+
+```bash
+python3 scripts/plot_layout.py lds \
+  --tensorShape 256 128 \
+  --kWidth 32 \
+  --nonKDim 16 \
+  --banks 64 \
+  --layout padding \
+  --access read \
+  --swizzleVec 16 \
+  --sharedLayout "[[1024, 16], [2048, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]" \
+  --dtype fp8
+```
+
+</details>
+
 ## 3. Optimization Techniques
 
 This kernel incorporates all optimizations from the a16w16 tutorial series:
@@ -71,31 +93,18 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. How to Run
 
-```bash
-python bench.py
-```
-
-To run a specific K dimension:
+From the `a8w8` directory:
 
 ```bash
 python bench.py --K 8192
 ```
 
-## 5. Layout Visualization
+This runs correctness checks against `torch.matmul` and reports TFLOPS.
 
-The LDS layout can be visualized using the layout plotting tool.
-
-**Operand A (256×128) with padding [[1024, 16], [2048, 32]]:**
+For accurate performance measurement with rocprof:
 
 ```bash
-python3 plot_layout.py lds \
-  --tensorShape 256 128 \
-  --kWidth 32 \
-  --nonKDim 16 \
-  --banks 64 \
-  --layout padding \
-  --access read \
-  --swizzleVec 16 \
-  --sharedLayout "[[1024, 16], [2048, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]" \
-  --dtype fp8
+rocprofv3 --kernel-trace -d out -- python bench.py --K 8192 --rocprof
 ```
+
+The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU cache, producing cold-cache timings similar to real workloads.
