@@ -4,22 +4,27 @@
 
 ```
 v8_beyond_hotloop/
-├── matmul_kernel.py                  # The kernel implementation
-├── README.md                         # This file
-├── ir_dump_K4096_fp16/               # IR dumps for analysis
-├── ir_dump_K4096_fp16_llirSched/     # IR dumps with llirSched
-└── ir_dump_K4096_fp16_llirSched_amdgcnas/  # IR dumps with llirSched + amdgcnas
+├── matmul_kernel.py                        # The kernel implementation
+├── README.md                               # This file
+├── ir_dump_K8192_fp16/                     # IR dumps for analysis
+├── ir_dump_K8192_fp16_llirSched/           # IR dumps with llirSched
+└── ir_dump_K8192_fp16_llirSched_amdgcnas/  # IR dumps with llirSched + amdgcnas
 ```
 
 ## 2. Motivation
 
-Previous versions focused on optimizing the hot loop—pipelining, prefetching, register pressure. But a complete kernel has more than just the main loop:
-- **Prologue**: Initial data loads before the loop
-- **Epilogue**: Final computations and stores after the loop
-- **Workgroup scheduling**: How thread blocks are mapped to hardware
+Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management. MFMA efficiency measures cycle-wise performance on each SIMD.
+
+However, the final performance reported as TFLOPS depends on both cycles and frequency. Frequency is determined by power management: higher power consumption leads to lower sustained frequency. As discussed in v7 regarding DIDT protection, power-aware optimization is essential for achieving peak TFLOPS.
+
+To reduce power consumption, we consider three strategies:
+
+- **Use power-efficient instructions**: MFMA 16×16 is more power-efficient than MFMA 32×32. Our kernel already uses the efficient variant.
+- **Use large tile sizes**: Workgroups computing different output tiles may request the same input data from A or B. Although these requests hit in cache and pipelining hides latency, every memory request consumes power. Larger tiles reduce redundant requests across workgroups.
+- **Optimize tile-to-workgroup mapping for L2 locality**: Reduce memory requests from L2 to MALL by ensuring workgroups on the same XCD share input data in L2 cache.
 
 > [!IMPORTANT]
-> This version addresses optimizations beyond the hot loop: XCD-aware PID remapping, workgroup swizzling, and an interleaved epilogue that overlaps final MFMA with stores.
+> This version focuses on the third strategy: XCD-aware PID remapping and workgroup swizzling to improve L2 cache locality and reduce power consumption.
 
 ## 3. Key Optimizations
 
@@ -124,68 +129,36 @@ The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model
 - v7 (GM=16) and v8 GM=1 (GM=2) have the same suboptimal data footprint
 - GM=4, 6, or 8 all achieve the minimum data footprint
 
-### 3.5 L2 Cache Measurements
+### 3.5 Validation
 
-To validate the math model, we collected hardware counters for different configurations:
+The math model predicts that GM=4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. This is validated by hardware counter measurements in Section 4, which show:
 
-| Configuration | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
-|---------------|------------------------|----------------------|
-| v7            |              4,754,139 |           16,777,216 |
-| v8 GM=1       |              4,870,303 |           16,777,216 |
-| v8 GM=4       |              3,148,321 |           16,777,216 |
-| v8 GM=6       |              3,147,765 |           16,777,216 |
+- v7 and v8 GM=1 have ~4.7–5.0M L2 misses (f(GM)=18)
+- GM=4, 6, and 8 all achieve ~3.1M L2 misses (f(GM)=12)
 
-- **TCP_TCC_READ_REQ_sum**: Requests from L1 to L2. All configurations have identical values since all workgroups perform the same computation.
-- **TCC_EA0_RDREQ_DRAM_sum**: Requests from L2 to MALL (memory-side last-level cache), indicating L2 cache misses.
-
-As expected:
-- v7 and v8 GM=1 have similar L2 miss counts (~4.8M), confirming their equivalent data footprints
-- v8 GM=4 and GM=6 have similar and lower L2 miss counts (~3.1M), matching the math model prediction
-
-### 3.6 Interleaved Epilogue with extract_slice
-
-The epilogue is restructured to overlap MFMA with stores using `extract_slice`:
-
-```python
-## slice 0 m[0:64]n[0:128]
-a0 = extract_slice(a, [64, 64], [0, 0])
-acc00 = extract_slice(acc0, [64, 128], [0, 0])
-acc00 = gl.amd.cdna3.mfma(a0, b0, acc00)
-c00 = acc00.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(stored_value=c00, ptr=c00_base, offsets=c_slice_offsets)
-
-## slice 1 m[64:128]n[0:128]
-a1 = extract_slice(a, [64, 64], [64, 0])
-acc01 = extract_slice(acc0, [64, 128], [64, 0])
-acc01 = gl.amd.cdna3.mfma(a1, b0, acc01)
-...
-```
-
-Instead of computing all MFMAs then storing all results, the epilogue interleaves:
-1. Compute MFMA for slice 0
-2. Store slice 0
-3. Compute MFMA for slice 1
-4. Store slice 1
-5. ...
-
-This allows stores to overlap with subsequent MFMA computations, hiding store latency.
-
-### 3.7 M-Dimension Slicing in Epilogue
-
-The epilogue slices the 256×256 output into 8 pieces (4 M-slices × 2 N-slices):
-- `acc00`, `acc01`, `acc02`, `acc03` for N=[0:128]
-- `acc10`, `acc11`, `acc12`, `acc13` for N=[128:256]
-
-Each slice is 64×128, small enough to process and store efficiently while maintaining overlap.
+The reduced L2 traffic directly translates to higher sustained TFLOPS through lower power consumption.
 
 ## 4. Performance Analysis
 
-| Version                        | TFLOPS | MFMA Eff. |
-|--------------------------------|--------|-----------|
-| v7 + LLIR scheduler + amdgcnas |   1523 |       98% |
-| v8 + LLIR scheduler + amdgcnas |   1610 |       99% |
+The following table shows performance, MFMA efficiency, and L2 cache behavior for different configurations:
 
-With full scheduling optimization, v8 achieves **1610 TFLOPS** at 99% MFMA efficiency — the highest performance in this tutorial series.
+| Configuration                  | TFLOPS | MFMA Eff. | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
+|--------------------------------|--------|-----------|------------------------|----------------------|
+| v7 + llirSched + amdgcnas      |   1538 |     98.5% |              5,043,636 |           16,777,216 |
+| v8 + llirSched + amdgcnas GM=1 |   1556 |     98.6% |              4,737,950 |           16,777,216 |
+| v8 + llirSched + amdgcnas GM=4 |   1605 |     98.9% |              3,147,709 |           16,777,216 |
+| v8 + llirSched + amdgcnas GM=6 |   1634 |     98.4% |              3,147,743 |           16,777,216 |
+| v8 + llirSched + amdgcnas GM=8 |   1608 |     98.9% |              3,147,721 |           16,777,216 |
+
+**Counter Definitions**:
+- **TCP_TCC_READ_REQ_sum**: Requests from L1 to L2. All configurations have identical values since all workgroups perform the same computation.
+- **TCC_EA0_RDREQ_DRAM_sum**: Requests from L2 to MALL (memory-side last-level cache), indicating L2 cache misses.
+
+**Observations**:
+- v7 and v8 GM=1 have similar L2 miss counts (~4.7–5.0M), confirming their equivalent data footprints as predicted by the math model.
+- GM=4, 6, and 8 all achieve ~3.1M L2 misses, matching the optimal f(GM)=12 prediction.
+- Despite similar MFMA efficiency (~98%), the reduced L2 traffic from GM=4/6/8 leads to higher sustained TFLOPS due to lower power consumption and higher frequency.
+- GM=6 achieves the highest TFLOPS (1634), demonstrating that non-divisor values can also be optimal.
 
 Performance is collected using:
 ```bash
@@ -196,10 +169,16 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ## 5. Summary
 
-This version demonstrates that high-performance GEMM requires attention to the entire kernel, not just the hot loop:
+This version demonstrates that achieving peak TFLOPS requires attention beyond MFMA efficiency:
 
-- **XCD-aware PID remapping** enables L2 cache reuse for adjacent tiles
-- **Workgroup swizzling** improves L2 cache utilization
-- **Interleaved epilogue** overlaps final computations with stores
+- **XCD-aware PID remapping** groups adjacent tiles onto the same XCD
+- **Workgroup swizzling (GROUP_SIZE_M)** reshapes tile layout to minimize data footprint per XCD
+- **Math model** provides a principled approach to choosing optimal GROUP_SIZE_M
 
-Combined with the optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves near-theoretical peak performance.
+Combined with the optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves **1634 TFLOPS** with optimal L2 locality.
+
+### Beyond This Version
+
+With near-100% MFMA efficiency inside the loop and optimal L2 locality, the remaining optimization opportunity is the **epilogue**. Currently, when K is large, the epilogue is a small fraction of total kernel execution time, so we have not prioritized its optimization.
+
+However, as K decreases, the epilogue takes a larger portion of the total time. Epilogue optimization (e.g., interleaving MFMA with stores, sliced output writes) will be addressed in future versions if small-K kernels become common use cases.

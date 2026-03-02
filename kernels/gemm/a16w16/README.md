@@ -101,10 +101,10 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 | v6      |   1260 |       88% | + llirSched                |
 | v7      |   1279 |       65% |                            |
 | v7      |   1411 |       79% | + llirSched                |
-| v7      |   1523 |       98% | + llirSched + amdgcnas     |
+| v7      |   1538 |       98% | + llirSched + amdgcnas     |
 | v8      |   1336 |       67% |                            |
 | v8      |   1470 |       77% | + llirSched                |
-| v8      |   1610 |       99% | + llirSched + amdgcnas     |
+| v8      |   1634 |       98% | + llirSched + amdgcnas     |
 
 Performance is measured and explained using:
 
