@@ -15,7 +15,7 @@ v8_beyond_hotloop/
 
 Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management. MFMA efficiency measures cycle-wise performance on each SIMD.
 
-However, the final performance reported as TFLOPS depends on both cycles and frequency. Frequency is determined by power management: higher power consumption leads to lower sustained frequency. As discussed in v7 regarding DIDT protection, power-aware optimization is essential for achieving peak TFLOPS.
+However, final performance reported as TFLOPS depends on both cycles and frequency. Frequency is governed by power management: higher power consumption leads to lower sustained frequency. As discussed in v7 regarding DIDT protection, power-aware optimization is essential for achieving peak TFLOPS.
 
 To reduce power consumption, we consider three strategies:
 
@@ -31,19 +31,19 @@ Throughout this section, we use **GM** as shorthand for **GROUP_SIZE_M**.
 
 ### 3.1 The Problem: Poor L2 Reuse Across XCDs
 
-gfx942 and gfx950 have 8 XCDs (Accelerator Compute Dies), each with its own L2 cache. The hardware distributes workgroups across XCDs in round-robin order: workgroup 0 to XCD 0, workgroup 1 to XCD 1, and so on.
+gfx942 and gfx950 have 8 XCDs (Accelerator Compute Dies), each with its own L2 cache. The hardware distributes workgroups across XCDs in round-robin order: workgroup 0 goes to XCD 0, workgroup 1 to XCD 1, and so on.
 
-This creates a problem for cache reuse. Adjacent output tiles often share the same A or B input tiles. With naive PID assignment, adjacent tiles go to consecutive workgroup IDs—and thus different XCDs. Since each XCD has a separate L2 cache, the shared input data must be reloaded from HBM on each XCD, wasting memory bandwidth.
+This creates a problem for cache reuse. Adjacent output tiles often share input tiles from A or B. With naive PID assignment, adjacent tiles map to consecutive workgroup IDs—and thus to different XCDs. Since each XCD has a separate L2 cache, shared input data must be reloaded from HBM on each XCD, wasting memory bandwidth.
 
-Consider v7 as an example with shape 4096×4096 and BLOCK_M=BLOCK_N=256. The output is divided into 16×16 = 256 tiles. With row-major PID assignment and round-robin XCD distribution, workgroups on XCD 0 are spread across all rows:
+Consider v7 with shape 4096×4096 and BLOCK_M=BLOCK_N=256. The output is divided into 16×16 = 256 tiles. With row-major PID assignment and round-robin XCD distribution, workgroups on XCD 0 are spread across all rows:
 
 <img src="../images/v7_grid.png" width="600">
 
-As shown, XCD 0 receives workgroups from every row of the output grid. This means XCD 0 must load the **entire A matrix** (all 16 row-strips) but only 1/8 of the B matrix (2 column-strips). The same pattern applies to all XCDs—each requires the full A matrix, resulting in poor L2 cache reuse.
+XCD 0 receives workgroups from every row of the output grid. As a result, XCD 0 must load the **entire A matrix** (all 16 row-strips) but only 1/8 of B (2 column-strips). The same pattern applies to all XCDs—each requires the full A matrix, resulting in poor L2 cache reuse.
 
 ### 3.2 XCD-Aware PID Remapping
 
-The `get_pids` function remaps PIDs so that consecutive tiles land on the **same XCD**:
+The first optimization remaps PIDs so that consecutive tiles land on the **same XCD**:
 
 ```python
 @gluon.jit
@@ -64,15 +64,15 @@ def get_pids(M, N, BM, BN, GRID_MN, NUM_XCDS, GROUP_SIZE_M):
     ...
 ```
 
-With XCD remapping alone (GROUP_M=1), each XCD receives a contiguous block of 32 tiles arranged in 2 rows × 16 columns:
+With XCD remapping alone (GM=1), each XCD receives a contiguous block of 32 tiles arranged in 2 rows × 16 columns:
 
 <img src="../images/v8_grid_xcd_GM1.png" width="600">
 
-However, this layout still requires the **entire B matrix** (all 16 column-strips) and only 1/8 of the A matrix (2 row-strips) per XCD. The total data footprint per XCD is unchanged—we've simply swapped which matrix is fully loaded.
+However, this layout still requires the **entire B matrix** (all 16 column-strips) and only 1/8 of A (2 row-strips) per XCD. The total data footprint per XCD is unchanged—we have simply swapped which matrix is fully loaded.
 
-### 3.3 Workgroup Swizzling (GROUP_SIZE_M)
+### 3.3 Workgroup Swizzling with GROUP_SIZE_M
 
-To reduce the data footprint per XCD, we reshape the workgroup layout using `GROUP_SIZE_M`:
+To reduce the data footprint per XCD, we reshape the workgroup layout using GROUP_SIZE_M:
 
 ```python
 if GROUP_SIZE_M == 1:
@@ -87,18 +87,18 @@ else:
     pid_n = (pid % num_pid_in_group) // group_size_m
 ```
 
-With `GROUP_SIZE_M=4`, the 32 workgroups per XCD are arranged in a 4×8 grid:
+With GM=4, the 32 workgroups per XCD are arranged in a 4×8 grid:
 
 <img src="../images/v8_grid_xcd_GM4.png" width="600">
 
-Now each XCD only requires **1/4 of the A matrix** (4 row-strips) and **1/2 of the B matrix** (8 column-strips). The total data footprint per XCD is significantly reduced compared to either v7 or v8 with GM=1.
+Now each XCD only requires **1/4 of A** (4 row-strips) and **1/2 of B** (8 column-strips). The total data footprint per XCD is significantly reduced compared to either v7 or v8 with GM=1.
 
-### 3.4 Math Model for Optimal GROUP_SIZE_M
+### 3.4 Math Model for Optimal GM
 
-The three configurations can be analyzed mathematically. Given:
+The configurations above can be analyzed mathematically. Given:
 - Total workgroups: 256
 - Workgroups per XCD: P = 32
-- Workgroup layout per XCD: GM × (P/GM)
+- Workgroup layout per XCD: GM × ⌈P/GM⌉
 
 Each XCD loads:
 - From A: GM row-strips
@@ -108,7 +108,7 @@ Total data per XCD is proportional to GM + ⌈P/GM⌉.
 
 **Optimization Problem**: Find integer GM that minimizes $f(\text{GM}) = \text{GM} + \lceil P/\text{GM} \rceil$.
 
-For the continuous relaxation where GM divides P:
+For the continuous relaxation:
 
 $$f(x) = x + \frac{P}{x}$$
 
@@ -118,26 +118,26 @@ For P = 32, $\sqrt{32} \approx 5.66$.
 
 Evaluating f(GM) for different values:
 
-| GM | ⌈P/GM⌉ | f(GM) = GM + ⌈P/GM⌉ | Configuration |
-|----|--------|---------------------|---------------|
-| 16 |      2 |                  18 | v7 (no XCD remapping) |
-|  2 |     16 |                  18 | v8 GM=1 (XCD remapping only) |
-|  4 |      8 |                  12 | v8 GM=4 |
-|  6 |      6 |                  12 | v8 GM=6 |
-|  8 |      4 |                  12 | v8 GM=8 |
+| GM | ⌈P/GM⌉ | f(GM) | Configuration |
+|----|--------|-------|---------------|
+| 16 |      2 |    18 | v7 (no XCD remapping) |
+|  2 |     16 |    18 | v8 GM=1 (XCD remapping only) |
+|  4 |      8 |    12 | v8 GM=4 |
+|  6 |      6 |    12 | v8 GM=6 |
+|  8 |      4 |    12 | v8 GM=8 |
 
 The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model confirms:
-- v7 (GM=16) and v8 GM=1 (GM=2) have the same suboptimal data footprint
-- GM=4, 6, or 8 all achieve the minimum data footprint
+- v7 (effectively GM=16) and v8 GM=1 (effectively GM=2) have the same suboptimal data footprint
+- GM = 4, 6, or 8 all achieve the minimum data footprint
 
 ### 3.5 Validation
 
-The math model predicts that GM=4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. This is validated by hardware counter measurements in Section 4, which show:
+The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. Hardware counter measurements in Section 4 confirm this:
 
-- v7 and v8 GM=1 have ~4.7–5.0M L2 misses (f(GM)=18)
-- GM=4, 6, and 8 all achieve ~3.1M L2 misses (f(GM)=12)
+- v7 and v8 GM=1 have ~4.7–5.0M L2 misses (f(GM) = 18)
+- GM = 4, 6, and 8 all achieve ~3.1M L2 misses (f(GM) = 12)
 
-The reduced L2 traffic directly translates to higher sustained TFLOPS through lower power consumption.
+The reduced L2 traffic translates directly to higher sustained TFLOPS through lower power consumption.
 
 ## 4. Performance Analysis
 
@@ -157,9 +157,8 @@ The following table shows performance, MFMA efficiency, and L2 cache behavior fo
 
 **Observations**:
 - v7 and v8 GM=1 have similar L2 miss counts (~4.7–5.0M), confirming their equivalent data footprints as predicted by the math model.
-- GM=4, 6, and 8 all achieve ~3.1M L2 misses, matching the optimal f(GM)=12 prediction.
-- Despite similar MFMA efficiency (~98%), the reduced L2 traffic from GM=4/6/8 leads to higher sustained TFLOPS due to lower power consumption and higher frequency.
-- GM=6 achieves the highest TFLOPS (1634), demonstrating that non-divisor values can also be optimal.
+- GM = 4, 6, and 8 all achieve ~3.1M L2 misses, matching the optimal f(GM) = 12 prediction.
+- Despite similar MFMA efficiency (~98%), the reduced L2 traffic from GM = 4/6/8 leads to higher sustained TFLOPS due to lower power consumption and higher frequency.
 
 Performance is collected using:
 ```bash
@@ -179,12 +178,12 @@ This version demonstrates that achieving peak TFLOPS requires attention beyond M
 
 - **XCD-aware PID remapping** groups adjacent tiles onto the same XCD
 - **Workgroup swizzling (GROUP_SIZE_M)** reshapes tile layout to minimize data footprint per XCD
-- **Math model** provides a principled approach to choosing optimal GROUP_SIZE_M
+- **Math model** provides a principled approach to choosing optimal GM
 
-Combined with the optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves **1634 TFLOPS** with optimal L2 locality.
+Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves **1634 TFLOPS** with optimal L2 locality.
 
 ### Beyond This Version
 
-With near-100% MFMA efficiency inside the loop and optimal L2 locality, the remaining optimization opportunity is the **epilogue**. Currently, when K is large, the epilogue is a small fraction of total kernel execution time, so we have not prioritized its optimization.
+With near-100% MFMA efficiency inside the loop and optimal L2 locality, the remaining optimization opportunity is the **epilogue**. When K is large, the epilogue is a small fraction of total kernel execution time, so we have not prioritized its optimization.
 
-However, as K decreases, the epilogue takes a larger portion of the total time. Epilogue optimization (e.g., interleaving MFMA with stores, sliced output writes) will be addressed in future versions if small-K kernels become common use cases.
+However, as K decreases, the epilogue takes a larger portion of total execution time. Epilogue optimization (e.g., interleaving MFMA with stores, sliced output writes) will be addressed in future versions if small-K kernels become common use cases.
