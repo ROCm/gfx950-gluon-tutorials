@@ -108,7 +108,7 @@ The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) alone ca
 From the `a8w8` directory:
 
 ```bash
-python bench.py --K 8192
+python bench.py --K 16384
 ```
 
 This runs correctness checks against `torch.matmul` and reports TFLOPS.
@@ -116,7 +116,7 @@ This runs correctness checks against `torch.matmul` and reports TFLOPS.
 For accurate performance measurement with rocprof:
 
 ```bash
-rocprofv3 --kernel-trace -d out -- python bench.py --K 8192 --rocprof
+rocprofv3 --kernel-trace -d out -- python bench.py --K 16384 --rocprof
 ```
 
 The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU caches, producing cold-cache timings representative of real workloads.
