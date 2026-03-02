@@ -79,6 +79,50 @@ Config: base
 
 If a run fails (e.g. an assertion in the scheduler), the row shows `FAIL` for the affected columns.
 
+## run_counter_collection.py
+
+Automates hardware performance counter collection using `rocprofv3` across kernel versions and scheduler configs, then prints a summary table of averaged counter values.
+
+### Prerequisites
+
+- Requires `rocprofv3`
+
+### Usage
+
+```bash
+python scripts/run_counter_collection.py --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--kernel` | `a16w16` | Kernel type (`a16w16` or `a8w8`) |
+| `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
+| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
+| `--K` | `4096` | K dimension for the GEMM problem |
+| `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
+| `--counters` | (required) | Comma-separated list of hardware counters to collect |
+
+### Examples
+
+Collect L2 cache and TCP read counters for v7 and v8:
+
+```bash
+python scripts/run_counter_collection.py --versions 7 8 --configs base \
+    --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum --K 4096 --dtype fp16
+```
+
+### Output
+
+```
+Config: base
+| Version              | TCC_EA0_RDREQ_DRAM_sum       | TCP_TCC_READ_REQ_sum         | Dispatches |
+|----------------------|------------------------------|------------------------------|------------|
+| v7_slice             |                    2,361,080 |                    8,388,608 |      1,002 |
+| v8_beyond_hotloop    |                    1,574,656 |                    8,388,608 |      1,002 |
+```
+
 ## run_att.py
 
 Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then automatically post-processes the trace with `process_json.py` to extract MFMA efficiency and timing breakdowns.
