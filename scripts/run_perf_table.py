@@ -302,15 +302,17 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
             lines = combined.strip().splitlines()
             for line in lines[-5:]:
                 print(f"    {line}")
-            return result
-
-        if not use_rocprof:
-            result["tflops"] = parse_tflops(combined)
-        result["mfma_eff"] = parse_mfma_efficiency(combined)
+            if not use_rocprof:
+                return result
+        else:
+            if not use_rocprof:
+                result["tflops"] = parse_tflops(combined)
+            result["mfma_eff"] = parse_mfma_efficiency(combined)
 
     except Exception as e:
         print(f"  FAILED: {e}")
-        return result
+        if not use_rocprof:
+            return result
 
     vgprs, spills = parse_amdgcn_metadata(version_dir)
     result["vgprs"] = vgprs
