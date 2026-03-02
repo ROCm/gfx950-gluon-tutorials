@@ -1,6 +1,6 @@
 # FP8 GEMM Kernel (a8w8)
 
-This kernel applies the same design principles developed in `a16w16/`, adapted for FP8 (e5m2) compute. Only the final optimized version is shown here.
+This kernel applies the design principles developed in `a16w16/`, adapted for FP8 (e5m2) compute. Only the final optimized version is provided.
 
 ## 1. Directory Structure
 
@@ -13,7 +13,7 @@ a8w8/
 
 ## 2. Key Differences from FP16
 
-The FP8 kernel shares the same optimization techniques as `a16w16/v8_beyond_hotloop`, but with different parameters to match the FP8 MFMA instruction characteristics.
+The FP8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match FP8 MFMA instruction characteristics.
 
 | Aspect | FP16 (a16w16) | FP8 (a8w8) |
 |--------|---------------|------------|
@@ -26,21 +26,21 @@ The FP8 kernel shares the same optimization techniques as `a16w16/v8_beyond_hotl
 
 ### 2.1 Why Larger BLOCK_K?
 
-FP8 MFMA processes 128 elements along the K dimension per instruction (vs 32 for FP16). To maintain the same number of MFMA instructions per iteration, we double BLOCK_K from 64 to 128.
+FP8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
 
 ### 2.2 Scaled MFMA
 
-FP8 uses `mfma_scaled` which supports per-tensor scaling factors:
+FP8 uses `mfma_scaled`, which supports per-tensor scaling factors:
 
 ```python
 acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
 ```
 
-The `None` arguments are placeholders for optional scale tensors. The `"e5m2"` specifies the FP8 format (5-bit exponent, 2-bit mantissa).
+The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the FP8 format (5-bit exponent, 2-bit mantissa).
 
 ### 2.3 LDS Layout with Double Padding
 
-FP8 requires additional padding to avoid bank conflicts due to the larger K dimension:
+The larger K dimension in FP8 requires additional padding to avoid bank conflicts:
 
 ```python
 sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
@@ -79,8 +79,8 @@ This kernel incorporates all optimizations from the a16w16 tutorial series:
 
 - **XCD-aware PID remapping** — Groups adjacent tiles on the same XCD for L2 cache reuse
 - **Workgroup swizzling** — Uses `GROUP_SIZE_M=4` to improve L2 cache hit rate for the A matrix
-- **N-slicing** — Separate `smemB0` and `smemB1` buffers reduce peak register pressure
-- **Loop unrolling by 2** — Eliminates register copy overhead between iterations
+- **N-slicing** — Separate `smemB0` and `smemB1` buffers to reduce peak register pressure
+- **Loop unrolling by 2** — Eliminates register copy overhead at iteration boundaries
 - **3-stage pipeline** — Overlaps global loads, LDS loads, and MFMA compute
 - **Interleaved epilogue** — Overlaps final MFMA with stores using `extract_slice`
 
@@ -119,4 +119,4 @@ For accurate performance measurement with rocprof:
 rocprofv3 --kernel-trace -d out -- python bench.py --K 8192 --rocprof
 ```
 
-The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU cache, producing cold-cache timings similar to real workloads.
+The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU caches, producing cold-cache timings representative of real workloads.
