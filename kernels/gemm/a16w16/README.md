@@ -50,9 +50,9 @@ Every intermediate kernel version is kept intentionally, so readers can see *wha
 > [!NOTE]
 > A key theme throughout: **think at the block level, not the instruction level**. Gluon kernels are designed at tensor granularity; fine-grained scheduling belongs in the backend.
 
-## 4. Kernel Versions
+## 4. The Optimization Journey
 
-Each version introduces **one new idea** and builds on the previous one.
+This section tells the story of how we transformed a 524 TFLOPS naive kernel into a 1634 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
 
 | Version | Name | Focus | Key Concept |
 |---------|------|-------|-------------|
@@ -65,10 +65,6 @@ Each version introduces **one new idea** and builds on the previous one.
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
 | v7 | slice | Register pressure | N-slicing, register allocation workarounds |
 | v8 | beyond_hotloop | Power efficiency | XCD-aware PID remapping, GROUP_SIZE_M optimization |
-
-## 5. The Optimization Journey
-
-This section tells the story of how we transformed a 524 TFLOPS naive kernel into a 1634 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
 
 ### Act I: Getting the Basics Right (v0–v3)
 
@@ -106,11 +102,7 @@ MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups la
 
 A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**—the journey's destination.
 
-### The Moral
-
-Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
-
-## 6. Performance Results
+### The Results
 
 Measured on MI355 with shape 4096×4096×8192, FP16:
 
@@ -134,16 +126,12 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 | v8      |   1470 |       77% | + llirSched                |
 | v8      |   1634 |       98% | + llirSched + amdgcnas     |
 
-Performance is measured and explained using:
+> [!IMPORTANT]
+> **The Moral:** Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
 
-- Microbenchmarking for throughput
-- `rocprofv3` traces for cycle-level analysis
-- Hardware counters for L2 cache behavior
-- A custom trace tool to compute **MFMA efficiency**
+Performance is measured using microbenchmarking, `rocprofv3` traces, hardware counters, and a custom tool to compute MFMA efficiency. For methodology details, see [MFMA Efficiency](../../../docs/mfma_efficiency.md).
 
-For methodology details, see [MFMA Efficiency](../../../docs/mfma_efficiency.md).
-
-## 7. Tools and Infrastructure
+## 5. Tools and Infrastructure
 
 This tutorial relies on several tools:
 
@@ -155,7 +143,7 @@ This tutorial relies on several tools:
 
 See [scripts/README.md](../../../scripts/README.md) for usage details.
 
-## 8. Beyond FP16
+## 6. Beyond FP16
 
 Although this directory focuses on **FP16 compute-bound GEMM**, the same optimization strategy applies to other precisions:
 
@@ -166,7 +154,7 @@ Although this directory focuses on **FP16 compute-bound GEMM**, the same optimiz
 
 The optimization journey remains the same—only the tile shape and MFMA instruction variant change.
 
-## 9. How to Read This
+## 7. How to Read This
 
 Recommended order:
 
