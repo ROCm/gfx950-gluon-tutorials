@@ -20,10 +20,7 @@ def get_x_vals():
     ]
 
 
-def get_gemm_sizes():
-
-    args = parse_args()
-    selected_k = args.K
+def get_gemm_sizes(selected_k=None):
     sizes = get_x_vals()
 
     if selected_k is None:
@@ -40,27 +37,6 @@ def get_gemm_sizes():
     return filtered
 
 
-def get_dtypes():
-    default_dtypes = ["fp16", "bf16"]
-
-    args = parse_args()
-    selected_dtype = args.dtype
-
-    if selected_dtype is None:
-        return default_dtypes
-
-    if isinstance(selected_dtype, str):
-        selected_dtype = [selected_dtype]
-
-    invalid = set(selected_dtype) - set(default_dtypes)
-    if invalid:
-        raise ValueError(
-            f"Unsupported dtype(s): {sorted(invalid)}. " f"Supported dtypes: {default_dtypes}"
-        )
-
-    return selected_dtype
-
-
 def parse_args():
 
     parser = argparse.ArgumentParser(description="GEMM benchmark")
@@ -72,68 +48,131 @@ def parse_args():
         default=None,
         help="Data type(s) to benchmark (default: fp16 bf16)",
     )
+    parser.add_argument(
+        "--rocprof",
+        action="store_true",
+        help="Rocprof mode: run kernel 1000 times without do_bench. "
+        "Use with rocprofv3 --kernel-trace to measure timing externally.",
+    )
+    parser.add_argument(
+        "--rotating-buffer-size",
+        type=int,
+        default=512,
+        help="Total size (MB) of rotating tensors (a, b) for rocprof mode. "
+        "Should exceed GPU cache (L2+MALL) size. (default: 512)",
+    )
     return parser.parse_args()
 
 
-def test_correctness(dtype):
-    if dtype == "f8":
-        torch_dtype = torch.float16
-    else:
-        torch_dtype = name_to_torch_type[dtype]
+def test_correctness(gemm_sizes):
+    torch_dtype = torch.float16
 
-    for M, N, K in get_gemm_sizes():
+    for M, N, K in gemm_sizes:
         a = torch.rand((M, K), device=DEVICE, dtype=torch_dtype) - 0.5
         b = torch.rand((N, K), device=DEVICE, dtype=torch_dtype).T - 0.5
-        if dtype == "f8":
-            a = a.to(torch.float8_e5m2)
-            b = b.to(torch.float8_e5m2)
-        triton_output = matmul(a, b)
-        if dtype == "f8":
-            torch_output = torch.matmul(a.to(torch.float16), b.to(torch.float16))
-        else:
-            torch_output = torch.matmul(a, b)
-        if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
-            print(f"{M=} {N=} {K=} {dtype=}: ✅ Triton and Torch match")
-        else:
-            print(f"{M=} {N=} {K=} {dtype=}: ❌ Triton and Torch differ")
-
-
-configs = []
-configs.append(
-    triton.testing.Benchmark(
-        x_names=["M", "N", "K"],
-        x_vals=get_gemm_sizes(),
-        line_arg="dtype",
-        line_vals=["f8"],
-        line_names=["f8"],
-        styles=[("green", "-")],
-        ylabel="TFLOPS",
-        plot_name="matmul-performance",
-        args={},
-    )
-)
-
-
-@triton.testing.perf_report(configs)
-def benchmark(M, N, K, dtype):
-    if dtype == "f8":
-        torch_dtype = torch.float16
-    else:
-        torch_dtype = name_to_torch_type[dtype]
-    a = torch.randn((M, K), device=DEVICE, dtype=torch_dtype)
-    b = torch.randn((N, K), device=DEVICE, dtype=torch_dtype).T
-    if dtype == "f8":
         a = a.to(torch.float8_e5m2)
         b = b.to(torch.float8_e5m2)
-    quantiles = [0.5, 0.2, 0.8]
-    ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
+        triton_output = matmul(a, b)
+        torch_output = torch.matmul(a.to(torch.float16), b.to(torch.float16))
+        if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
+            print(f"[a8w8] {M=} {N=} {K=} dtype=f8: ✅ Triton and Torch match")
+        else:
+            print(f"[a8w8] {M=} {N=} {K=} dtype=f8: ❌ Triton and Torch differ")
 
-    def perf(ms):
-        return 2 * M * N * K * 1e-12 / (ms * 1e-3)
 
-    return perf(ms), perf(max_ms), perf(min_ms)
+def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
+    """Allocate multiple copies of (a, b) tensors to exceed GPU cache size.
+
+    Each iteration of the benchmark loop uses a different copy via i % block_count,
+    so cached data from the previous iteration is useless and the kernel always
+    starts with cold caches.
+    """
+    torch_dtype = torch.float8_e5m2
+    elem_bytes = torch.tensor([], dtype=torch_dtype).element_size()
+    a_size = M * K * elem_bytes
+    b_size = K * N * elem_bytes
+    total_size = a_size + b_size
+
+    block_count = max(1, rotating_buffer_size_mb * 1024 * 1024 // total_size)
+
+    a_list, b_list = [], []
+    for _ in range(block_count):
+        a = torch.randn((M, K), device=DEVICE, dtype=torch.float16).to(torch.float8_e5m2)
+        b = torch.randn((N, K), device=DEVICE, dtype=torch.float16).T.to(torch.float8_e5m2)
+        a_list.append(a)
+        b_list.append(b)
+
+    return a_list, b_list, block_count
 
 
-test_correctness("f8")
+def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
+    """Run the kernel n_iters times for each size using rotating tensors.
 
-benchmark.run(show_plots=False, print_data=True)
+    Rotating tensors ensure each iteration reads from different memory addresses,
+    defeating GPU cache and producing cold-cache timings similar to real workloads.
+    Designed to be wrapped by rocprofv3 --kernel-trace for external timing.
+    """
+    for M, N, K in gemm_sizes:
+        a_list, b_list, block_count = gen_rotating_tensors(
+            M, N, K, rotating_buffer_size_mb
+        )
+        print(f"[a8w8] {M=} {N=} {K=} dtype=f8: "
+              f"rotating tensors: {block_count} copies, "
+              f"{block_count * (M*K + K*N) * a_list[0].element_size() / 1024**2:.0f} MB")
+        # Warmup
+        matmul(a_list[0], b_list[0])
+        torch.cuda.synchronize()
+        for i in range(n_iters):
+            idx = i % block_count
+            matmul(a_list[idx], b_list[idx])
+        torch.cuda.synchronize()
+        print(f"[a8w8] {M=} {N=} {K=} dtype=f8: {n_iters} iterations done")
+
+
+def main():
+    args = parse_args()
+
+    gemm_sizes = get_gemm_sizes(args.K)
+
+    test_correctness(gemm_sizes)
+
+    if args.rocprof:
+        run_rocprof_iterations(gemm_sizes,
+                               rotating_buffer_size_mb=args.rotating_buffer_size)
+        return
+
+    configs = [
+        triton.testing.Benchmark(
+            x_names=["M", "N", "K"],
+            x_vals=gemm_sizes,
+            line_arg="dtype",
+            line_vals=["f8"],
+            line_names=["f8"],
+            styles=[("green", "-")],
+            ylabel="TFLOPS",
+            plot_name="matmul-performance",
+            args={},
+        )
+    ]
+
+    @triton.testing.perf_report(configs)
+    def benchmark(M, N, K, dtype):
+        torch_dtype = torch.float16
+        a = torch.randn((M, K), device=DEVICE, dtype=torch_dtype)
+        b = torch.randn((N, K), device=DEVICE, dtype=torch_dtype).T
+        a = a.to(torch.float8_e5m2)
+        b = b.to(torch.float8_e5m2)
+        quantiles = [0.5, 0.2, 0.8]
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
+
+        def perf(ms):
+            return 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
+        return perf(ms), perf(max_ms), perf(min_ms)
+
+    print("\na8w8_kernel:")
+    benchmark.run(show_plots=False, print_data=True)
+
+
+if __name__ == "__main__":
+    main()
