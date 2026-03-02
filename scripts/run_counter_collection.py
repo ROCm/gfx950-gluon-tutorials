@@ -151,10 +151,14 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 
     cmd = [
         "rocprofv3",
-        "-i", counters_yaml,
-        "--kernel-include-regex", version_dir,
-        "-d", trace_dir,
-        "--output-format", "csv",
+        "-i",
+        counters_yaml,
+        "--kernel-include-regex",
+        version_dir,
+        "-d",
+        trace_dir,
+        "--output-format",
+        "csv",
         "--",
     ] + bench_cmd
 
@@ -195,11 +199,16 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 def print_table(config, rows, counters):
     """Print a markdown summary table for one config."""
     # Build header
-    counter_headers = [f"{c:>28}" for c in counters]
-    header = "| Version              | " + " | ".join(f"{c:<28}" for c in counters) + " | Dispatches |"
-    sep_parts = [
-        "|----------------------|",
-    ] + [f"{''.join(['-'] * 30)}|" for _ in counters] + ["------------|"]
+    header = (
+        "| Version              | " + " | ".join(f"{c:<28}" for c in counters) + " | Dispatches |"
+    )
+    sep_parts = (
+        [
+            "|----------------------|",
+        ]
+        + [f"{''.join(['-'] * 30)}|" for _ in counters]
+        + ["------------|"]
+    )
     sep = "".join(sep_parts)
 
     print(f"\nConfig: {config}")

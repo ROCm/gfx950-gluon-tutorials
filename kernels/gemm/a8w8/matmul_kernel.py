@@ -54,6 +54,7 @@ def get_pids(
 
     return pid_m, pid_n
 
+
 @gluon.jit
 def a8w8_kernel(
     a_ptr,
@@ -261,7 +262,9 @@ def a8w8_kernel(
         )
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -273,7 +276,9 @@ def a8w8_kernel(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
@@ -298,7 +303,9 @@ def a8w8_kernel(
         )
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -310,7 +317,9 @@ def a8w8_kernel(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
@@ -321,11 +330,7 @@ def a8w8_kernel(
 
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
-    offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
-    c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
-    c_left_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
-    c_right_offsets = c_left_offsets + BLOCK_N * stride_cn // 2
 
     ## iterMax - 2
 
@@ -343,7 +348,6 @@ def a8w8_kernel(
     acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
-
 
     ## iterMax - 1
 
@@ -363,7 +367,6 @@ def a8w8_kernel(
     c11_base = c10_base + 64 * stride_cm
     c12_base = c11_base + 64 * stride_cm
     c13_base = c12_base + 64 * stride_cm
-
 
     ## slice 0 m[0:64]n[0:128]
     a0 = extract_slice(a, [64, 128], [0, 0])

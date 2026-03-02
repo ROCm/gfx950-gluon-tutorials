@@ -113,12 +113,12 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
     Designed to be wrapped by rocprofv3 --kernel-trace for external timing.
     """
     for M, N, K in gemm_sizes:
-        a_list, b_list, block_count = gen_rotating_tensors(
-            M, N, K, rotating_buffer_size_mb
+        a_list, b_list, block_count = gen_rotating_tensors(M, N, K, rotating_buffer_size_mb)
+        print(
+            f"[a8w8] {M=} {N=} {K=} dtype=f8: "
+            f"rotating tensors: {block_count} copies, "
+            f"{block_count * (M*K + K*N) * a_list[0].element_size() / 1024**2:.0f} MB"
         )
-        print(f"[a8w8] {M=} {N=} {K=} dtype=f8: "
-              f"rotating tensors: {block_count} copies, "
-              f"{block_count * (M*K + K*N) * a_list[0].element_size() / 1024**2:.0f} MB")
         # Warmup
         matmul(a_list[0], b_list[0])
         torch.cuda.synchronize()
@@ -137,8 +137,7 @@ def main():
     test_correctness(gemm_sizes)
 
     if args.rocprof:
-        run_rocprof_iterations(gemm_sizes,
-                               rotating_buffer_size_mb=args.rotating_buffer_size)
+        run_rocprof_iterations(gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size)
         return
 
     configs = [

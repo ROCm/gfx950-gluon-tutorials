@@ -196,12 +196,16 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     cmd = [
         "rocprofv3",
         "--kernel-trace",
-        "--kernel-include-regex", version_dir,
-        "-d", trace_dir,
+        "--kernel-include-regex",
+        version_dir,
+        "-d",
+        trace_dir,
         "--",
-        "python", "bench.py",
+        "python",
+        "bench.py",
         "--rocprof",
-        "--K", str(K),
+        "--K",
+        str(K),
     ]
     if kernel_type != "a8w8":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
@@ -258,7 +262,13 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         version_dir = VERSION_MAP[version]
         work_dir = os.path.join(git_root, "kernels", "gemm", "a16w16")
 
-    result = {"version_dir": version_dir, "tflops": None, "vgprs": None, "spills": None, "mfma_eff": None}
+    result = {
+        "version_dir": version_dir,
+        "tflops": None,
+        "vgprs": None,
+        "spills": None,
+        "mfma_eff": None,
+    }
 
     clean_caches(work_dir)
     write_att_config(version_dir, work_dir)
@@ -275,9 +285,12 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     cmd = [
         sys.executable,
         run_att_path,
-        "--att-output", "tmp",
-        "python", "bench.py",
-        "--K", str(K),
+        "--att-output",
+        "tmp",
+        "python",
+        "bench.py",
+        "--K",
+        str(K),
     ]
     if kernel != "a8w8":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
@@ -320,7 +333,9 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
 
     # Run rocprofv3 to get TFLOPS from kernel timestamps
     if use_rocprof:
-        tflops = run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type=kernel)
+        tflops = run_rocprof_trace(
+            version_dir, K, dtype, version, work_dir, env, kernel_type=kernel
+        )
         result["tflops"] = tflops
 
     return result
@@ -342,7 +357,11 @@ def print_table(config, rows):
     print("|----------------------|--------|-------|--------|-----------|")
     for row in rows:
         version_dir = row["version_dir"]
-        tflops = format_val(row["tflops"], "{:.0f}") if isinstance(row["tflops"], float) else format_val(row["tflops"])
+        tflops = (
+            format_val(row["tflops"], "{:.0f}")
+            if isinstance(row["tflops"], float)
+            else format_val(row["tflops"])
+        )
         vgprs = format_val(row["vgprs"])
         spills = format_val(row["spills"])
         mfma_eff = format_val(row["mfma_eff"])
@@ -416,7 +435,14 @@ def main():
         print(f"{'='*60}")
         results[config] = []
         for version in versions:
-            row = run_benchmark(version, config, args.K, args.dtype, kernel=args.kernel, use_rocprof=args.use_rocprof)
+            row = run_benchmark(
+                version,
+                config,
+                args.K,
+                args.dtype,
+                kernel=args.kernel,
+                use_rocprof=args.use_rocprof,
+            )
             results[config].append(row)
 
     # Print summary tables

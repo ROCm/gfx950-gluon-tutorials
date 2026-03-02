@@ -177,7 +177,14 @@ def analyze_code(code_list):
     # Compute iterations: hitcount_loop / hitcount_epilogue
     loop_hit = hitcounts[loop_first_pos]
     epilogue_hit = hitcounts[epilogue_first_pos] if epilogue_first_pos is not None else 1
-    num_iterations = loop_hit / epilogue_hit if epilogue_hit != 0 else None
+
+    if epilogue_hit == 0:
+        # No epilogue executed (dead code) - loop_hit is the iteration count
+        num_iterations = loop_hit
+        epilogue_first_index = None
+    else:
+        num_iterations = loop_hit / epilogue_hit
+        epilogue_first_index = indices[epilogue_first_pos]
 
     # Count MFMA instructions and their total cycles
     total_mfma_cycles = 0
@@ -190,7 +197,8 @@ def analyze_code(code_list):
 
     return {
         "loop_first_index": indices[loop_first_pos],
-        "epilogue_first_index": None if epilogue_first_pos is None else indices[epilogue_first_pos],
+        "loop_last_index": indices[loop_last_pos],
+        "epilogue_first_index": epilogue_first_index,
         "mfma_count_in_loop": mfma_count,
         "total_mfma_cycles_in_loop": total_mfma_cycles,
         "loop_hitcount": loop_hit,
@@ -199,8 +207,13 @@ def analyze_code(code_list):
     }
 
 
-def process_wave_file(path, loop_index, epilogue_index):
-    """Find first occurrence clocks in a wave JSON file."""
+def process_wave_file(path, loop_index, epilogue_index, loop_last_index=None):
+    """Find first occurrence clocks in a wave JSON file.
+
+    Returns (prologue_duration, loop_duration, epilogue_duration, wave_iterations)
+    where wave_iterations is the number of loop iterations observed in this wave
+    (only set in no-epilogue mode, None otherwise).
+    """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     if "wave" not in data or "instructions" not in data["wave"]:
@@ -209,16 +222,32 @@ def process_wave_file(path, loop_index, epilogue_index):
     instructions = data["wave"]["instructions"]
     loop_clock = None
     epilogue_clock = None
-    start_clock = None
-    end_clock = None
+    wave_iterations = None
 
-    for clock, _, _, _, idx in instructions:
-        if loop_clock is None and idx == loop_index:
-            loop_clock = clock
-        if epilogue_clock is None and idx == epilogue_index:
-            epilogue_clock = clock
-        if loop_clock is not None and epilogue_clock is not None:
-            break
+    if epilogue_index is not None:
+        # Normal case: find first occurrence of loop and epilogue indices
+        for clock, _, _, _, idx in instructions:
+            if loop_clock is None and idx == loop_index:
+                loop_clock = clock
+            if epilogue_clock is None and idx == epilogue_index:
+                epilogue_clock = clock
+            if loop_clock is not None and epilogue_clock is not None:
+                break
+    else:
+        # No-epilogue case: find first occurrence of loop start, last
+        # occurrence of any instruction in the loop range as loop end,
+        # and count iterations by counting occurrences of loop_index.
+        last_loop_clock = None
+        iter_count = 0
+        for clock, _, _, _, idx in instructions:
+            if idx == loop_index:
+                if loop_clock is None:
+                    loop_clock = clock
+                iter_count += 1
+            if loop_index <= idx <= loop_last_index:
+                last_loop_clock = clock
+        epilogue_clock = last_loop_clock
+        wave_iterations = iter_count
 
     start_clock = instructions[0][0]
     end_clock = instructions[-1][0]
@@ -229,10 +258,10 @@ def process_wave_file(path, loop_index, epilogue_index):
     pro = loop_clock - start_clock
     epi = end_clock - epilogue_clock
 
-    return pro, epilogue_clock - loop_clock, epi
+    return pro, epilogue_clock - loop_clock, epi, wave_iterations
 
 
-def analyze_waves(folder, loop_index, epilogue_index):
+def analyze_waves(folder, loop_index, epilogue_index, loop_last_index=None):
     """Process se0_sm0_sl0_wv*.json files and compute durations + average."""
     pattern = os.path.join(folder, "se0_sm0_sl0_wv*.json")
     files = sorted(glob(pattern))
@@ -242,13 +271,16 @@ def analyze_waves(folder, loop_index, epilogue_index):
     durations = {}
     pro_dur = {}
     epi_dur = {}
+    wave_iters = []
     for path in files:
-        result = process_wave_file(path, loop_index, epilogue_index)
+        result = process_wave_file(path, loop_index, epilogue_index, loop_last_index)
         if result is not None:
-            pro, dur, epi = result
+            pro, dur, epi, w_iters = result
             durations[os.path.basename(path)] = dur
             pro_dur[os.path.basename(path)] = pro
             epi_dur[os.path.basename(path)] = epi
+            if w_iters is not None:
+                wave_iters.append(w_iters)
 
     if not durations:
         raise ValueError("No valid loop durations found in any se0_sm0_sl0_wv*.json file")
@@ -256,7 +288,8 @@ def analyze_waves(folder, loop_index, epilogue_index):
     avg_duration = sum(durations.values()) / len(durations)
     avg_pro_dur = sum(pro_dur.values()) / len(pro_dur)
     avg_epi_dur = sum(epi_dur.values()) / len(epi_dur)
-    return durations, avg_duration, pro_dur, avg_pro_dur, epi_dur, avg_epi_dur
+    avg_wave_iters = sum(wave_iters) / len(wave_iters) if wave_iters else None
+    return durations, avg_duration, pro_dur, avg_pro_dur, epi_dur, avg_epi_dur, avg_wave_iters
 
 
 def main():
@@ -270,16 +303,21 @@ def main():
         code_list = load_code_json(args.folder)
         code_info = analyze_code(code_list)
 
-        durations, avg_loop_duration, _, avg_pro, _, avg_epi = analyze_waves(
+        durations, avg_loop_duration, _, avg_pro, _, avg_epi, wave_iters = analyze_waves(
             args.folder,
             code_info["loop_first_index"],
             code_info["epilogue_first_index"],
+            code_info["loop_last_index"],
         )
 
+        # Use wave-derived iteration count when epilogue hitcount is 0
+        num_iterations = code_info["num_iterations"]
+        if wave_iters is not None:
+            num_iterations = wave_iters
+            code_info["num_iterations"] = wave_iters
+
         avg_iteration_duration = (
-            avg_loop_duration / code_info["num_iterations"]
-            if code_info["num_iterations"] and code_info["num_iterations"] > 0
-            else None
+            avg_loop_duration / num_iterations if num_iterations and num_iterations > 0 else None
         )
 
         mfma_efficiency = (

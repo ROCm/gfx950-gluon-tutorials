@@ -218,7 +218,9 @@ def v7_slice(
         )
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -230,7 +232,9 @@ def v7_slice(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
@@ -255,7 +259,9 @@ def v7_slice(
         )
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -267,7 +273,9 @@ def v7_slice(
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
         b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += BLOCK_K * stride_ak
@@ -299,7 +307,6 @@ def v7_slice(
     acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
-
 
     ## iterMax - 1
 
