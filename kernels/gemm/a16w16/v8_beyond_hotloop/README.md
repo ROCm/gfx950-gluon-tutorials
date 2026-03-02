@@ -31,7 +31,7 @@ This creates a problem for cache reuse. Adjacent output tiles often share the sa
 
 Consider v7 as an example with shape 4096×4096 and BLOCK_M=BLOCK_N=256. The output is divided into 16×16 = 256 tiles. With row-major PID assignment and round-robin XCD distribution, workgroups on XCD 0 are spread across all rows:
 
-![v7 Grid Layout](../images/v7_grid.png)
+<img src="../images/v7_grid.png" width="600">
 
 As shown, XCD 0 receives workgroups from every row of the output grid. This means XCD 0 must load the **entire A matrix** (all 16 row-strips) but only 1/8 of the B matrix (2 column-strips). The same pattern applies to all XCDs—each requires the full A matrix, resulting in poor L2 cache reuse.
 
@@ -60,7 +60,7 @@ def get_pids(M, N, BM, BN, GRID_MN, NUM_XCDS, GROUP_SIZE_M):
 
 With XCD remapping alone (GROUP_M=1), each XCD receives a contiguous block of 32 tiles arranged in 2 rows × 16 columns:
 
-![v8 Grid with XCD Remapping, GM=1](../images/v8_grid_xcd_GM1.png)
+<img src="../images/v8_grid_xcd_GM1.png" width="600">
 
 However, this layout still requires the **entire B matrix** (all 16 column-strips) and only 1/8 of the A matrix (2 row-strips) per XCD. The total data footprint per XCD is unchanged—we've simply swapped which matrix is fully loaded.
 
@@ -83,7 +83,7 @@ else:
 
 With `GROUP_SIZE_M=4`, the 32 workgroups per XCD are arranged in a 4×8 grid:
 
-![v8 Grid with XCD Remapping, GM=4](../images/v8_grid_xcd_GM4.png)
+<img src="../images/v8_grid_xcd_GM4.png" width="600">
 
 Now each XCD only requires **1/4 of the A matrix** (4 row-strips) and **1/2 of the B matrix** (8 column-strips). The total data footprint per XCD is significantly reduced compared to either v7 or v8 with GM=1.
 
