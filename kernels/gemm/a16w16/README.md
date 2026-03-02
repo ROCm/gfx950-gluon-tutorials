@@ -108,35 +108,15 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 
 ![Performance Chart](images/performance_chart.png)
 
-| Version | TFLOPS | MFMA Eff. | Notes                      |
-|---------|--------|-----------|----------------------------|
-| v0      |    524 |       25% | Baseline                   |
-| v1      |    514 |       24% |                            |
-| v2      |    697 |       36% |                            |
-| v3      |    774 |       42% |                            |
-| v4      |   1113 |       57% |                            |
-| v5      |   1134 |       59% |                            |
-| v5      |   1283 |       76% | + llirSched                |
-| v6      |   1088 |       61% |                            |
-| v6      |   1260 |       88% | + llirSched                |
-| v7      |   1279 |       65% |                            |
-| v7      |   1411 |       79% | + llirSched                |
-| v7      |   1538 |       98% | + llirSched + amdgcnas     |
-| v8      |   1336 |       67% |                            |
-| v8      |   1470 |       77% | + llirSched                |
-| v8      |   1634 |       98% | + llirSched + amdgcnas     |
-
 > [!IMPORTANT]
 > **The Moral:** Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
-
-Performance is measured using microbenchmarking, `rocprofv3` traces, hardware counters, and a custom tool to compute MFMA efficiency. For methodology details, see [MFMA Efficiency](../../../docs/mfma_efficiency.md).
 
 ## 5. Tools and Infrastructure
 
 This tutorial relies on several tools:
 
-- **LLIR Scheduler**: Instruction-level scheduling at LLVM IR level (`TRITON_ENABLE_LLIR_SCHED=1`)
-- **amdgcnas**: Assembly post-processor for peephole optimizations (`TRITON_ENABLE_AMDGCN_AS=1`)
+- **[LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves)**: Instruction-level scheduling at LLVM IR level (`TRITON_ENABLE_LLIR_SCHED=1`)
+- **[amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves)**: Assembly post-processor for peephole optimizations (`TRITON_ENABLE_AMDGCN_AS=1`)
 - **Layout plotting tool**: Visualize blocked, MFMA, and LDS layouts
 - **run_perf_table.py**: Automated performance collection across versions
 - **run_counter_collection.py**: Hardware counter collection for cache analysis
@@ -150,6 +130,7 @@ Although this directory focuses on **FP16 compute-bound GEMM**, the same optimiz
 | Data Type | Tile Size | Compute Intensity |
 |-----------|-----------|-------------------|
 | FP16      | 256×256×64  | Compute-bound |
+| FP8       | 256×256×128 | Compute-bound |
 | MXFP4     | 256×256×256 | Compute-bound |
 
 The optimization journey remains the same—only the tile shape and MFMA instruction variant change.
