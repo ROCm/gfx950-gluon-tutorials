@@ -95,13 +95,13 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 Measured on MI355 with shape 4096×4096×16384, FP8 (e5m2):
 
-| Configuration      | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|--------------------|--------|-------|--------|-----------|
-| base               |   2466 |   478 |      0 |       62% |
-| llir               |    747 |   512 |    111 |       20% |
-| llir + amdgcnas    |   3383 |   444 |      0 |       99% |
+| Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|---------------------------------|--------|-------|--------|-----------|
+| base                            |   2466 |   478 |      0 |       62% |
+| llirSched                       |    747 |   512 |    111 |       20% |
+| llirSched + amdgcnas            |   3383 |   444 |      0 |       99% |
 
-The `llir` configuration alone causes register spills, which severely degrades performance. The `amdgcnas` post-processor resolves register allocation issues, achieving 99% MFMA efficiency.
+The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) alone causes register spills, which severely degrades performance. The [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) post-processor resolves register allocation issues, achieving 99% MFMA efficiency.
 
 ## 5. How to Run
 
