@@ -91,7 +91,19 @@ For detailed explanations of these techniques, refer to the corresponding versio
 - Local prefetch: [v5_local_prefetch](../a16w16/v5_local_prefetch/README.md)
 - Global prefetch: [v4_global_prefetch](../a16w16/v4_global_prefetch/README.md)
 
-## 4. How to Run
+## 4. Performance
+
+Measured on MI355 with shape 4096×4096×16384, FP8 (e5m2):
+
+| Configuration      | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|--------------------|--------|-------|--------|-----------|
+| base               |   2466 |   478 |      0 |       62% |
+| llir               |    747 |   512 |    111 |       20% |
+| llir + amdgcnas    |   3383 |   444 |      0 |       99% |
+
+The `llir` configuration alone causes register spills, which severely degrades performance. The `amdgcnas` post-processor resolves register allocation issues, achieving 99% MFMA efficiency.
+
+## 5. How to Run
 
 From the `a8w8` directory:
 
