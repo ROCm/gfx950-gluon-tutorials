@@ -8,25 +8,27 @@ Automates running benchmarks across kernel versions and scheduler configs, colle
 
 ### Prerequisites
 
-- Must be run from the `kernels/gemm/a16w16/` directory
 - Requires `rocprofv3` and the ATT decoder library
-- Requires `bench.py` in the current directory
 
 ### Usage
 
 ```bash
-cd kernels/gemm/a16w16
-python ../../../scripts/run_perf_table.py [OPTIONS]
+# a16w16 kernels (run from anywhere):
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+
+# a8w8 kernel (run from anywhere):
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--versions` | `5 6 7 8` | Kernel versions to benchmark |
+| `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16` or `a8w8`) |
+| `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
 | `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
-| `--dtype` | `fp16` | Data type (`fp16` or `bf16`) |
+| `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 
 ### Configs
 
@@ -38,22 +40,28 @@ Each config sets different environment variables before running the benchmark:
 
 ### Examples
 
-Run all versions with all configs:
+Run all a16w16 versions with all configs:
 
 ```bash
-python ../../../scripts/run_perf_table.py
+python scripts/run_perf_table.py
 ```
 
 Compare v7 and v8 under base and llir configs:
 
 ```bash
-python ../../../scripts/run_perf_table.py --versions 7 8 --configs base llir
+python scripts/run_perf_table.py --versions 7 8 --configs base llir
 ```
 
 Run a single version with a specific K and dtype:
 
 ```bash
-python ../../../scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf16
+python scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf16
+```
+
+Run a8w8 kernel benchmark:
+
+```bash
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 ```
 
 ### Output
@@ -71,14 +79,89 @@ Config: base
 
 If a run fails (e.g. an assertion in the scheduler), the row shows `FAIL` for the affected columns.
 
+## run_counter_collection.py
+
+Automates hardware performance counter collection using `rocprofv3` across kernel versions and scheduler configs, then prints a summary table of averaged counter values.
+
+### Prerequisites
+
+- Requires `rocprofv3`
+
+### Usage
+
+```bash
+python scripts/run_counter_collection.py --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--kernel` | `a16w16` | Kernel type (`a16w16` or `a8w8`) |
+| `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
+| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
+| `--K` | `4096` | K dimension for the GEMM problem |
+| `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
+| `--counters` | (required) | Comma-separated list of hardware counters to collect |
+
+### Examples
+
+Collect L2 cache and TCP read counters for v7 and v8:
+
+```bash
+python scripts/run_counter_collection.py --versions 7 8 --configs base \
+    --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum --K 4096 --dtype fp16
+```
+
+### Output
+
+```
+Config: base
+| Version              | TCC_EA0_RDREQ_DRAM_sum       | TCP_TCC_READ_REQ_sum         | Dispatches |
+|----------------------|------------------------------|------------------------------|------------|
+| v7_slice             |                    2,361,080 |                    8,388,608 |      1,002 |
+| v8_beyond_hotloop    |                    1,574,656 |                    8,388,608 |      1,002 |
+```
+
 ## run_att.py
 
-Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then post-processes the trace with `process_json.py`.
+Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then automatically post-processes the trace with `process_json.py` to extract MFMA efficiency and timing breakdowns.
+
+### Prerequisites
+
+- Requires `rocprofv3` and the ATT decoder library
+- Requires an `att_matmul.json` config file in the current directory
+
+> [!IMPORTANT]
+> The script sets `ROCPROF_ATT_LIBRARY_PATH` to an example path that may not match your system.
+> Update the path in `run_att.py` at line 31 (in `run_rocprof_att()`) to point to your ATT decoder library location.
+
+### Usage
+
+```bash
+python scripts/run_att.py --att-output <output_dir> <python_command>
+```
+
+### Options
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--att-output` | Yes | Output directory for rocprofv3 ATT traces |
+
+### Examples
+
+Profile a16w16 kernel v8:
 
 ```bash
 cd kernels/gemm/a16w16
 python ../../../scripts/run_att.py --att-output tmp python bench.py --K 4096 --dtype fp16 --version 8
 ```
+
+### What It Does
+
+1. Runs `rocprofv3 --att` with the specified Python command
+2. Locates the generated `ui_*` output directory
+3. Calls `process_json.py` to analyze the traces and print results
 
 ## process_json.py
 

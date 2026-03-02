@@ -1,18 +1,18 @@
 # MFMA Efficiency
 
-## What is MFMA Efficiency?
+## 1. What is MFMA Efficiency?
 
 MFMA efficiency measures how well a kernel utilizes the matrix core. It is defined as the ratio of cycles spent executing MFMA instructions to the total cycles of the main loop, measured per SIMD.
 
 A higher MFMA efficiency means better matrix core utilization. For a compute-bound kernel, the ideal target is close to 100%.
 
-## Why Measure MFMA Efficiency?
+## 2. Why Measure MFMA Efficiency?
 
 TFLOPS is the standard end-to-end performance metric, but it can vary due to factors outside the kernel developer's control—temperature, cooling, system load, and frequency scaling all affect the result.
 
 MFMA efficiency is cycle-based and independent of clock frequency, making it more stable and reproducible across runs. Because it directly reflects instruction scheduling and co-execution behavior, it provides clearer guidance for kernel optimization and compiler tuning.
 
-## How to Measure It
+## 3. How to Measure It
 
 1. **Collect thread traces** using `rocprofv3`. Detailed steps are available at: [Triton Profiling with ATT](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744188574/Triton+Profiling+with+ATT)
 

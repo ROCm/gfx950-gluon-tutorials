@@ -38,10 +38,10 @@ This kernel implements a 2-stage software pipeline with the following structure:
 
 ```
 Prologue:
-    AC A0, B0 → buffer 0
+    Async_Copy A0, B0 → buffer 0
 
 Main Loop (iterMax - 1 iterations):
-    AC A[k+1], B[k+1] → buffer g_idx      (prefetch next iteration)
+    Async_Copy A[k+1], B[k+1] → buffer g_idx      (prefetch next iteration)
     wait for buffer l_idx                  (wait for previous iteration's data)
     local_load A[k], B[k] ← buffer l_idx
     DOT(A[k], B[k])
@@ -134,33 +134,47 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 ## 4. Performance Analysis
 
-| Version | TFLOPS | MFMA Eff. |
-|---------|--------|-----------|
-| v3      |    700 |       43% |
-| v4      |    984 |       57% |
+| Version            | TFLOPS | VGPRs | MFMA Eff. |
+|--------------------|--------|-------|-----------|
+| v3_lds             |    774 |   420 |       42% |
+| v4_global_prefetch |   1113 |   446 |       57% |
 
-Software pipelining delivers a **40% performance improvement** (700 → 984 TFLOPS) by overlapping global memory latency with compute.
+Software pipelining delivers a **44% performance improvement** (774 → 1113 TFLOPS) by overlapping global memory latency with compute.
 
 Performance is collected using:
 ```bash
-python bench.py --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 3 4 --configs base --K 8192 --dtype fp16 --use-rocprof
 ```
+This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### Bottleneck Analysis
+### 4.1. What Changed
 
-Despite the improvement, MFMA efficiency is only 57%. The thread trace below shows one iteration of the main loop:
+Comparing the thread traces of v3 and v4 reveals the effect of software pipelining. Each screenshot shows one iteration of the main loop:
 
-![v4 bottleneck](../images/v4_bottleneck.png)
+![v3 trace](../images/v3_bottleneck.png)
 
-As we can see, MFMA executes only during the second half of the iteration:
-- **Red rectangle**: `buffer_load` instructions are issued at the beginning of the iteration
-- **Blue rectangle**: `ds_read` instructions follow
+![v4 trace](../images/v4_bottleneck.png)
 
-Although `buffer_load` latency is hidden by pipelining and `ds_read` latency is partially hidden by issuing multiple `ds_read` instructions back-to-back, the kernel is not executing MFMA during the first half of the iteration.
+In v3 (top), there is a long waiting period between `buffer_load` and `ds_read`, marked by the **green rectangle**. This is the global memory latency that stalls the kernel — the kernel must wait for data to arrive from global memory before it can proceed.
 
-The key insight is that MFMA has no dependency on `buffer_load`—it does not wait for global loads to finish. However, **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from being issued back-to-back from the beginning of the iteration.
+In v4 (bottom), the waiting period is gone. By prefetching the next iteration's data while computing on the current iteration, the global memory latency is overlapped with useful work.
+
+### 4.2. Bottleneck Analysis
+
+Despite the improvement, MFMA efficiency is only 57%. Looking at the v4 trace above, MFMA executes only during the second half of the iteration.
+
+At this point, latency hiding is working as expected:
+- `buffer_load` latency (**red rectangle**) is hidden by global prefetch — the data was requested in the previous iteration
+- `ds_read` latency (**blue rectangle**) is hidden by issuing multiple `ds_read` instructions back-to-back
+
+However, latency hiding alone is not sufficient to achieve peak performance. The ultimate goal is to execute MFMA instructions throughout the entire loop iteration. This is clearly not the case — MFMA only runs in the second half.
+
+The bottleneck is the dependency between `ds_read` and MFMA. While MFMA has no dependency on `buffer_load` (it does not wait for global loads), **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from starting until the `ds_read` results are ready.
+
+> [!NOTE]
+> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's talk on MFMA Ordering ([TR20241121](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744185703/Presentation)).
 
 ## 5. What Comes Next
 

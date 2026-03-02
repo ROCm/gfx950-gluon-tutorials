@@ -4,34 +4,36 @@
 
 ```
 v6_loop_unroll/
-├── matmul_kernel.py              # The kernel implementation
-├── README.md                     # This file
-└── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
+├── matmul_kernel.py                       # The kernel implementation
+├── README.md                              # This file
+├── ir_dump_K8192_fp16/                    # IR dumps for analysis
+├── ir_dump_K8192_fp16_llirSched/          # IR dumps with LLIR scheduler
+└── ir_dump_K8192_fp16_llirSched_amdgcnas/ # IR dumps with LLIR scheduler + amdgcnas
 ```
 
 ## 2. Motivation
 
-In v5, we identified the bottleneck: copy instructions at the end of each iteration that move `ds_read` results from prefetch registers (`a_next`, `b_next`) to the registers MFMA will consume (`a`, `b`). This overhead is inherent to the prefetch design when using a single-iteration loop body.
+In v5, we identified a bottleneck: copy instructions at the end of each iteration that move `ds_read` results from prefetch registers (`a_next`, `b_next`) to the registers MFMA consumes (`a`, `b`). This overhead is inherent to the prefetch design when using a single-iteration loop body.
 
 > [!IMPORTANT]
-> By unrolling the loop by a factor of 2, we can alternate between two register sets directly. Odd iterations use `a/b`, even iterations use `a_next/b_next`—no copying required.
+> By unrolling the loop by a factor of 2, we alternate between two register sets directly. Odd iterations use `a/b`, even iterations use `a_next/b_next`—no copying required.
 
 ## 3. Loop Unrolling Design
 
-### 3.1 Key Change: Loop Step Size
+### 3.1. Loop Step Size
 
 The loop now iterates with step size 2:
 
 ```python
-for k in range(0, iterMax - 1, 2):
+for k in range(0, iterMax - 2, 2):
 ```
 
-Each unrolled iteration contains two complete sub-iterations that alternate register sets.
+Each unrolled iteration contains two sub-iterations that alternate register sets.
 
-### 3.2 Unrolled Loop Body
+### 3.2. Unrolled Loop Body
 
 ```python
-for k in range(0, iterMax - 1, 2):
+for k in range(0, iterMax - 2, 2):
     # --- First sub-iteration: use a/b, prefetch into a_next/b_next ---
     g_idx = 0
     l_idx = 1
@@ -67,42 +69,82 @@ for k in range(0, iterMax - 1, 2):
     b_base += BLOCK_K * stride_bk
 ```
 
-Notice that:
-- First sub-iteration: MFMA consumes `a/b`, ds_read loads into `a_next/b_next`
-- Second sub-iteration: MFMA consumes `a_next/b_next`, ds_read loads into `a/b`
+Key observations:
+- First sub-iteration: MFMA consumes `a/b`, `ds_read` loads into `a_next/b_next`
+- Second sub-iteration: MFMA consumes `a_next/b_next`, `ds_read` loads into `a/b`
 
-The register sets naturally alternate—no copy instructions needed.
+The register sets alternate naturally—no copy instructions needed.
 
-### 3.3 Why This Works
+### 3.3. Epilogue
 
-In v5, each iteration ended with:
+With loop unrolling, the epilogue handles the remaining iterations. Since the main loop ends at `iterMax - 2`, the epilogue processes the final two iterations:
+
 ```python
-a = a_next
-b = b_next
+## Epilogue
+## iterMax - 2
+l_idx = 1
+acc = gl.amd.cdna3.mfma(a, b, acc)
+a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
+b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+
+## iterMax - 1
+acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
 ```
 
-This assignment generated copy instructions because `a` and `a_next` are different register allocations.
+Here we assume `iterMax` is even. With an unroll factor of 2 and the main loop ending at `iterMax - 2`, exactly two iterations remain. The epilogue alternates register sets like the main loop: iteration `iterMax - 2` uses `a/b`, iteration `iterMax - 1` uses `a_next/b_next`.
 
-With unrolling, we eliminate this assignment entirely. Each sub-iteration uses its designated register set, and the loop structure ensures the correct set is ready for the next sub-iteration.
+If `iterMax` is odd, only one iteration remains in the epilogue, containing just the final MFMA.
 
 ## 4. Performance Analysis
 
-| Version | TFLOPS | MFMA Eff. |
-|---------|--------|-----------|
-| v5      |   1000 |       59% |
-| v5 + llirSched |   1123 |       76% |
-| v6      |   1025 |       61% |
-| v6 + llirSched |   1105 |       84% |
+| Version              | TFLOPS | VGPRs | MFMA Eff. |
+|----------------------|--------|-------|-----------|
+| v5 + LLIR scheduler  |   1283 |   510 |       76% |
+| v6 + LLIR scheduler  |   1260 |   500 |       88% |
 
-Without llirSched, v6 (1025 TFLOPS) is slightly slower than v5 + llirSched (1123 TFLOPS) because the baseline scheduler doesn't fully exploit the unrolled structure. However, with llirSched enabled, MFMA efficiency improves from 76% to 84%.
+With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
 
 Performance is collected using:
 ```bash
-python bench.py --K 8192 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --use-rocprof
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
+### 4.1. Trace Comparison
+
+Comparing thread traces of v5 and v6 with the LLIR scheduler. Each screenshot shows one iteration of the main loop:
+
+![v5 with LLIR scheduler trace](../images/v5-llirSched_bottleneck_zoomin.png)
+
+![v6 with LLIR scheduler trace](../images/v6-llirSched_bottleneck_zoomin.png)
+
+In v5 (top), copy instructions appear at the end of each iteration. In v6 (bottom), these copies are eliminated—the register sets alternate naturally.
+
+### 4.2. Remaining Bottlenecks
+
+Even with 88% MFMA efficiency, room for improvement remains. The v6 trace shows MFMA gaps scattered throughout the iteration.
+
+#### 4.2.1. VALU Stalls from Power Management
+
+The area marked by the **purple circle** shows instructions across iteration boundaries. VALU instructions in this region take 40-80 cycles instead of the expected 4 cycles due to power management mechanisms.
+
+When power consumption changes rapidly, the power delivery network cannot respond quickly enough, causing voltage instability. MI350 uses two mechanisms to prevent this:
+
+- **DIDT (Digital Integrated Droop Tracking)**: Hardware that detects voltage droops and stretches the clock (lowering frequency) until voltage stabilizes.
+- **PIT (Power Instruction Throttling)**: Firmware that looks ahead at upcoming instructions and proactively inserts stalls to smooth out power spikes before they trigger DIDT.
+
+In the trace, a long period of low-power instructions (scalar operations, waits) across the iteration boundary is followed by a burst of high-power VALU and MFMA instructions. PIT detects this transition and inserts stalls to prevent a voltage droop.
+
+**Solution**: Increase MFMA efficiency to maintain stable power draw. Keeping the MFMA unit continuously busy avoids the power fluctuations that trigger PIT stalls.
+
+#### 4.2.2. AGPR ↔ VGPR Copies
+
+The generated assembly still contains copy instructions between AGPRs and VGPRs. While we eliminated the `a/b` ↔ `a_next/b_next` copies, the compiler inserts data movement between accumulator registers (AGPRs) and vector registers (VGPRs) for certain operations.
+
 ## 5. What Comes Next
 
-In `v7_slice`, we explore K-slicing to further improve parallelism and reduce memory pressure.
+The next versions address the two bottlenecks identified above:
+
+- **Register pressure optimization** — to eliminate AGPR ↔ VGPR copy overhead
+- **Increased MFMA efficiency** — to maintain stable power draw and avoid PIT stalls

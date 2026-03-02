@@ -91,14 +91,15 @@ def v0_naive(
     gl.store(c_ptrs, c, mask=c_mask)
 
 
-def matmul(a, b):
+def matmul(a, b, c=None):
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     assert a.is_contiguous(), "Matrix A must be contiguous"
     M, K = a.shape
     K, N = b.shape
     BLOCK_M, BLOCK_N, BLOCK_K = 256, 256, 64
     num_warps = 4
-    c = torch.empty((M, N), device=a.device, dtype=a.dtype)
+    if c is None:
+        c = torch.empty((M, N), device=a.device, dtype=a.dtype)
     GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
     grid = (GRID_MN, 1)
     v0_naive[grid](
