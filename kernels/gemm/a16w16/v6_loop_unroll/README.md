@@ -126,15 +126,33 @@ In v5 (top), copy instructions are visible at the end of each iteration. In v6 (
 
 Even with 88% MFMA efficiency, there is still room for improvement. Examining the v6 trace above, we observe MFMA gaps scattered throughout the iteration.
 
-**Bottleneck 1: DIDT control overhead**
+**Bottleneck 1: VALU stalls from power management**
 
-The area marked by the **purple circle** shows instructions across iteration boundaries. The VALU instructions in this region take significantly longer than the expected 4 cycles to execute.
+The area marked by the **purple circle** shows instructions across iteration boundaries. The VALU instructions in this region take significantly longer than the expected 4 cycles to execute—often 40-80 cycles. This is caused by power management mechanisms designed to prevent voltage droops.
 
-This is caused by **DIDT control** (di/dt — rate of change of current). If the voltage rises too fast, the chip may produce incorrect results. The hardware limits how fast the current (and thus voltage) can rise to prevent this instability.
+**Voltage Droops and Clock Stretching**
 
-Looking at the trace, there is a long period of non-VALU, non-MFMA instructions across the iteration boundary (scalar operations, waits, etc.). These low-power instructions cause the voltage to drop. Then at the beginning of the next loop iteration, there is a high density of VALU and MFMA instructions. The voltage must rise to support these high-power operations, but DIDT protection prevents it from rising too quickly. The hardware inserts delays to smooth out the current ramp rate.
+When power consumption spikes, the power delivery network cannot react quickly enough, causing a voltage droop. Small droops are acceptable, but large droops can cause incorrect results. To maintain stability, the hardware uses **clock stretching**—extending the clock period to effectively lower frequency until the power delivery adapts and voltage stabilizes.
 
-This is observable in the trace as VALU instructions taking 40-80 cycles instead of the expected 4 cycles.
+On MI350, this is handled by **DIDT (Digital Integrated Droop Tracking)**, a closed-loop control system that monitors supply voltage and activity indicators to predict and mitigate droops. Unlike traditional sensors that may be too slow to react, DIDT is integrated with the Digital Frequency-Locked Loop (DFLL) to provide sub-nanosecond response. When a droop is detected, DIDT communicates with the DFLL to stretch the clock, reducing instantaneous power demand:
+
+$$P = C \cdot V^2 \cdot f$$
+
+By reducing frequency ($f$) for a few cycles, DIDT arrests the downward trajectory of voltage. In extreme cases, the DFLL may gate the clock entirely for a few cycles to allow decoupling capacitors to recharge.
+
+**PIT: Proactive Power Spike Mitigation**
+
+To avoid triggering DIDT in the first place, MI350 firmware includes **PIT (Power Instruction Throttling)**. PIT looks ahead in time and analyzes the expected power signature of upcoming instructions. If it detects a large power change (in either direction), it inserts stalls—either across the entire SE or on a per-WGP basis—to spread high-power instructions (e.g., VALU) over time, smoothing the power consumption curve.
+
+**What We Observe in the Trace**
+
+Looking at the trace, there is a long period of low-power instructions (scalar operations, waits) across the iteration boundary. This causes voltage to drop. At the beginning of the next iteration, there is a high density of VALU and MFMA instructions. PIT detects this upcoming power spike and inserts stalls to prevent a droop that would trigger DIDT clock stretching.
+
+The result is VALU instructions taking 40-80 cycles instead of 4 cycles.
+
+**The Solution: Increase MFMA Efficiency**
+
+From a kernel and compiler perspective, the solution is to increase MFMA efficiency—keeping the MFMA unit continuously busy with minimal gaps. This maintains a stable, high power draw without the sudden spikes and drops that trigger PIT stalls or DIDT clock stretching. A steady power profile leads to stable voltage and sustained high frequency.
 
 **Bottleneck 2: AGPR ↔ VGPR copies**
 
@@ -145,4 +163,4 @@ Examining the generated assembly, there are still copy instructions between AGPR
 In the next versions, we focus on addressing the two bottlenecks identified above:
 
 - **Register pressure optimization** — to eliminate the AGPR ↔ VGPR copy overhead
-- **Fine-grained peephole optimizations** — to mitigate the DIDT control delays at iteration boundaries
+- **Increased MFMA efficiency** — to maintain stable power draw and avoid PIT stalls at iteration boundaries
