@@ -217,7 +217,9 @@ The trace above shows that removing `v_accvgpr` copies also eliminates VALU stal
 
 ### 4.4. amdgcnas Assembly Processor
 
-**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. Enable it with:
+**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It is available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch.
+
+Enable it by setting the environment variable:
 
 ```bash
 TRITON_ENABLE_AMDGCN_AS=1

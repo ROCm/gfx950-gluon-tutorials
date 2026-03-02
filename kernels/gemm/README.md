@@ -4,7 +4,7 @@ This directory contains **high-performance GEMM kernels written in Gluon**, targ
 
 The goal is not just to provide fast kernels, but to **teach how to design, analyze, and optimize GEMM kernels** on AMD hardware—from memory layout to instruction scheduling.
 
-## Performance Summary
+## 1. Performance Summary
 
 Measured on MI355:
 
@@ -15,16 +15,57 @@ Measured on MI355:
 
 Both kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
-## Directory Structure
+## 2. Prerequisites
 
-```
-kernels/gemm/
-├── a16w16/        # Full optimization journey (v0–v8)
-├── a8w8/          # Final optimized kernel (FP8)
-└── README.md      # This file
+### 2.1 Triton Branch
+
+The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features.
+
+### 2.2 Running Benchmarks
+
+The easiest way to run benchmarks with all optimizations enabled is `run_perf_table.py`:
+
+```bash
+# FP16 (a16w16)
+python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
+
+# FP8 (a8w8)
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
 ```
 
-## FP16: The Optimization Journey
+This script automatically:
+- Sets the environment variables for llirSched and amdgcnas
+- Collects kernel traces using rocprofv3
+- Calculates and reports TFLOPS, VGPRs, spills, and MFMA efficiency
+
+### 2.3 Manual Workflow
+
+To run benchmarks manually, set the environment variables directly. Run from the kernel directory:
+
+```bash
+# FP16 (from kernels/gemm/a16w16/)
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8 --K 8192 --dtype fp16
+
+# FP8 (from kernels/gemm/a8w8/)
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
+```
+
+For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
+
+1. Collect the kernel trace (`-d` specifies the output directory):
+   ```bash
+   TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
+       rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+   ```
+
+2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:
+   ```bash
+   python ../../../scripts/calc_kernel_time.py [trace_csv_file] [kernel_name]
+   ```
+
+3. Convert to TFLOPS: `TFLOPS = 2 × M × N × K / (time_in_us × 10^6)`
+
+## 3. FP16: The Optimization Journey
 
 The [a16w16/](a16w16/) directory is the heart of this repository. It documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement**.
 
@@ -46,7 +87,7 @@ Each version focuses on one concept, with detailed analysis of what changed, why
 
 **Start here** to learn how to write high-performance Gluon kernels.
 
-## FP8: Applying the Same Ideas
+## 4. FP8: Applying the Same Ideas
 
 The [a8w8/](a8w8/) directory provides only the final optimized kernel.
 
@@ -60,7 +101,7 @@ Why? The optimization principles are identical to FP16. The main differences are
 
 If you understand the FP16 journey, you understand the FP8 kernel.
 
-## Philosophy
+## 5. Philosophy
 
 Performance emerges from the combination of:
 
@@ -71,7 +112,7 @@ Performance emerges from the combination of:
 
 This repository is built around the idea that **performance is a process**, and that process should be visible.
 
-## How to Use This Directory
+## 6. How to Use This Directory
 
 | Goal | Recommendation |
 |------|----------------|
