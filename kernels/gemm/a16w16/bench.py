@@ -23,6 +23,7 @@ name_to_torch_type = {"fp16": torch.float16, "bf16": torch.bfloat16}
 
 def get_x_vals():
     return [
+        (4096, 4096, 512),
         (4096, 4096, 1024),
         (4096, 4096, 2048),
         (4096, 4096, 3072),

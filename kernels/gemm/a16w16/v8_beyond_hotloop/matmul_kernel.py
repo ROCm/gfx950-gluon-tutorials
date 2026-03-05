@@ -332,7 +332,6 @@ def v8_beyond_hotloop(
         b_base += BLOCK_K * stride_bk
 
     ## Epilogue
-    gl.amd.cdna4.async_copy.wait_group(0)
 
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
@@ -346,12 +345,16 @@ def v8_beyond_hotloop(
     g_idx = 0
     l_idx = 1
     acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+
+    gl.amd.cdna4.async_copy.wait_group(2)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
     ########################################
     ## Region 1
     ########################################
     acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+
+    gl.amd.cdna4.async_copy.wait_group(1)
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
@@ -378,6 +381,8 @@ def v8_beyond_hotloop(
     a0 = extract_slice(a, [64, 64], [0, 0])
     acc00 = extract_slice(acc_left, [64, 128], [0, 0])
     acc00 = gl.amd.cdna3.mfma(a0, b_left, acc00)
+
+    gl.amd.cdna4.async_copy.wait_group(0)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
     ## slice 1 m[64:128]n[0:128]
