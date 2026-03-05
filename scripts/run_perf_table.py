@@ -49,7 +49,7 @@ CONFIG_ENV = {
     },
 }
 
-TRITON_CACHE = os.path.expanduser("~/.triton/cache")
+TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
 
 ATT_MATMUL_TEMPLATE = {
     "jobs": [
