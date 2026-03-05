@@ -2,7 +2,7 @@
 
 ## $1: input script that contains one kernel
 
-rm -rf ~/.triton/cache/
+rm -rf "${TRITON_CACHE_DIR:-$HOME/.triton/cache}"/
 
 export MLIR_ENABLE_DUMP=1
 export AMDGCN_ENABLE_DUMP=1
