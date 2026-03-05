@@ -1,4 +1,4 @@
-# v8_beyond_hotloop — Kernel-Level Optimizations
+# v8_beyond_hotloop — Optimizations Beyond the Hot Loop
 
 ## 1. Directory Structure
 
@@ -13,17 +13,18 @@ v8_beyond_hotloop/
 
 ## 2. Motivation
 
-Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management. MFMA efficiency measures cycle-wise performance on each SIMD.
+Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management.
 
-However, final performance reported as TFLOPS depends on both cycles and frequency. Frequency is governed by power management: higher power consumption leads to lower sustained frequency. As discussed in v7 regarding DIDT protection, power-aware optimization is essential for achieving peak TFLOPS.
+However, TFLOPS depends on more than per-SIMD cycle efficiency. Two additional factors matter:
 
-To reduce power consumption, we consider three strategies:
+1. **Frequency**: Higher power consumption leads to lower sustained clock frequency. As discussed in v7 regarding DIDT protection, reducing power consumption is essential for achieving peak TFLOPS.
 
-- **Use power-efficient instructions**: 16×16 MFMA instructions are more power-efficient than 32×32 MFMA instructions. Our kernel already uses the efficient variant.
-- **Use large tile sizes**: Workgroups computing different output tiles may request the same input data from A or B. Although these requests hit in cache and pipelining hides latency, every memory request consumes power. Larger tiles reduce redundant requests across workgroups. Our kernel uses 256×256 tiles, the largest feasible size given the register budget per SIMD and Triton's constraint that tile dimensions must be powers of 2.
-- **Optimize tile-to-workgroup mapping for L2 locality**: Reduce memory requests from L2 to MALL by ensuring workgroups on the same XCD share input data in L2 cache.
+2. **Epilogue overhead**: After the loop completes, the epilogue converts accumulators to the output type and writes results to global memory. When K is large, the epilogue is a small fraction of total execution time. As K decreases, the epilogue takes a larger share and its inefficiencies directly reduce TFLOPS.
 
-This version focuses on the third strategy: XCD-aware PID remapping and workgroup swizzling to improve L2 cache locality and reduce power consumption.
+This version addresses both factors with two optimizations:
+
+- **L2 cache locality** (Section 3): XCD-aware PID remapping and workgroup swizzling reduce L2 misses, lowering power consumption and sustaining higher frequency.
+- **Interleaved epilogue** (Section 4): `extract_slice` breaks each accumulator half into sub-tiles along the M dimension and interleaves MFMA computation with stores, reducing `buffer_store` contention when CUs reach the epilogue simultaneously. This is distinct from v7's N-slicing (splitting the output into left/right halves along the N dimension for register pressure), which is present in both epilogue strategies discussed here.
 
 ## 3. L2 Cache Locality
 
@@ -132,16 +133,7 @@ The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model
 
 ### 3.5 Validation
 
-The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. Hardware counter measurements in Section 4 confirm this:
-
-- v7 and v8 GM=1 have ~4.7–5.0M L2 misses (f(GM) = 18)
-- GM = 4, 6, and 8 all achieve ~3.1M L2 misses (f(GM) = 12)
-
-The reduced L2 traffic translates directly to higher sustained TFLOPS through lower power consumption.
-
-## 4. Performance Analysis
-
-The following table shows performance, MFMA efficiency, and L2 cache behavior for different configurations:
+The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. Hardware counter measurements confirm this:
 
 | Configuration                  | TFLOPS | MFMA Eff. | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
 |--------------------------------|--------|-----------|------------------------|----------------------|
@@ -172,18 +164,149 @@ python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs 
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
+## 4. Epilogue Optimization
+
+### 4.1 The Problem: Store Contention at Small K
+
+After the loop, the epilogue converts accumulators to the output type and writes results to global memory. A straightforward approach completes all remaining MFMAs, then issues all stores in a burst. This works well when K is large—CUs finish the loop at different times due to natural variation, so their stores are staggered. But when K is small, all CUs complete the loop nearly simultaneously and issue stores at the same time, saturating the L2/HBM write path.
+
+### 4.2 Two Epilogue Strategies
+
+Both strategies build on v7's N-slicing, which splits the output tile into left (N/2) and right (N/2) halves to reduce register pressure. The difference is how the final MFMAs and stores are organized within each half.
+
+**v7-style epilogue (full-tile stores)**: Completes all remaining MFMAs, then converts and stores the full 256×128 `acc_left` tile, followed by the full 256×128 `acc_right` tile:
+
+```python
+## Region 2: finish MFMAs, then store left tile
+acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+
+c_left = acc_left.to(a_ptr.dtype.element_ty)
+c_left = gl.convert_layout(c_left, layout=gStoreLayoutC)
+gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_left_offsets, stored_value=c_left)
+
+## Region 3: finish MFMAs, then store right tile
+acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+
+c_right = acc_right.to(a_ptr.dtype.element_ty)
+c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)
+gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_right_offsets, stored_value=c_right)
+```
+
+**Interleaved epilogue (sub-tiled stores)**: Uses [`extract_slice`](https://github.com/ROCm/triton/tree/matmul_4waves) to break each 256×128 half into four 64×128 sub-tiles along the M dimension. `extract_slice` is not yet upstreamed and is available on the `matmul_4waves` development branch. MFMAs and stores are pipelined: while sub-tile `i+1` is being computed by MFMA, sub-tile `i` is being stored. This follows the same design principle as the main loop—keeping adjacent operations independent so MFMA and memory operations can execute in parallel:
+
+```python
+## sub-tile 0 m[0:64]n[0:128] — compute acc00
+a0 = extract_slice(a, [64, 64], [0, 0])
+acc00 = extract_slice(acc_left, [64, 128], [0, 0])
+acc00 = gl.amd.cdna3.mfma(a0, b_left, acc00)
+b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+
+## sub-tile 1 m[64:128]n[0:128] — compute acc01 while storing acc00
+a1 = extract_slice(a, [64, 64], [64, 0])
+acc01 = extract_slice(acc_left, [64, 128], [64, 0])
+acc01 = gl.amd.cdna3.mfma(a1, b_left, acc01)
+c00 = acc00.to(a_ptr.dtype.element_ty)
+c00 = gl.convert_layout(c00, layout=gStoreLayoutC)
+gl.amd.cdna3.buffer_store(stored_value=c00, ptr=c00_base, offsets=c_slice_offsets)
+
+## sub-tiles 2-3 for acc_left, then 4 sub-tiles for acc_right (same pattern)
+```
+
+### 4.3 Performance Comparison
+
+We measured both epilogue strategies across three scheduler configs and two K values:
+
+- **`base`**: Default LLVM instruction scheduler.
+- **`llir`**: LLIR scheduler, which reorders instructions in the **loop body only**. The epilogue still uses the default LLVM scheduler.
+- **`llir+amdgcnas`**: Same as `llir`, with additional AMD GCN assembly-level scheduling passes (also loop-only).
+
+**K = 8192 (M=N=4096, fp16)**
+
+| Config | TFLOPS | VGPRs | Spills | Epi Cycles | v_accvgpr_ Count |
+|---|---|---|---|---|---|
+| | interleaved / v7 | interleaved / v7 | interleaved / v7 | interleaved / v7 | interleaved / v7 |
+| base | 1339 / 1335 | 452 / 444 | 0 / 0 | 12,108 / 13,072 | 154 / 110 |
+| llir | 1424 / 1390 | 444 / 444 | 4 / 0 | 14,744 / 12,552 | 208 / 128 |
+| llir+amdgcnas | 1629 / 1590 | 444 / 444 | 0 / 0 | 12,460 / 13,124 | 280 / 256 |
+
+**K = 512 (M=N=4096, fp16)**
+
+| Config | TFLOPS | VGPRs | Spills | Epi Cycles | v_accvgpr_ Count |
+|---|---|---|---|---|---|
+| | interleaved / v7 | interleaved / v7 | interleaved / v7 | interleaved / v7 | interleaved / v7 |
+| base | 715 / 674 | 452 / 444 | 0 / 0 | 12,076 / 14,564 | 154 / 110 |
+| llir | 721 / 719 | 444 / 444 | 4 / 0 | 14,652 / 15,004 | 208 / 128 |
+| llir+amdgcnas | 790 / 743 | 444 / 444 | 0 / 0 | 12,868 / 14,292 | 280 / 256 |
+
+**Epilogue cycle difference (interleaved minus v7)**
+
+| Config | K=8192 | K=512 |
+|---|---|---|
+| base | -964 | -2,488 |
+| llir | +2,192 | -352 |
+| llir+amdgcnas | -664 | -1,424 |
+
+Negative means the interleaved epilogue is faster.
+
+### 4.4 Key Observations
+
+**The interleaved epilogue is faster at small K.** Under `base` and `llir+amdgcnas`, the interleaved epilogue consistently outperforms the v7-style across both K values. The advantage is larger at K=512—for example, `base` saves 2,488 epilogue cycles and delivers 41 more TFLOPS (+6.1%)—because the store contention effect described in Section 4.1 is more pronounced at small K.
+
+**v_accvgpr_ instruction count.** The interleaved epilogue generates more `v_accvgpr_read` / `v_accvgpr_write` instructions because `extract_slice` requires moving data between ACCVGPRs and VGPRs. However, this data movement overlaps with stores and does not increase epilogue latency in most configs.
+
+**VGPR spills under `llir`.** With the interleaved epilogue, the `llir` config produces 4 VGPR spills. These cause `scratch_load_dword` instructions in the epilogue, each immediately followed by `s_waitcnt vmcnt(0)`, which serializes the scratch load and exposes its full latency. This is why `llir` is the only config where the v7-style epilogue has lower epilogue cycles at K=8192. The spills are a side effect of how `llir` allocates registers for the loop, not an epilogue scheduling decision—`llir` only schedules the loop body; the epilogue uses the default LLVM scheduler regardless.
+
+### 4.5 ATT Analysis: Why the v7-Style Epilogue Suffers at Small K
+
+The epilogue executes the same instructions regardless of K—the same MFMAs, type conversions, and stores. Epilogue cycles should therefore be independent of K. This holds for the interleaved epilogue but not for the v7-style:
+
+**Epilogue cycles vs K (llir+amdgcnas config)**
+
+| Epilogue | K=8192 | K=512 | Delta |
+|---|---|---|---|
+| Interleaved | 12,392 | 12,344 | +48 |
+| v7-style | 14,484 | 15,224 | +740 |
+
+The interleaved epilogue is stable (48-cycle variation), while the v7-style takes 740 extra cycles at K=512.
+
+To understand where these extra cycles come from, we collected per-instruction ATT (Advanced Thread Trace) timing for the v7-style epilogue at both K values. The cycles are broken down by instruction category:
+
+**v7-style epilogue cycle breakdown (llir+amdgcnas config)**
+
+| Category | K=8192 | K=512 | Extra at K=512 |
+|---|---|---|---|
+| `buffer_store_dwordx4` | 3,232 | 3,904 | +672 |
+| `s_endpgm` (store drain) | 552 | 1,328 | +776 |
+| `s_waitcnt` | 1,432 | 1,456 | +24 |
+| `s_barrier` | 680 | 604 | -76 |
+| Other | 8,668 | 8,764 | +96 |
+| **Total** | **14,564** | **16,056** | **+1,492** |
+
+The `s_waitcnt` delta is negligible (+24 cycles) because the progressive `wait_group(2)` → `wait_group(1)` → `wait_group(0)` allows MFMA computation to overlap with async copy draining. Without progressive waits, a single `wait_group(0)` at the epilogue entry would stall for hundreds of extra cycles at small K, waiting for the last loop iteration's async copies to complete.
+
+The penalty is dominated by two sources:
+
+1. **`buffer_store` back-pressure (+672 cycles)**: At K=512, all CUs complete the loop at nearly the same time and issue stores simultaneously. Stores from all 256 CUs saturate the L2/HBM write path, causing individual `buffer_store_dwordx4` instructions to stall while waiting for write slots.
+
+2. **`s_endpgm` store drain (+776 cycles)**: `s_endpgm` waits for all outstanding stores to complete before the wave terminates. At K=512, store congestion means more writes are still in flight when `s_endpgm` is reached, requiring a longer drain.
+
+The interleaved epilogue avoids both problems. The MFMAs between store groups (computing sub-tile `i+1` while storing sub-tile `i`) create natural gaps in the store stream, preventing the burst that causes contention.
+
+### 4.6 Summary
+
+| Strategy | Pros | Cons |
+|---|---|---|
+| v7-style (full-tile) | Fewer v_accvgpr_ instructions; simpler code | Store burst causes write contention at small K |
+| Interleaved (sub-tiled) | Stores pipelined with compute; stable across K | More v_accvgpr_ data movement; can cause spills under `llir` |
+
+The interleaved epilogue is used in this kernel because it provides consistent performance across K values and the best TFLOPS under `base` and `llir+amdgcnas` configs.
+
 ## 5. Summary
 
-This version demonstrates that achieving peak TFLOPS requires attention beyond MFMA efficiency:
+This version demonstrates that achieving peak TFLOPS requires optimization beyond the hot loop:
 
-- **XCD-aware PID remapping** groups adjacent tiles onto the same XCD
-- **Workgroup swizzling (GROUP_SIZE_M)** reshapes tile layout to minimize data footprint per XCD
-- **Math model** provides a principled approach to choosing optimal GM
+- **L2 cache locality**: XCD-aware PID remapping and workgroup swizzling (GROUP_SIZE_M) reduce L2 misses by ~40%, lowering power consumption and sustaining higher frequency.
+- **Interleaved epilogue**: `extract_slice` breaks accumulators into sub-tiles and pipelines stores with MFMA computation, avoiding the `buffer_store` contention that occurs when all CUs reach the epilogue simultaneously at small K.
 
-Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves **1634 TFLOPS** with optimal L2 locality.
-
-### Beyond This Version
-
-With near-100% MFMA efficiency inside the loop and optimal L2 locality, the remaining optimization opportunity is the **epilogue**. When K is large, the epilogue is a small fraction of total kernel execution time, so we have not prioritized its optimization.
-
-However, as K decreases, the epilogue takes a larger portion of total execution time. Epilogue optimization (e.g., interleaving MFMA with stores, sliced output writes) will be addressed in future versions if small-K kernels become common use cases.
+Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, N-slicing), this kernel achieves **1634 TFLOPS** at K=8192 and **798 TFLOPS** at K=512 with optimal L2 locality and efficient epilogue execution.

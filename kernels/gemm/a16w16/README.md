@@ -23,7 +23,7 @@ a16w16/
 ├── v5_local_prefetch/    # 3-stage pipeline with local prefetch
 ├── v6_loop_unroll/       # Loop unrolling to eliminate copy overhead
 ├── v7_slice/             # N-slicing for register pressure reduction
-└── v8_beyond_hotloop/    # L2 cache locality optimization
+└── v8_beyond_hotloop/    # L2 cache locality and interleaved epilogue
 ```
 
 ## 2. How to Run
@@ -64,7 +64,7 @@ This section tells the story of how we transformed a 524 TFLOPS naive kernel int
 | v5 | local_prefetch | Latency hiding | 3-stage pipeline, LLIR scheduler introduction |
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
 | v7 | slice | Register pressure | N-slicing, register allocation workarounds |
-| v8 | beyond_hotloop | Power efficiency | XCD-aware PID remapping, GROUP_SIZE_M optimization |
+| v8 | beyond_hotloop | Power efficiency, epilogue | XCD-aware PID remapping, interleaved epilogue |
 
 ### Act I: Getting the Basics Right (v0–v3)
 
@@ -96,11 +96,11 @@ We slice along N: instead of loading a full 256-wide B tile, we load two 128-wid
 
 ### Act IV: Beyond the Loop (v8)
 
-**v8 — The L2 Locality Puzzle.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the loop.
+**v8 — Two Problems Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop: in **L2 cache locality** and **epilogue design**.
 
-MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD.
+**The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**.
 
-A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**—the journey's destination.
+**The epilogue contention problem.** When K is small, all CUs finish the loop at nearly the same time and issue stores simultaneously, saturating the L2/HBM write path. The fix: use `extract_slice` to break the accumulator into sub-tiles and interleave stores with MFMAs—while sub-tile `i+1` is computed, sub-tile `i` is stored. The MFMAs act as natural gaps in the store stream, spreading write traffic over time regardless of how synchronized the CUs are.
 
 ### The Results
 
@@ -117,6 +117,7 @@ This tutorial relies on several tools:
 
 - **[LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves)**: Instruction-level scheduling at LLVM IR level (`TRITON_ENABLE_LLIR_SCHED=1`)
 - **[amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves)**: Assembly post-processor for peephole optimizations (`TRITON_ENABLE_AMDGCN_AS=1`)
+- **[extract_slice](https://github.com/ROCm/triton/tree/matmul_4waves)**: Sub-tile accumulator slicing for interleaved epilogue (v8)
 - **Layout plotting tool**: Visualize blocked, MFMA, and LDS layouts
 - **run_perf_table.py**: Automated performance collection across versions
 - **run_counter_collection.py**: Hardware counter collection for cache analysis
