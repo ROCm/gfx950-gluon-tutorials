@@ -2,7 +2,6 @@ import argparse
 
 import torch
 import triton
-
 from matmul_kernel import matmul
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
@@ -47,8 +46,7 @@ def get_dtypes(selected_dtype=None):
     invalid = set(selected_dtype) - set(default_dtypes)
     if invalid:
         raise ValueError(
-            f"Unsupported dtype(s): {sorted(invalid)}. "
-            f"Supported dtypes: {default_dtypes}"
+            f"Unsupported dtype(s): {sorted(invalid)}. " f"Supported dtypes: {default_dtypes}"
         )
 
     return selected_dtype
@@ -56,9 +54,7 @@ def get_dtypes(selected_dtype=None):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Memory-bound GEMM benchmark")
-    parser.add_argument(
-        "--K", type=int, default=None, help="Select GEMM problem size with given K"
-    )
+    parser.add_argument("--K", type=int, default=None, help="Select GEMM problem size with given K")
     parser.add_argument(
         "--dtype",
         nargs="+",
@@ -141,9 +137,7 @@ def run_rocprof_iterations(
             torch.cuda.synchronize()
             for i in range(n_iters):
                 idx = i % block_count
-                matmul(
-                    a_list[idx], b_list[idx], c_list[idx], num_stages=num_stages
-                )
+                matmul(a_list[idx], b_list[idx], c_list[idx], num_stages=num_stages)
             torch.cuda.synchronize()
             print(f"{M=} {N=} {K=} {dtype=}: {n_iters} iterations done")
 
@@ -198,10 +192,7 @@ def main():
         def perf(ms):
             return 2 * M * N * K * 1e-12 / (ms * 1e-3)
 
-        print(
-            f"  {M=:5d} {N=:5d} {K=:5d} {dtype}: "
-            f"{perf(ms):7.1f} TFLOPS, {bw_gbs:7.1f} GB/s"
-        )
+        print(f"  {M=:5d} {N=:5d} {K=:5d} {dtype}: " f"{perf(ms):7.1f} TFLOPS, {bw_gbs:7.1f} GB/s")
 
         return perf(ms), perf(max_ms), perf(min_ms)
 
