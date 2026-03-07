@@ -335,6 +335,12 @@ a tile of C of size [BLOCK_M, BLOCK_N]. Per K-loop iteration, it loads:
 - **B tile** [BLOCK_K, BLOCK_N]: unique per workgroup. Each workgroup loads a
   distinct slice of B.
 
+For memory-bound GEMMs with small M (skinny matrices), we typically set BLOCK_M = M
+so that a single tile covers the entire M dimension. This means all workgroups
+partition work only along the N dimension. Every workgroup loads the same A rows
+from HBM but loads a distinct slice of B. As a result, A loads are fully redundant
+across all workgroups while B loads are fully unique.
+
 The total HBM traffic is:
 
 ```
@@ -368,25 +374,32 @@ tcp_efficiency = B_tile_bytes / (A_tile_bytes + B_tile_bytes)
 ```
 
 This creates a direct relationship between tile shape and achievable bandwidth.
-Increasing `BLOCK_N` (relative to `BLOCK_K`) shifts bytes from the redundant A tile
-to the unique B tile, improving TCP efficiency:
+Since A tile and B tile share the same BLOCK_K, the TCP efficiency depends on
+the ratio of BLOCK_M (= M for skinny GEMMs) to BLOCK_N:
 
-| BLOCK_K | BLOCK_N | A tile | B tile | TCP efficiency |
-|---------|---------|--------|--------|----------------|
-| 128     | 32      | 8 KB   | 8 KB   | 50%            |
-| 128     | 64      | 8 KB   | 16 KB  | 67%            |
-| 64      | 128     | 4 KB   | 16 KB  | 80%            |
-| 64      | 256     | 4 KB   | 32 KB  | 89%            |
+```
+tcp_efficiency = BLOCK_N / (M + BLOCK_N)
+```
 
-However, increasing `BLOCK_N` has a cost: it reduces the number of workgroups
+Increasing BLOCK_N improves TCP efficiency:
+
+| M   | BLOCK_N | BLOCK_K | A tile | B tile | TCP efficiency |
+|-----|---------|---------|--------|--------|----------------|
+| 32  | 32      | 128     | 8 KB   | 8 KB   | 50%            |
+| 32  | 64      | 128     | 8 KB   | 16 KB  | 67%            |
+| 32  | 128     | 64      | 4 KB   | 16 KB  | 80%            |
+| 32  | 256     | 64      | 4 KB   | 32 KB  | 89%            |
+
+However, increasing BLOCK_N has a cost: it reduces the number of workgroups
 for a given problem size (`num_workgroups = N / BLOCK_N`), which may leave CUs
 idle. This creates a **three-way tradeoff**:
 
-1. **TCP efficiency** — wants large BLOCK_N / small BLOCK_K
+1. **TCP efficiency** — wants large BLOCK_N (relative to M)
 2. **CU utilization** — wants many workgroups (small BLOCK_N or large N)
-3. **Minimum load width** — BLOCK_K must be large enough for each thread to
-   issue at least one full-width memory load (e.g., `buffer_load_dwordx4`
-   requires 8 elements per thread, so `BLOCK_M × BLOCK_K / num_threads ≥ 8`)
+3. **TCP capacity** — the total tile data in the pipeline, roughly
+   `(A_tile + B_tile) × num_stages`, must fit within the TCP size (32 KB on
+   GFX9). After M and BLOCK_N are determined, BLOCK_K is the remaining knob
+   to control the per-iteration data size within this limit
 
 ### 4.3 Strategies for Improving TCP Efficiency Without Reducing CU Utilization
 
