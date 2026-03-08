@@ -324,7 +324,7 @@
   %% maxPhase: the total number of different swizzling patterns
   \ifthenelse{\hasSwizzle=1}{
     %% When vec is small enough, we want 16/perPhase different swizzling patterns
-    %% When vec is large, we can only have 64 / \vec different swizzling pattern at most
+    %% When vec is large, we can only have waveSize / \vec different swizzling patterns at most
     \pgfmathsetmacro{\maxPhase}{min(min(\mfmaNonKDim,\numThreadsSameCycleRead)/\perPhase,\banks*4/\bytesPerElem/\swizzleVec)}
   }{
     %% When swizzling is disabled

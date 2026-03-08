@@ -8,6 +8,7 @@ class BlockedConfig:
     threadsPerWarp: tuple
     warpsPerCTA: tuple
     order: tuple
+    waveSize: int = 64
 
 
 def draw_blocked_layout_cmd(dim0, dim1, dim0Name, dim1Name, blockedConfig):
@@ -15,6 +16,7 @@ def draw_blocked_layout_cmd(dim0, dim1, dim0Name, dim1Name, blockedConfig):
                \\begin{{tikzpicture}}
                \\def\\scale{{1}}
                \\def\\elem{{0.06}}
+               \\def\\waveSize{{{blockedConfig.waveSize}}}
                \\coordinate (TL) at (0,0);
                \\def\\dimColName{{{dim0Name}}}
                \\def\\dimRowName{{{dim1Name}}}
@@ -39,7 +41,8 @@ def generate_blocked_tex(args):
     threadsPerWarp = args.threadsPerWarp
     warpsPerCTA = args.warpsPerCTA
     order = args.order
-    blockedConfig = BlockedConfig(sizePerThread, threadsPerWarp, warpsPerCTA, order)
+    waveSize = args.waveSize
+    blockedConfig = BlockedConfig(sizePerThread, threadsPerWarp, warpsPerCTA, order, waveSize)
     CTAShape = [
         sizePerThread[0] * threadsPerWarp[0] * warpsPerCTA[0],
         sizePerThread[1] * threadsPerWarp[1] * warpsPerCTA[1],

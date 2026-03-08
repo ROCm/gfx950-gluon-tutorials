@@ -5,22 +5,22 @@ Here is the help info from the script.
 
 ```bash
 >$ python3 plot_layout.py -h
-usage: Draw triton layouts [-h] [--output OUTPUT] [--keep] [--force] PLOT_TYPE ...
+usage: Draw triton layouts [-h] [--output OUTPUT] [--keep] [--force] [--waveSize {32,64}] PLOT_TYPE ...
 
 options:
-  -h, --help       show this help message and exit
-  --output OUTPUT  output pdf file name (without surfix)
-  --keep           If set, keep the generated .tex file
-  --force          If set, overwrite the pdf file with the same name
+  -h, --help            show this help message and exit
+  --output OUTPUT       output pdf file name (without surfix)
+  --keep                If set, keep the generated .tex file
+  --force               If set, overwrite the pdf file with the same name
+  --waveSize {32,64}    number of threads per wave/warp (32 for MI450, 64 for other AMD GPUs)
 
 subcommands:
-  Choose to plot blocked, lds, dot or wmma
+  Choose to plot blocked, lds, or dot
 
-  PLOT_TYPE        Choose one of the four plot mode
+  PLOT_TYPE        Choose one of the three plot modes
     blocked        plot blocked layout for global memory access
-    dot            plot dot layout for MFMA
+    dot            plot dot layout for MFMA/WMMA
     lds            plot LDS (shared memory) layout
-    wmma           plot dot layout for wmma
 ```
 
 ## Installation
@@ -72,27 +72,68 @@ Notes
   - For dim1: sizePerThread[1] * threadsPerWarps[1] * warpsPerCTA[1] <= dim1
 
 
-## Draw mfma operand and result layouts (`python plot_layout.py dot`)
+## Draw mfma/wmma operand and result layouts (`python plot_layout.py dot`)
+
+The dot subcommand supports three GPU architectures:
+- **gfx942** (CDNA3/MI300): 64-thread waves, MFMA instructions
+- **gfx950** (CDNA4/MI350): 64-thread waves, MFMA instructions with f4/f6 support
+- **gfx1250** (MI450): 32-thread waves, WMMA instructions
+
+### Quick Start with `--gfx`
+
+The easiest way to use this tool is with the `--gfx` argument, which automatically sets
+the correct `waveSize`, `kWidth`, and `kGroup` based on the target architecture:
+
+```bash
+## gfx942 (MI300/CDNA3)
+python3 plot_layout.py dot --gfx 942 --dotShape 64 64 64 --warpsPerCTA 1 2 --dtypeA fp16
+python3 plot_layout.py dot --gfx 942 --dotShape 64 64 64 --warpsPerCTA 1 2 --dtypeA fp8
+
+## gfx950 (MI350/CDNA4) - supports f4/f6 types
+python3 plot_layout.py dot --gfx 950 --dotShape 64 64 64 --warpsPerCTA 1 2 --dtypeA fp16
+python3 plot_layout.py dot --gfx 950 --dotShape 128 128 128 --warpsPerCTA 1 2 --dtypeA f4
+
+## gfx1250 (MI450) - uses WMMA instructions
+python3 plot_layout.py dot --gfx 1250 --dotShape 64 64 64 --warpsPerCTA 1 2 --dtypeA fp16
+python3 plot_layout.py dot --gfx 1250 --dotShape 64 64 64 --warpsPerCTA 1 2 --dtypeA fp8
+```
+
+### Architecture Default Configurations
+
+| GFX | waveSize | Supported dtypes | Default kWidth by dtype |
+|-----|----------|------------------|------------------------|
+| 942 | 64 | fp16, bf16, fp8, bf8, i8 | fp16/bf16: 4, fp8/bf8/i8: 8 |
+| 950 | 64 | fp16, bf16, fp8, bf8, fp6, bf6, f4, i8 | fp16/bf16/fp8/bf8: 8, i8: 16, f4/f6: 32 |
+| 1250 | 32 | fp16, bf16, fp8, bf8, fp6, bf6, f4 | fp16/bf16: 8 (kGroup=2), fp8/bf8: 8 (kGroup=4), f4/f6: 32 (kGroup=2) |
+
+### Manual Configuration
+
+You can also manually specify all parameters:
+
 ```bash
 >$ python plot_layout.py dot --help
-usage: Draw triton layouts dot [-h] [--dotShape M N K] [--warpsPerCTA w0 w1] [--nonKDim {16,32}] [--kWidth {4,8,16,32}] [--kGroup {1,2}]
-                               [--dtypeA {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--dtypeB {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--mfmaTrans] [--scale]
+usage: Draw triton layouts dot [-h] [--gfx {942,950,1250}] [--dotShape M N K] [--warpsPerCTA w0 w1] [--nonKDim {16,32}]
+                               [--kWidth {4,8,16,32,64}] [--kGroup {1,2,4,8}]
+                               [--dtypeA {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--dtypeB {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}]
+                               [--mfmaTrans] [--scale]
 
 options:
   -h, --help                                  show this help message and exit
+  --gfx {942,950,1250}                        GPU architecture (auto-sets waveSize, kWidth, kGroup)
   --dotShape M N K                            Dot op shape in the form of M, N, K (default: (32, 128, 64))
   --warpsPerCTA w0 w1                         how warps tile the dot result matrix (default: (1, 4))
   --tilesPerWarp y0 y1                        how many contiguous tiles per warp (default: (1, 1))
   --nonKDim {16,32}                           mfma instruction dimension of M/N (default: 16)
-  --kWidth {4,8,16,32}                        number of contiguous elements each thread owns during MFMA (default: 4)
-  --kGroup {1,2}                              total number of elements / kWidth per mfma instruction (default: 1)
+  --kWidth {4,8,16,32,64}                     number of contiguous elements each thread owns (auto-set if --gfx provided)
+  --kGroup {1,2,4,8}                          total number of elements / kWidth per instruction (auto-set if --gfx provided)
   --dtypeA {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}  element type of operand A (default: fp16)
   --dtypeB {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}  element type of operand B (default: fp16)
   --mfmaTrans                                 If set, then use mfma.trans layout (default: False)
   --scale                                     If set, plot the scale tensor for mfma_f8f6f4 instructions (default: False)
 ```
 
-Examples:
+### Examples with Manual Configuration
+
 ```bash
 ## i8 inputs
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 8 --dtypeA i8 --dtypeB i8
@@ -104,7 +145,7 @@ python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 8 -
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 8 --dtypeA fp8 --dtypeB bf8
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 16 --dtypeA fp8 --dtypeB bf8
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 16 --kGroup 2 --dtypeA fp8 --dtypeB bf8
-## f4 and fp6/bf6 inputs
+## f4 and fp6/bf6 inputs (gfx950 only)
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 32 --kGroup 1 --dtypeA f4 --dtypeB bf6
 ## fp8/bf8 and fp6/bf6/f4 inputs
 python3 plot_layout.py dot --dotShape 128 128 128 --warpsPerCTA 2 4 --kWidth 16 --kGroup 2 --dtypeA fp6 --dtypeB bf8
@@ -116,25 +157,49 @@ One can add `--nonKDim [16,32]` and `--mfmaTrans` to all of the above examples.
 
 This mode draws two graphs:
 1. The layout of the dot operation, i.e. tile C = tile A x tile B
-2. The layout of a single mfma block, operands and results of one or more mfma
+2. The layout of a single mfma/wmma block, operands and results of one or more
    instructions that share the same accumulating VGPRs.
 
-Knobs
-- `--kWidth [4,8,16,32]`: the number of elements that will be loaded into one thread at once
-- `--kGroup [1,2]`: total number of elements / kWidth for on mfma instruction.
-   This is 1 for all mfma instructions except for mfma_f32_16x16x128_f8f6f4 and mfma_f32_32x32x64_f8f6f4
-   with fp8 input types (CBSZ=0 or 1 and/or BLGP=0 or 1)
-- `--nonKDim [16,32]`: mfma instruction size. The default is set to 16.
+### Supported Instructions
+
+**MFMA Instructions (gfx942/gfx950, waveSize=64)**
+
+| Data Type | nonKDim | kWidth | kGroup | Instruction |
+|-----------|---------|--------|--------|-------------|
+| fp16/bf16 | 16 | 4 | 1 | `mfma_f32_16x16x16_fp16` |
+| fp16/bf16 | 16 | 8 | 1 | `mfma_f32_16x16x32_fp16` |
+| fp8/bf8 | 16 | 8 | 1 | `mfma_f32_16x16x32_fp8_fp8` |
+| i8 | 16 | 8 | 1 | `mfma_i32_16x16x32_i8` |
+| i8 | 16 | 16 | 1 | `mfma_i32_16x16x64_i8` |
+| f4/f6 (gfx950) | 16 | 32 | 1 | `mfma_f32_16x16x128_f8f6f4` |
+
+**WMMA Instructions (gfx1250, waveSize=32)**
+
+| Data Type | nonKDim | kWidth | kGroup | Instruction |
+|-----------|---------|--------|--------|-------------|
+| fp16/bf16 | 16 | 8 | 2 | `wmma_f32_16x16x32_fp16` |
+| fp16/bf16 | 16 | 16 | 1 | `wmma_f32_16x16x32_fp16` |
+| fp8/bf8 | 16 | 8 | 4 | `wmma_f32_16x16x64_fp8_fp8` |
+| fp8/bf8 | 16 | 16 | 2 | `wmma_f32_16x16x64_fp8_fp8` |
+| fp8/bf8 | 16 | 32 | 2 | `wmma_f32_16x16x128_fp8_fp8` |
+| f4/f6 | 16 | 32 | 2 | `wmma_f32_16x16x128_f8f6f4` |
+
+### Knobs
+- `--gfx [942,950,1250]`: GPU architecture. Auto-sets waveSize, kWidth, and kGroup.
+- `--kWidth [4,8,16,32,64]`: the number of elements that will be loaded into one thread at once
+- `--kGroup [1,2,4,8]`: total number of elements / kWidth for one mfma/wmma instruction.
+- `--nonKDim [16,32]`: mfma/wmma instruction size. The default is 16. Note: gfx1250 only supports 16.
 - `--mfmaTrans`: if set, the transposed mfma layout will be plotted.
-- `--dtypeA` and `-dtypeB`: element types of operand A and B. The default value is fp16.
-- `--scale`: plot scale tensors for A and B. This is only supported with f4/f6 and f8 with `kGroup=2`.
+- `--dtypeA` and `--dtypeB`: element types of operand A and B. The default value is fp16.
+- `--scale`: plot scale tensors for A and B. This is only supported with f4/f6 and f8 with `kGroup>=2`.
   If `--scale` is set but not supported, it's ignored.
 
-Notes
+### Notes
 - The layout shows the mapping from the threads/wave to the elements in the
   original tensor. It does not matter if LDS is used.
 - The script does not allow settings for k dim of the mfma instruction.
-  This can be controled by the `--kWidth` and `--kGroup`.
+  This can be controlled by the `--kWidth` and `--kGroup`.
+- For gfx1250 (MI450), only `nonKDim=16` is supported.
 
 ## Draw LDS access (`python plot_layout.py lds`)
 ```bash
@@ -195,9 +260,6 @@ Knobs
 - `mfma_trans_load`: This flag only works when `mnContig` is set. When set, `ds_read_b64_tr_bx`
   instructions are used to read from LDS. Note that current triton LDS layout mechanism will
   lead to bank conflicts.
-
-## Draw WMMA access (`python plot_layout.py lds`)
-WMMA layout drawing is intended for Radeon consumer GPU usage. Currently it has very limited support.
 
 # Linear Layout Visualizer (matplotlib version)
 

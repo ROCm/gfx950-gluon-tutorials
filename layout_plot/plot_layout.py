@@ -6,7 +6,99 @@ from blocked import generate_blocked_tex
 from dot import generate_dot_tex
 from lds import generate_lds_tex
 from utils import OneLineFormatter, run_bash_command
-from wmma import generate_wmma_tex
+
+# GFX architecture configurations
+# Maps gfx arch number to (waveSize, supported_dtypes, default_kWidth_kGroup_by_dtype)
+GFX_CONFIGS = {
+    942: {
+        "waveSize": 64,
+        "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "i8"],
+        "supported_nonKDim": [16, 32],
+        # (kWidth, kGroup) - based on Triton compiler's kBase values for gfx942 (CDNA3)
+        # f16/bf16: kBase=4 for 16x16x16 and 32x32x8
+        # fp8/bf8: kBase=8 for 16x16x32 and 32x32x16
+        # i8: kBase=8 for 16x16x32 and 32x32x16
+        "defaults": {
+            "fp16": (4, 1),
+            "bf16": (4, 1),
+            "fp8": (8, 1),
+            "bf8": (8, 1),
+            "i8": (8, 1),
+        },
+    },
+    950: {
+        "waveSize": 64,
+        "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "fp6", "bf6", "f4", "i8"],
+        "supported_nonKDim": [16, 32],
+        # (kWidth, kGroup) - based on Triton compiler's kBase values for gfx950
+        # f16/bf16: kBase=8 for both 16x16x32 and 32x32x16
+        # fp8/bf8: kBase=8 for 16x16x32 and 32x32x16
+        # i8: kBase=16 for 16x16x64 and 32x32x32
+        # f4/f6: kBase=32 for scaled mfma instructions
+        "defaults": {
+            "fp16": (8, 1),
+            "bf16": (8, 1),
+            "fp8": (8, 1),
+            "bf8": (8, 1),
+            "fp6": (32, 1),
+            "bf6": (32, 1),
+            "f4": (32, 1),
+            "i8": (16, 1),
+        },
+    },
+    1250: {
+        "waveSize": 32,
+        "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "fp6", "bf6", "f4"],
+        "supported_nonKDim": [16],  # Only 16x16 instructions
+        # (kWidth, kGroup) - use smallest kWidth for each dtype
+        # fp16/bf16: only 16x16x32, so kWidth*kGroup=16 -> smallest is kWidth=8, kGroup=2
+        # fp8/bf8: 16x16x64 (kWidth*kGroup=32) -> smallest is kWidth=8, kGroup=4
+        # f4/f6: 16x16x128 (kWidth*kGroup=64) -> smallest is kWidth=32, kGroup=2
+        "defaults": {
+            "fp16": (8, 2),
+            "bf16": (8, 2),
+            "fp8": (8, 4),
+            "bf8": (8, 4),
+            "fp6": (32, 2),
+            "bf6": (32, 2),
+            "f4": (32, 2),
+        },
+    },
+}
+
+
+def get_gfx_defaults(gfx, dtypeA, dtypeB, nonKDim):
+    """Get default kWidth and kGroup for a given gfx architecture and data types."""
+    if gfx not in GFX_CONFIGS:
+        raise ValueError(
+            f"Unknown gfx architecture: {gfx}. Supported: {list(GFX_CONFIGS.keys())} (942=MI300, 950=MI350, 1250=MI450)"
+        )
+
+    config = GFX_CONFIGS[gfx]
+
+    # Check if dtypes are supported
+    if dtypeA not in config["supported_dtypes"]:
+        raise ValueError(
+            f"Data type {dtypeA} is not supported on gfx{gfx}. "
+            f"Supported types: {config['supported_dtypes']}"
+        )
+    if dtypeB not in config["supported_dtypes"]:
+        raise ValueError(
+            f"Data type {dtypeB} is not supported on gfx{gfx}. "
+            f"Supported types: {config['supported_dtypes']}"
+        )
+
+    # Check if nonKDim is supported
+    if nonKDim not in config["supported_nonKDim"]:
+        raise ValueError(
+            f"nonKDim={nonKDim} is not supported on gfx{gfx}. "
+            f"Supported values: {config['supported_nonKDim']}"
+        )
+
+    # Use dtypeA for determining defaults (assuming same or compatible types)
+    kWidth, kGroup = config["defaults"][dtypeA]
+
+    return config["waveSize"], kWidth, kGroup
 
 
 def parse_args():
@@ -26,13 +118,20 @@ def parse_args():
         default=False,
         help="If set, overwrite the pdf file with the same name",
     )
+    top_parser.add_argument(
+        "--waveSize",
+        type=int,
+        default=64,
+        choices=[32, 64],
+        help="number of threads per wave/warp (32 for MI450, 64 for other AMD GPUs)",
+    )
     subparsers = top_parser.add_subparsers(
         dest="plot_type",
         metavar="PLOT_TYPE",
         required=False,
         title="subcommands",
-        description="Choose to plot blocked, lds, dot or wmma",
-        help="Choose one of the four plot mode",
+        description="Choose to plot blocked, lds, or dot",
+        help="Choose one of the three plot modes",
     )
     # blocked layout parameters
     blocked_parser = subparsers.add_parser(
@@ -70,7 +169,7 @@ def parse_args():
         nargs=2,
         default=(16, 4),
         metavar=("t0", "t1"),
-        help="how thread is partitioned into a 2D grid in a warp with 64 threads",
+        help="how threads are partitioned into a 2D grid in a warp",
     )
     blocked_parser.add_argument(
         "-w",
@@ -106,6 +205,12 @@ def parse_args():
         formatter_class=lambda prog: OneLineFormatter(prog, max_help_position=50),
     )
     dot_parser.add_argument(
+        "--gfx",
+        type=int,
+        choices=[942, 950, 1250],
+        help="GPU architecture number (auto-sets waveSize, kWidth, kGroup). 942=MI300, 950=MI350, 1250=MI450",
+    )
+    dot_parser.add_argument(
         "--dotShape",
         type=int,
         nargs=3,
@@ -132,23 +237,23 @@ def parse_args():
     dot_parser.add_argument(
         "--nonKDim",
         type=int,
-        default=16,
+        default=None,
         choices=[16, 32],
-        help="mfma instruction dimension of M/N",
+        help="mfma instruction dimension of M/N (default: 16)",
     )
     dot_parser.add_argument(
         "--kWidth",
         type=int,
-        default=4,
-        choices=[4, 8, 16, 32],
-        help="number of contiguous elements each thread owns during MFMA",
+        default=None,
+        choices=[4, 8, 16, 32, 64],
+        help="number of contiguous elements each thread owns during MFMA (auto-set if --gfx is provided)",
     )
     dot_parser.add_argument(
         "--kGroup",
         type=int,
-        default=1,
-        choices=[1, 2],
-        help="total number of elements / kWidth per mfma instruction",
+        default=None,
+        choices=[1, 2, 4, 8],
+        help="total number of elements / kWidth per mfma instruction (auto-set if --gfx is provided)",
     )
     dot_parser.add_argument(
         "--dtypeA",
@@ -252,19 +357,47 @@ def parse_args():
     lds_parser.add_argument(
         "--padAmount", type=int, default=0, help="Pad padAmount bytes for every padInterval bytes"
     )
-    ## wmma instruction layout parameter
-    wmma_parser = subparsers.add_parser("wmma", help="plot dot layout for wmma")
-    wmma_parser.add_argument(
-        "--wave-size",
-        type=int,
-        default=32,
-        choices=[32, 64],
-        help="choose the wmma instruction mode",
-    )
-
     # workaround for top-level parser's flag passes in after subparser
     args, remaining = top_parser.parse_known_args()
     args = top_parser.parse_args(remaining, namespace=args)
+
+    return args
+
+
+def apply_gfx_defaults(args):
+    """Apply default values based on --gfx architecture for dot plots."""
+    if args.plot_type != "dot":
+        return args
+
+    # Set nonKDim default to 16 if not provided
+    if args.nonKDim is None:
+        args.nonKDim = 16
+
+    # If --gfx is provided, use its defaults for waveSize, kWidth, kGroup
+    if hasattr(args, "gfx") and args.gfx is not None:
+        try:
+            waveSize, kWidth, kGroup = get_gfx_defaults(
+                args.gfx, args.dtypeA, args.dtypeB, args.nonKDim
+            )
+            # Override waveSize from gfx config
+            args.waveSize = waveSize
+            # Only set kWidth/kGroup if not explicitly provided
+            if args.kWidth is None:
+                args.kWidth = kWidth
+            if args.kGroup is None:
+                args.kGroup = kGroup
+            print(
+                f"Using gfx{args.gfx} defaults: waveSize={waveSize}, kWidth={args.kWidth}, kGroup={args.kGroup}"
+            )
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+    else:
+        # No --gfx provided, use legacy defaults if kWidth/kGroup not specified
+        if args.kWidth is None:
+            args.kWidth = 4
+        if args.kGroup is None:
+            args.kGroup = 1
 
     return args
 
@@ -284,6 +417,9 @@ def main():
         else:
             print(f"{ofilename}.pdf exists but overwritten!")
 
+    # Apply gfx-specific defaults for dot plots
+    args = apply_gfx_defaults(args)
+
     match args.plot_type:
         case "blocked":
             generate_blocked_tex(args)
@@ -291,11 +427,9 @@ def main():
             generate_dot_tex(args)
         case "lds":
             generate_lds_tex(args)
-        case "wmma":
-            generate_wmma_tex(args)
         case _:
             raise NotImplementedError(
-                f"Only blocked, dot, lds and wmma supported, you entered {args.plot_type}"
+                f"Only blocked, dot, and lds supported, you entered {args.plot_type}"
             )
 
     ret = run_bash_command(f"pdflatex -halt-on-error -jobname {ofilename} myplot.tex")

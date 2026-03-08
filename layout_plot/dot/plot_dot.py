@@ -10,6 +10,7 @@ class DotConfig:
     trans: int
     warpsPerCTA: tuple
     tilesPerWarp: tuple
+    waveSize: int = 64
 
 
 matrixFormatTable = {"fp8": 0, "bf8": 1, "fp6": 2, "bf6": 3, "f4": 4}
@@ -56,6 +57,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
     trans = 1 if dotConfig.trans else 0
     kWidth = dotConfig.kWidth
     kGroup = dotConfig.kGroup
+    waveSize = dotConfig.waveSize
     scaleLabel = 0.7 if (kWidth == 4 or (kWidth == 8 and mfmaNonKDim == 32)) else 1
 
     outType = "i32" if dtypeA == "i8" else "f32"
@@ -93,6 +95,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
                \\def\\scale{{1}}
                \\def\\elem{{{elemSmall}}}
                \\def\\elemW{{\\elem}}
+               \\def\\waveSize{{{waveSize}}}
                \\def\\kWidthA{{{kWidth_a}}}
                \\def\\kWidthB{{{kWidth_b}}}
                \\def\\kGroupA{{{kGroup_a}}}
@@ -112,7 +115,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
                \\def\\elemW{{{elemWidth}}}
                \\pgfmathsetmacro{{\\gap}}{{\\elem*5}}
                \\pgfmathsetmacro{{\\nonTrans}}{{1-\\mfmaTrans}}
-               \\pgfmathsetmacro{{\\groups}}{{64/{mfmaNonKDim}}}
+               \\pgfmathsetmacro{{\\groups}}{{\\waveSize/{mfmaNonKDim}}}
                \\coordinate (C TL) at ($(C TL)+({scaling}*0.3*\\gap+{scaling}*\\groups*4*\\elemW+.5*\\gap+1.2*\\nonTrans*\\gap+\\groups*{kWidth_left}*{kGroup_left}*\\elemW, -{M}*\\oldElem+{mfmaNonKDim}*\\elem)$);
                \\coordinate (mfma instr) at ($(C TL)+(-.5*\\gap-0.6*\\nonTrans*\\gap-0.4*\\mfmaTrans*\\gap, 1.5*\\gap+.5*\\mfmaTrans*\\gap)$);
                \\node [scale=\\scaleLabel, above left, align=left, draw=black, fill=white] at (mfma instr) {{{mfma_inst_str}}};
@@ -122,7 +125,7 @@ def draw_dot_layout_cmd(M, N, K, dtypeA, dtypeB, mfma_inst_str, isMixed864, plot
                \\end{{document}}"""
 
 
-def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale):
+def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale, waveSize=64):
     # Check input types
     # Mixed precision is only allowed within f8, f6 and f4
     assert (isMixedPrecType(dtypeA) and isMixedPrecType(dtypeB)) or (
@@ -156,20 +159,43 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
         *mfma_i32_32x32x32_i8: kWidth = 16, kGroup = 1
         mfma_i32_32x32x16_i8: kWidth = 8, kGroup = 1
 
+    WMMA configurations for waveSize=32 (MI450):
+    16-bit (fp16/bf16), nonKDim=16:
+        wmma_f32_16x16x32_f16/bf16: kWidth = 8, kGroup = 2 (kDim = 32)
+        wmma_f32_16x16x32_f16/bf16: kWidth = 16, kGroup = 1 (kDim = 32)
+    8-bit (fp8/bf8), nonKDim=16:
+        wmma_f32_16x16x64_fp8_fp8: kWidth = 8, kGroup = 4 (kDim = 64)
+        wmma_f32_16x16x64_fp8_fp8: kWidth = 16, kGroup = 2 (kDim = 64)
+        wmma_f32_16x16x64_fp8_fp8: kWidth = 32, kGroup = 1 (kDim = 64)
+        wmma_f32_16x16x128_fp8_fp8: kWidth = 8, kGroup = 8 (kDim = 128)
+        wmma_f32_16x16x128_fp8_fp8: kWidth = 16, kGroup = 4 (kDim = 128)
+        wmma_f32_16x16x128_fp8_fp8: kWidth = 32, kGroup = 2 (kDim = 128)
+        wmma_f32_16x16x128_fp8_fp8: kWidth = 64, kGroup = 1 (kDim = 128)
+    4-bit (f4), nonKDim=16:
+        wmma_f32_16x16x128_f8f6f4: kWidth = 32, kGroup = 2 (kDim = 128)
+        wmma_f32_16x16x128_f8f6f4: kWidth = 64, kGroup = 1 (kDim = 128)
+
     Return mfma instruction name and kpack
     """
-    kDim = 64 / mfmaNonKDim * kWidth * kGroup
+    kDim = waveSize / mfmaNonKDim * kWidth * kGroup
     # Both dtyes are f4 or fp6 or bf6
     if isType4Or6Bit(dtypeA) and isType4Or6Bit(dtypeB):
+        # For waveSize=64: kWidth=32, kGroup=1
+        # For waveSize=32: kWidth=32, kGroup=2 or kWidth=64, kGroup=1
+        if waveSize == 64:
+            valid_config = kWidth == 32 and kGroup == 1
+        else:  # waveSize == 32
+            valid_config = (kWidth == 32 and kGroup == 2) or (kWidth == 64 and kGroup == 1)
+        instr_prefix = "wmma" if waveSize == 32 else "mfma"
         assert (
-            kWidth == 32 and kGroup == 1
-        ), f"Only kWidth=32 and kGroup=1 is supported for {dtypeA} x {dtypeB}"
+            valid_config
+        ), f"Not a valid {instr_prefix} instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=} for {waveSize=}"
         kpack = 1
         CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
         BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
         scale_str = "scale_" if scale else ""
         return (
-            f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4",
+            f"{instr_prefix}_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4",
             kpack,
             CBSZ,
             BLGP,
@@ -178,11 +204,27 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
 
     # Both dtypes are fp8 or bf8
     if isType8BitFloat(dtypeA) and isType8BitFloat(dtypeB):
-        assert (kWidth == 8 and kGroup == 1) or (
-            kWidth == 16
-        ), f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
-        kpack = 2 if (kWidth == 16 and kGroup == 1) else 1
-        if kGroup == 2:
+        # For waveSize=64:
+        #   kWidth=8, kGroup=1 or kWidth=16 (kGroup=1 or 2)
+        # For waveSize=32:
+        #   Only 16x16x64 and 16x16x128 are available
+        #   kDim=64: kWidth=8/kGroup=4, kWidth=16/kGroup=2, kWidth=32/kGroup=1
+        #   kDim=128: kWidth=8/kGroup=8, kWidth=16/kGroup=4, kWidth=32/kGroup=2, kWidth=64/kGroup=1
+        if waveSize == 64:
+            valid_config = (kWidth == 8 and kGroup == 1) or (kWidth == 16)
+        else:  # waveSize == 32
+            # kWidth * kGroup must equal 32 (for kDim=64) or 64 (for kDim=128)
+            kw_kg_product = kWidth * kGroup
+            valid_config = kw_kg_product == 32 or kw_kg_product == 64
+        instr_prefix = "wmma" if waveSize == 32 else "mfma"
+        assert (
+            valid_config
+        ), f"Not a valid {instr_prefix} instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=} for {waveSize=}"
+        # For waveSize=64: use f8f6f4 if kGroup >= 2, otherwise use fp8/bf8 suffix
+        # For waveSize=32: always use fp8/bf8 suffix (e.g., wmma_f32_16x16x64_fp8_fp8)
+        use_f8f6f4 = (waveSize == 64) and (kGroup >= 2)
+        kpack = 2 if (kWidth == 16 and kGroup == 1 and waveSize == 64) else 1
+        if use_f8f6f4:
             suffix = "f8f6f4"
             CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
             BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
@@ -196,7 +238,7 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
             scale_str = ""
         kDim = kDim / 2 if kpack == 2 else kDim
         return (
-            f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{suffix}",
+            f"{instr_prefix}_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{suffix}",
             kpack,
             CBSZ,
             BLGP,
@@ -205,27 +247,44 @@ def checkMfmaValidity(mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale)
 
     # Both types are fp16 or bf16
     if isType16Bit(dtypeA) and isType16Bit(dtypeB):
+        # For waveSize=64: kWidth=4 or 8, kGroup=1
+        # For waveSize=32: only 16x16x32 is supported (kWidth=8/kGroup=2 or kWidth=16/kGroup=1)
+        if waveSize == 64:
+            valid_config = (kWidth == 8 or kWidth == 4) and kGroup == 1
+        else:  # waveSize == 32
+            # Only wmma_f32_16x16x32 is available, so kWidth * kGroup must equal 16
+            valid_config = (kWidth == 8 and kGroup == 2) or (kWidth == 16 and kGroup == 1)
+        instr_prefix = "wmma" if waveSize == 32 else "mfma"
         assert (
-            kWidth == 8 or kWidth == 4
-        ) and kGroup == 1, (
-            f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
-        )
+            valid_config
+        ), f"Not a valid {instr_prefix} instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=} for {waveSize=}"
         kpack = 1
         CBSZ = -1
         BLGP = -1
-        return f"mfma_f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}", kpack, CBSZ, BLGP, False
+        return (
+            f"{instr_prefix}_f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}",
+            kpack,
+            CBSZ,
+            BLGP,
+            False,
+        )
 
     # Both types are i8
     if dtypeA == "i8" and dtypeB == "i8":
+        instr_prefix = "wmma" if waveSize == 32 else "mfma"
         assert (
             kWidth == 16 or kWidth == 8
-        ) and kGroup == 1, (
-            f"Not a valid mfma instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
-        )
+        ) and kGroup == 1, f"Not a valid {instr_prefix} instruction for {dtypeA} x {dtypeB} with {kWidth=} and {kGroup=}"
         kpack = 1
         CBSZ = -1
         BLGP = -1
-        return f"mfma_i32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}", kpack, CBSZ, BLGP, False
+        return (
+            f"{instr_prefix}_i32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}",
+            kpack,
+            CBSZ,
+            BLGP,
+            False,
+        )
 
     assert False, "Mixed precision between fp8/bf8 and fp6/bf6/f4 not supported in this mode"
 
@@ -248,8 +307,9 @@ def generate_dot_tex(args):
     kGroup = args.kGroup
     trans = args.mfmaTrans
     scale = args.scale
+    waveSize = args.waveSize
     # TODO: some of the checking can be done inside this dataclass as well but plot_dot requires quite some refactoring on this
-    dotConfig = DotConfig(mfmaNonKDim, kWidth, kGroup, trans, warpsPerCTA, tilesPerWarp)
+    dotConfig = DotConfig(mfmaNonKDim, kWidth, kGroup, trans, warpsPerCTA, tilesPerWarp, waveSize)
 
     # checks and logging
     CTAShape = [
@@ -267,37 +327,40 @@ def generate_dot_tex(args):
         and CTAShape[1] <= N
         and N % CTAShape[1] == 0
     ), f"block size ({M}, {N}) should equal to or be multiple of CTA shape ({CTAShape[0]}, {CTAShape[1]})"
+    instr_prefix = "wmma" if waveSize == 32 else "mfma"
     if isMixedPrecBtwF8AndF4OrF6(dtypeA, dtypeB):
         # In the case of mixed precision between 8-bit and 4 or 6-bit,
         # ignore kWidth and kGroup since inA and inB have different kWidth and kGroup values
         if mfmaNonKDim == 16:
-            kDim = 128
+            kDim = 128 * waveSize // 64  # Scale with wave size
         elif mfmaNonKDim == 32:
-            kDim = 64
+            kDim = 64 * waveSize // 64  # Scale with wave size
         else:
             raise NotImplementedError("scaled dot only supports 32x32x64 or 16x16x128 for now")
         assert (
             K != 0 and K % kDim == 0
-        ), f"BLOCK_K = {K} should be spanned by one or multiple of MFMA instructions with KDim = {kDim}"
+        ), f"BLOCK_K = {K} should be spanned by one or multiple of {instr_prefix.upper()} instructions with KDim = {kDim}"
         kpack = 1
         CBSZ = matrixFormatTable[dtypeB] if trans else matrixFormatTable[dtypeA]
         BLGP = matrixFormatTable[dtypeA] if trans else matrixFormatTable[dtypeB]
         scale_str = "scale_" if scale else ""
-        mfma_inst_str = f"mfma_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4"
+        mfma_inst_str = (
+            f"{instr_prefix}_{scale_str}f32_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_f8f6f4"
+        )
         isMixed864 = True
         plot_scale = scale
     else:
-        kDim = kWidth * kGroup * 64 // mfmaNonKDim
+        kDim = kWidth * kGroup * waveSize // mfmaNonKDim
         assert (
             K % kDim == 0
         ), f"one mfma instruction requires multiple of {kDim} elements along k dim but BLOCK_K = {K}"
         mfma_inst_str, kpack, CBSZ, BLGP, plot_scale = checkMfmaValidity(
-            mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale
+            mfmaNonKDim, kWidth, kGroup, dtypeA, dtypeB, trans, scale, waveSize
         )
         isMixed864 = False
     flag = "" if CBSZ == -1 else f" with {CBSZ=},{BLGP=}"
     scale_info = " (scale is not supported hence ignored)" if (scale and not plot_scale) else ""
-    print(f"MFMA: {mfma_inst_str} x {kpack}{flag}{scale_info}", end="")
+    print(f"{instr_prefix.upper()}: {mfma_inst_str} x {kpack}{flag}{scale_info}", end="")
     mfma_inst_str = mfma_inst_str.replace("_", "\\_")
     mfma_inst_str = mfma_inst_str + flag
     if kpack == 2:
@@ -305,9 +368,9 @@ def generate_dot_tex(args):
     if ((dtypeA == "fp16" or dtypeA == "bf16") and kWidth == 8) or (
         dtypeA == "i8" and kWidth == 16
     ):
-        kDim = 64 / mfmaNonKDim * kWidth / 2
+        kDim = waveSize / mfmaNonKDim * kWidth / 2
         outType = "i32" if dtypeA == "i8" else "f32"
-        old_instr = f"mfma_{outType}_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}"
+        old_instr = f"{instr_prefix}_{outType}_{mfmaNonKDim}x{mfmaNonKDim}x{kDim:.0f}_{dtypeA}"
         print(f" or {old_instr} x 2")
         old_instr = old_instr.replace("_", "\\_")
         mfma_inst_str = mfma_inst_str + " or\\\\" + old_instr + "$\\times$2"
