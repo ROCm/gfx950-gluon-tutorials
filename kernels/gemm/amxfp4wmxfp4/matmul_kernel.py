@@ -108,7 +108,10 @@ def amxfp4wmxfp4_kernel(
 
     # Scale load layout: (256, 8)
     blocked_scales: gl.constexpr = gl.BlockedLayout(
-        [8, 1], [32, 2], [1, 4], [0, 1],
+        [8, 1],
+        [32, 2],
+        [1, 4],
+        [0, 1],
     )
 
     # -- Shared memory layout (PaddedSharedLayout) --
@@ -118,9 +121,21 @@ def amxfp4wmxfp4_kernel(
     sharedLayout: gl.constexpr = gl.PaddedSharedLayout(
         [[1024, 16], [2048, 32]],
         [
-            [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-            [16, 0], [32, 0], [64, 0],
-            [1, 0], [2, 0], [4, 0], [8, 0], [128, 0],
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+            [128, 0],
         ],
         [],
         [BLOCK_M, BLOCK_K // 2],
@@ -132,8 +147,12 @@ def amxfp4wmxfp4_kernel(
     mfma_layout: gl.constexpr = gl.amd.AMDMFMALayout(
         version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[2, 2]
     )
-    dot_a_layout: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfma_layout, k_width=16)
-    dot_b_layout: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfma_layout, k_width=16)
+    dot_a_layout: gl.constexpr = gl.DotOperandLayout(
+        operand_index=0, parent=mfma_layout, k_width=16
+    )
+    dot_b_layout: gl.constexpr = gl.DotOperandLayout(
+        operand_index=1, parent=mfma_layout, k_width=16
+    )
     scale_a_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
         dot_a_layout, [BLOCK_M, BLOCK_K // SCALE_GROUP_SIZE]
     )
@@ -148,10 +167,14 @@ def amxfp4wmxfp4_kernel(
     smemA = gl.allocate_shared_memory(a_ptr.type.element_ty, [BLOCK_M, BLOCK_K // 2], sharedLayout)
     smemB = gl.allocate_shared_memory(b_ptr.type.element_ty, [BLOCK_N, BLOCK_K // 2], sharedLayout)
     smem_as = gl.allocate_shared_memory(
-        a_scales_ptr.type.element_ty, [BLOCK_M, BLOCK_K // SCALE_GROUP_SIZE], shared_scales,
+        a_scales_ptr.type.element_ty,
+        [BLOCK_M, BLOCK_K // SCALE_GROUP_SIZE],
+        shared_scales,
     )
     smem_bs = gl.allocate_shared_memory(
-        b_scales_ptr.type.element_ty, [BLOCK_N, BLOCK_K // SCALE_GROUP_SIZE], shared_scales,
+        b_scales_ptr.type.element_ty,
+        [BLOCK_N, BLOCK_K // SCALE_GROUP_SIZE],
+        shared_scales,
     )
 
     # -- Offsets --
@@ -169,12 +192,8 @@ def amxfp4wmxfp4_kernel(
 
     # Scales
     offs_ks = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales))
-    offs_asm = (
-        pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))
-    ) % M
-    offs_bsn = (
-        pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))
-    ) % N
+    offs_asm = (pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))) % M
+    offs_bsn = (pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))) % N
     offs_as = offs_asm[:, None] * stride_asm + offs_ks[None, :] * stride_ask
     offs_bs = offs_bsn[:, None] * stride_bsn + offs_ks[None, :] * stride_bsk
 
@@ -207,8 +226,12 @@ def amxfp4wmxfp4_kernel(
 
         # Compute
         acc = gl.amd.cdna4.mfma_scaled(
-            a=a, a_scale=a_sc_reg, a_format="e2m1",
-            b=b, b_scale=b_sc_reg, b_format="e2m1",
+            a=a,
+            a_scale=a_sc_reg,
+            a_format="e2m1",
+            b=b,
+            b_scale=b_sc_reg,
+            b_format="e2m1",
             acc=acc,
         )
 
@@ -246,15 +269,30 @@ def matmul(a, b, a_scales, b_scales):
     GROUP_SIZE_M = 4
 
     amxfp4wmxfp4_kernel[grid](
-        a, b, c, a_scales, b_scales,
-        M, N, K,
-        a.stride(0), a.stride(1),
-        b.stride(0), b.stride(1),
-        c.stride(0), c.stride(1),
-        a_scales.stride(0), a_scales.stride(1),
-        b_scales.stride(0), b_scales.stride(1),
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-        GRID_MN=GRID_MN, NUM_XCDS=NUM_XCDS, GROUP_SIZE_M=GROUP_SIZE_M,
+        a,
+        b,
+        c,
+        a_scales,
+        b_scales,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        a_scales.stride(0),
+        a_scales.stride(1),
+        b_scales.stride(0),
+        b_scales.stride(1),
+        BLOCK_M=BLOCK_M,
+        BLOCK_N=BLOCK_N,
+        BLOCK_K=BLOCK_K,
+        GRID_MN=GRID_MN,
+        NUM_XCDS=NUM_XCDS,
+        GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=num_warps,
     )
     return c

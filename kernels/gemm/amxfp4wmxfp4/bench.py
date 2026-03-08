@@ -17,8 +17,22 @@ def mxfp4_to_f32(x):
     x[:, ::2] = x[:, ::2] & 0xF
     x[:, 1::2] = x[:, 1::2] >> 4
     mxfp4_list = [
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-        -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
     ]
     mxfp4_in_f32 = torch.tensor(mxfp4_list, dtype=torch.float32, device=x.device)
     return mxfp4_in_f32[x.long()]
@@ -146,7 +160,9 @@ def test_correctness(gemm_sizes):
             print(f"[amxfp4wmxfp4] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[amxfp4wmxfp4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(
+                f"[amxfp4wmxfp4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})"
+            )
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
@@ -178,9 +194,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
         a_list, b_list, as_list, bs_list, block_count = gen_rotating_tensors(
             M, N, K, rotating_buffer_size_mb
         )
-        total_bytes = block_count * (
-            M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32)
-        )
+        total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32))
         print(
             f"[amxfp4wmxfp4] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, "
