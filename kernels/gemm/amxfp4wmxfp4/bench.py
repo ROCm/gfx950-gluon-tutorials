@@ -136,8 +136,8 @@ def test_correctness(gemm_sizes):
     for M, N, K in gemm_sizes:
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
 
-        # Kernel expects B as (K//2, N) column-major
-        triton_output = matmul(a_fp4, b_fp4.T.contiguous(), a_scales, b_scales)
+        # Kernel expects B as (N, K//2) row-major (K-contiguous)
+        triton_output = matmul(a_fp4, b_fp4, a_scales, b_scales)
 
         # Reference: dequantize and compute in float32
         torch_output = torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16)
@@ -165,7 +165,7 @@ def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
     for _ in range(block_count):
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
         a_list.append(a_fp4)
-        b_list.append(b_fp4.T.contiguous())  # (K//2, N) layout for kernel
+        b_list.append(b_fp4)  # (N, K//2) K-contiguous layout for kernel
         as_list.append(a_scales)
         bs_list.append(b_scales)
 
@@ -224,10 +224,9 @@ def main():
     @triton.testing.perf_report(configs)
     def benchmark(M, N, K, dtype):
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
-        b_fp4_t = b_fp4.T.contiguous()  # (K//2, N) for kernel
         quantiles = [0.5, 0.2, 0.8]
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: matmul(a_fp4, b_fp4_t, a_scales, b_scales),
+            lambda: matmul(a_fp4, b_fp4, a_scales, b_scales),
             quantiles=quantiles,
         )
 
