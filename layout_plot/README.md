@@ -202,14 +202,48 @@ This mode draws two graphs:
 - For gfx1250 (MI450), only `nonKDim=16` is supported.
 
 ## Draw LDS access (`python plot_layout.py lds`)
+
+The lds subcommand supports three GPU architectures with different LDS configurations:
+- **gfx942** (CDNA3/MI300): 32 banks, 64-thread waves
+- **gfx950** (CDNA4/MI350): 64 banks, 64-thread waves
+- **gfx1250** (MI450): 64 banks, 32-thread waves
+
+### Quick Start with `--gfx`
+
+The easiest way to use this tool is with the `--gfx` argument, which automatically sets
+the correct `banks` and `waveSize` based on the target architecture:
+
+```bash
+# gfx942 (MI300): 32 banks, waveSize=64
+python3 plot_layout.py lds --gfx 942 --tensorShape 16 64 --kWidth 8 --dtype fp16 --layout swizzle --access read
+
+# gfx950 (MI350): 64 banks, waveSize=64
+python3 plot_layout.py lds --gfx 950 --tensorShape 16 64 --kWidth 8 --dtype fp16 --layout swizzle --access read
+
+# gfx1250 (MI450): 64 banks, waveSize=32
+python3 plot_layout.py lds --gfx 1250 --tensorShape 16 64 --kWidth 8 --dtype fp16 --layout swizzle --access read
+```
+
+### Architecture LDS Configurations
+
+| GFX | Banks | waveSize | GPU |
+|-----|-------|----------|-----|
+| 942 | 32 | 64 | MI300 (CDNA3) |
+| 950 | 64 | 64 | MI350 (CDNA4) |
+| 1250 | 64 | 32 | MI450 |
+
+### Manual Configuration
+
 ```bash
 >$ python plot_layout.py lds --help
-usage: Draw triton layouts lds [-h] [--tensorShape TENSORSHAPE TENSORSHAPE] [--kWidth {4,8,16,32}] [--dtype {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--nonKDim {16,32}]
+usage: Draw triton layouts lds [-h] [--gfx {942,950,1250}] [--tensorShape TENSORSHAPE TENSORSHAPE] [--kWidth {4,8,16,32}]
+                               [--dtype {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}] [--nonKDim {16,32}]
                                [--banks {32,64}] [--layout {swizzle,padding,none}] [--access {read,write,none}] [--mnContig] [--mfma-trans-load]
                                [--swizzleVec {4,8,16,32}] [--padInterval PADINTERVAL] [--padAmount PADAMOUNT] [--sharedLayout SHAREDLAYOUT]
 
 options:
   -h, --help                                 show this help message and exit
+  --gfx {942,950,1250}                       GPU architecture (auto-sets banks, waveSize). 942=MI300, 950=MI350, 1250=MI450
   --tensorShape TENSORSHAPE TENSORSHAPE      2D block shape in the form of (dim0, dim1) (default: (128, 64))
   --kWidth {4,8,16,32}                       number of contiguous elements per thread (default: 4)
   --dtype {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}  element type of tensor to be stored in LDS (default: fp16)
@@ -224,7 +258,8 @@ options:
   --padAmount PADAMOUNT                      Pad padAmount bytes for every padInterval bytes (default: 0)
   --sharedLayout SHAREDLAYOUT                Triton shared layout string: "[[padInterval, padAmount], ...], [[r,c], ...]" where pads are in elements (default: )
 ```
-Examples:
+
+### Examples
 ```bash
 python3 plot_layout.py lds --layout none --access none --tensorShape 128 128 --kWidth 8
 python3 plot_layout.py lds --layout none --access none --tensorShape 128 128 --kWidth 32 --dtype f4
@@ -239,8 +274,9 @@ python3 plot_layout.py lds --tensorShape 256 64 --kWidth 8 --dtype fp16 --banks 
 ```
 
 Knobs
+- `--gfx [942,950,1250]`: GPU architecture. Auto-sets `banks` and `waveSize`.
 - `kWidth`: the vector size (in unit of elements) when accessing LDS
-- `banks`: the number of banks in LDS. (64 for gfx950, 32 for pre-gfx950)
+- `banks`: the number of banks in LDS. (64 for gfx950/gfx1250, 32 for gfx942)
 - `dtype_a`: element data type
 - Three options for `--layout`:
   - `none`: no swizzling, no padding

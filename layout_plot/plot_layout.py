@@ -286,6 +286,12 @@ def parse_args():
         formatter_class=lambda prog: OneLineFormatter(prog, max_help_position=50),
     )
     lds_parser.add_argument(
+        "--gfx",
+        type=int,
+        choices=[942, 950, 1250],
+        help="GPU architecture (auto-sets banks, waveSize). 942=MI300, 950=MI350, 1250=MI450",
+    )
+    lds_parser.add_argument(
         "--tensorShape",
         type=int,
         nargs=2,
@@ -365,10 +371,16 @@ def parse_args():
 
 
 def apply_gfx_defaults(args):
-    """Apply default values based on --gfx architecture for dot plots."""
-    if args.plot_type != "dot":
-        return args
+    """Apply default values based on --gfx architecture for dot and lds plots."""
+    if args.plot_type == "dot":
+        return _apply_gfx_defaults_dot(args)
+    elif args.plot_type == "lds":
+        return _apply_gfx_defaults_lds(args)
+    return args
 
+
+def _apply_gfx_defaults_dot(args):
+    """Apply default values based on --gfx architecture for dot plots."""
     # Set nonKDim default to 16 if not provided
     if args.nonKDim is None:
         args.nonKDim = 16
@@ -398,6 +410,32 @@ def apply_gfx_defaults(args):
             args.kWidth = 4
         if args.kGroup is None:
             args.kGroup = 1
+
+    return args
+
+
+# GFX LDS configurations: banks and waveSize per architecture
+GFX_LDS_CONFIGS = {
+    942: {"banks": 32, "waveSize": 64},  # MI300
+    950: {"banks": 64, "waveSize": 64},  # MI350
+    1250: {"banks": 64, "waveSize": 32},  # MI450
+}
+
+
+def _apply_gfx_defaults_lds(args):
+    """Apply default values based on --gfx architecture for lds plots."""
+    if hasattr(args, "gfx") and args.gfx is not None:
+        if args.gfx not in GFX_LDS_CONFIGS:
+            print(
+                f"Error: Unknown gfx architecture: {args.gfx}. "
+                f"Supported: {list(GFX_LDS_CONFIGS.keys())} (942=MI300, 950=MI350, 1250=MI450)"
+            )
+            sys.exit(1)
+
+        config = GFX_LDS_CONFIGS[args.gfx]
+        args.banks = config["banks"]
+        args.waveSize = config["waveSize"]
+        print(f"Using gfx{args.gfx} defaults: banks={args.banks}, waveSize={args.waveSize}")
 
     return args
 

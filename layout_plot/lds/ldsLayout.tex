@@ -158,12 +158,19 @@
   \def\bWidth{0.02}
 
   \pgfmathtruncatemacro{\isHighlighted}{0}
+  \pgfmathtruncatemacro{\waveSizeInt}{\waveSize}
   \ifnum\vecInBitsInt=128
-    \ifnum\banksInt=32
-      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=20 && \tid<=23)), 1, 0)}
-    \fi
-    \ifnum\banksInt=64
-      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=12 && \tid<=15) || (\tid>=20 && \tid<=27)), 1, 0)}
+    \ifnum\waveSizeInt=32
+      % For waveSize=32, threads t0-15 access LDS simultaneously (consecutive)
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tid>=0 && \tid<=15, 1, 0)}
+    \else
+      % For waveSize=64
+      \ifnum\banksInt=32
+        \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=20 && \tid<=23)), 1, 0)}
+      \fi
+      \ifnum\banksInt=64
+        \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tid>=0 && \tid<=3) || (\tid>=12 && \tid<=15) || (\tid>=20 && \tid<=27)), 1, 0)}
+      \fi
     \fi
   \else
     \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tid < \threshold, 1, 0)}
@@ -202,12 +209,19 @@
 
   %\ifthenelse{\tidRaw < \threshold}{
   \pgfmathtruncatemacro{\isHighlighted}{0}
+  \pgfmathtruncatemacro{\waveSizeInt}{\waveSize}
   \ifnum\vecInBitsInt=128
-    \ifnum\banksInt=32
-      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=20 && \tidRaw<=23)), 1, 0)}
-    \fi
-    \ifnum\banksInt=64
-      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=12 && \tidRaw<=15) || (\tidRaw>=20 && \tidRaw<=27)), 1, 0)}
+    \ifnum\waveSizeInt=32
+      % For waveSize=32, threads t0-15 access LDS simultaneously (consecutive)
+      \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tidRaw>=0 && \tidRaw<=15, 1, 0)}
+    \else
+      % For waveSize=64
+      \ifnum\banksInt=32
+        \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=20 && \tidRaw<=23)), 1, 0)}
+      \fi
+      \ifnum\banksInt=64
+        \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(((\tidRaw>=0 && \tidRaw<=3) || (\tidRaw>=12 && \tidRaw<=15) || (\tidRaw>=20 && \tidRaw<=27)), 1, 0)}
+      \fi
     \fi
   \else
     \pgfmathtruncatemacro{\isHighlighted}{ifthenelse(\tidRaw < \threshold, 1, 0)}
@@ -411,12 +425,19 @@
           \ifthenelse{\tid=0}{
             \ifthenelse{\readVecInBits=128}{
               %%% Special thread access pattern for ds_read_b128
-              \ifthenelse{\banks=32}{
+              \ifthenelse{\waveSize=32}{
+                %%% waveSize=32: consecutive threads t0-15
                 \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t20$\sim$t23)};
+                {ds\_read\_b\readVecInBits\ (t0$\sim$t15)};
               }{
-                \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
-                {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t12$\sim$t15, t20$\sim$t27)};
+                %%% waveSize=64: non-consecutive threads
+                \ifthenelse{\banks=32}{
+                  \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
+                  {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t20$\sim$t23)};
+                }{
+                  \node [scale=\scale, above right] at ($(TL)+(0, \gapT*\elemH)$)
+                  {ds\_read\_b\readVecInBits\ (t0$\sim$t3, t12$\sim$t15, t20$\sim$t27)};
+                }
               }
             }{
               %%% Normal thread access pattern for ds_read_b64
