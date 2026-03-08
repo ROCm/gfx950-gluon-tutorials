@@ -8,10 +8,11 @@ from lds import generate_lds_tex
 from utils import OneLineFormatter, run_bash_command
 
 # GFX architecture configurations
-# Maps gfx arch number to (waveSize, supported_dtypes, default_kWidth_kGroup_by_dtype)
+# Consolidated config for all subcommands (dot, lds, blocked)
 GFX_CONFIGS = {
     942: {
         "waveSize": 64,
+        "banks": 32,  # LDS banks
         "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "i8"],
         "supported_nonKDim": [16, 32],
         # (kWidth, kGroup) - based on Triton compiler's kBase values for gfx942 (CDNA3)
@@ -28,6 +29,7 @@ GFX_CONFIGS = {
     },
     950: {
         "waveSize": 64,
+        "banks": 64,  # LDS banks
         "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "fp6", "bf6", "f4", "i8"],
         "supported_nonKDim": [16, 32],
         # (kWidth, kGroup) - based on Triton compiler's kBase values for gfx950
@@ -48,6 +50,7 @@ GFX_CONFIGS = {
     },
     1250: {
         "waveSize": 32,
+        "banks": 64,  # LDS banks
         "supported_dtypes": ["fp16", "bf16", "fp8", "bf8", "fp6", "bf6", "f4"],
         "supported_nonKDim": [16],  # Only 16x16 instructions
         # (kWidth, kGroup) - use smallest kWidth for each dtype
@@ -139,6 +142,12 @@ def parse_args():
         allow_abbrev=False,
         help="plot blocked layout for global memory access",
         formatter_class=lambda prog: OneLineFormatter(prog, max_help_position=40),
+    )
+    blocked_parser.add_argument(
+        "--gfx",
+        type=int,
+        choices=[942, 950, 1250],
+        help="GPU architecture (auto-sets waveSize). 942=MI300, 950=MI350, 1250=MI450",
     )
     # tensor shapes
     blocked_parser.add_argument(
@@ -371,11 +380,30 @@ def parse_args():
 
 
 def apply_gfx_defaults(args):
-    """Apply default values based on --gfx architecture for dot and lds plots."""
-    if args.plot_type == "dot":
+    """Apply default values based on --gfx architecture for all plot types."""
+    if args.plot_type == "blocked":
+        return _apply_gfx_defaults_blocked(args)
+    elif args.plot_type == "dot":
         return _apply_gfx_defaults_dot(args)
     elif args.plot_type == "lds":
         return _apply_gfx_defaults_lds(args)
+    return args
+
+
+def _apply_gfx_defaults_blocked(args):
+    """Apply default values based on --gfx architecture for blocked plots."""
+    if hasattr(args, "gfx") and args.gfx is not None:
+        if args.gfx not in GFX_CONFIGS:
+            print(
+                f"Error: Unknown gfx architecture: {args.gfx}. "
+                f"Supported: {list(GFX_CONFIGS.keys())} (942=MI300, 950=MI350, 1250=MI450)"
+            )
+            sys.exit(1)
+
+        config = GFX_CONFIGS[args.gfx]
+        args.waveSize = config["waveSize"]
+        print(f"Using gfx{args.gfx} defaults: waveSize={args.waveSize}")
+
     return args
 
 
@@ -414,25 +442,17 @@ def _apply_gfx_defaults_dot(args):
     return args
 
 
-# GFX LDS configurations: banks and waveSize per architecture
-GFX_LDS_CONFIGS = {
-    942: {"banks": 32, "waveSize": 64},  # MI300
-    950: {"banks": 64, "waveSize": 64},  # MI350
-    1250: {"banks": 64, "waveSize": 32},  # MI450
-}
-
-
 def _apply_gfx_defaults_lds(args):
     """Apply default values based on --gfx architecture for lds plots."""
     if hasattr(args, "gfx") and args.gfx is not None:
-        if args.gfx not in GFX_LDS_CONFIGS:
+        if args.gfx not in GFX_CONFIGS:
             print(
                 f"Error: Unknown gfx architecture: {args.gfx}. "
-                f"Supported: {list(GFX_LDS_CONFIGS.keys())} (942=MI300, 950=MI350, 1250=MI450)"
+                f"Supported: {list(GFX_CONFIGS.keys())} (942=MI300, 950=MI350, 1250=MI450)"
             )
             sys.exit(1)
 
-        config = GFX_LDS_CONFIGS[args.gfx]
+        config = GFX_CONFIGS[args.gfx]
         args.banks = config["banks"]
         args.waveSize = config["waveSize"]
         print(f"Using gfx{args.gfx} defaults: banks={args.banks}, waveSize={args.waveSize}")

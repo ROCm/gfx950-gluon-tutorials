@@ -9,7 +9,7 @@ usage: Draw triton layouts [-h] [--output OUTPUT] [--keep] [--force] [--waveSize
 
 options:
   -h, --help            show this help message and exit
-  --output OUTPUT       output pdf file name (without surfix)
+  --output OUTPUT       output pdf file name (without suffix)
   --keep                If set, keep the generated .tex file
   --force               If set, overwrite the pdf file with the same name
   --waveSize {32,64}    number of threads per wave/warp (32 for MI450, 64 for other AMD GPUs)
@@ -23,6 +23,10 @@ subcommands:
     lds            plot LDS (shared memory) layout
 ```
 
+**Note**: Each subcommand supports `--gfx {942,950,1250}` which automatically sets architecture-specific
+defaults (waveSize, banks, kWidth, kGroup). Using `--gfx` is the recommended approach as it overrides
+the global `--waveSize` with the correct value for the target GPU.
+
 ## Installation
 This script does not require torch or triton to be installed. The only package
 it depends on is latex. On Ubuntu, do
@@ -32,23 +36,42 @@ sudo apt-get install texlive-latex-base texlive-latex-extra texlive-fonts-recomm
 ```
 
 ## Draw blocked layout (`python plot_layout.py blocked`)
+
+The blocked subcommand supports three GPU architectures:
+- **gfx942** (CDNA3/MI300): 64-thread waves
+- **gfx950** (CDNA4/MI350): 64-thread waves
+- **gfx1250** (MI450): 32-thread waves
+
+### Quick Start with `--gfx`
+
+```bash
+# gfx942/gfx950 (64-thread waves)
+python3 plot_layout.py blocked --gfx 942 --sizePerThread 1 8 --threadsPerWarp 16 4 --warpsPerCTA 1 2
+
+# gfx1250 (MI450, 32-thread waves)
+python3 plot_layout.py blocked --gfx 1250 --sizePerThread 1 8 --threadsPerWarp 8 4 --warpsPerCTA 1 2
+```
+
+### Manual Configuration
+
 ```bash
 >$ python plot_layout.py blocked --help
-usage: Draw triton layouts blocked [-h] [-r ROW] [-c COL] [-B] [-s s0 s1] [-t t0 t1] [-w w0 w1] [-o minor major] [-b b0 b1]
+usage: Draw triton layouts blocked [-h] [--gfx {942,950,1250}] [-r ROW] [-c COL] [-B] [-s s0 s1] [-t t0 t1] [-w w0 w1] [-o minor major] [-b b0 b1]
 
 options:
   -h, --help                           show this help message and exit
+  --gfx {942,950,1250}                 GPU architecture (auto-sets waveSize). 942=MI300, 950=MI350, 1250=MI450
   -r ROW, --rowName ROW                tensor dim0 name (default: M)
   -c COL, --colName COL                tensor dim1 name (default: K)
   -B, --matrixB                        shortcut to plot operand B with dimension name of (K, N) (default: False)
   -s s0 s1, --sizePerThread s0 s1      how many elements each thread holds in the 2D block per CTA (default: (1, 4))
-  -t t0 t1, --threadsPerWarp t0 t1     how thread is partitioned into a 2D grid in a warp with 64 threads (default: (16, 4))
+  -t t0 t1, --threadsPerWarp t0 t1     how threads are partitioned into a 2D grid in a warp (default: (16, 4))
   -w w0 w1, --warpsPerCTA w0 w1        how warps tile a CTA (default: (1, 4))
   -o minor major, --order minor major  order from most minor to most major (default: (1, 0))
   -b b0 b1, --blockShape b0 b1         block size (dim0, dim1) of the tile. If not specified it presumably equals to the shape of CTA
 ```
 
-Examples:
+### Examples
 ```bash
 python3 plot_layout.py blocked --sizePerThread 1 8 --threadsPerWarp 8 8 --warpsPerCTA 4 1
 python3 plot_layout.py blocked --blockShape 16 64 --sizePerThread 1 8 --threadsPerWarp 16 4 --warpsPerCTA 1 2
@@ -66,10 +89,12 @@ Note that the parameters above forms a Cooperative Thread Array (CTA) and the bl
 Please specifiy block shape (`--blockShape b0 b1`) to explicitly set the block size, otherwise it will assumes block size equals to CTA size.
 
 Notes
+- The number of threads per warp depends on waveSize (64 for gfx942/gfx950, 32 for gfx1250).
+  Ensure `threadsPerWarp[0] * threadsPerWarp[1] == waveSize`.
 - The script does not support the case when threads are loading elements that are
   out of the boundary of the tensor dimensions. This means
-  - For dim0: sizePerThread[0] * threadsPerWarps[0] * warpsPerCTA[0] <= dim0
-  - For dim1: sizePerThread[1] * threadsPerWarps[1] * warpsPerCTA[1] <= dim1
+  - For dim0: sizePerThread[0] * threadsPerWarp[0] * warpsPerCTA[0] <= dim0
+  - For dim1: sizePerThread[1] * threadsPerWarp[1] * warpsPerCTA[1] <= dim1
 
 
 ## Draw mfma/wmma operand and result layouts (`python plot_layout.py dot`)
@@ -261,11 +286,14 @@ options:
 
 ### Examples
 ```bash
+# Using --gfx (recommended)
+python3 plot_layout.py lds --gfx 942 --layout swizzle --access read --tensorShape 128 128 --kWidth 8 --dtype fp16
+python3 plot_layout.py lds --gfx 950 --layout swizzle --access read --tensorShape 128 128 --kWidth 16 --dtype fp8
+python3 plot_layout.py lds --gfx 1250 --layout swizzle --access read --tensorShape 128 128 --kWidth 8 --dtype fp16
+
+# Manual configuration
 python3 plot_layout.py lds --layout none --access none --tensorShape 128 128 --kWidth 8
 python3 plot_layout.py lds --layout none --access none --tensorShape 128 128 --kWidth 32 --dtype f4
-python3 plot_layout.py lds --layout none --access none --tensorShape 128 128 --kWidth 16 --dtype fp8 --banks 64
-python3 plot_layout.py lds --layout swizzle --access none --tensorShape 128 128 --kWidth 16 --dtype fp8 --banks 64
-python3 plot_layout.py lds --layout swizzle --access read --tensorShape 128 128 --kWidth 16 --dtype bf8 --banks 64
 python3 plot_layout.py lds --layout swizzle --access write --tensorShape 128 128 --kWidth 16 --dtype f4 --banks 32
 python3 plot_layout.py lds --layout none --access read --tensorShape 128 32 --kWidth 4 --dtype fp16 --banks 64 --mnContig
 python3 plot_layout.py lds --layout swizzle --access read --tensorShape 128 32 --kWidth 16 --dtype fp8 --banks 64 --mnContig --mfma-trans-load
@@ -275,9 +303,9 @@ python3 plot_layout.py lds --tensorShape 256 64 --kWidth 8 --dtype fp16 --banks 
 
 Knobs
 - `--gfx [942,950,1250]`: GPU architecture. Auto-sets `banks` and `waveSize`.
-- `kWidth`: the vector size (in unit of elements) when accessing LDS
-- `banks`: the number of banks in LDS. (64 for gfx950/gfx1250, 32 for gfx942)
-- `dtype_a`: element data type
+- `--kWidth`: the vector size (in unit of elements) when accessing LDS
+- `--banks`: the number of banks in LDS. (64 for gfx950/gfx1250, 32 for gfx942)
+- `--dtype`: element data type
 - Three options for `--layout`:
   - `none`: no swizzling, no padding
   - `swizzle`: apply the swizzling pattern, which is derived from tensor shape and kWidth.
@@ -291,9 +319,9 @@ Knobs
   - `read`: plot accessed elements at the first cycle of ds_read
   - `write`: plot accessed elements during ds_write. For global load access, we assume
     a fully coalesced dwordx4 access pattern along the K dim.
-- `mnContig`: If set, the tile is stored in mn-contig layout. In this layout, elements along
+- `--mnContig`: If set, the tile is stored in mn-contig layout. In this layout, elements along
   the M/N dim are contiguous in both global memory and LDS.
-- `mfma_trans_load`: This flag only works when `mnContig` is set. When set, `ds_read_b64_tr_bx`
+- `--mfma-trans-load`: This flag only works when `--mnContig` is set. When set, `ds_read_b64_tr_bx`
   instructions are used to read from LDS. Note that current triton LDS layout mechanism will
   lead to bank conflicts.
 
