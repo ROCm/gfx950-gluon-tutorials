@@ -28,7 +28,11 @@ def get_pids(
         if xcd < tall_xcds:
             pid = xcd * pids_per_xcd + local_pid
         else:
-            pid = tall_xcds * pids_per_xcd + (xcd - tall_xcds) * (pids_per_xcd - 1) + local_pid
+            pid = (
+                tall_xcds * pids_per_xcd
+                + (xcd - tall_xcds) * (pids_per_xcd - 1)
+                + local_pid
+            )
 
     if GROUP_SIZE_M == 1:
         pid_m = pid // num_pid_n
@@ -45,7 +49,7 @@ def get_pids(
 
 
 @gluon.jit
-def amxfp4wmxfp4_kernel(
+def a4w4_kernel(
     a_ptr,
     b_ptr,
     c_ptr,
@@ -72,12 +76,38 @@ def amxfp4wmxfp4_kernel(
     GROUP_SIZE_M: gl.constexpr,
 ):
     """
-    MXFP4 GEMM kernel in v3_lds_padding style.
-    Uses DistributedLinearLayout + PaddedSharedLayout + async_copy.
-    Single-buffered, no prefetch.
+    MXFP4 GEMM kernel with local prefetch (v5 style).
+    Double-buffered async_copy + local_load prefetch.
 
-    A: (M, K//2) uint8, row-major (K-contiguous) → tiles [256, 128]
-    B: (N, K//2) uint8, row-major (K-contiguous) → tiles [256, 128]
+    Pipeline (3 things in parallel):
+      1. async copy fills buffer g_idx (next+1 iteration's data)
+      2. local load prefetches from buffer l_idx (next iteration's data)
+      3. DOT computes with registers (current iteration's data)
+
+    Prologue:
+        AC A0, B0 --> buffer 0
+        AC A1, B1 --> buffer 1
+        wait buffer 0
+        local_load A0, B0 <-- buffer 0
+        load scales iter 0
+
+    In loop:
+        DOT(A, B, scales)
+        wait buffer 1
+        local_load A_next, B_next <-- buffer l_idx
+        load scales for next iter
+        AC A_next+1, B_next+1 --> buffer g_idx (masked on last iter)
+
+    Epilogue:
+        DOT(A, B, scales)
+        wait last buffer
+        local_load last A, B
+        load last scales
+        DOT(last A, last B, last scales)
+        store(acc)
+
+    A: (M, K//2) uint8, row-major (K-contiguous) -> tiles [256, 128]
+    B: (N, K//2) uint8, row-major (K-contiguous) -> tiles [256, 128]
     A_scales: (M, K//32) uint8 e8m0
     B_scales: (N, K//32) uint8 e8m0
     C: (M, N) bfloat16
@@ -88,16 +118,7 @@ def amxfp4wmxfp4_kernel(
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
     # -- Global load layout (DistributedLinearLayout) --
-    #
-    # Both A [256, 128] and B [256, 128] use the same layout since B is now
-    # K-contiguous (N, K//2) instead of N-contiguous (K//2, N).
-    #
-    # For uint8 [256, 128]:
-    #   4 consecutive K reg_bases for 128b loads: [0,1],[0,2],[0,4],[0,8]
-    #   3 lane K bits: [0,16],[0,32],[0,64]
-    #   3 reg M/N bits: [4,0],[8,0],[128,0]
-    #   3 lane M/N bits: [16,0],[32,0],[64,0]
-    #   2 warp M/N bits: [1,0],[2,0]
+    # Both A [256, 128] and B [256, 128] use the same layout.
     gLoadLayout: gl.constexpr = gl.DistributedLinearLayout(
         reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [4, 0], [8, 0], [128, 0]],
         lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
@@ -115,9 +136,6 @@ def amxfp4wmxfp4_kernel(
     )
 
     # -- Shared memory layout (PaddedSharedLayout) --
-    #
-    # Same layout for both A and B since both are [256, 128] uint8 tiles.
-    # For uint8: byte = linear index, so padding [[1024,16],[2048,32]]
     sharedLayout: gl.constexpr = gl.PaddedSharedLayout(
         [[1024, 16], [2048, 32]],
         [
@@ -162,10 +180,14 @@ def amxfp4wmxfp4_kernel(
 
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
-    # -- SMEM allocation (single-buffered) --
-    # Both A and B tiles are [256, 128] with the same shared layout.
-    smemA = gl.allocate_shared_memory(a_ptr.type.element_ty, [BLOCK_M, BLOCK_K // 2], sharedLayout)
-    smemB = gl.allocate_shared_memory(b_ptr.type.element_ty, [BLOCK_N, BLOCK_K // 2], sharedLayout)
+    # -- SMEM allocation (double-buffered for A and B) --
+    nBuffers: gl.constexpr = 2
+    smemA = gl.allocate_shared_memory(
+        a_ptr.type.element_ty, [nBuffers, BLOCK_M, BLOCK_K // 2], sharedLayout
+    )
+    smemB = gl.allocate_shared_memory(
+        b_ptr.type.element_ty, [nBuffers, BLOCK_N, BLOCK_K // 2], sharedLayout
+    )
     smem_as = gl.allocate_shared_memory(
         a_scales_ptr.type.element_ty,
         [BLOCK_M, BLOCK_K // SCALE_GROUP_SIZE],
@@ -178,53 +200,83 @@ def amxfp4wmxfp4_kernel(
     )
 
     # -- Offsets --
-    # A: (M, K//2) row-major
     offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gLoadLayout))
     offs_ak = gl.arange(0, BLOCK_K // 2, gl.SliceLayout(0, gLoadLayout))
     a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
     a_base = a_ptr + pid_m * BLOCK_M * stride_am
 
-    # B: (N, K//2) row-major (K-contiguous) — same tile shape [256, 128] as A
     offs_bn = gl.arange(0, BLOCK_N, gl.SliceLayout(1, gLoadLayout))
     offs_bk = gl.arange(0, BLOCK_K // 2, gl.SliceLayout(0, gLoadLayout))
     b_offsets = offs_bn[:, None] * stride_bn + offs_bk[None, :] * stride_bk
     b_base = b_ptr + pid_n * BLOCK_N * stride_bn
 
-    # Scales
-    offs_ks = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales))
-    offs_asm = (pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))) % M
-    offs_bsn = (pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))) % N
+    offs_ks = gl.arange(
+        0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales)
+    )
+    offs_asm = (
+        pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))
+    ) % M
+    offs_bsn = (
+        pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))
+    ) % N
     offs_as = offs_asm[:, None] * stride_asm + offs_ks[None, :] * stride_ask
     offs_bs = offs_bsn[:, None] * stride_bsn + offs_ks[None, :] * stride_bsk
 
     acc = gl.zeros((BLOCK_M, BLOCK_N), gl.float32, mfma_layout)
 
-    # Permute smemB [N, K//2] → [K//2, N] for dot_b_layout compatibility
-    smemB_T = smemB.permute([1, 0])
+    iterMax = gl.cdiv(K, BLOCK_K)
 
-    # -- Main loop (v3 style: async_copy, no prefetch) --
-    for k in range(0, gl.cdiv(K, BLOCK_K)):
-        # Async copy A and B to shared (both [256, 128] tiles)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA, a_base, a_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB, b_base, b_offsets)
-        gl.amd.cdna4.async_copy.commit_group()
-        gl.amd.cdna4.async_copy.wait_group(0)
+    # ====== Prologue ======
+    # AC A0, B0 --> buffer 0
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemA.index(0), a_base, a_offsets
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemB.index(0), b_base, b_offsets
+    )
+    gl.amd.cdna4.async_copy.commit_group()
+    a_base += (BLOCK_K // 2) * stride_ak
+    b_base += (BLOCK_K // 2) * stride_bk
 
-        # Load from shared to registers
-        # A: smemA [M, K//2] → dot_a_layout
-        # B: smemB_T [K//2, N] (permuted view) → dot_b_layout
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA, dot_a_layout)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_T, dot_b_layout)
+    # AC A1, B1 --> buffer 1
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemA.index(1), a_base, a_offsets
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemB.index(1), b_base, b_offsets
+    )
+    gl.amd.cdna4.async_copy.commit_group()
+    a_base += (BLOCK_K // 2) * stride_ak
+    b_base += (BLOCK_K // 2) * stride_bk
 
-        # Load scales (explicit buffer_load → smem → registers)
-        a_sc = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
-        b_sc = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs)
-        smem_as.store(a_sc)
-        smem_bs.store(b_sc)
-        a_sc_reg = smem_as.load(layout=scale_a_layout)
-        b_sc_reg = smem_bs.load(layout=scale_b_layout)
+    # Wait for buffer 0, local_load A0, B0
+    gl.amd.cdna4.async_copy.wait_group(1)
+    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dot_a_layout)
+    b = gl.amd.cdna4.async_copy.load_shared_relaxed(
+        smemB.index(0).permute([1, 0]), dot_b_layout
+    )
 
-        # Compute
+    # Load scales for iter 0
+    a_sc = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+    b_sc = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs)
+    smem_as.store(a_sc)
+    smem_bs.store(b_sc)
+    a_sc_reg = smem_as.load(layout=scale_a_layout)
+    b_sc_reg = smem_bs.load(layout=scale_b_layout)
+    offs_as += (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask
+    offs_bs += (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk
+
+    # ====== Main loop ======
+    for k in range(0, iterMax - 1):
+        # 3 things in parallel:
+        #   1. DOT with current a, b, scales (from prev local_load)
+        #   2. local_load next iteration's data from buffer l_idx
+        #   3. async copy next+1 iteration's data to buffer g_idx
+        g_idx = k % 2
+        l_idx = 1 - g_idx
+
+
+        # DOT with current data
         acc = gl.amd.cdna4.mfma_scaled(
             a=a,
             a_scale=a_sc_reg,
@@ -235,17 +287,66 @@ def amxfp4wmxfp4_kernel(
             acc=acc,
         )
 
+        # Wait for next buffer and local_load
+        gl.amd.cdna4.async_copy.wait_group(0)
+
+        # Load scales
+        a_sc = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+        b_sc = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs)
+
+        #gl.amd.cdna3.sched_barrier(0)
+
+        # Async copy next+1 iteration (masked on last iter)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemA.index(g_idx), a_base, a_offsets, mask=(k != (iterMax - 2))
+        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB.index(g_idx), b_base, b_offsets, mask=(k != (iterMax - 2))
+        )
+        gl.amd.cdna4.async_copy.commit_group()
+
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemA.index(l_idx), dot_a_layout
+        )
+        b = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB.index(l_idx).permute([1, 0]), dot_b_layout
+        )
+
+        smem_as.store(a_sc)
+        smem_bs.store(b_sc)
+        #a_sc_reg = smem_as.load(layout=scale_a_layout)
+        #b_sc_reg = smem_bs.load(layout=scale_b_layout)
+        a_sc_reg = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
+        b_sc_reg = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+
+
         # Advance
         a_base += (BLOCK_K // 2) * stride_ak
         b_base += (BLOCK_K // 2) * stride_bk
         offs_as += (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask
         offs_bs += (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk
 
+    # ====== Epilogue ======
+    # Last DOT
+    acc = gl.amd.cdna4.mfma_scaled(
+        a=a,
+        a_scale=a_sc_reg,
+        a_format="e2m1",
+        b=b,
+        b_scale=b_sc_reg,
+        b_format="e2m1",
+        acc=acc,
+    )
+
     # -- Store output --
     c = acc.to(c_ptr.type.element_ty)
     c = gl.convert_layout(c, layout=gStoreLayoutC, assert_trivial=False)
-    offs_cm = pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
-    offs_cn = pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(0, gStoreLayoutC))
+    offs_cm = pid_m * BLOCK_M + gl.arange(
+        0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC)
+    )
+    offs_cn = pid_n * BLOCK_N + gl.arange(
+        0, BLOCK_N, gl.SliceLayout(0, gStoreLayoutC)
+    )
     offs_c = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
     c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
     gl.amd.cdna4.buffer_store(c, c_ptr, offs_c, c_mask)
@@ -268,7 +369,7 @@ def matmul(a, b, a_scales, b_scales):
     NUM_XCDS = 8
     GROUP_SIZE_M = 4
 
-    amxfp4wmxfp4_kernel[grid](
+    a4w4_kernel[grid](
         a,
         b,
         c,

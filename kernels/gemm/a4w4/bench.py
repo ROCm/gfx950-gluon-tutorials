@@ -157,11 +157,11 @@ def test_correctness(gemm_sizes):
         torch_output = torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16)
 
         if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
-            print(f"[amxfp4wmxfp4] {M=} {N=} {K=}: Triton and Torch match")
+            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
             print(
-                f"[amxfp4wmxfp4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})"
+                f"[a4w4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})"
             )
 
 
@@ -196,7 +196,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
         )
         total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32))
         print(
-            f"[amxfp4wmxfp4] {M=} {N=} {K=}: "
+            f"[a4w4] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, "
             f"{total_bytes / 1024**2:.0f} MB"
         )
@@ -207,7 +207,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
             idx = i % block_count
             matmul(a_list[idx], b_list[idx], as_list[idx], bs_list[idx])
         torch.cuda.synchronize()
-        print(f"[amxfp4wmxfp4] {M=} {N=} {K=}: {n_iters} iterations done")
+        print(f"[a4w4] {M=} {N=} {K=}: {n_iters} iterations done")
 
 
 def main():
@@ -249,7 +249,7 @@ def main():
 
         return perf(ms), perf(max_ms), perf(min_ms)
 
-    print("\namxfp4wmxfp4_kernel:")
+    print("\na4w4_kernel:")
     benchmark.run(show_plots=False, print_data=True)
 
 
