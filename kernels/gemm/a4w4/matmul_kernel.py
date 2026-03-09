@@ -28,11 +28,7 @@ def get_pids(
         if xcd < tall_xcds:
             pid = xcd * pids_per_xcd + local_pid
         else:
-            pid = (
-                tall_xcds * pids_per_xcd
-                + (xcd - tall_xcds) * (pids_per_xcd - 1)
-                + local_pid
-            )
+            pid = tall_xcds * pids_per_xcd + (xcd - tall_xcds) * (pids_per_xcd - 1) + local_pid
 
     if GROUP_SIZE_M == 1:
         pid_m = pid // num_pid_n
@@ -210,15 +206,9 @@ def a4w4_kernel(
     b_offsets = offs_bn[:, None] * stride_bn + offs_bk[None, :] * stride_bk
     b_base = b_ptr + pid_n * BLOCK_N * stride_bn
 
-    offs_ks = gl.arange(
-        0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales)
-    )
-    offs_asm = (
-        pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))
-    ) % M
-    offs_bsn = (
-        pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))
-    ) % N
+    offs_ks = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales))
+    offs_asm = (pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, blocked_scales))) % M
+    offs_bsn = (pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_scales))) % N
     offs_as = offs_asm[:, None] * stride_asm + offs_ks[None, :] * stride_ask
     offs_bs = offs_bsn[:, None] * stride_bsn + offs_ks[None, :] * stride_bsk
 
@@ -228,23 +218,15 @@ def a4w4_kernel(
 
     # ====== Prologue ======
     # AC A0, B0 --> buffer 0
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemA.index(0), a_base, a_offsets
-    )
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemB.index(0), b_base, b_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(0), a_base, a_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(0), b_base, b_offsets)
     gl.amd.cdna4.async_copy.commit_group()
     a_base += (BLOCK_K // 2) * stride_ak
     b_base += (BLOCK_K // 2) * stride_bk
 
     # AC A1, B1 --> buffer 1
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemA.index(1), a_base, a_offsets
-    )
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemB.index(1), b_base, b_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(1), a_base, a_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(1), b_base, b_offsets)
     gl.amd.cdna4.async_copy.commit_group()
     a_base += (BLOCK_K // 2) * stride_ak
     b_base += (BLOCK_K // 2) * stride_bk
@@ -252,9 +234,7 @@ def a4w4_kernel(
     # Wait for buffer 0, local_load A0, B0
     gl.amd.cdna4.async_copy.wait_group(1)
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dot_a_layout)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(
-        smemB.index(0).permute([1, 0]), dot_b_layout
-    )
+    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(0).permute([1, 0]), dot_b_layout)
 
     # Load scales for iter 0
     a_sc = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
@@ -275,7 +255,6 @@ def a4w4_kernel(
         g_idx = k % 2
         l_idx = 1 - g_idx
 
-
         # DOT with current data
         acc = gl.amd.cdna4.mfma_scaled(
             a=a,
@@ -294,7 +273,7 @@ def a4w4_kernel(
         a_sc = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
         b_sc = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs)
 
-        #gl.amd.cdna3.sched_barrier(0)
+        # gl.amd.cdna3.sched_barrier(0)
 
         # Async copy next+1 iteration (masked on last iter)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
@@ -305,20 +284,17 @@ def a4w4_kernel(
         )
         gl.amd.cdna4.async_copy.commit_group()
 
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemA.index(l_idx), dot_a_layout
-        )
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
         b = gl.amd.cdna4.async_copy.load_shared_relaxed(
             smemB.index(l_idx).permute([1, 0]), dot_b_layout
         )
 
         smem_as.store(a_sc)
         smem_bs.store(b_sc)
-        #a_sc_reg = smem_as.load(layout=scale_a_layout)
-        #b_sc_reg = smem_bs.load(layout=scale_b_layout)
+        # a_sc_reg = smem_as.load(layout=scale_a_layout)
+        # b_sc_reg = smem_bs.load(layout=scale_b_layout)
         a_sc_reg = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
         b_sc_reg = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
-
 
         # Advance
         a_base += (BLOCK_K // 2) * stride_ak
@@ -341,12 +317,8 @@ def a4w4_kernel(
     # -- Store output --
     c = acc.to(c_ptr.type.element_ty)
     c = gl.convert_layout(c, layout=gStoreLayoutC, assert_trivial=False)
-    offs_cm = pid_m * BLOCK_M + gl.arange(
-        0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC)
-    )
-    offs_cn = pid_n * BLOCK_N + gl.arange(
-        0, BLOCK_N, gl.SliceLayout(0, gStoreLayoutC)
-    )
+    offs_cm = pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
+    offs_cn = pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(0, gStoreLayoutC))
     offs_c = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
     c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
     gl.amd.cdna4.buffer_store(c, c_ptr, offs_c, c_mask)

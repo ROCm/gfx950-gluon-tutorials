@@ -160,9 +160,7 @@ def test_correctness(gemm_sizes):
             print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(
-                f"[a4w4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})"
-            )
+            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
