@@ -117,6 +117,9 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
     if kernel == "a8w8":
         version_dir = "a8w8_kernel"
         work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
+    elif kernel == "a4w4":
+        version_dir = "a4w4_kernel"
+        work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
         work_dir = os.path.join(git_root, "kernels", "gemm", "a16w16")
@@ -146,7 +149,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 
     # Build benchmark command
     bench_cmd = ["python", "bench.py", "--rocprof", "--K", str(K)]
-    if kernel != "a8w8":
+    if kernel not in ("a8w8", "a4w4"):
         bench_cmd.extend(["--dtype", dtype, "--version", str(version)])
 
     cmd = [
@@ -162,7 +165,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "--",
     ] + bench_cmd
 
-    label = f"v{version} ({version_dir})" if kernel != "a8w8" else "a8w8"
+    label = f"v{version} ({version_dir})" if kernel not in ("a8w8", "a4w4") else kernel
     print(f"  Collecting counters: {label} config={config}")
     try:
         proc = subprocess.run(
@@ -232,7 +235,7 @@ def parse_args():
     )
     parser.add_argument(
         "--kernel",
-        choices=["a16w16", "a8w8"],
+        choices=["a16w16", "a8w8", "a4w4"],
         default="a16w16",
         help="Kernel type to benchmark (default: a16w16)",
     )
@@ -275,7 +278,7 @@ def main():
     args = parse_args()
     counters = [c.strip() for c in args.counters.split(",")]
 
-    if args.kernel == "a8w8":
+    if args.kernel in ("a8w8", "a4w4"):
         versions = [None]
     else:
         for v in args.versions:
