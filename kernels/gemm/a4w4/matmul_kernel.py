@@ -2,6 +2,7 @@ import torch
 import triton
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
+from triton.experimental.gluon.language.amd.cdna3 import extract_slice
 
 
 @gluon.jit
@@ -486,11 +487,8 @@ def a4w4_kernel(
     # ====== Epilogue: last 2 iterations (no new async copies) ======
 
     # -- Output offset setup --
-    offs_cm = pid_m * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn_left = pid_n * BLOCK_N + gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
     c_base = c_ptr
-    c_left_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn_left[None, :]
-    c_right_offsets = c_left_offsets + (BLOCK_N // 2) * stride_cn
 
     # -- iterMax - 2 --
 
@@ -531,7 +529,7 @@ def a4w4_kernel(
         acc=acc_right,
     )
 
-    gl.amd.cdna4.async_copy.wait_group(2)
+    gl.amd.cdna4.async_copy.wait_group(1)
     a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
         smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
@@ -545,52 +543,162 @@ def a4w4_kernel(
     # -- iterMax - 1 --
 
     ########################################
-    ## Epilogue Region 2
+    ## Epilogue Region 2 (sliced along M)
     ########################################
     g_idx = 1
 
-    acc_left = gl.amd.cdna4.mfma_scaled(
-        a=a_next,
-        a_scale=a_sc_reg_buf2,
+    # Output offset setup for sliced stores (64 rows per slice)
+    # offs_cn_left already contains pid_n * BLOCK_N, so use c_ptr as base
+    offs_cm_slice = gl.arange(0, BLOCK_M // 4, gl.SliceLayout(1, gStoreLayoutC))
+    c_slice_left_offsets = stride_cm * offs_cm_slice[:, None] + stride_cn * offs_cn_left[None, :]
+    c_slice_right_offsets = c_slice_left_offsets + (BLOCK_N // 2) * stride_cn
+    c00_base = c_base + pid_m * BLOCK_M * stride_cm
+    c01_base = c00_base + 64 * stride_cm
+    c02_base = c01_base + 64 * stride_cm
+    c03_base = c02_base + 64 * stride_cm
+    c10_base = c00_base
+    c11_base = c10_base + 64 * stride_cm
+    c12_base = c11_base + 64 * stride_cm
+    c13_base = c12_base + 64 * stride_cm
+
+    ## slice 0 m[0:64]
+    a0 = extract_slice(a_next, [64, BLOCK_K // 2], [0, 0])
+    a_sc0 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K // SCALE_GROUP_SIZE], [0, 0])
+    acc00 = extract_slice(acc_left, [64, BLOCK_N // 2], [0, 0])
+    acc00 = gl.amd.cdna4.mfma_scaled(
+        a=a0,
+        a_scale=a_sc0,
         a_format="e2m1",
         b=b_left,
         b_scale=b_sc_left_reg_buf2,
         b_format="e2m1",
-        acc=acc_left,
+        acc=acc00,
     )
-
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
         smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
     )
-
     smem_bs.store(b_sc_right_buf3)
     b_sc_right_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
-    # Store acc_left (overlap with Region 3 DOT_right)
-    c_left = acc_left.to(c_ptr.type.element_ty)
-    c_left = gl.convert_layout(c_left, layout=gStoreLayoutC, assert_trivial=False)
-    c_left_mask = (offs_cm[:, None] < M) & (offs_cn_left[None, :] < N)
-    gl.amd.cdna4.buffer_store(c_left, c_base, c_left_offsets, c_left_mask)
+    ## slice 1 m[64:128]
+    a1 = extract_slice(a_next, [64, BLOCK_K // 2], [64, 0])
+    a_sc1 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K // SCALE_GROUP_SIZE], [64, 0])
+    acc01 = extract_slice(acc_left, [64, BLOCK_N // 2], [64, 0])
+    acc01 = gl.amd.cdna4.mfma_scaled(
+        a=a1,
+        a_scale=a_sc1,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left_reg_buf2,
+        b_format="e2m1",
+        acc=acc01,
+    )
+    c00 = acc00.to(c_ptr.type.element_ty)
+    c00 = gl.convert_layout(c00, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c00, c00_base, c_slice_left_offsets)
+
+    ## slice 2 m[128:192]
+    a2 = extract_slice(a_next, [64, BLOCK_K // 2], [128, 0])
+    a_sc2 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K // SCALE_GROUP_SIZE], [128, 0])
+    acc02 = extract_slice(acc_left, [64, BLOCK_N // 2], [128, 0])
+    acc02 = gl.amd.cdna4.mfma_scaled(
+        a=a2,
+        a_scale=a_sc2,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left_reg_buf2,
+        b_format="e2m1",
+        acc=acc02,
+    )
+    c01 = acc01.to(c_ptr.type.element_ty)
+    c01 = gl.convert_layout(c01, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c01, c01_base, c_slice_left_offsets)
+
+    ## slice 3 m[192:256]
+    a3 = extract_slice(a_next, [64, BLOCK_K // 2], [192, 0])
+    a_sc3 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K // SCALE_GROUP_SIZE], [192, 0])
+    acc03 = extract_slice(acc_left, [64, BLOCK_N // 2], [192, 0])
+    acc03 = gl.amd.cdna4.mfma_scaled(
+        a=a3,
+        a_scale=a_sc3,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left_reg_buf2,
+        b_format="e2m1",
+        acc=acc03,
+    )
+    c02 = acc02.to(c_ptr.type.element_ty)
+    c02 = gl.convert_layout(c02, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c02, c02_base, c_slice_left_offsets)
 
     ########################################
-    ## Epilogue Region 3
+    ## Epilogue Region 3 (sliced along M)
     ########################################
-    acc_right = gl.amd.cdna4.mfma_scaled(
-        a=a_next,
-        a_scale=a_sc_reg_buf2,
+
+    ## slice 0 m[0:64]
+    acc10 = extract_slice(acc_right, [64, BLOCK_N // 2], [0, 0])
+    acc10 = gl.amd.cdna4.mfma_scaled(
+        a=a0,
+        a_scale=a_sc0,
         a_format="e2m1",
         b=b_right,
         b_scale=b_sc_right_reg_buf2,
         b_format="e2m1",
-        acc=acc_right,
+        acc=acc10,
     )
+    c03 = acc03.to(c_ptr.type.element_ty)
+    c03 = gl.convert_layout(c03, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c03, c03_base, c_slice_left_offsets)
 
-    # Store acc_right
-    c_right = acc_right.to(c_ptr.type.element_ty)
-    c_right = gl.convert_layout(c_right, layout=gStoreLayoutC, assert_trivial=False)
-    c_right_mask = (offs_cm[:, None] < M) & ((offs_cn_left[None, :] + BLOCK_N // 2) < N)
-    gl.amd.cdna4.buffer_store(c_right, c_base, c_right_offsets, c_right_mask)
+    ## slice 1 m[64:128]
+    acc11 = extract_slice(acc_right, [64, BLOCK_N // 2], [64, 0])
+    acc11 = gl.amd.cdna4.mfma_scaled(
+        a=a1,
+        a_scale=a_sc1,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right_reg_buf2,
+        b_format="e2m1",
+        acc=acc11,
+    )
+    c10 = acc10.to(c_ptr.type.element_ty)
+    c10 = gl.convert_layout(c10, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c10, c10_base, c_slice_right_offsets)
+
+    ## slice 2 m[128:192]
+    acc12 = extract_slice(acc_right, [64, BLOCK_N // 2], [128, 0])
+    acc12 = gl.amd.cdna4.mfma_scaled(
+        a=a2,
+        a_scale=a_sc2,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right_reg_buf2,
+        b_format="e2m1",
+        acc=acc12,
+    )
+    c11 = acc11.to(c_ptr.type.element_ty)
+    c11 = gl.convert_layout(c11, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c11, c11_base, c_slice_right_offsets)
+
+    ## slice 3 m[192:256]
+    acc13 = extract_slice(acc_right, [64, BLOCK_N // 2], [192, 0])
+    acc13 = gl.amd.cdna4.mfma_scaled(
+        a=a3,
+        a_scale=a_sc3,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right_reg_buf2,
+        b_format="e2m1",
+        acc=acc13,
+    )
+    c12 = acc12.to(c_ptr.type.element_ty)
+    c12 = gl.convert_layout(c12, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c12, c12_base, c_slice_right_offsets)
+
+    c13 = acc13.to(c_ptr.type.element_ty)
+    c13 = gl.convert_layout(c13, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c13, c13_base, c_slice_right_offsets)
 
 
 def matmul(a, b, a_scales, b_scales):
