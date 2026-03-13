@@ -86,26 +86,27 @@ def a4w4_kernel(
 
       Prologue:
         iter 0:
-          GR a_sc, b_sc_left + AC A0, B0_left --> commit group 0, scales -> buf1
-          GR b_sc_right      + AC B0_right    --> commit group 1, scales -> buf1
+          AC A0, B0_left + GR a_sc, b_sc_left --> commit group 0, scales -> buf1
+          AC B0_right    + GR b_sc_right       --> commit group 1, scales -> buf1
+          advance tile/scale ptrs
         iter 1:
-          GR a_sc, b_sc_left + AC A1, B1_left --> commit group 2, scales -> buf3
-          GR b_sc_right      + AC B1_right    --> commit group 3, scales -> buf3
-          advance tile/scale ptrs (* 2)
-        wait_group(3), store/load scales -> buf0, local_load A0/B0_left
+          AC A1, B1_left + GR a_sc, b_sc_left --> commit group 2, scales -> buf3
+          AC B1_right    + GR b_sc_right       --> commit group 3, scales -> buf3
+          advance tile/scale ptrs
+        wait_group(3), local_load A0/B0_left, store/load scales -> buf0
 
       Main loop (4 regions per 2 K iterations):
-        Region 0: DOT_left(buf0)  | wait | store b_sc, LL B_right | GR scales + AC A+B_left -> buf1
-        Region 1: DOT_right(buf0) | wait | store scales -> buf2, LL A+B_left | GR b_sc + AC B_right -> buf1
+        Region 0: DOT_left(buf0)  | wait | LL B_right, store b_sc -> buf0 | AC A+B_left + GR scales -> buf1
+        Region 1: DOT_right(buf0) | wait | LL A+B_left, store scales -> buf2 | AC B_right + GR b_sc -> buf1
                   advance ptrs
-        Region 2: DOT_left(buf2)  | wait | store b_sc, LL B_right | GR scales + AC A+B_left -> buf3
-        Region 3: DOT_right(buf2) | wait | store scales -> buf0, LL A+B_left | GR b_sc + AC B_right -> buf3
+        Region 2: DOT_left(buf2)  | wait | LL B_right, store b_sc -> buf2 | AC A+B_left + GR scales -> buf3
+        Region 3: DOT_right(buf2) | wait | LL A+B_left, store scales -> buf0 | AC B_right + GR b_sc -> buf3
                   advance ptrs
 
       Epilogue (last 2 iterations, no new AC):
-        Region 0: DOT_left(buf0)  | wait | store b_sc, LL B_right
-        Region 1: DOT_right(buf0) | wait | store scales -> buf2, LL A+B_left
-        Region 2: DOT_left(buf2)  | wait(0) | store b_sc, LL B_right
+        Region 0: DOT_left(buf0)  | wait | LL B_right, store b_sc -> buf0
+        Region 1: DOT_right(buf0) | wait | LL A+B_left, store scales -> buf2
+        Region 2: DOT_left(buf2)  | wait(0) | LL B_right, store b_sc -> buf2
                   store acc_left
         Region 3: DOT_right(buf2)
                   store acc_right
@@ -282,32 +283,32 @@ def a4w4_kernel(
 
     # ====== Prologue: prefetch iter 0 and iter 1 ======
 
-    # -- iter 0: GR scales + AC tiles --
-    # commit group 0: a_sc + b_sc_left scales, A0 + B0_left tiles
-    a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
-    b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
+    # -- iter 0: AC tiles + GR scales --
+    # commit group 0: A0 + B0_left tiles, a_sc + b_sc_left scales
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(0), a_base, a_offsets)
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
+    a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+    b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
     gl.amd.cdna4.async_copy.commit_group()
 
-    # commit group 1: b_sc_right scale, B0_right tile
-    b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
+    # commit group 1: B0_right tile, b_sc_right scale
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
+    b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
     gl.amd.cdna4.async_copy.commit_group()
 
-    # -- iter 1: GR scales + AC tiles --
-    # commit group 2: a_sc + b_sc_left scales, A1 + B1_left tiles
-    a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
-    b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
+    # -- iter 1: AC tiles + GR scales --
+    # commit group 2: A1 + B1_left tiles, a_sc + b_sc_left scales
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(1), a_base, a_offsets_next)
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
+    a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
+    b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
     gl.amd.cdna4.async_copy.commit_group()
 
-    # commit group 3: b_sc_right scale, B1_right tile
-    b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
+    # commit group 3: B1_right tile, b_sc_right scale
     gl.amd.cdna4.async_copy.buffer_load_to_shared(
         smemB_right.index(1), b_base, b_right_offsets_next
     )
+    b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
     gl.amd.cdna4.async_copy.commit_group()
 
     a_base += (BLOCK_K // 2) * stride_ak * 2
@@ -316,17 +317,16 @@ def a4w4_kernel(
     b_scales_ptr += (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk * 2
 
     # -- Wait for iter 0 tiles (commit group 0) and prepare registers --
-    # Scale LW+LR first (hide ds_write latency), then tile LR
     gl.amd.cdna4.async_copy.wait_group(3)
-    smem_as.store(a_sc_buf1)
-    smem_bs.store(b_sc_left_buf1)
-    a_sc_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
-    b_sc_left_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
-
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dot_a_layout)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
         smemB_left.index(0).permute([1, 0]), dot_b_layout
     )
+
+    smem_as.store(a_sc_buf1)
+    smem_bs.store(b_sc_left_buf1)
+    a_sc_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
+    b_sc_left_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
     gl.assume(iterMax > 3)
 
@@ -352,22 +352,21 @@ def a4w4_kernel(
 
         # Wait for B_right tile (commit group 1)
         gl.amd.cdna4.async_copy.wait_group(2)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+        )
 
         # Prepare b_sc_right from prefetched buf1
         smem_bs.store(b_sc_right_buf1)
         b_sc_right_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-        )
-
-        # GR next a_sc + b_sc_left scales + AC next A + B_left tiles
-        a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
-        b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
+        # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_left.index(g_idx), b_base, b_left_offsets
         )
+        a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+        b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -387,6 +386,10 @@ def a4w4_kernel(
 
         # Wait for next A + B_left tiles (commit group 2)
         gl.amd.cdna4.async_copy.wait_group(2)
+        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
+        )
 
         # Prepare next a_sc + b_sc_left from prefetched buf3
         smem_as.store(a_sc_buf3)
@@ -394,16 +397,11 @@ def a4w4_kernel(
         a_sc_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
         b_sc_left_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
-        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
-        )
-
-        # GR next b_sc_right scale + AC next B_right tile
-        b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
+        # AC next B_right tile + GR next b_sc_right scale
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_right.index(g_idx), b_base, b_right_offsets
         )
+        b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
         gl.amd.cdna4.async_copy.commit_group()
 
         ## -- loop unrolling --
@@ -428,22 +426,21 @@ def a4w4_kernel(
 
         # Wait for B_right tile
         gl.amd.cdna4.async_copy.wait_group(2)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+        )
 
         # Prepare b_sc_right from prefetched buf3
         smem_bs.store(b_sc_right_buf3)
         b_sc_right_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-        )
-
-        # GR next a_sc + b_sc_left scales + AC next A + B_left tiles
-        a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
-        b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
+        # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets_next)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_left.index(g_idx), b_base, b_left_offsets_next
         )
+        a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
+        b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -463,6 +460,10 @@ def a4w4_kernel(
 
         # Wait for next A + B_left tiles
         gl.amd.cdna4.async_copy.wait_group(2)
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
+        )
 
         # Prepare next a_sc + b_sc_left from prefetched buf1
         smem_as.store(a_sc_buf1)
@@ -470,16 +471,11 @@ def a4w4_kernel(
         a_sc_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
         b_sc_left_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
 
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
-        )
-
-        # GR next b_sc_right scale + AC next B_right tile
-        b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
+        # AC next B_right tile + GR next b_sc_right scale
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_right.index(g_idx), b_base, b_right_offsets_next
         )
+        b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += (BLOCK_K // 2) * stride_ak * 2
