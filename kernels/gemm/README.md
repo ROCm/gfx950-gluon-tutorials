@@ -10,10 +10,11 @@ Measured on MI355:
 
 | Data Type | Shape | TFLOPS | MFMA Eff. |
 |-----------|-------|--------|-----------|
-| FP16 | 4096×4096×8192 | 1634 | 98% |
-| FP8 | 4096×4096×16384 | 3383 | 99% |
+| FP16 | 4096x4096x8192 | 1634 | 98% |
+| FP8 | 4096x4096x16384 | 3383 | 99% |
+| MXFP4 | 4096x4096x32768 | 5293 | 92% |
 
-Both kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
+All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
 ## 2. Prerequisites
 
@@ -31,6 +32,9 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amd
 
 # FP8 (a8w8)
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
+
+# MXFP4 (a4w4) — run from kernels/gemm/a4w4/
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768 --use-rocprof
 ```
 
 This script automatically:
@@ -47,6 +51,9 @@ To run benchmarks manually, set the environment variables directly. Run from the
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8 --K 8192 --dtype fp16
 
 # FP8 (from kernels/gemm/a8w8/)
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
+
+# MXFP4 (from kernels/gemm/a4w4/)
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
 ```
 
@@ -85,7 +92,28 @@ Why? The optimization principles are identical to FP16. The main differences are
 
 If you understand the FP16 journey, you understand the FP8 kernel.
 
-## 5. Philosophy
+## 5. MXFP4: New Challenges from Microscaling
+
+The [a4w4/](a4w4/) directory implements an MXFP4 (e2m1) GEMM kernel, which introduces new optimization challenges beyond FP8:
+
+| Aspect | FP8 (a8w8) | MXFP4 (a4w4) |
+|--------|------------|--------------|
+| Tile size | 256x256x128 | 256x256x256 |
+| MFMA instruction | `mfma_f8_16x16x128` | `mfma_scale_f32_16x16x128` |
+| MFMA cycles | 32 | 16 (e2m1) |
+| Scaling | None | Per-group e8m0 scales |
+| LDS padding | `[[1024, 16], [2048, 32]]` | `[[1024, 32]]` |
+
+### Key differences from FP8:
+
+- **Per-group scales**: Each group of 32 elements has an 8-bit scale factor. Scales must be loaded from global memory, stored to LDS, and read back in the MFMA scale layout before compute can proceed.
+- **16-cycle MFMA**: The e2m1 format halves MFMA latency, requiring more MFMAs interleaved per memory operation.
+- **LDS port contention**: ds_write (scale store) and buffer_load_to_lds (tile load) compete for the same LDS write port. ds_write can stall ~400 cycles, requiring careful scheduling to hide with MFMA.
+- **Interleaved epilogue**: Uses `extract_slice` to split the final iteration into 4 M-slices, overlapping `mfma_scaled` with `buffer_store`.
+
+See the [a4w4 README](a4w4/README.md) for full details on the pipeline, scheduling, and hardware considerations.
+
+## 6. Philosophy
 
 Performance emerges from the combination of:
 
@@ -96,10 +124,11 @@ Performance emerges from the combination of:
 
 This repository is built around the idea that **performance is a process**, and that process should be visible.
 
-## 6. How to Use This Directory
+## 7. How to Use This Directory
 
 | Goal | Recommendation |
 |------|----------------|
 | Learning Gluon | Start with [a16w16/](a16w16/) and follow versions in order |
 | Need a fast kernel | Jump to the latest version for your data type |
 | Understanding AMD GPU performance | Focus on LDS behavior, MFMA utilization, and prefetch pipelines |
+| MXFP4 / microscaling | Read [a4w4/](a4w4/) for scale pipeline and LDS port contention |

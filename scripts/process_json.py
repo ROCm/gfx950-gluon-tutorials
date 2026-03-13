@@ -176,7 +176,7 @@ def analyze_code(code_list):
 
     # Compute iterations: hitcount_loop / hitcount_epilogue
     loop_hit = hitcounts[loop_first_pos]
-    epilogue_hit = hitcounts[epilogue_first_pos] if epilogue_first_pos is not None else 1
+    epilogue_hit = hitcounts[epilogue_first_pos] if epilogue_first_pos is not None else 0
 
     if epilogue_hit == 0:
         # No epilogue executed (dead code) - loop_hit is the iteration count
