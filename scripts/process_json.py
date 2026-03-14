@@ -162,6 +162,20 @@ def load_code_json(folder):
     raise ValueError("Unexpected code.json format")
 
 
+def find_loop_branch(sorted_code):
+    """Find the loop back-edge branch (s_cbranch_scc0/scc1).
+
+    Returns the position in sorted_code, or None if not found.
+    This is more robust than hitcount heuristics since it uses the
+    actual control flow structure.
+    """
+    for i, ins in enumerate(sorted_code):
+        name = ins[0].lower()
+        if "s_cbranch_scc0" in name or "s_cbranch_scc1" in name:
+            return i
+    return None
+
+
 def analyze_code(code_list):
     """Extract loop info and compute iteration count."""
     sorted_code = sorted(code_list, key=lambda x: x[2])
@@ -169,14 +183,30 @@ def analyze_code(code_list):
     indices = [ins[2] for ins in sorted_code]
     names = [ins[0] for ins in sorted_code]  # Keep original case for instruction parsing
 
-    max_hit = max(hitcounts)
-    loop_first_pos = next(i for i, h in enumerate(hitcounts) if h == max_hit)
-    loop_last_pos = max(i for i, h in enumerate(hitcounts) if h == max_hit)
-    epilogue_first_pos = loop_last_pos + 1 if loop_last_pos + 1 < len(hitcounts) else None
+    # Primary method: find loop boundary via s_cbranch (back-edge).
+    # The instruction after the branch is the first epilogue instruction.
+    branch_pos = find_loop_branch(sorted_code)
+
+    if branch_pos is not None:
+        # Use branch-based loop detection
+        loop_hit = hitcounts[branch_pos]
+        # Loop starts at the first instruction with the same hitcount
+        loop_first_pos = next(i for i, h in enumerate(hitcounts) if h == loop_hit)
+        loop_last_pos = branch_pos
+        epilogue_first_pos = branch_pos + 1 if branch_pos + 1 < len(hitcounts) else None
+    else:
+        # Fallback: hitcount-based detection
+        max_hit = max(hitcounts)
+        loop_first_pos = next(i for i, h in enumerate(hitcounts) if h == max_hit)
+        loop_last_pos = max(i for i, h in enumerate(hitcounts) if h == max_hit)
+        epilogue_first_pos = loop_last_pos + 1 if loop_last_pos + 1 < len(hitcounts) else None
 
     # Compute iterations: hitcount_loop / hitcount_epilogue
     loop_hit = hitcounts[loop_first_pos]
-    epilogue_hit = hitcounts[epilogue_first_pos] if epilogue_first_pos is not None else 0
+    if epilogue_first_pos is not None:
+        epilogue_hit = hitcounts[epilogue_first_pos]
+    else:
+        epilogue_hit = 0
 
     if epilogue_hit == 0:
         # No epilogue executed (dead code) - loop_hit is the iteration count
@@ -186,7 +216,7 @@ def analyze_code(code_list):
         num_iterations = loop_hit / epilogue_hit
         epilogue_first_index = indices[epilogue_first_pos]
 
-    # Count MFMA instructions and their total cycles
+    # Count MFMA instructions and their total cycles in the loop
     total_mfma_cycles = 0
     mfma_count = 0
     for i in range(loop_first_pos, loop_last_pos + 1):

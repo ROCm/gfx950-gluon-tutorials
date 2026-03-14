@@ -12,7 +12,7 @@ Measured on MI355:
 |-----------|-------|--------|-----------|
 | FP16 | 4096x4096x8192 | 1634 | 98% |
 | FP8 | 4096x4096x16384 | 3383 | 99% |
-| MXFP4 | 4096x4096x32768 | 5293 | 92% |
+| MXFP4 | 4096x4096x32768 | 5270 | 92% |
 
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
@@ -54,7 +54,7 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
 
 # MXFP4 (from kernels/gemm/a4w4/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
 ```
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
@@ -107,9 +107,7 @@ The [a4w4/](a4w4/) directory implements an MXFP4 (e2m1) GEMM kernel, which intro
 ### Key differences from FP8:
 
 - **Per-group scales**: Each group of 32 elements has an 8-bit scale factor. Scales must be loaded from global memory, stored to LDS, and read back in the MFMA scale layout before compute can proceed.
-- **16-cycle MFMA**: The e2m1 format halves MFMA latency, requiring more MFMAs interleaved per memory operation.
 - **LDS port contention**: ds_write (scale store) and buffer_load_to_lds (tile load) compete for the same LDS write port. ds_write can stall ~400 cycles, requiring careful scheduling to hide with MFMA.
-- **Interleaved epilogue**: Uses `extract_slice` to split the final iteration into 4 M-slices, overlapping `mfma_scaled` with `buffer_store`.
 
 See the [a4w4 README](a4w4/README.md) for full details on the pipeline, scheduling, and hardware considerations.
 

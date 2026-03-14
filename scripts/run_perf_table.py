@@ -64,9 +64,14 @@ ATT_MATMUL_TEMPLATE = {
             "att_target_cu": 0,
             "att_shader_engine_mask": "0xF",
             "att_simd_select": "0xF",
-            "att_buffer_size": "0x6000000",
+            "att_buffer_size": "0x60000000",
         }
     ]
+}
+
+# Kernels with large instruction counts need bigger ATT buffers
+ATT_BUFFER_SIZE_OVERRIDES = {
+    "a4w4": "0x20000000",  # 512MB for MXFP4 (2x MFMA per iteration vs FP8)
 }
 
 
@@ -82,10 +87,12 @@ def get_git_root():
     return result.stdout.strip()
 
 
-def write_att_config(version_dir, work_dir=None):
+def write_att_config(version_dir, work_dir=None, kernel_type="a16w16"):
     """Write att_matmul.json with kernel_include_regex set to the version dir name."""
     cfg = json.loads(json.dumps(ATT_MATMUL_TEMPLATE))
     cfg["jobs"][0]["kernel_include_regex"] = version_dir
+    if kernel_type in ATT_BUFFER_SIZE_OVERRIDES:
+        cfg["jobs"][0]["att_buffer_size"] = ATT_BUFFER_SIZE_OVERRIDES[kernel_type]
     att_path = os.path.join(work_dir, "att_matmul.json") if work_dir else "att_matmul.json"
     with open(att_path, "w") as f:
         json.dump(cfg, f, indent=4)
@@ -277,7 +284,7 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     }
 
     clean_caches(work_dir)
-    write_att_config(version_dir, work_dir)
+    write_att_config(version_dir, work_dir, kernel_type=kernel)
 
     run_att_path = os.path.join(git_root, "scripts", "run_att.py")
 
