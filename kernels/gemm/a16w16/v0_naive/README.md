@@ -166,11 +166,11 @@ python3 plot_layout.py blocked \
 
 ```bash
 python3 plot_layout.py dot \
+  --gfx 950 \
   --dotShape 256 256 64 \
   --warpsPerCTA 2 2 \
   --dtypeA fp16 \
   --dtypeB fp16 \
-  --kWidth 8 \
   --mfmaTrans \
   --output v0_naive_dot
 ```

@@ -94,10 +94,10 @@ The raw layout preserves a simple linear mapping from (row, col) to LDS offsets.
 
 ```bash
 python3 plot_layout.py lds \
+  --gfx 950 \
   --tensorShape 256 64 \
   --kWidth 8 \
   --nonKDim 16 \
-  --banks 64 \
   --layout none \
   --access read \
   --swizzleVec 8 \
@@ -131,10 +131,10 @@ The details are explained in [Lei's blog](https://www.lei.chat/posts/triton-besp
 
 ```bash
 python3 plot_layout.py lds \
+  --gfx 950 \
   --tensorShape 256 64 \
   --kWidth 8 \
   --nonKDim 16 \
-  --banks 64 \
   --layout swizzle \
   --access read \
   --swizzleVec 8 \
@@ -176,10 +176,10 @@ Details can be found at [Lei's blog](https://www.lei.chat/posts/triton-bespoke-l
 
 ```bash
 python3 plot_layout.py lds \
+  --gfx 950 \
   --tensorShape 256 64 \
   --kWidth 8 \
   --nonKDim 16 \
-  --banks 64 \
   --layout padding \
   --access read \
   --swizzleVec 8 \

@@ -11,24 +11,27 @@ import numpy as np
 from matplotlib.patches import Rectangle
 
 
-def get_color(i):
+def get_color(i, wave_size=64):
     """
-    Return an RGBA color for index i in [0, 63].
+    Return an RGBA color for index i in [0, wave_size-1].
     - 4 hue families (Blues, Oranges, Greens, Reds)
-    - Within each hue family (16 values), light → dark
+    - Within each hue family, light → dark
     """
-    if not (0 <= i < 64):
-        raise ValueError("threadsPerWarp must be in range [0, 63]")
+    if not (0 <= i < wave_size):
+        raise ValueError(f"thread index must be in range [0, {wave_size - 1}]")
 
-    # Define 4 base colormaps (different hues)
+    # Define base colormaps (different hues)
     hue_maps = ["Blues", "Oranges", "Greens", "Reds"]
 
-    hue_index = i // 16  # which hue group (0–3)
-    shade_index = i % 16  # how dark/light within the group
+    # For wave_size=64: 4 groups of 16 threads each
+    # For wave_size=32: 2 groups of 16 threads each (use first 2 hue families)
+    threads_per_hue = 16
+    hue_index = i // threads_per_hue  # which hue group
+    shade_index = i % threads_per_hue  # how dark/light within the group
 
     # Sample linearly from light (0.3) to dark (0.9)
-    levels = np.linspace(0.3, 0.9, 16)
-    cmap = cm.colormaps.get_cmap(hue_maps[hue_index])
+    levels = np.linspace(0.3, 0.9, threads_per_hue)
+    cmap = cm.colormaps.get_cmap(hue_maps[hue_index % len(hue_maps)])
     return cmap(levels[shade_index])
 
 
@@ -159,7 +162,7 @@ class LinearLayout:
         return None, 1
 
 
-def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize):
+def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize, wave_size=64):
     x = shape[0] - dim0 - 1
     if vecDim == 0:
         x += 1
@@ -169,7 +172,9 @@ def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize):
 
     # Pick color based on first lane
     tid = lanes[0]
-    rect = Rectangle((y, x), width, height, facecolor=get_color(tid), edgecolor="black", lw=0.3)
+    rect = Rectangle(
+        (y, x), width, height, facecolor=get_color(tid, wave_size), edgecolor="black", lw=0.3
+    )
     ax.add_patch(rect)
 
     # Combine all lane IDs into one string
@@ -185,7 +190,7 @@ def drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize):
     )
 
 
-def plot(layout, warpId, out_file):
+def plot(layout, warpId, out_file, wave_size=64):
     shape = layout.tensorSize()
     fig, ax = plt.subplots(figsize=(shape[0], shape[1]))
     cmap = cm.colormaps.get_cmap("Set1")
@@ -205,7 +210,7 @@ def plot(layout, warpId, out_file):
             coord_to_lanes[(dim0, dim1)].append(lane)
 
     for (dim0, dim1), lanes in coord_to_lanes.items():
-        drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize)
+        drawVec(dim0, dim1, vecDim, vecSize, shape, lanes, ax, cmap, fontSize, wave_size)
 
     ax.text(
         -0.5,
@@ -251,6 +256,13 @@ def main():
     )
     parser.add_argument("--warpBase", help='Warp bases, e.g. "[[32,0],[64,0],[128,0]]"')
     parser.add_argument("--warpId", type=int, default=0)
+    parser.add_argument(
+        "--waveSize",
+        type=int,
+        default=64,
+        choices=[32, 64],
+        help="number of threads per wave (32 for MI450, 64 for other AMD GPUs)",
+    )
     parser.add_argument("--o")
 
     args = parser.parse_args()
@@ -262,6 +274,7 @@ def main():
     lane_bases = parse_bases(args.laneBase)
     warp_bases = parse_bases(args.warpBase)
     warpId = args.warpId
+    wave_size = args.waveSize
     out_file = args.o
 
     layout = LinearLayout(register_bases, lane_bases, warp_bases)
@@ -284,7 +297,7 @@ def main():
         print(f"warpId must be < {warpSize}, but got {warpId}")
         exit(0)
 
-    plot(layout, warpId, out_file)
+    plot(layout, warpId, out_file, wave_size)
 
 
 if __name__ == "__main__":

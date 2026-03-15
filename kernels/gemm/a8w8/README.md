@@ -60,10 +60,10 @@ sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
 
 ```bash
 python3 layout_plot/plot_layout.py --output lds_padding_1024-16_2048-32 --force lds \
+  --gfx 950 \
   --tensorShape 256 128 \
   --kWidth 32 \
   --nonKDim 16 \
-  --banks 64 \
   --layout padding \
   --access read \
   --swizzleVec 16 \
@@ -89,10 +89,10 @@ sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
 
 ```bash
 python3 layout_plot/plot_layout.py --output lds_padding_1024-32_kWidth16 --force lds \
+  --gfx 950 \
   --tensorShape 256 128 \
   --kWidth 16 \
   --nonKDim 16 \
-  --banks 64 \
   --layout padding \
   --access read \
   --dtype fp8 \

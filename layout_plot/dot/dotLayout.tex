@@ -4,6 +4,7 @@
   %%
   %% block TL: pre-defined top-left coordinate of the block
   %% \elem: pre defined variable
+  %% \waveSize: pre defined variable (32 or 64)
   %%
   %% #1: 1 for mfma.trans, 0 for normal mfma
   %% #2: mfmaNonKDim
@@ -13,12 +14,14 @@
   \pgfmathsetmacro{\nonTrans}{1-#1}
   \pgfmathsetmacro{\nonKDim}{#2}
   \pgfmathsetmacro{\maxTID}{\nonKDim-1}
-  \pgfmathsetmacro{\groups}{64/\nonKDim}
+  \pgfmathsetmacro{\groups}{\waveSize/\nonKDim}
   \pgfmathsetmacro{\maxGID}{\groups-1}
+  %% outVecSize = number of output elements per thread = nonKDim^2 / waveSize
+  \pgfmathsetmacro{\outVec}{int(\nonKDim*\nonKDim/\waveSize)}
   \pgfmathsetmacro{\maxIVec}{\nonKDim*\nonKDim/256-1}
   \pgfmathsetmacro{\verbose}{#3}
   \foreach \iVec in {0,...,\maxIVec} {
-    \coordinate (wave TL) at ($(block TL)+(\trans*\iVec*\groups*4*\elem, -\nonTrans*\iVec*\groups*4*\elem)$);
+    \coordinate (wave TL) at ($(block TL)+(\trans*\iVec*\groups*\outVec*\elem, -\nonTrans*\iVec*\groups*\outVec*\elem)$);
     \foreach \tg in {0,...,\maxGID}{
       \pgfmathsetmacro{\colID}{\tg}
       \pgfmathsetmacro{\col}{\Colors[\colID]}
@@ -26,13 +29,13 @@
         \pgfmathsetmacro{\ratio}{\tid*2.5*\groups+15}
         \ifthenelse{\verbose=0}{
           \draw [line width=0.005mm, fill=\col!\ratio!white]
-          ($(wave TL)+(\nonTrans*\tid*\elem+\tg*\trans*4*\elem, -\trans*\tid*\elem-\tg*\nonTrans*4*\elem)$)
-          rectangle ++(\nonTrans*\elem+\trans*4*\elem, -\nonTrans*4*\elem-\trans*\elem);
+          ($(wave TL)+(\nonTrans*\tid*\elem+\tg*\trans*\outVec*\elem, -\trans*\tid*\elem-\tg*\nonTrans*\outVec*\elem)$)
+          rectangle ++(\nonTrans*\elem+\trans*\outVec*\elem, -\nonTrans*\outVec*\elem-\trans*\elem);
         }{
           \pgfmathsetmacro{\drawTid}{int(\tid+\tg*\nonKDim)}
           \draw [line width=0.005mm, fill=\col!\ratio!white]
-          ($(wave TL)+(\nonTrans*\tid*\elem+\tg*\trans*4*\elem, -\trans*\tid*\elem-\tg*\nonTrans*4*\elem)$)
-          rectangle ++(\nonTrans*\elem+\trans*4*\elem, -\nonTrans*4*\elem-\trans*\elem)
+          ($(wave TL)+(\nonTrans*\tid*\elem+\tg*\trans*\outVec*\elem, -\trans*\tid*\elem-\tg*\nonTrans*\outVec*\elem)$)
+          rectangle ++(\nonTrans*\elem+\trans*\outVec*\elem, -\nonTrans*\outVec*\elem-\trans*\elem)
           node [pos=.5, scale=.35*\scale, rotate=90*\nonTrans] {t\drawTid};
         }
       }
@@ -130,7 +133,7 @@
   %% #4: verbose. 1 means draw tid in each vec; 0 means draw nothing
 
   \pgfmathsetmacro{\nonKDim}{#1}
-  \pgfmathsetmacro{\maxGID}{64/\nonKDim-1}
+  \pgfmathsetmacro{\maxGID}{\waveSize/\nonKDim-1}
   \pgfmathsetmacro{\maxTID}{\nonKDim-1}
   \pgfmathsetmacro{\kWidth}{#2}
   \pgfmathsetmacro{\kGroup}{#3}
@@ -140,7 +143,7 @@
   \pgfmathsetmacro{\verbose}{#5}
 
   \foreach \gp in {0,...,\maxGroupId}{
-    \coordinate (group TL) at ($(mfma op TL)+(\gp*\kWidth*64*\elemW/\nonKDim*\opIdxB, -\gp*\kWidth*64*\elemW/\nonKDim*\opIdxA)$);
+    \coordinate (group TL) at ($(mfma op TL)+(\gp*\kWidth*\waveSize*\elemW/\nonKDim*\opIdxB, -\gp*\kWidth*\waveSize*\elemW/\nonKDim*\opIdxA)$);
     \foreach \col/\tg in {0,...,\maxGID}{
       \pgfmathsetmacro{\col}{\Colors[\tg]}
       \foreach \tid in {0,...,\maxTID} {
@@ -175,7 +178,7 @@
 
   \pgfmathsetmacro{\K}{#1}
   \pgfmathsetmacro{\nonKDim}{#2}
-  \pgfmathsetmacro{\groups}{64/\nonKDim}
+  \pgfmathsetmacro{\groups}{\waveSize/\nonKDim}
   \pgfmathsetmacro{\kWidth}{#3}
   \pgfmathsetmacro{\kGroup}{#4}
   \pgfmathsetmacro{\opIdx}{#5}
@@ -295,7 +298,7 @@
   \pgfmathsetmacro{\N}{#2}
   \pgfmathsetmacro{\K}{#3}
   \pgfmathsetmacro{\mfmaNonKDim}{#4}
-  \pgfmathsetmacro{\groups}{64/\mfmaNonKDim}
+  \pgfmathsetmacro{\groups}{\waveSize/\mfmaNonKDim}
   \pgfmathsetmacro{\warpsPerCTAM}{#5}
   \pgfmathsetmacro{\warpsPerCTAN}{#6}
   \pgfmathsetmacro{\mfmaTrans}{#7}
@@ -372,7 +375,7 @@
   %% #6: scaling: if set, draw scaling tensors
 
   \pgfmathsetmacro{\mfmaNonKDim}{#1}
-  \pgfmathsetmacro{\groups}{64/\mfmaNonKDim}
+  \pgfmathsetmacro{\groups}{\waveSize/\mfmaNonKDim}
   \pgfmathsetmacro{\mfmaTrans}{#2}
   \pgfmathsetmacro{\nonTrans}{1-#2}
   \pgfmathsetmacro{\drawScale}{#6}
@@ -441,6 +444,12 @@
     \drawZoomInVec{4}{1}{vec=4$\times$e8m0}
   }{}
 
+  %% Compute output vector size: vecSize = nonKDim * nonKDim / waveSize
+  %% For 64-thread waves with nonKDim=16: 16*16/64 = 4
+  %% For 32-thread waves with nonKDim=16: 16*16/32 = 8
+  \pgfmathsetmacro{\outVecSize}{int(\mfmaNonKDim*\mfmaNonKDim/\waveSize)}
+  \pgfmathsetmacro{\maxOutVecId}{\outVecSize-1}
+
   %% Draw labels according to mfma.trans or not
   \ifthenelse{\mfmaTrans=0}{
     \node [scale=\scaleLabel, above left] at ($(mfma opA TL)+(\kWidthLeft*\elemW*\groups*\kGroupLeft, 0)$)
@@ -452,12 +461,12 @@
       \node [scale=\scaleLabel, above, rotate=90] at ($(right scaling TL)+(0,-0.5*\groups*4*\elemW)$) {scaleB};
     }{}
     \coordinate (vec TL) at ($(block TL)+(-3*\elem-\elem,0)$);
-    \foreach \vecId in {0,1,2,3}{
+    \foreach \vecId in {0,...,\maxOutVecId}{
       \draw ($(vec TL)+(0, -\vecId*\elem)$) rectangle ++(\elem, -\elem);
     }
     \draw [densely dotted] (block TL) -- ++(-3*\elem,0);
-    \draw [densely dotted] ($(block TL)+(0, -4*\elem)$) -- ++(-3*\elem,0);
-    \node [scale=.8*\scale, above, rotate=90] at ($(vec TL)+(0, -.5*4*\elem)$) {vec=4$\times$\outType};
+    \draw [densely dotted] ($(block TL)+(0, -\outVecSize*\elem)$) -- ++(-3*\elem,0);
+    \node [scale=.8*\scale, above, rotate=90] at ($(vec TL)+(0, -.5*\outVecSize*\elem)$) {vec=\outVecSize$\times$\outType};
     \node [scale=.8*\scale, above, align=center] at ($(block TL)+(.5*\mfmaNonKDim*\elem, 0)$) {mfmaLayout\\trans=False};
   }{
     \node [scale=\scaleLabel, above left] at ($(mfma opA TL)+(\kWidthLeft*\elemW*\groups*\kGroupLeft, 0)$)
@@ -469,12 +478,12 @@
       \node [scale=\scaleLabel, above, rotate=90] at ($(right scaling TL)+(0, -.5*\groups*4*\elemW)$) {scaleA};
     }{}
     \coordinate (vec TL) at ($(block TL)+(0, 3*\elem+\elem)$);
-    \foreach \vecId in {0,1,2,3}{
+    \foreach \vecId in {0,...,\maxOutVecId}{
       \draw ($(vec TL)+(\vecId*\elem, 0)$) rectangle ++(\elem, -\elem);
     }
     \draw [densely dotted] (block TL) -- ++(0, 3*\elem);
-    \draw [densely dotted] ($(block TL)+(4*\elem, 0)$) -- ++(0, 3*\elem);
-    \node [scale=.8*\scale, above] at ($(vec TL)+(.5*4*\elem, 0)$) {vec=4$\times$\outType};
+    \draw [densely dotted] ($(block TL)+(\outVecSize*\elem, 0)$) -- ++(0, 3*\elem);
+    \node [scale=.8*\scale, above] at ($(vec TL)+(.5*\outVecSize*\elem, 0)$) {vec=\outVecSize$\times$\outType};
     \node [scale=.6*\scale, above, align=center] at ($(block TL)+(.5*\mfmaNonKDim*\elem, 0)$) {mfmaLayout\\trans=True};
   }
 }

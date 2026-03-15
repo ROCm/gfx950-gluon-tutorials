@@ -15,6 +15,7 @@ class LDSConfig:
     kWidth: int
     padInterval: int
     padAmount: int
+    waveSize: int = 64
 
     def __init__(
         self,
@@ -28,6 +29,7 @@ class LDSConfig:
         kWidth,
         padInterval,
         padAmount,
+        waveSize=64,
     ):
         self.banks = banks
         self.ldsLayout = ldsLayout
@@ -39,10 +41,11 @@ class LDSConfig:
         self.kWidth = kWidth
         self.padInterval = padInterval
         self.padAmount = padAmount
+        self.waveSize = waveSize
 
     def print(self):
         print(
-            f"{self.banks=} {self.ldsLayout=} {self.ldsAccess=} {self.mnContig=} {self.mfmaTransLD=} {self.swizzleVec=} {self.accessVec=} {self.kWidth=} {self.padInterval} {self.padAmount}"
+            f"{self.banks=} {self.ldsLayout=} {self.ldsAccess=} {self.mnContig=} {self.mfmaTransLD=} {self.swizzleVec=} {self.accessVec=} {self.kWidth=} {self.padInterval} {self.padAmount} {self.waveSize=}"
         )
 
 
@@ -138,8 +141,8 @@ def typeToBytes(dtype):
         return 0.75
 
 
-def maxKDimInBytes(dtype, mfmaNonKDim, kWidth):
-    groups = 64 / mfmaNonKDim
+def maxKDimInBytes(dtype, mfmaNonKDim, kWidth, waveSize=64):
+    groups = waveSize / mfmaNonKDim
     if (dtype == "bf8" or dtype == "fp8") and kWidth == 16:
         groups *= 2
     return groups * kWidth * typeToBytes(dtype)
@@ -172,6 +175,7 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
     banks = ldsConfig.banks
     padInterval = ldsConfig.padInterval
     padAmount = ldsConfig.padAmount
+    waveSize = ldsConfig.waveSize
 
     if trans:
         dim0Name = "k"
@@ -301,6 +305,7 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
                \def\useMfmaTransLD{{{useMfmaTransLD}}}
                \def\padInterval{{{padInterval}}}
                \def\padAmount{{{padAmount}}}
+               \def\waveSize{{{waveSize}}}
                {sharedLayoutRows}
                {sharedLayoutVecs}
                {sharedLayoutRowStarts}
@@ -337,6 +342,7 @@ def generate_lds_tex(args):
     swizzleVec = args.swizzleVec
     padInterval = args.padInterval
     padAmount = args.padAmount
+    waveSize = args.waveSize
     sharedLayout = _parse_shared_layout(args.sharedLayout)
 
     ldsConfig = LDSConfig(
@@ -350,6 +356,7 @@ def generate_lds_tex(args):
         kWidth,
         padInterval,
         padAmount,
+        waveSize,
     )
 
     # checks and logging

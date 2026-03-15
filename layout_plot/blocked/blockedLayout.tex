@@ -19,8 +19,9 @@
 
   \pgfmathsetmacro{\waveSizeM}{\sizePerThreadM*\threadsPerWarpM}
   \pgfmathsetmacro{\waveSizeN}{\sizePerThreadN*\threadsPerWarpN}
+  \pgfmathsetmacro{\maxTID}{\waveSize-1}
 
-  \foreach \tid in {0,...,63}{
+  \foreach \tid in {0,...,\maxTID}{
     \pgfmathsetmacro{\tidM}{int(\tid/\threadsPerWarpN)}
     \pgfmathsetmacro{\tidN}{mod(\tid,\threadsPerWarpN)}
     \coordinate (Thread TL) at ($(Wave TL)+(\tidN*\sizePerThreadN*\elem, -\tidM*\sizePerThreadM*\elem)$);
@@ -107,7 +108,7 @@
   %% #3: sizePerThread[0] --> sizePerThreadM
   %% #4: sizePerThread[1] --> sizePerThreadN
   %% #5: threadsPerWarp[0] --> threadsPerWarpM
-  %%     Note that threadsPerWarp[1] is calculated by 64/threadsPerWarp[0]
+  %%     Note that threadsPerWarp[1] is calculated by waveSize/threadsPerWarp[0]
   %% #6: warpsPerCTA[0] --> warpsPerCTAM
   %% #7: warpsPerCTA[1] --> warpsPerCTAN
   %% #8: fastest changing dim --> order
@@ -121,7 +122,7 @@
   \pgfmathsetmacro{\warpsPerCTAN}{#7}
   \pgfmathsetmacro{\order}{#8}
 
-  \pgfmathsetmacro{\threadsPerWarpN}{64/\threadsPerWarpM}
+  \pgfmathsetmacro{\threadsPerWarpN}{\waveSize/\threadsPerWarpM}
   \pgfmathsetmacro{\CTASizeM}{\sizePerThreadM*\threadsPerWarpM*\warpsPerCTAM}
   \pgfmathsetmacro{\CTASizeN}{\sizePerThreadN*\threadsPerWarpN*\warpsPerCTAN}
   \pgfmathsetmacro{\CTARepM}{\M/\CTASizeM}
