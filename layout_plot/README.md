@@ -273,7 +273,7 @@ options:
   --kWidth {4,8,16,32}                       number of contiguous elements per thread (default: 4)
   --dtype {fp16,bf16,fp8,bf8,fp6,bf6,f4,i8}  element type of tensor to be stored in LDS (default: fp16)
   --nonKDim {16,32}                          mfma instruction dim (default: 16)
-  --banks {32,64}                            choose the number of banks in LDS (default: 32)
+  --banks {32,64}                            choose the number of banks in LDS (default: 64)
   --layout {swizzle,padding,none}            choose the LDS data layout (default: none)
   --access {read,write,none}                 choose LDS access mode (default: none)
   --mnContig                                 If set, the tensor is K x N and n-contig (default: False)
@@ -304,7 +304,7 @@ python3 plot_layout.py lds --tensorShape 256 64 --kWidth 8 --dtype fp16 --banks 
 Knobs
 - `--gfx [942,950,1250]`: GPU architecture. Auto-sets `banks` and `waveSize`.
 - `--kWidth`: the vector size (in unit of elements) when accessing LDS
-- `--banks`: the number of banks in LDS. (64 for gfx950/gfx1250, 32 for gfx942)
+- `--banks`: the number of banks in LDS. (64 for gfx950/gfx1250, 32 for gfx942; default: 64)
 - `--dtype`: element data type
 - Three options for `--layout`:
   - `none`: no swizzling, no padding

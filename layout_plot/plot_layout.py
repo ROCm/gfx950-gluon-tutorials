@@ -325,7 +325,7 @@ def parse_args():
         "--nonKDim", type=int, default=16, choices=[16, 32], help="mfma instruction dim"
     )
     lds_parser.add_argument(
-        "--banks", type=int, default=32, choices=[32, 64], help="choose the number of banks in LDS"
+        "--banks", type=int, default=64, choices=[32, 64], help="choose the number of banks in LDS"
     )
     lds_parser.add_argument(
         "--layout",
