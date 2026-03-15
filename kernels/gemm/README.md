@@ -11,7 +11,7 @@ Measured on MI355:
 | Data Type | Shape | TFLOPS | MFMA Eff. |
 |-----------|-------|--------|-----------|
 | FP16 | 4096x4096x8192 | 1634 | 98% |
-| FP8 | 4096x4096x16384 | 3383 | 99% |
+| BF8 | 4096x4096x16384 | 3383 | 99% |
 | MXFP4 | 4096x4096x32768 | 5270 | 92% |
 
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
@@ -22,18 +22,18 @@ All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/mat
 
 The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**LLIR Scheduler** (`TRITON_ENABLE_LLIR_SCHED=1`) operates at the LLVM IR level before register allocation. It interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations — matching the rate at which MFMAs can be issued with the rate at which memory operations complete. Without it, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
+**LLIR Scheduler** (`TRITON_ENABLE_LLIR_SCHED=1`) operates at the LLVM IR level before register allocation. It interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory operation completion rate. Without it, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
 - Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
 - Distributes MFMAs among anchors based on throughput (e.g., 4 MFMAs per global load for 16-cycle MFMA, 2 for 32-cycle)
-- For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads, and allocates leftover MFMAs after ds_write to cover LDS port contention
+- For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads and allocates remaining MFMAs after ds_write to cover LDS port contention
 
 **amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_slice/README.md#43-register-allocation-workaround). It does two things:
 
-1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, telling LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false`, which prevents LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs to reduce VGPR pressure.
+1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure.
 
 2. **Post-assembly processing**: Optimizes the final generated assembly:
-   - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted instruction's output register is redefined inside the loop
-   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput
+   - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue. When the hoisted instruction's output register is redefined inside the loop, it applies register renaming.
+   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput.
 
 ### 2.2 Running Benchmarks
 
@@ -43,7 +43,7 @@ The easiest way to run benchmarks with all optimizations enabled is `run_perf_ta
 # FP16 (a16w16)
 python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
 
-# FP8 (a8w8)
+# BF8 (a8w8)
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
 
 # MXFP4 (a4w4)
@@ -63,7 +63,7 @@ To run benchmarks manually, set the environment variables directly. Run from the
 # FP16 (from kernels/gemm/a16w16/)
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8 --K 8192 --dtype fp16
 
-# FP8 (from kernels/gemm/a8w8/)
+# BF8 (from kernels/gemm/a8w8/)
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
 
 # MXFP4 (from kernels/gemm/a4w4/)
@@ -89,40 +89,21 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 9 versions (v0–v8).
 
-**Start here** to learn how to write high-performance Gluon kernels.
+**Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 
-## 4. FP8 and MXFP4: Applying the Same Design
+## 4. BF8 and MXFP4: Applying the Same Design
 
-The optimization principles from the FP16 journey apply directly to FP8 and MXFP4. All three kernels share the same fundamental design: N-slicing, 3-stage pipeline, loop unrolling by 2, and the same LLIR scheduler + amdgcnas passes.
+The optimization principles from the FP16 journey apply directly to BF8 and MXFP4. All three kernels share the same fundamental design: N-slicing, 3-stage pipeline, loop unrolling by 2, and the LLIR scheduler + amdgcnas optimizations.
 
-| Aspect | FP16 (a16w16) | FP8 (a8w8) | MXFP4 (a4w4) |
+| Aspect | FP16 (a16w16) | BF8 (a8w8) | MXFP4 (a4w4) |
 |--------|---------------|------------|--------------|
 | Tile size | 256x256x64 | 256x256x128 | 256x256x256 |
-| MFMA instruction | `mfma_f16_16x16x32` | `mfma_scale_f32_16x16x128` | same |
-| MFMA cycles | 16 | 32 | 16 |
+| MFMA instruction | `v_mfma_f32_16x16x32_f16` | `v_mfma_scale_f32_16x16x128_f8f6f4` | same |
+| cbsz / blgp | N/A | 1 / 1 (E5M2) | 4 / 4 (E2M1) |
+| MFMA cycles | 16 | 32 (cbsz/blgp <= 1) | 16 (cbsz/blgp > 1) |
 | Scaling | None | None | Per-group e8m0 |
-| LDS padding | `[[512, 16]]` | `[[1024, 16], [2048, 32]]` | `[[1024, 32]]` |
 
-The [a8w8/](a8w8/) directory provides the final optimized FP8 kernel. If you understand the FP16 journey, you understand the FP8 kernel — the differences are tile shape, MFMA instruction, and LDS padding.
+The [a8w8/](a8w8/) directory provides the final optimized BF8 kernel. If you understand the FP16 journey, you will understand the BF8 kernel. The key differences are tile shape, MFMA instruction, and LDS padding.
 
 The [a4w4/](a4w4/) directory implements the MXFP4 kernel, which introduces new challenges: per-group scale loading (GR → LW → LR round-trip), LDS port contention between ds_write and buffer_load_to_lds, and scale layout conversion. See the [a4w4 README](a4w4/README.md) for full details.
 
-## 5. Philosophy
-
-Performance emerges from the combination of:
-
-- **Good layouts** — explicit memory organization for conflict-free access
-- **Latency hiding** — pipelining to overlap memory and compute
-- **Register management** — slicing and allocation strategies
-- **Power efficiency** — L2 locality and stable power draw
-
-This repository is built around the idea that **performance is a process**, and that process should be visible.
-
-## 6. How to Use This Directory
-
-| Goal | Recommendation |
-|------|----------------|
-| Learning Gluon | Start with [a16w16/](a16w16/) and follow versions in order |
-| Need a fast kernel | Jump to the latest version for your data type |
-| Understanding AMD GPU performance | Focus on LDS behavior, MFMA utilization, and prefetch pipelines |
-| MXFP4 / microscaling | Read [a4w4/](a4w4/) for scale pipeline and LDS port contention |

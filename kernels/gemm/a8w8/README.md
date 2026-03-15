@@ -1,6 +1,8 @@
-# FP8 GEMM Kernel (a8w8)
+# BF8 GEMM Kernel (a8w8)
 
-This kernel applies the design principles developed in `a16w16/`, adapted for FP8 (e5m2) compute. Only the final optimized version is provided.
+This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. Only the final optimized version is provided. If you haven't completed the a16w16 journey (v0–v8), start there first — this kernel assumes familiarity with all techniques introduced in that series.
+
+After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel, which builds on the same design with additional complexity from per-group scaling.
 
 ## 1. Directory Structure
 
@@ -13,9 +15,9 @@ a8w8/
 
 ## 2. Key Differences from FP16
 
-The FP8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match FP8 MFMA instruction characteristics.
+The BF8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match BF8 MFMA instruction characteristics.
 
-| Aspect | FP16 (a16w16) | FP8 (a8w8) |
+| Aspect | FP16 (a16w16) | BF8 (a8w8) |
 |--------|---------------|------------|
 | Tile size | 256×256×64 | 256×256×128 |
 | MFMA instruction | `mfma_f16_16x16x32` | `mfma_f8_16x16x128` |
@@ -26,17 +28,17 @@ The FP8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloo
 
 ### 2.1 Why Larger BLOCK_K?
 
-FP8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
+BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
 
 ### 2.2 Scaled MFMA
 
-FP8 uses `mfma_scaled`, which supports per-tensor scaling factors:
+BF8 uses `mfma_scaled`, which supports per-tensor scaling factors:
 
 ```python
 acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
 ```
 
-The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the FP8 format (5-bit exponent, 2-bit mantissa).
+The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the BF8 format (5-bit exponent, 2-bit mantissa).
 
 ### 2.3 LDS Layout and kWidth
 
@@ -119,7 +121,7 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on MI355 with shape 4096×4096×16384, FP8 (e5m2):
+Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------|--------|-------|--------|-----------|
@@ -145,4 +147,4 @@ For accurate performance measurement with rocprof:
 rocprofv3 --kernel-trace -d out -- python bench.py --K 16384 --rocprof
 ```
 
-The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU caches, producing cold-cache timings representative of real workloads.
+The `--rocprof` flag runs the kernel 1000 times with rotating buffers to avoid GPU cache effects, producing cold-cache timings representative of real workloads.

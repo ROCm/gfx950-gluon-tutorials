@@ -1,6 +1,6 @@
 # MXFP4 GEMM Kernel (a4w4)
 
-This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). It builds on the design principles from `a16w16/` and `a8w8/`, with additional complexity from per-group scaling and the microscaling (MX) data format.
+This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). It builds on the design principles from the [a16w16/](../a16w16/) tutorial and [a8w8/](../a8w8/) kernel, with additional complexity from per-group scaling and the microscaling (MX) data format. If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, and the LLIR scheduler.
 
 ## 1. Directory Structure
 
@@ -23,7 +23,7 @@ acc = gl.amd.cdna4.mfma_scaled(a, a_scale, "e2m1", b, b_scale, "e2m1", acc)
 
 ### 2.1 Layouts: the heart of the design
 
-Learning Gluon is learning layouts. The MXFP4 kernel introduces **scale layouts** on top of the tile and accumulator layouts from FP16/FP8. Understanding how scales are distributed across threads is essential to understanding the kernel.
+Learning Gluon is learning layouts. The MXFP4 kernel introduces **scale layouts** on top of the tile and accumulator layouts from FP16/BF8. Understanding how scales are distributed across threads is essential to understanding the kernel.
 
 The following diagram shows the complete layout for the MXFP4 GEMM — A, B, C matrices with their dot operand layouts, and the scale layouts used by `mfma_scale_f32_16x16x128_f8f6f4` with `CBSZ=4, BLGP=4`:
 
@@ -46,11 +46,11 @@ A single `mfma_scale` instruction computes a 16x16x128 tile and requires a scale
 
 The [16, 4] = 64 scale values are distributed across 64 threads, so each thread holds exactly **1 scale value** per `mfma_scale`. However, the 4 scale values in the same row (the K-scale dimension) are assigned to 4 different threads.
 
-The key optimization: rather than using a separate register for each `mfma_scale` invocation, the compiler **packs 4 scale values into one 32-bit register** (4 x 8-bit e8m0 = 32 bits). Each `mfma_scale` instruction then uses the `op_sel_hi` flag to select which byte within the register to use. This means every 4 `mfma_scale` instructions share the same scale register, with only `op_sel_hi` changing between them.
+The key optimization is that the compiler **packs 4 scale values into one 32-bit register** (4 x 8-bit e8m0 = 32 bits) rather than using a separate register for each `mfma_scale` invocation. Each `mfma_scale` instruction uses the `op_sel_hi` flag to select the appropriate byte within the register. This means every 4 `mfma_scale` instructions share the same scale register, with only `op_sel_hi` changing between them.
 
 ### 2.3 Why scales need an LDS round-trip
 
-Unlike input tiles, scales **cannot use `buffer_load_to_lds`** (async copy) to load directly from global memory into LDS. This is because the scale tile is small — each thread loads only 32 or 64 bits of scale data, which is below the minimum granularity supported by `buffer_load_to_lds`.
+Unlike input tiles, scales **cannot use `buffer_load_to_lds`** (async copy) to load directly from global memory into LDS. Each thread loads only 32 or 64 bits of scale data, which is below the minimum granularity that `buffer_load_to_lds` supports.
 
 Instead, scales must go through a 3-step pipeline:
 
@@ -121,7 +121,7 @@ This kernel follows the same **3-stage pipeline** design as the [a16w16 v5_local
 - **Stage 1**: LDS → registers (LR for tiles) / LW+LR round-trip (for scales)
 - **Stage 2**: MFMA compute (DOT)
 
-For scales, the LW+LR round-trip acts as a single "super operation" that serves the same purpose as LR for tiles — it converts data from the global-load layout to the compute layout. The difference is that tiles go through LDS via `buffer_load_to_lds` (Stage 0) and come out via `ds_read` (Stage 1), while scales go through registers via `buffer_load` (Stage 0) and must round-trip through LDS via `ds_write` + `ds_read` (Stage 1) for layout conversion.
+For scales, the LW+LR round-trip acts as a single composite operation serving the same purpose as LR for tiles: converting data from the global-load layout to the compute layout. The difference is that tiles go through LDS via `buffer_load_to_lds` (Stage 0) and come out via `ds_read` (Stage 1), while scales go through registers via `buffer_load` (Stage 0) and must round-trip through LDS via `ds_write` + `ds_read` (Stage 1) for layout conversion.
 
 Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`, the AC/GR operations load data for iteration `i+2`. The LR operations in each region load data for the *next* iteration (`i+1`), so MFMA always consumes data that was locally prefetched in the previous region.
 
@@ -158,7 +158,7 @@ Tiles and scales use the same 3-stage pipeline and need the same number of **log
 - **2 buffers for global load ping-pong**: While global load fills buffer 0, buffer 1 is being consumed. For tiles this means 2 LDS buffers (double-buffered `smemA`, `smemB_left`, `smemB_right`). For scales this means 2 register buffers holding the raw `buffer_load` results (e.g., `a_sc_buf1` and `a_sc_buf3`).
 - **1 buffer for compute**: After the scale round-trip (LW → LR), the result lives in a separate register buffer in MFMA scale layout (e.g., `a_sc_reg_buf0`).
 
-However, the liveness of the global-load register buffer **overlaps** with the compute register buffer — the GR result is still live (waiting for LW+LR round-trip) while the previous compute buffer is being consumed by MFMA. This overlap means each scale needs **2 + 2 = 4 register buffers** total: 2 for global-load results and 2 for post-round-trip compute values, ping-ponging between even (buf0/buf1) and odd (buf2/buf3) pairs.
+However, the liveness of the global-load register buffer **overlaps** with the compute register buffer — the GR result is still live (waiting for LW+LR round-trip) while the previous compute buffer is being consumed by MFMA. This overlap requires **4 register buffers per scale**: 2 for global-load results and 2 for post-round-trip compute values, alternating between even (buf0/buf1) and odd (buf2/buf3) pairs.
 
 For tiles, the situation is different because tiles use LDS (not registers) for the global-load stage, so there is no register-level overlap. Instead:
 
@@ -172,11 +172,11 @@ For tiles, the situation is different because tiles use LDS (not registers) for 
 
 ### 3.5 Where to place LW+LR for scales
 
-The placement of scale LW+LR is the trickiest part of the pipeline design. It breaks the philosophy that "all operations within the same region are independent" — the LR for scales depends on the LW completing first, introducing a **within-region dependency**. We must place LW+LR carefully so the backend compiler has enough instructions to schedule between them to hide the LW latency.
+The placement of scale LW+LR is the trickiest part of the pipeline design. Unlike other operations, scale LR depends on scale LW completing first, introducing a **within-region dependency** that breaks the usual independence between operations in the same region. We must place LW+LR carefully so the backend compiler has enough instructions to schedule between them to hide the LW latency.
 
 Here are the options we considered:
 
-**Option A: LW before tile LR, scale LR after tile LR** — Use ds_read for tiles to hide the ds_write latency. This **does not work** because the LDS has a FIFO queue per SIMD pair with only 8 slots. The ds_write enters the queue and stays there for hundreds of cycles (see section 3.6). Subsequent ds_read instructions fill the remaining slots, and once the queue is full, the next ds instruction stalls waiting for the ds_write at the head to drain. So ds_read cannot hide ds_write latency.
+**Option A: LW before tile LR, scale LR after tile LR** — Use ds_read for tiles to hide the ds_write latency. This **fails** because the LDS maintains a FIFO queue per SIMD pair with only 8 slots. The ds_write enters the queue and stays there for hundreds of cycles (see section 3.6). Subsequent ds_read instructions fill the remaining slots, and once the queue is full, the next ds instruction stalls waiting for the ds_write at the head to drain. So ds_read cannot hide ds_write latency.
 
 **Option B: LW after tile LR, scale LR after AC** — This avoids the FIFO queue problem since AC (buffer_load_to_lds) uses a different path. However, placing scale LR after AC means it is too close to the DOT in the next region, which depends on the loaded scale values. We only have GR and a few MFMAs between the scale LR and the next DOT, which is not enough to hide the ds_read latency — especially in regions with only 1 GR instruction.
 
@@ -184,11 +184,11 @@ Here are the options we considered:
 
 ### 3.6 Surprise: ds_write can take 400 cycles
 
-A critical hardware limitation affects ds_write scheduling: **ds_write and buffer_load_to_lds share the same LDS write port**. The texture data unit (TD) handles buffer_load_to_lds data arriving from global memory, while ds_write is issued by the shader sequencer (SQ). TD has higher priority, so when buffer_load_to_lds data is ready, ds_write gets blocked at the LDS write port. Including stall time, ds_write can take as long as ~400 cycles.
+A critical hardware limitation affects ds_write scheduling: **ds_write and buffer_load_to_lds share the same LDS write port**. The texture data unit (TD) handles buffer_load_to_lds data from global memory, while the shader sequencer (SQ) issues ds_write. Because TD has higher priority, ds_write is blocked at the LDS write port whenever buffer_load_to_lds data arrives. Including stall time, ds_write can take as long as ~400 cycles.
 
 This is why Option A in section 3.5 fails — ds_read cannot hide ds_write latency because they share the same FIFO queue, and the slow ds_write at the head blocks everything behind it.
 
-Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each), which is more than enough to cover the 400-cycle ds_write latency. The LLIR scheduler ensures that MFMA instructions are placed after the ds_write to provide this coverage (see section 4).
+Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each), which is more than enough to cover the 400-cycle ds_write latency. The LLIR scheduler places MFMA instructions after ds_write to provide this coverage (see section 4).
 
 ### 3.7 Other design choices
 
@@ -209,9 +209,9 @@ Copy instructions (`v_accvgpr_*`, `v_mov`) are register-to-register moves insert
 
 See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of LLIR scheduler**: Transforms the kernel from 578 to 4774 TFLOPS (8x). Without it, the backend compiler clusters all MFMAs together, leaving memory operations at the end of each region. This causes 261 register spills (too many values live simultaneously) and 5% MFMA efficiency (data not ready when needed). The scheduler interleaves MFMAs with memory operations, eliminating spills and raising efficiency to 70%.
+**Effect of LLIR scheduler**: Transforms the kernel from 578 to 4774 TFLOPS (8x). Without it, the backend compiler clusters all MFMAs together, leaving memory operations at the end of each region. This causes 261 register spills (excessive simultaneous live values) and 5% MFMA efficiency (data unavailable when needed). The scheduler interleaves MFMAs with memory operations, eliminating spills and increasing efficiency to 70%.
 
-**Effect of amdgcnas**: Further improves from 4774 to 5160 TFLOPS and eliminates all 67 remaining copy instructions. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, which frees up VGPRs and makes it much easier for LLVM to allocate registers for other operands without inserting copy instructions. LICM further reduces the instruction count by hoisting loop-invariant LDS address calculations to the prologue. Together, MFMA efficiency rises from 70% to 92%.
+**Effect of amdgcnas**: Further improves from 4774 to 5160 TFLOPS and eliminates all 67 remaining copy instructions. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation for other operands without copy instructions. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue. Together, MFMA efficiency rises from 70% to 92%.
 
 ## 5. How to Run
 
