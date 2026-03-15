@@ -121,13 +121,6 @@ def parse_args():
         default=False,
         help="If set, overwrite the pdf file with the same name",
     )
-    top_parser.add_argument(
-        "--waveSize",
-        type=int,
-        default=64,
-        choices=[32, 64],
-        help="number of threads per wave/warp (32 for MI450, 64 for other AMD GPUs)",
-    )
     subparsers = top_parser.add_subparsers(
         dest="plot_type",
         metavar="PLOT_TYPE",
@@ -403,6 +396,9 @@ def _apply_gfx_defaults_blocked(args):
         config = GFX_CONFIGS[args.gfx]
         args.waveSize = config["waveSize"]
         print(f"Using gfx{args.gfx} defaults: waveSize={args.waveSize}")
+    else:
+        # Default to waveSize=64 when --gfx is not specified
+        args.waveSize = 64
 
     return args
 
@@ -433,7 +429,8 @@ def _apply_gfx_defaults_dot(args):
             print(f"Error: {e}")
             sys.exit(1)
     else:
-        # No --gfx provided, use legacy defaults if kWidth/kGroup not specified
+        # No --gfx provided, use legacy defaults
+        args.waveSize = 64
         if args.kWidth is None:
             args.kWidth = 4
         if args.kGroup is None:
@@ -456,6 +453,9 @@ def _apply_gfx_defaults_lds(args):
         args.banks = config["banks"]
         args.waveSize = config["waveSize"]
         print(f"Using gfx{args.gfx} defaults: banks={args.banks}, waveSize={args.waveSize}")
+    else:
+        # Default to waveSize=64 when --gfx is not specified
+        args.waveSize = 64
 
     return args
 

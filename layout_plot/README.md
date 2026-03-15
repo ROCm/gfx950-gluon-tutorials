@@ -5,14 +5,13 @@ Here is the help info from the script.
 
 ```bash
 >$ python3 plot_layout.py -h
-usage: Draw triton layouts [-h] [--output OUTPUT] [--keep] [--force] [--waveSize {32,64}] PLOT_TYPE ...
+usage: Draw triton layouts [-h] [--output OUTPUT] [--keep] [--force] PLOT_TYPE ...
 
 options:
   -h, --help            show this help message and exit
   --output OUTPUT       output pdf file name (without suffix)
   --keep                If set, keep the generated .tex file
   --force               If set, overwrite the pdf file with the same name
-  --waveSize {32,64}    number of threads per wave/warp (32 for MI450, 64 for other AMD GPUs)
 
 subcommands:
   Choose to plot blocked, lds, or dot
@@ -23,9 +22,9 @@ subcommands:
     lds            plot LDS (shared memory) layout
 ```
 
-**Note**: Each subcommand supports `--gfx {942,950,1250}` which automatically sets architecture-specific
-defaults (waveSize, banks, kWidth, kGroup). Using `--gfx` is the recommended approach as it overrides
-the global `--waveSize` with the correct value for the target GPU.
+**Important**: Use the `--gfx {942,950,1250}` argument in subcommands to automatically set architecture-specific
+defaults (waveSize, banks, kWidth, kGroup) for your target GPU. When `--gfx` is not specified, the tool defaults
+to waveSize=64 (suitable for most AMD GPUs).
 
 ## Installation
 This script does not require torch or triton to be installed. The only package
