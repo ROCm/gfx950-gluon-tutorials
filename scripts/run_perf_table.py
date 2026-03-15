@@ -13,6 +13,9 @@ Usage:
     # a8w8 kernel (run from anywhere):
     python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 
+    # a4w4 kernel (run from anywhere):
+    python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 8192
+
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
     python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --use-rocprof
 """
@@ -61,9 +64,14 @@ ATT_MATMUL_TEMPLATE = {
             "att_target_cu": 0,
             "att_shader_engine_mask": "0xF",
             "att_simd_select": "0xF",
-            "att_buffer_size": "0x6000000",
+            "att_buffer_size": "0x60000000",
         }
     ]
+}
+
+# Kernels with large instruction counts need bigger ATT buffers
+ATT_BUFFER_SIZE_OVERRIDES = {
+    "a4w4": "0x20000000",  # 512MB for MXFP4 (2x MFMA per iteration vs FP8)
 }
 
 
@@ -79,10 +87,12 @@ def get_git_root():
     return result.stdout.strip()
 
 
-def write_att_config(version_dir, work_dir=None):
+def write_att_config(version_dir, work_dir=None, kernel_type="a16w16"):
     """Write att_matmul.json with kernel_include_regex set to the version dir name."""
     cfg = json.loads(json.dumps(ATT_MATMUL_TEMPLATE))
     cfg["jobs"][0]["kernel_include_regex"] = version_dir
+    if kernel_type in ATT_BUFFER_SIZE_OVERRIDES:
+        cfg["jobs"][0]["att_buffer_size"] = ATT_BUFFER_SIZE_OVERRIDES[kernel_type]
     att_path = os.path.join(work_dir, "att_matmul.json") if work_dir else "att_matmul.json"
     with open(att_path, "w") as f:
         json.dump(cfg, f, indent=4)
@@ -207,7 +217,7 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
         "--K",
         str(K),
     ]
-    if kernel_type != "a8w8":
+    if kernel_type not in ("a8w8", "a4w4"):
         cmd.extend(["--dtype", dtype, "--version", str(version)])
 
     rocprof_env = env.copy()
@@ -258,6 +268,9 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     if kernel == "a8w8":
         version_dir = "a8w8_kernel"
         work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
+    elif kernel == "a4w4":
+        version_dir = "a4w4_kernel"
+        work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
         work_dir = os.path.join(git_root, "kernels", "gemm", "a16w16")
@@ -271,7 +284,7 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     }
 
     clean_caches(work_dir)
-    write_att_config(version_dir, work_dir)
+    write_att_config(version_dir, work_dir, kernel_type=kernel)
 
     run_att_path = os.path.join(git_root, "scripts", "run_att.py")
 
@@ -292,11 +305,11 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         "--K",
         str(K),
     ]
-    if kernel != "a8w8":
+    if kernel not in ("a8w8", "a4w4"):
         cmd.extend(["--dtype", dtype, "--version", str(version)])
 
-    if kernel == "a8w8":
-        print(f"  Running: a8w8 config={config}")
+    if kernel in ("a8w8", "a4w4"):
+        print(f"  Running: {kernel} config={config}")
     else:
         print(f"  Running: v{version} ({version_dir}) config={config}")
     try:
@@ -375,7 +388,7 @@ def parse_args():
     )
     parser.add_argument(
         "--kernel",
-        choices=["a16w16", "a8w8"],
+        choices=["a16w16", "a8w8", "a4w4"],
         default="a16w16",
         help="Kernel type to benchmark (default: a16w16)",
     )
@@ -416,8 +429,8 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.kernel == "a8w8":
-        # a8w8 has a single kernel, --versions is ignored
+    if args.kernel in ("a8w8", "a4w4"):
+        # a8w8/a4w4 have a single kernel, --versions is ignored
         versions = [None]
     else:
         # Validate versions for a16w16

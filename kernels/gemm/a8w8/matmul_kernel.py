@@ -326,7 +326,6 @@ def a8w8_kernel(
         b_base += BLOCK_K * stride_bk
 
     ## Epilogue
-    gl.amd.cdna4.async_copy.wait_group(0)
 
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
@@ -340,12 +339,16 @@ def a8w8_kernel(
     g_idx = 0
     l_idx = 1
     acc_left = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_left, None, "e5m2", acc_left)
+
+    gl.amd.cdna4.async_copy.wait_group(2)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
     ########################################
     ## Region 1
     ########################################
     acc_right = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b_right, None, "e5m2", acc_right)
+
+    gl.amd.cdna4.async_copy.wait_group(1)
     a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
     b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
 
@@ -372,6 +375,8 @@ def a8w8_kernel(
     a0 = extract_slice(a, [64, 128], [0, 0])
     acc00 = extract_slice(acc_left, [64, 128], [0, 0])
     acc00 = gl.amd.cdna4.mfma_scaled(a0, None, "e5m2", b_left, None, "e5m2", acc00)
+
+    gl.amd.cdna4.async_copy.wait_group(0)
     b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
 
     ## slice 1 m[64:128]n[0:128]

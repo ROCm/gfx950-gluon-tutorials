@@ -1,6 +1,8 @@
-# FP8 GEMM Kernel (a8w8)
+# BF8 GEMM Kernel (a8w8)
 
-This kernel applies the design principles developed in `a16w16/`, adapted for FP8 (e5m2) compute. Only the final optimized version is provided.
+This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. Only the final optimized version is provided. If you haven't completed the a16w16 journey (v0–v8), start there first — this kernel assumes familiarity with all techniques introduced in that series.
+
+After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel, which builds on the same design with additional complexity from per-group scaling.
 
 ## 1. Directory Structure
 
@@ -13,9 +15,9 @@ a8w8/
 
 ## 2. Key Differences from FP16
 
-The FP8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match FP8 MFMA instruction characteristics.
+The BF8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match BF8 MFMA instruction characteristics.
 
-| Aspect | FP16 (a16w16) | FP8 (a8w8) |
+| Aspect | FP16 (a16w16) | BF8 (a8w8) |
 |--------|---------------|------------|
 | Tile size | 256×256×64 | 256×256×128 |
 | MFMA instruction | `mfma_f16_16x16x32` | `mfma_f8_16x16x128` |
@@ -26,21 +28,23 @@ The FP8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloo
 
 ### 2.1 Why Larger BLOCK_K?
 
-FP8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
+BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
 
 ### 2.2 Scaled MFMA
 
-FP8 uses `mfma_scaled`, which supports per-tensor scaling factors:
+BF8 uses `mfma_scaled`, which supports per-tensor scaling factors:
 
 ```python
 acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
 ```
 
-The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the FP8 format (5-bit exponent, 2-bit mantissa).
+The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the BF8 format (5-bit exponent, 2-bit mantissa).
 
-### 2.3 LDS Layout with Double Padding
+### 2.3 LDS Layout and kWidth
 
-The larger K dimension in FP8 requires additional padding to avoid bank conflicts:
+The LDS padding depends on the `kWidth` parameter of the dot operand layout. Without scales, `kWidth` can be either 16 or 32 as long as both A and B operands use the same value. However, **with scales** (as in the MXFP4 kernel), `kWidth` must be 16 to match the scale layout required by hardware.
+
+**kWidth=32 (no scales)**: Requires dual padding `[[1024, 16], [2048, 32]]` to avoid bank conflicts:
 
 ```python
 sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
@@ -49,17 +53,13 @@ sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
 )
 ```
 
-The dual padding `[[1024, 16], [2048, 32]]` ensures bank-conflict-free access for the 256×128 tile.
-
-The layout can be visualized using the layout plotting tool:
-
-![LDS Layout with Double Padding](images/lds_padding_1024-16_2048-32.png)
+![LDS Layout with Double Padding (kWidth=32)](images/lds_padding_1024-16_2048-32.png)
 
 <details>
 <summary>Command to generate this layout</summary>
 
 ```bash
-python3 scripts/plot_layout.py lds \
+python3 layout_plot/plot_layout.py --output lds_padding_1024-16_2048-32 --force lds \
   --tensorShape 256 128 \
   --kWidth 32 \
   --nonKDim 16 \
@@ -69,6 +69,34 @@ python3 scripts/plot_layout.py lds \
   --swizzleVec 16 \
   --sharedLayout "[[1024, 16], [2048, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]" \
   --dtype fp8
+```
+
+</details>
+
+**kWidth=16 (required for scales)**: Only needs single padding `[[1024, 32]]`:
+
+```python
+sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
+    [[1024, 32]],  # Single padding rule
+    ...
+)
+```
+
+![LDS Layout with Single Padding (kWidth=16)](images/lds_padding_1024-32_kWidth16.png)
+
+<details>
+<summary>Command to generate this layout</summary>
+
+```bash
+python3 layout_plot/plot_layout.py --output lds_padding_1024-32_kWidth16 --force lds \
+  --tensorShape 256 128 \
+  --kWidth 16 \
+  --nonKDim 16 \
+  --banks 64 \
+  --layout padding \
+  --access read \
+  --dtype fp8 \
+  --sharedLayout "[[1024, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]"
 ```
 
 </details>
@@ -93,7 +121,7 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on MI355 with shape 4096×4096×16384, FP8 (e5m2):
+Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------|--------|-------|--------|-----------|
@@ -119,4 +147,4 @@ For accurate performance measurement with rocprof:
 rocprofv3 --kernel-trace -d out -- python bench.py --K 16384 --rocprof
 ```
 
-The `--rocprof` flag runs the kernel 1000 times with rotating buffers to defeat GPU caches, producing cold-cache timings representative of real workloads.
+The `--rocprof` flag runs the kernel 1000 times with rotating buffers to avoid GPU cache effects, producing cold-cache timings representative of real workloads.
