@@ -34,7 +34,8 @@ The following diagram shows the complete layout for the MXFP4 GEMM — A, B, C m
 
 ```bash
 python3 layout_plot/plot_layout.py --output mfma_scale_mxfp4 --force dot \
-    --dotShape 256 256 256 --kWidth 32 --kGroup 1 --nonKDim 16 \
+    --gfx 950 \
+    --dotShape 256 256 256 --nonKDim 16 \
     --dtypeA f4 --dtypeB f4 --scale --mfmaTrans --warpsPerCTA 2 2
 ```
 
