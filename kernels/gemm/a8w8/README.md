@@ -38,9 +38,11 @@ acc0 = gl.amd.cdna4.mfma_scaled(a, None, "e5m2", b0, None, "e5m2", acc0)
 
 The `None` arguments are placeholders for optional scale tensors. `"e5m2"` specifies the FP8 format (5-bit exponent, 2-bit mantissa).
 
-### 2.3 LDS Layout with Double Padding
+### 2.3 LDS Layout and kWidth
 
-The larger K dimension in FP8 requires additional padding to avoid bank conflicts:
+The LDS padding depends on the `kWidth` parameter of the dot operand layout. Without scales, `kWidth` can be either 16 or 32 as long as both A and B operands use the same value. However, **with scales** (as in the MXFP4 kernel), `kWidth` must be 16 to match the scale layout required by hardware.
+
+**kWidth=32 (no scales)**: Requires dual padding `[[1024, 16], [2048, 32]]` to avoid bank conflicts:
 
 ```python
 sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
@@ -49,17 +51,13 @@ sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
 )
 ```
 
-The dual padding `[[1024, 16], [2048, 32]]` ensures bank-conflict-free access for the 256×128 tile.
-
-The layout can be visualized using the layout plotting tool:
-
-![LDS Layout with Double Padding](images/lds_padding_1024-16_2048-32.png)
+![LDS Layout with Double Padding (kWidth=32)](images/lds_padding_1024-16_2048-32.png)
 
 <details>
 <summary>Command to generate this layout</summary>
 
 ```bash
-python3 scripts/plot_layout.py lds \
+python3 layout_plot/plot_layout.py --output lds_padding_1024-16_2048-32 --force lds \
   --tensorShape 256 128 \
   --kWidth 32 \
   --nonKDim 16 \
@@ -69,6 +67,34 @@ python3 scripts/plot_layout.py lds \
   --swizzleVec 16 \
   --sharedLayout "[[1024, 16], [2048, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]" \
   --dtype fp8
+```
+
+</details>
+
+**kWidth=16 (required for scales)**: Only needs single padding `[[1024, 32]]`:
+
+```python
+sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
+    [[1024, 32]],  # Single padding rule
+    ...
+)
+```
+
+![LDS Layout with Single Padding (kWidth=16)](images/lds_padding_1024-32_kWidth16.png)
+
+<details>
+<summary>Command to generate this layout</summary>
+
+```bash
+python3 layout_plot/plot_layout.py --output lds_padding_1024-32_kWidth16 --force lds \
+  --tensorShape 256 128 \
+  --kWidth 16 \
+  --nonKDim 16 \
+  --banks 64 \
+  --layout padding \
+  --access read \
+  --dtype fp8 \
+  --sharedLayout "[[1024, 32]], [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [16, 0],[32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0], [128, 0]]"
 ```
 
 </details>
