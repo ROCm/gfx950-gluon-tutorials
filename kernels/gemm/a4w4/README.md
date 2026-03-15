@@ -11,55 +11,64 @@ a4w4/
 └── README.md             # This file
 ```
 
-## 2. Key Differences from FP8
+## 2. MXFP4 Basics and Layouts
 
-MXFP4 introduces per-group scaling factors that must be loaded, stored to LDS, and read back before MFMA can execute. This adds a new class of memory operations not present in FP8.
+MXFP4 is a microscaling format defined in the [OCP Microscaling Formats (MX) v1.0 Spec](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf). Data is stored in 4-bit e2m1 (2-bit exponent, 1-bit mantissa), with two values packed per byte. Each group of 32 elements shares an 8-bit e8m0 scale factor.
 
-| Aspect | FP8 (a8w8) | MXFP4 (a4w4) |
-|--------|------------|--------------|
-| Data format | e5m2 (8-bit) | e2m1 (4-bit) |
-| Tile size | 256x256x128 | 256x256x256 |
-| MFMA instruction | `v_mfma_scale_f32_16x16x128_f8f6f4` | same |
-| cbsz / blgp | 1 (E5M2) | 4 (E2M1) |
-| MFMA cycles | 32 (cbsz/blgp <= 1) | 16 (cbsz/blgp > 1) |
-| Scaling | None (pass `None`) | Per-group e8m0 scales for A and B |
-| Scale group size | N/A | 32 elements |
-| N-slicing | B split into left/right halves | Same, plus separate left/right scales |
-| LDS padding | `[[1024, 16], [2048, 32]]` | `[[1024, 32]]` |
-
-Both FP8 and MXFP4 use the same MFMA instruction (`v_mfma_scale_f32_16x16x128_f8f6f4`). The data format is controlled by the `cbsz` (input A) and `blgp` (input B) fields: 0=E4M3 (fp8), 1=E5M2 (bf8), 2=E2M3 (fp6), 3=E3M2 (bf6), 4=E2M1 (fp4). When both cbsz and blgp are <= 1, the instruction takes 32 cycles; otherwise it takes 16 cycles.
-
-### 2.1 Microscaling (MX) Format
-
-MXFP4 packs two 4-bit values per byte. Each group of 32 elements shares an 8-bit e8m0 scale factor. The `mfma_scaled` instruction takes both the data tile and its scale tensor:
+This kernel uses `v_mfma_scale_f32_16x16x128_f8f6f4` with `cbsz=4, blgp=4` (E2M1 format), which completes in 16 cycles per instruction. In Gluon, the `mfma_scaled` API takes data tiles, scale tensors, and the format string:
 
 ```python
-acc_left = gl.amd.cdna4.mfma_scaled(
-    a=a, a_scale=a_sc_reg_buf0, a_format="e2m1",
-    b=b_left, b_scale=b_sc_left_reg_buf0, b_format="e2m1",
-    acc=acc_left,
-)
+acc = gl.amd.cdna4.mfma_scaled(a, a_scale, "e2m1", b, b_scale, "e2m1", acc)
 ```
 
-### 2.2 Scale Pipeline
+### 2.1 Layouts: the heart of the design
 
-Scales follow a separate pipeline from tiles:
+Learning Gluon is learning layouts. The MXFP4 kernel introduces **scale layouts** on top of the tile and accumulator layouts from FP16/FP8. Understanding how scales are distributed across threads is essential to understanding the kernel.
 
-1. **GR** (Global Read): `buffer_load` scales into registers (`a_sc_buf1`, `b_sc_left_buf1`, etc.)
-2. **LW** (Local Write): `smem_as.store(a_sc_buf1)` writes scales to shared memory
-3. **LR** (Local Read): `load_shared_relaxed(smem_as, scale_a_layout)` reads scales back in the layout expected by MFMA
+The following diagram shows the complete layout for the MXFP4 GEMM — A, B, C matrices with their dot operand layouts, and the scale layouts used by `mfma_scale_f32_16x16x128_f8f6f4` with `CBSZ=4, BLGP=4`:
 
-This store-to-LDS + load-from-LDS round-trip is necessary because `buffer_load` delivers scales in a blocked layout, but `mfma_scaled` requires them in a specific scale layout.
+![MXFP4 MFMA Scale Layout](images/mfma_scale_mxfp4.png)
 
-**Scale layouts through the pipeline:**
+<details>
+<summary>Command to generate this layout</summary>
 
-1. **HBM layout**: A scales are stored as `[M, K // SCALE_GROUP_SIZE]`, B scales as `[N, K // SCALE_GROUP_SIZE]` (split into left/right halves of `[N//2, K // SCALE_GROUP_SIZE]`). With `SCALE_GROUP_SIZE=32` and `BLOCK_K=256`, each tile loads `[256, 8]` for A scales or `[128, 8]` for B scales. Scales must be contiguous along the first dimension (M or N) for coalesced access, since each thread loads consecutive elements along that dimension.
+```bash
+python3 layout_plot/plot_layout.py --output mfma_scale_mxfp4 --force dot \
+    --dotShape 256 256 256 --kWidth 32 --kGroup 1 --nonKDim 16 \
+    --dtypeA f4 --dtypeB f4 --scale --mfmaTrans --warpsPerCTA 2 2
+```
+
+</details>
+
+### 2.2 How scales map to MFMA instructions
+
+A single `mfma_scale` instruction computes a 16x16x128 tile and requires a scale of shape [16, 4] (16 rows along M/N, 4 groups along K since 128 / 32 = 4). Each scale input occupies **one 32-bit register** per operand (A and B).
+
+The [16, 4] = 64 scale values are distributed across 64 threads, so each thread holds exactly **1 scale value** per `mfma_scale`. However, the 4 scale values in the same row (the K-scale dimension) are assigned to 4 different threads.
+
+The key optimization: rather than using a separate register for each `mfma_scale` invocation, the compiler **packs 4 scale values into one 32-bit register** (4 x 8-bit e8m0 = 32 bits). Each `mfma_scale` instruction then uses the `op_sel_hi` flag to select which byte within the register to use. This means every 4 `mfma_scale` instructions share the same scale register, with only `op_sel_hi` changing between them.
+
+### 2.3 Why scales need an LDS round-trip
+
+Unlike input tiles, scales **cannot use `buffer_load_to_lds`** (async copy) to load directly from global memory into LDS. This is because the scale tile is small — each thread loads only 32 or 64 bits of scale data, which is below the minimum granularity supported by `buffer_load_to_lds`.
+
+Instead, scales must go through a 3-step pipeline:
+
+1. **GR** (Global Read): `buffer_load` loads scales from HBM into registers in a `BlockedLayout` optimized for coalesced access
+2. **LW** (Local Write): `store` writes scales from registers to LDS
+3. **LR** (Local Read): `load_shared_relaxed` reads scales back from LDS into the MFMA scale layout
+
+The LDS round-trip exists because the two register layouts are fundamentally different. The `BlockedLayout` for global load groups consecutive M (or N) elements per thread for coalesced HBM access. The MFMA scale layout distributes M/N positions to match the MFMA dot operand thread mapping — each thread's scale values must correspond to the data elements it feeds to MFMA. These two distributions are incompatible, so LDS serves as the intermediary to redistribute data between them.
+
+### 2.4 Scale layouts through the pipeline
+
+1. **HBM layout**: A scales are stored as `[M, K // SCALE_GROUP_SIZE]`, B scales as `[N, K // SCALE_GROUP_SIZE]` (split into left/right halves of `[N//2, K // SCALE_GROUP_SIZE]`). With `SCALE_GROUP_SIZE=32` and `BLOCK_K=256`, each tile loads `[256, 8]` for A scales or `[128, 8]` for B scales. Scales must be contiguous along the first dimension (M or N) for coalesced access.
 
 2. **Global load layout**: Scales are loaded using `BlockedLayout`:
    - A scales (`blocked_scales_a`): `BlockedLayout([8, 1], [32, 2], [1, 4], [0, 1])` for shape `[256, 8]`. Each thread loads 8 elements along M. Within a warp, 32 threads cover M and 2 threads cover K-scale, giving `[256, 2]` per warp. Across 4 warps (`warpsPerCTA=[1, 4]`), the full `[256, 8]` is covered.
    - B scales (`blocked_scales_b`): `BlockedLayout([4, 1], [32, 2], [1, 4], [0, 1])` for shape `[128, 8]`. Each thread loads 4 elements along N. Within a warp, 32 threads cover N and 2 cover K-scale, giving `[128, 2]` per warp. Across 4 warps, the full `[128, 8]` is covered.
 
-3. **LDS layout** (`shared_scales`): `SwizzledSharedLayout(1, 1, 1, order=[0, 1])` — a minimal shared layout since scale tiles are small and don't need the complex padding used for data tiles. Both A and B scales share the same LDS layout and the same shared memory allocation (reused via `smem_as` / `smem_bs`).
+3. **LDS layout** (`shared_scales`): `SwizzledSharedLayout(1, 1, 1, order=[0, 1])` — an identity layout with no swizzling or padding, chosen for simplicity. This layout will have bank conflicts when reading scale values with `ds_read`. However, this is acceptable because the pipeline design ensures enough instructions (MFMA and other memory operations) overlap with the scale `ds_read` to hide its latency, so bank conflicts are not the performance bottleneck. Both A and B scales reuse the same shared memory allocation (`smem_as` / `smem_bs`).
 
 4. **MFMA scale layout**: Computed by `get_mfma_scale_layout()`, which derives the scale distribution from the dot operand layout so that each thread holds the scale values matching its MFMA data elements.
 
@@ -85,76 +94,48 @@ This store-to-LDS + load-from-LDS round-trip is necessary because `buffer_load` 
    ```
    Each thread holds 8 elements: 4 N-positions (stride 32) x 2 K-scale positions (0 and 4). Lane bits 0-3 index 16 consecutive N positions, lane bits 4-5 index 4 K-scale positions. Warps 0/2 cover N base [0..15], warps 1/3 cover N base [16..31], with register stride 32 extending to N=128.
 
-   Both layouts scatter the first dimension (M or N) at stride 32 to match the MFMA dot operand distribution, while the blocked global load layout groups consecutive elements for coalesced HBM access. The LDS round-trip bridges these two layouts.
-
-The following diagram visualizes the complete layout for the MXFP4 GEMM, including the A, B, C matrices, their dot operand layouts, and the scale layouts used by `mfma_scale_f32_16x16x128_f8f6f4` with `CBSZ=4, BLGP=4`:
-
-![MXFP4 MFMA Scale Layout](images/mfma_scale_mxfp4.png)
-
-<details>
-<summary>Command to generate this layout</summary>
-
-```bash
-python3 layout_plot/plot_layout.py --output mfma_scale_mxfp4 --force dot \
-    --dotShape 256 256 256 --kWidth 32 --kGroup 1 --nonKDim 16 \
-    --dtypeA f4 --dtypeB f4 --scale --mfmaTrans --warpsPerCTA 2 2
-```
-
-</details>
-
-### 2.3 LDS Padding
-
-MXFP4 uses single padding `[[1024, 32]]`, which matches the `a16w16` kernel. Both kernels share the same dotoperand layout, so the optimal padding parameters are identical despite different data types.
-
-### 2.4 Why 16-Cycle MFMA?
-
-With e2m1 format (cbsz > 1 or blgp > 1), the `mfma_scale_f32_16x16x128` instruction completes in 16 cycles instead of 32. This means each MFMA occupies less time, requiring more MFMAs to be interleaved with each memory operation to hide latency.
+   Both layouts scatter the first dimension (M or N) at stride 32 to match the MFMA dot operand distribution, while the blocked global load layout groups consecutive elements for coalesced HBM access.
 
 ## 3. Pipeline Design
 
-![MXFP4 Tiling Design](images/mxfp4_tiling_design.png)
-
-The diagram above shows the tiling and N-slicing strategy. The B matrix and its scales are split along the N dimension into left and right halves (B_l, B_r, B_sc_l, B_sc_r). The A matrix and A_sc scale are shared across both halves. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right) as two separate `mfma_scaled` calls.
-
-The kernel uses a double-buffered pipeline with loop unrolling by 2. Each unrolled iteration has 4 regions.
-
-![MXFP4 Kernel Pipeline Design](images/mxfp4_kernel_design.png)
-
-The diagram above shows the pipeline for one unrolled iteration (2 K-iterations across 4 regions). Columns represent register buffers. The arrows show the **liveness** of each register buffer — from when it is produced to when all consumers are done using it. (Note: we use the term "buffer" loosely here to refer to register groups holding a particular value; this is not buffer memory in the traditional sense, but makes the pipeline design easier to reason about.)
-
-### 3-stage pipeline
-
-This kernel follows the same **3-stage pipeline** design as the [a16w16 v5_local_prefetch](../a16w16/v5_local_prefetch/README.md) kernel:
-
-- **Stage 0**: Global memory → LDS (AC for tiles) / Global memory → registers (GR for scales)
-- **Stage 1**: LDS → registers (LR for tiles and scales)
-- **Stage 2**: MFMA compute (DOT)
-
-Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`, the AC/GR operations load data for iteration `i+2`. The LR operations in each region load data for the *next* iteration (`i+1`), so MFMA always consumes data that was locally prefetched in the previous region.
-
-### Why scales need 4 register buffers
-
-Tiles and scales use the same 3-stage pipeline and need the same number of **logical** buffers:
-
-- **2 buffers for global load ping-pong**: While global load fills buffer 0, buffer 1 is being consumed. For tiles this means 2 LDS buffers (double-buffered `smemA`, `smemB_left`, `smemB_right`). For scales this means 2 register buffers holding the raw `buffer_load` results (e.g., `a_sc_buf1` and `a_sc_buf3`).
-- **1 buffer for compute**: After the scale round-trip (LW → LR), the result lives in a separate register buffer in MFMA scale layout (e.g., `a_sc_reg_buf0`).
-
-However, the liveness of the global-load register buffer **overlaps** with the compute register buffer — the GR result is still live (waiting for LW+LR round-trip) while the previous compute buffer is being consumed by MFMA. This overlap means each scale needs **2 + 2 = 4 register buffers** total: 2 for global-load results and 2 for post-round-trip compute values, ping-ponging between even (buf0/buf1) and odd (buf2/buf3) pairs.
-
-For tiles, the situation is different because tiles use LDS (not registers) for the global-load stage, so there is no register-level overlap. Instead:
-
-- **A** needs **2 register buffers** (A[0], A[1]) because A is consumed by both DOT_left and DOT_right within the same iteration — its liveness spans 2 regions. B tiles are sliced along N (B_left, B_right) and each half is only used in one region, so they need just **1 register buffer** each and are reloaded each region pair.
+<img src="images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">
 
 **Legend:**
 - **AC**: `async_copy` (buffer_load_to_shared) for tiles
 - **GR**: global read (`buffer_load`) for scales into registers
 - **LR**: local read (`load_shared_relaxed`) for tiles and scales
 - **LW**: local write (`store` to shared memory) for scales
-- **A[0,1]**: tile A register buffers (2 for liveness across DOT_left + DOT_right)
-- **B_l, B_r**: B_left and B_right tile registers (1 each, reloaded per region pair)
-- **A_sc[0–3], B_sc_l[0–3], B_sc_r[0–3]**: scale register buffers (4 each, see above)
+- **A[0,1]**: tile A register buffers
+- **B_l, B_r**: B_left and B_right tile registers
+- **A_sc[0–3], B_sc_l[0–3], B_sc_r[0–3]**: scale register buffers
 
-### How to read the pipeline diagram
+<br clear="right">
+
+The tiling design is the same as the [a8w8](../a8w8/) and [a16w16 v8](../a16w16/v8_beyond_hotloop/) kernels: the B matrix is split along N into left and right halves (B_l, B_r), and A is shared across both. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right). For scales, we apply the same slicing — B_sc is split into B_sc_l and B_sc_r, while A_sc is shared.
+
+### 3.1 3-stage pipeline
+
+This kernel follows the same **3-stage pipeline** design as the [a16w16 v5_local_prefetch](../a16w16/v5_local_prefetch/README.md) kernel:
+
+- **Stage 0**: Global memory → LDS (AC for tiles) / Global memory → registers (GR for scales)
+- **Stage 1**: LDS → registers (LR for tiles) / LW+LR round-trip (for scales)
+- **Stage 2**: MFMA compute (DOT)
+
+For scales, the LW+LR round-trip acts as a single "super operation" that serves the same purpose as LR for tiles — it converts data from the global-load layout to the compute layout. The difference is that tiles go through LDS via `buffer_load_to_lds` (Stage 0) and come out via `ds_read` (Stage 1), while scales go through registers via `buffer_load` (Stage 0) and must round-trip through LDS via `ds_write` + `ds_read` (Stage 1) for layout conversion.
+
+Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`, the AC/GR operations load data for iteration `i+2`. The LR operations in each region load data for the *next* iteration (`i+1`), so MFMA always consumes data that was locally prefetched in the previous region.
+
+### 3.2 Detailed pipeline
+
+The pipeline design for tiles is exactly the same as the [a16w16 v8](../a16w16/v8_beyond_hotloop/) and [a8w8](../a8w8/) kernels — double-buffered async copy with loop unrolling by 2. This section focuses on the pipeline design for **scales**, which is the new element in the MXFP4 kernel.
+
+The kernel uses loop unrolling by 2 with 4 regions per unrolled iteration:
+
+![MXFP4 Kernel Pipeline Design](images/mxfp4_kernel_design.png)
+
+The diagram shows the pipeline for one unrolled iteration (2 K-iterations across 4 regions). Columns represent register buffers. The arrows show the **liveness** of each register buffer — from when it is produced to when all consumers are done using it. (Note: we use the term "buffer" loosely here to refer to register groups holding a particular value; this is not buffer memory in the traditional sense, but makes the pipeline design easier to reason about.)
+
+### 3.3 How to read the pipeline diagram
 
 The pipeline diagram has **4 row groups** (regions 0–3) and **columns for each register buffer**. Each row within a region is one operation. Here is how to read it:
 
@@ -170,67 +151,77 @@ The pipeline diagram has **4 row groups** (regions 0–3) and **columns for each
 
 **Prefetch distance**: Each region prefetches data 2 iterations ahead. In region 0, AC loads tiles for `i+2` into LDS, and GR loads scales for `i+2` into registers. The LR in region 0 loads tiles/scales for iteration `i` (which were prefetched 2 iterations ago). This 2-iteration prefetch distance is the hallmark of the 3-stage pipeline.
 
-### Scale round-trip
+### 3.4 Why scales need 4 register buffers
 
-Each scale goes through: GR (global → register) → LW (register → LDS) → LR (LDS → register in MFMA layout). The LW+LR round-trip is needed because `buffer_load` delivers scales in a blocked layout, but `mfma_scaled` requires the MFMA scale layout.
+Tiles and scales use the same 3-stage pipeline and need the same number of **logical** buffers:
 
-### Key design choices
+- **2 buffers for global load ping-pong**: While global load fills buffer 0, buffer 1 is being consumed. For tiles this means 2 LDS buffers (double-buffered `smemA`, `smemB_left`, `smemB_right`). For scales this means 2 register buffers holding the raw `buffer_load` results (e.g., `a_sc_buf1` and `a_sc_buf3`).
+- **1 buffer for compute**: After the scale round-trip (LW → LR), the result lives in a separate register buffer in MFMA scale layout (e.g., `a_sc_reg_buf0`).
 
-- **Pre-computed `_next` offsets**: The loop advances base pointers by `2 * (BLOCK_K // 2)` once per unrolled iteration. Odd-iteration loads use `_next` offset variants instead of advancing pointers mid-iteration.
+However, the liveness of the global-load register buffer **overlaps** with the compute register buffer — the GR result is still live (waiting for LW+LR round-trip) while the previous compute buffer is being consumed by MFMA. This overlap means each scale needs **2 + 2 = 4 register buffers** total: 2 for global-load results and 2 for post-round-trip compute values, ping-ponging between even (buf0/buf1) and odd (buf2/buf3) pairs.
+
+For tiles, the situation is different because tiles use LDS (not registers) for the global-load stage, so there is no register-level overlap. Instead:
+
+- **A** needs **2 register buffers** (A[0], A[1]) because A is consumed by both DOT_left and DOT_right within the same iteration — its liveness spans 2 regions. B tiles are sliced along N (B_left, B_right) and each half is only used in one region, so they need just **1 register buffer** each and are reloaded each region pair.
+
+> [!NOTE]
+> It is possible to reduce B_sc_l and B_sc_r from 4 buffers to 2 by moving the GR for B_sc to the following region. This would break the overlap between the GR result and the compute buffer, allowing them to reuse the same registers. However, we choose not to do this for three reasons:
+> 1. The register savings are small — 2 fewer register buffers for a kernel that doesn't spill.
+> 2. GR and AC currently share the same structure (both appear together at the end of each region). Moving GR away breaks this symmetry and simplicity.
+> 3. If GR moves to the next region, each region would start with scalar address update instructions (`s_add`, `s_lshl`, etc.). Having scalar instructions at the beginning of the loop is likely to trigger [PIT (Power Instruction Throttling)](../a16w16/v6_loop_unroll/README.md), where the hardware inserts stalls at the transition from low-power scalar instructions to high-power MFMA/VALU bursts.
+
+### 3.5 Where to place LW+LR for scales
+
+The placement of scale LW+LR is the trickiest part of the pipeline design. It breaks the philosophy that "all operations within the same region are independent" — the LR for scales depends on the LW completing first, introducing a **within-region dependency**. We must place LW+LR carefully so the backend compiler has enough instructions to schedule between them to hide the LW latency.
+
+Here are the options we considered:
+
+**Option A: LW before tile LR, scale LR after tile LR** — Use ds_read for tiles to hide the ds_write latency. This **does not work** because the LDS has a FIFO queue per SIMD pair with only 8 slots. The ds_write enters the queue and stays there for hundreds of cycles (see section 3.6). Subsequent ds_read instructions fill the remaining slots, and once the queue is full, the next ds instruction stalls waiting for the ds_write at the head to drain. So ds_read cannot hide ds_write latency.
+
+**Option B: LW after tile LR, scale LR after AC** — This avoids the FIFO queue problem since AC (buffer_load_to_lds) uses a different path. However, placing scale LR after AC means it is too close to the DOT in the next region, which depends on the loaded scale values. We only have GR and a few MFMAs between the scale LR and the next DOT, which is not enough to hide the ds_read latency — especially in regions with only 1 GR instruction.
+
+**Option C: LW after tile LR, scale LR right after LW** — This is what we use. By placing LW after the tile LR chunk, we let the AC instructions (buffer_load_to_lds) hide the ds_write latency. The scale LR follows immediately after LW in program order, but the backend scheduler pushes it back so that AC and MFMA instructions fill the gap between LW and LR. This gives enough cycles to hide both the ds_write and ds_read latencies.
+
+### 3.6 Surprise: ds_write can take 400 cycles
+
+A critical hardware limitation affects ds_write scheduling: **ds_write and buffer_load_to_lds share the same LDS write port**. The texture data unit (TD) handles buffer_load_to_lds data arriving from global memory, while ds_write is issued by the shader sequencer (SQ). TD has higher priority, so when buffer_load_to_lds data is ready, ds_write gets blocked at the LDS write port. Including stall time, ds_write can take as long as ~400 cycles.
+
+This is why Option A in section 3.5 fails — ds_read cannot hide ds_write latency because they share the same FIFO queue, and the slow ds_write at the head blocks everything behind it.
+
+Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each), which is more than enough to cover the 400-cycle ds_write latency. The LLIR scheduler ensures that MFMA instructions are placed after the ds_write to provide this coverage (see section 4).
+
+### 3.7 Other design choices
+
+- **Pre-computed `_next` offsets**: The loop advances base pointers by `2 * (BLOCK_K // 2)` once per unrolled iteration instead of twice. Odd-iteration loads use pre-computed `_next` offset variants. This saves scalar instructions (`s_add`, `s_lshl`) that would otherwise be needed for the second pointer advance.
 - **`commit_group()` / `wait_group()`**: Each commit group bundles tile async copies and scale buffer loads. With a recent LLVM feature (asyncmarkers), kernels that mix `buffer_load_to_lds` and regular `buffer_load` can now generate correct `vmcnt()` counter values.
 
-## 4. LDS Port Contention and ds_write Latency
-
-A critical hardware limitation affects scheduling: **ds_write and buffer_load_to_lds share the same LDS write port**. The texture data unit (TD) has higher priority than the shader sequencer (SQ), so ds_write can stall for up to ~400 cycles when buffer_load_to_lds data is ready.
-
-Furthermore, the LDS has a FIFO queue per SIMD pair with only 8 slots. When ds_write occupies the head of the queue for ~400 cycles, subsequent ds instructions fill the remaining slots. Once full, the next ds instruction stalls until the head drains.
-
-This means **ds_read cannot hide ds_write latency** due to queue slot limitations. Only MFMA instructions (which don't use the ds queue) can effectively hide it.
-
-The LLIR scheduler addresses this by:
-1. Placing ds_write (LW) after the ds_read (LR) chunk in each region
-2. Allocating leftover MFMA instructions after the first LW to provide ~400+ cycles of coverage
-
-## 5. Interleaved Epilogue with `extract_slice`
-
-The epilogue (last 2 K iterations) uses `extract_slice` to split the [256, K//2] input tile, [256, K//SCALE_GROUP_SIZE] scale tensor, and [256, N//2] accumulator into 4 x [64, ...] slices along the M dimension. Each sliced `mfma_scaled` is interleaved with a `buffer_store` of the previous slice's result, overlapping the final computation with output writes.
-
-## 6. LLIR Scheduler
-
-The kernel requires the LLIR scheduler (`TRITON_ENABLE_LLIR_SCHED=1`) for optimal performance. The scheduler operates at the LLVM IR level (pre-register allocation) and performs two transformations per region:
-
-1. **Anchor movement**: Moves LR instructions (and associated waitcnt/barrier) from between the last LW and first GR to after the 2nd-to-last GR, placing ds_write after the ds_read chunk.
-2. **MFMA interleaving**: Distributes MFMA instructions among anchor instructions using a budget-based scheme:
-   - 4 MFMAs after each GR (or 2 for 32-cycle MFMA), 1 if GR is followed by LR
-   - 1 MFMA after each LR
-   - Leftover MFMAs after the first LW (to hide ds_write latency)
-   - 2 MFMAs at the end of each region
-
-## 7. amdgcnas Post-Processor
-
-The kernel also benefits from the amdgcnas assembly post-processor (`TRITON_ENABLE_AMDGCN_AS=1`), which performs:
-
-- **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (LDS address calculations) to the loop prologue, with register renaming when the output register is redefined in the loop
-- **`.amdhsa_accum_offset` fix**: Ensures the full VGPR range (v0-v255) is available by setting `accum_offset=256`, preventing renamed VGPRs from aliasing with AGPRs
-
-## 8. Performance
+## 4. Performance
 
 Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
-| Configuration | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|---------------|--------|-------|--------|-----------|
-| base | 655 | 512 | 261 | 5% |
-| llirSched | 4904 | 512 | 0 | 70% |
-| llirSched + amdgcnas | 5270 | 512 | 0 | 92% |
+| Configuration | TFLOPS | VGPRs | Spills | Copy instrs in loop | MFMA Eff. |
+|---------------|--------|-------|--------|---------------------|-----------|
+| base | 578 | 512 | 261 | 113 | 5% |
+| llirSched | 4774 | 512 | 0 | 67 | 70% |
+| llirSched + amdgcnas | 5160 | 512 | 0 | 0 | 92% |
 
-The LLIR scheduler alone eliminates register spills and achieves 70% MFMA efficiency. The amdgcnas post-processor further improves to 92% by hoisting loop-invariant instructions and reducing register pressure.
+Copy instructions (`v_accvgpr_*`, `v_mov`) are register-to-register moves inserted by the compiler when it cannot allocate the desired physical register. They consume VALU cycles and increase register pressure. The progression from 113 → 67 → 0 shows how each pass reduces unnecessary data movement.
 
-## 9. How to Run
+See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for an overview of the LLIR scheduler and amdgcnas passes.
+
+**Effect of LLIR scheduler**: Transforms the kernel from 578 to 4774 TFLOPS (8x). Without it, the backend compiler clusters all MFMAs together, leaving memory operations at the end of each region. This causes 261 register spills (too many values live simultaneously) and 5% MFMA efficiency (data not ready when needed). The scheduler interleaves MFMAs with memory operations, eliminating spills and raising efficiency to 70%.
+
+**Effect of amdgcnas**: Further improves from 4774 to 5160 TFLOPS and eliminates all 67 remaining copy instructions. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, which frees up VGPRs and makes it much easier for LLVM to allocate registers for other operands without inserting copy instructions. LICM further reduces the instruction count by hoisting loop-invariant LDS address calculations to the prologue. Together, MFMA efficiency rises from 70% to 92%.
+
+## 5. How to Run
 
 From the `a4w4` directory:
 
 ```bash
-# With LLIR scheduler
+# Without optimizations (base)
+python bench.py --K 32768
+
+# With LLIR scheduler only
 TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 32768
 
 # With both LLIR scheduler and amdgcnas

@@ -18,9 +18,22 @@ All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/mat
 
 ## 2. Prerequisites
 
-### 2.1 Triton Branch
+### 2.1 Triton Branch — LLIR Scheduler and amdgcnas
 
-The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features.
+The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
+
+**LLIR Scheduler** (`TRITON_ENABLE_LLIR_SCHED=1`) operates at the LLVM IR level before register allocation. It interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations — matching the rate at which MFMAs can be issued with the rate at which memory operations complete. Without it, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
+- Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
+- Distributes MFMAs among anchors based on throughput (e.g., 4 MFMAs per global load for 16-cycle MFMA, 2 for 32-cycle)
+- For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads, and allocates leftover MFMAs after ds_write to cover LDS port contention
+
+**amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_slice/README.md#43-register-allocation-workaround). It does two things:
+
+1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, telling LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false`, which prevents LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs to reduce VGPR pressure.
+
+2. **Post-assembly processing**: Optimizes the final generated assembly:
+   - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted instruction's output register is redefined inside the loop
+   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput
 
 ### 2.2 Running Benchmarks
 
@@ -33,8 +46,8 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amd
 # FP8 (a8w8)
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
 
-# MXFP4 (a4w4) — run from kernels/gemm/a4w4/
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768 --use-rocprof
+# MXFP4 (a4w4)
+python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --use-rocprof
 ```
 
 This script automatically:
@@ -78,40 +91,23 @@ The [a16w16/](a16w16/) directory documents a step-by-step optimization journey f
 
 **Start here** to learn how to write high-performance Gluon kernels.
 
-## 4. FP8: Applying the Same Ideas
+## 4. FP8 and MXFP4: Applying the Same Design
 
-The [a8w8/](a8w8/) directory provides only the final optimized kernel.
+The optimization principles from the FP16 journey apply directly to FP8 and MXFP4. All three kernels share the same fundamental design: N-slicing, 3-stage pipeline, loop unrolling by 2, and the same LLIR scheduler + amdgcnas passes.
 
-Why? The optimization principles are identical to FP16. The main differences are tile shape, MFMA instruction, and LDS padding:
+| Aspect | FP16 (a16w16) | FP8 (a8w8) | MXFP4 (a4w4) |
+|--------|---------------|------------|--------------|
+| Tile size | 256x256x64 | 256x256x128 | 256x256x256 |
+| MFMA instruction | `mfma_f16_16x16x32` | `mfma_scale_f32_16x16x128` | same |
+| MFMA cycles | 16 | 32 | 16 |
+| Scaling | None | None | Per-group e8m0 |
+| LDS padding | `[[512, 16]]` | `[[1024, 16], [2048, 32]]` | `[[1024, 32]]` |
 
-| Aspect | FP16 | FP8 |
-|--------|------|-----|
-| Tile size | 256×256×64 | 256×256×128 |
-| MFMA instruction | mfma_f16_16x16x32 | mfma_f8_16x16x128 |
-| LDS padding | [[512, 16]] | [[1024, 16], [2048, 32]] |
+The [a8w8/](a8w8/) directory provides the final optimized FP8 kernel. If you understand the FP16 journey, you understand the FP8 kernel — the differences are tile shape, MFMA instruction, and LDS padding.
 
-If you understand the FP16 journey, you understand the FP8 kernel.
+The [a4w4/](a4w4/) directory implements the MXFP4 kernel, which introduces new challenges: per-group scale loading (GR → LW → LR round-trip), LDS port contention between ds_write and buffer_load_to_lds, and scale layout conversion. See the [a4w4 README](a4w4/README.md) for full details.
 
-## 5. MXFP4: New Challenges from Microscaling
-
-The [a4w4/](a4w4/) directory implements an MXFP4 (e2m1) GEMM kernel, which introduces new optimization challenges beyond FP8:
-
-| Aspect | FP8 (a8w8) | MXFP4 (a4w4) |
-|--------|------------|--------------|
-| Tile size | 256x256x128 | 256x256x256 |
-| MFMA instruction | `mfma_f8_16x16x128` | `mfma_scale_f32_16x16x128` |
-| MFMA cycles | 32 | 16 (e2m1) |
-| Scaling | None | Per-group e8m0 scales |
-| LDS padding | `[[1024, 16], [2048, 32]]` | `[[1024, 32]]` |
-
-### Key differences from FP8:
-
-- **Per-group scales**: Each group of 32 elements has an 8-bit scale factor. Scales must be loaded from global memory, stored to LDS, and read back in the MFMA scale layout before compute can proceed.
-- **LDS port contention**: ds_write (scale store) and buffer_load_to_lds (tile load) compete for the same LDS write port. ds_write can stall ~400 cycles, requiring careful scheduling to hide with MFMA.
-
-See the [a4w4 README](a4w4/README.md) for full details on the pipeline, scheduling, and hardware considerations.
-
-## 6. Philosophy
+## 5. Philosophy
 
 Performance emerges from the combination of:
 
@@ -122,7 +118,7 @@ Performance emerges from the combination of:
 
 This repository is built around the idea that **performance is a process**, and that process should be visible.
 
-## 7. How to Use This Directory
+## 6. How to Use This Directory
 
 | Goal | Recommendation |
 |------|----------------|
