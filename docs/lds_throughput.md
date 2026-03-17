@@ -53,9 +53,9 @@ Before LDS can service a `ds_read` request, the addresses must be delivered from
 This address transfer is an explicit part of the dataflow and is worth understanding, 
 even though it does not ultimately limit throughput in this case.
 
-Each thread participating in a `ds_read` provides an address. 
-For a wave of 64 threads, this results in 256 bytes of address data per SIMD. 
-SIMDs are grouped into SIMD pairs (SPs), 
+Each thread participating in a `ds_read` provides an address.
+For a wave of 64 threads, a single `ds_read` instruction generates 256 bytes of address data (64 threads × 4 bytes per address).
+SIMDs are grouped into SIMD pairs (SPs),
 and each SP has a dedicated 128 B/cycle bus to LDS.
 Each SP must send 512 bytes of address data to LDS for a single `ds_read` instruction,
 which takes 4 cycles.
@@ -69,9 +69,9 @@ but it is fast relative to the rest of the pipeline.
 LDS is organized as 64 banks, each 4 bytes wide, 
 giving a total service bandwidth of 256 bytes per cycle.
 
-For `ds_read_b128`, each thread requests 16 bytes. 
-A single SIMD therefore requests 1024 bytes, 
-and when all four SIMDs in a compute unit participate, LDS must serve a total of 4096 bytes.
+For `ds_read_b128`, each thread requests 16 bytes.
+A single `ds_read_b128` instruction therefore requests 1024 bytes (64 threads × 16 bytes),
+and when all four SIMDs in a compute unit issue a `ds_read_b128` instruction, LDS must serve a total of 4096 bytes.
 
 At 256 bytes per cycle, LDS requires 16 cycles to service these requests. 
 This immediately tells us that LDS cannot support issuing `ds_read_b128` instructions 
@@ -133,9 +133,9 @@ So far, we have used `ds_read_b128` as the primary example.
 The same mental model, however, also applies to `ds_read_b64`, 
 and comparing the two helps clarify what really matters for LDS access.
 
-For `ds_read_b64`, each thread loads 64 bits, or 8 bytes. 
-A single SIMD therefore requests 512 bytes, 
-and all four SIMDs together request 2048 bytes. 
+For `ds_read_b64`, each thread loads 64 bits, or 8 bytes.
+A single `ds_read_b64` instruction therefore requests 512 bytes (64 threads × 8 bytes),
+and when all four SIMDs in a compute unit issue a `ds_read_b64` instruction, LDS must serve a total of 2048 bytes.
 With an LDS service rate of 256 bytes per cycle, the LDS can service these requests in 8 cycles. 
 The LDS-to-SIMD bus bandwidth leads to the same result.
 
