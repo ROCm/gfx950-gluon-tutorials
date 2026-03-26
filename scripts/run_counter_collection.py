@@ -140,7 +140,7 @@ def parse_counter_csv(csv_path, counters, kernel_name):
     return averages, n_dispatches
 
 
-def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
+def run_collection(version, config, counters, K, dtype, kernel="a16w16", preshuffle_scales=False):
     """Run rocprofv3 counter collection for one (version, config) pair.
 
     Returns a dict with version_dir, averages (counter->value), and n_dispatches.
@@ -151,7 +151,9 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         version_dir = "a8w8_kernel"
         work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
     elif kernel == "a4w4":
-        version_dir = "a4w4_kernel"
+        version_dir = (
+            "a4w4_kernel_preshuffle_scales" if preshuffle_scales else "a4w4_kernel"
+        )
         work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
@@ -188,6 +190,8 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
     bench_cmd = ["python", "bench.py", "--rocprof", "--K", str(K)]
     if kernel not in ("a8w8", "a4w4"):
         bench_cmd.extend(["--dtype", dtype, "--version", str(version)])
+    if preshuffle_scales:
+        bench_cmd.append("--preshuffle-scales")
 
     cmd = [
         "rocprofv3",
@@ -308,6 +312,11 @@ def parse_args():
         help="Comma-separated list of hardware counters to collect "
         "(e.g. TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum)",
     )
+    parser.add_argument(
+        "--preshuffle-scales",
+        action="store_true",
+        help="Use preshuffled scales kernel for a4w4 (eliminates LDS round-trip for scales).",
+    )
     return parser.parse_args()
 
 
@@ -332,7 +341,10 @@ def main():
         print(f"{'='*60}")
         results[config] = []
         for version in versions:
-            row = run_collection(version, config, counters, args.K, args.dtype, kernel=args.kernel)
+            row = run_collection(
+                version, config, counters, args.K, args.dtype,
+                kernel=args.kernel, preshuffle_scales=args.preshuffle_scales,
+            )
             results[config].append(row)
 
     # Print summary tables

@@ -26,7 +26,7 @@ import argparse
 
 import torch
 import triton
-from matmul_kernel import matmul
+from matmul_kernel import matmul, matmul_preshuffle_scales, shuffle_scales
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
@@ -168,27 +168,43 @@ def parse_args():
         help="Total size (MB) of rotating tensors for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
     )
+    parser.add_argument(
+        "--preshuffle-scales",
+        action="store_true",
+        help="Use preshuffled scales kernel (eliminates LDS round-trip for scales).",
+    )
     return parser.parse_args()
 
 
-def test_correctness(gemm_sizes):
+def get_matmul_fn(preshuffle_scales):
+    """Return the appropriate matmul function and input generator."""
+    if preshuffle_scales:
+        def matmul_fn(a, b, a_scales, b_scales):
+            a_scales_ps = shuffle_scales(a_scales)
+            b_scales_ps = shuffle_scales(b_scales)
+            return matmul_preshuffle_scales(a, b, a_scales_ps, b_scales_ps)
+        return matmul_fn
+    return matmul
+
+
+def test_correctness(gemm_sizes, matmul_fn, label="a4w4"):
     for M, N, K in gemm_sizes:
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
 
         # Kernel expects B as (N, K//2) row-major (K-contiguous)
-        triton_output = matmul(a_fp4, b_fp4, a_scales, b_scales)
+        triton_output = matmul_fn(a_fp4, b_fp4, a_scales, b_scales)
 
         # Reference: dequantize and compute in float32
         torch_output = torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16)
 
         if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
-            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch match")
+            print(f"[{label}] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(f"[{label}] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
 
 
-def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
+def gen_rotating_tensors(M, N, K, preshuffle_scales=False, rotating_buffer_size_mb=512):
     """Allocate multiple copies of tensors to exceed GPU cache size."""
     elem_bytes = 1  # uint8
     # a: M*K//2, b: K//2*N, a_scales: M*K//32, b_scales: N*K//32
@@ -205,32 +221,42 @@ def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
         a_list.append(a_fp4)
         b_list.append(b_fp4)  # (N, K//2) K-contiguous layout for kernel
-        as_list.append(a_scales)
-        bs_list.append(b_scales)
+        if preshuffle_scales:
+            as_list.append(shuffle_scales(a_scales))
+            bs_list.append(shuffle_scales(b_scales))
+        else:
+            as_list.append(a_scales)
+            bs_list.append(b_scales)
 
     return a_list, b_list, as_list, bs_list, block_count
 
 
-def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
+def run_rocprof_iterations(
+    gemm_sizes, preshuffle_scales=False, n_iters=1000, rotating_buffer_size_mb=512
+):
     """Run kernel n_iters times with rotating tensors for cache-cold profiling."""
+    kernel_fn = matmul_preshuffle_scales if preshuffle_scales else matmul
+    label = "a4w4_preshuffle" if preshuffle_scales else "a4w4"
+
     for M, N, K in gemm_sizes:
         a_list, b_list, as_list, bs_list, block_count = gen_rotating_tensors(
-            M, N, K, rotating_buffer_size_mb
+            M, N, K, preshuffle_scales=preshuffle_scales,
+            rotating_buffer_size_mb=rotating_buffer_size_mb,
         )
         total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32))
         print(
-            f"[a4w4] {M=} {N=} {K=}: "
+            f"[{label}] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, "
             f"{total_bytes / 1024**2:.0f} MB"
         )
         # Warmup
-        matmul(a_list[0], b_list[0], as_list[0], bs_list[0])
+        kernel_fn(a_list[0], b_list[0], as_list[0], bs_list[0])
         torch.cuda.synchronize()
         for i in range(n_iters):
             idx = i % block_count
-            matmul(a_list[idx], b_list[idx], as_list[idx], bs_list[idx])
+            kernel_fn(a_list[idx], b_list[idx], as_list[idx], bs_list[idx])
         torch.cuda.synchronize()
-        print(f"[a4w4] {M=} {N=} {K=}: {n_iters} iterations done")
+        print(f"[{label}] {M=} {N=} {K=}: {n_iters} iterations done")
 
 
 def main():
@@ -238,10 +264,17 @@ def main():
 
     gemm_sizes = get_gemm_sizes(args.K)
 
-    test_correctness(gemm_sizes)
+    matmul_fn = get_matmul_fn(args.preshuffle_scales)
+    label = "a4w4_preshuffle" if args.preshuffle_scales else "a4w4"
+
+    test_correctness(gemm_sizes, matmul_fn, label=label)
 
     if args.rocprof:
-        run_rocprof_iterations(gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size)
+        run_rocprof_iterations(
+            gemm_sizes,
+            preshuffle_scales=args.preshuffle_scales,
+            rotating_buffer_size_mb=args.rotating_buffer_size,
+        )
         return
 
     configs = [
@@ -263,7 +296,7 @@ def main():
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
         quantiles = [0.5, 0.2, 0.8]
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: matmul(a_fp4, b_fp4, a_scales, b_scales),
+            lambda: matmul_fn(a_fp4, b_fp4, a_scales, b_scales),
             quantiles=quantiles,
         )
 
@@ -272,7 +305,7 @@ def main():
 
         return perf(ms), perf(max_ms), perf(min_ms)
 
-    print("\na4w4_kernel:")
+    print(f"\n{label}_kernel:")
     benchmark.run(show_plots=False, print_data=True)
 
 

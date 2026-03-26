@@ -229,7 +229,10 @@ def avg_kernel_time_ns(csv_path, kernel_name, last_n=100):
     return sum(tail) / len(tail), len(durations)
 
 
-def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type="a16w16"):
+def run_rocprof_trace(
+    version_dir, K, dtype, version, work_dir, env, kernel_type="a16w16",
+    preshuffle_scales=False,
+):
     """Run rocprofv3 --kernel-trace to collect kernel timestamps.
 
     Returns TFLOPS computed from the average kernel time, or None on failure.
@@ -255,6 +258,8 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     ]
     if kernel_type not in ("a8w8", "a4w4"):
         cmd.extend(["--dtype", dtype, "--version", str(version)])
+    if preshuffle_scales:
+        cmd.append("--preshuffle-scales")
 
     rocprof_env = env.copy()
     rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
@@ -294,7 +299,9 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     return tflops
 
 
-def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False):
+def run_benchmark(
+    version, config, K, dtype, kernel="a16w16", use_rocprof=False, preshuffle_scales=False
+):
     """Run a single benchmark for the given version, config, and kernel type.
 
     Returns a dict with keys: tflops, vgprs, spills, mfma_eff, or None values on failure.
@@ -305,7 +312,9 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         version_dir = "a8w8_kernel"
         work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
     elif kernel == "a4w4":
-        version_dir = "a4w4_kernel"
+        version_dir = (
+            "a4w4_kernel_preshuffle_scales" if preshuffle_scales else "a4w4_kernel"
+        )
         work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
@@ -347,6 +356,8 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     ]
     if kernel not in ("a8w8", "a4w4"):
         cmd.extend(["--dtype", dtype, "--version", str(version)])
+    if preshuffle_scales:
+        cmd.append("--preshuffle-scales")
 
     if kernel in ("a8w8", "a4w4"):
         print(f"  Running: {kernel} config={config}")
@@ -387,7 +398,8 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     # Run rocprofv3 to get TFLOPS from kernel timestamps
     if use_rocprof:
         tflops = run_rocprof_trace(
-            version_dir, K, dtype, version, work_dir, env, kernel_type=kernel
+            version_dir, K, dtype, version, work_dir, env, kernel_type=kernel,
+            preshuffle_scales=preshuffle_scales,
         )
         result["tflops"] = tflops
 
@@ -463,6 +475,11 @@ def parse_args():
         action="store_true",
         help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
     )
+    parser.add_argument(
+        "--preshuffle-scales",
+        action="store_true",
+        help="Use preshuffled scales kernel for a4w4 (eliminates LDS round-trip for scales).",
+    )
     return parser.parse_args()
 
 
@@ -495,6 +512,7 @@ def main():
                 args.dtype,
                 kernel=args.kernel,
                 use_rocprof=args.use_rocprof,
+                preshuffle_scales=args.preshuffle_scales,
             )
             results[config].append(row)
 

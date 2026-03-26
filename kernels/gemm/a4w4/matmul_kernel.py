@@ -754,3 +754,654 @@ def matmul(a, b, a_scales, b_scales):
         num_warps=num_warps,
     )
     return c
+
+
+# ============================================================
+# Preshuffled scales: helpers and kernel
+# ============================================================
+
+
+def shuffle_scales(scales):
+    """Transform scales from (M, K//32) to preshuffled (M//32, K) layout.
+
+    The preshuffled layout rearranges scale bytes so that after loading into
+    LDS and applying a reshape+permute on the shared memory descriptor, the
+    data can be read directly into the MFMA scale layout. This provides better
+    HBM coalescing (wide short tile vs tall narrow tile).
+
+    M must be a multiple of 32.
+    """
+    sm, sn = scales.shape  # (M, K//32)
+    assert sm % 32 == 0, f"M must be a multiple of 32, got {sm}"
+    assert sn % 8 == 0, f"K//32 must be a multiple of 8, got {sn}"
+    scales = scales.reshape(sm // 32, 2, 16, sn // 8, 2, 4, 1)
+    scales = scales.permute(0, 3, 5, 2, 4, 1, 6).contiguous()
+    scales = scales.reshape(sm // 32, sn * 32)
+    return scales
+
+
+def unshuffle_scales(scales_shuffled):
+    """Transform preshuffled scales from (M//32, K) back to (M, K//32)."""
+    sm_ps, sn_ps = scales_shuffled.shape  # (M//32, K)
+    sn = sn_ps // 32  # K//32
+    scales = scales_shuffled.reshape(sm_ps, sn // 8, 4, 16, 2, 2, 1)
+    scales = scales.permute(0, 5, 3, 1, 4, 2, 6).contiguous()
+    scales = scales.reshape(sm_ps * 32, sn)
+    return scales
+
+
+@gluon.jit
+def a4w4_kernel_preshuffle_scales(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    a_scales_ptr,
+    b_scales_ptr,
+    M,
+    N,
+    K: gl.constexpr,
+    stride_am,
+    stride_ak,
+    stride_bn,
+    stride_bk,
+    stride_cm,
+    stride_cn,
+    stride_asm,
+    stride_ask,
+    stride_bsn,
+    stride_bsk,
+    BLOCK_M: gl.constexpr,
+    BLOCK_N: gl.constexpr,
+    BLOCK_K: gl.constexpr,
+    GRID_MN: gl.constexpr,
+    NUM_XCDS: gl.constexpr,
+    GROUP_SIZE_M: gl.constexpr,
+):
+    """
+    MXFP4 GEMM kernel with preshuffled scales.
+
+    Scales are preshuffled from (M, K//32) to (M//32, K) on the host. The
+    kernel loads this wider tile into LDS, then applies reshape+permute on
+    the shared memory descriptor to unshuffle, and reads into MFMA scale
+    layout via load_shared_relaxed.
+
+    Benefits vs base kernel:
+      - Better HBM coalescing: scale tile is (8, 256) instead of (256, 8).
+      - Same pipeline structure (buffer_load -> LDS store -> LDS load).
+
+    Inputs:
+      A: (M, K//2) uint8, row-major -> tiles [256, 128]
+      B: (N, K//2) uint8, row-major -> tiles [128, 128]
+      A_scales: (M//32, K) uint8 e8m0, preshuffled
+      B_scales: (N//32, K) uint8 e8m0, preshuffled
+      C: (M, N) bfloat16
+    """
+
+    SCALE_GROUP_SIZE: gl.constexpr = 32
+    BLOCK_K_SCALE: gl.constexpr = BLOCK_K // SCALE_GROUP_SIZE
+
+    pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
+
+    # -- Global load layout for A: [BLOCK_M, BLOCK_K//2] = [256, 128] --
+    gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [4, 0], [8, 0], [128, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
+        warp_bases=[[1, 0], [2, 0]],
+        block_bases=[],
+        shape=[BLOCK_M, BLOCK_K // 2],
+    )
+
+    # -- Global load layout for B half: [BLOCK_N//2, BLOCK_K//2] = [128, 128] --
+    gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [4, 0], [8, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
+        warp_bases=[[1, 0], [2, 0]],
+        block_bases=[],
+        shape=[BLOCK_N // 2, BLOCK_K // 2],
+    )
+
+    # -- Shared memory layout for A: [BLOCK_M, BLOCK_K//2] = [256, 128] --
+    sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
+        [[1024, 32]],
+        [
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+            [128, 0],
+        ],
+        [],
+        [BLOCK_M, BLOCK_K // 2],
+    )
+
+    # -- Shared memory layout for B half: [BLOCK_N//2, BLOCK_K//2] = [128, 128] --
+    sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
+        [[1024, 32]],
+        [
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+        ],
+        [],
+        [BLOCK_N // 2, BLOCK_K // 2],
+    )
+
+    # -- MFMA layouts --
+    mfma_layout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[2, 2], tiles_per_warp=[2, 2]
+    )
+    dot_a_layout: gl.constexpr = gl.DotOperandLayout(
+        operand_index=0, parent=mfma_layout, k_width=16
+    )
+    dot_b_layout: gl.constexpr = gl.DotOperandLayout(
+        operand_index=1, parent=mfma_layout, k_width=16
+    )
+    scale_a_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
+        dot_a_layout, [BLOCK_M, BLOCK_K_SCALE]
+    )
+    scale_b_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
+        dot_b_layout, [BLOCK_N // 2, BLOCK_K_SCALE]
+    )
+
+    gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
+
+    # -- SMEM allocation (tiles only — scales bypass LDS) --
+    nBuffers: gl.constexpr = 2
+    smemA = gl.allocate_shared_memory(
+        a_ptr.type.element_ty, [nBuffers, BLOCK_M, BLOCK_K // 2], sharedLayoutA
+    )
+    smemB_left = gl.allocate_shared_memory(
+        b_ptr.type.element_ty, [nBuffers, BLOCK_N // 2, BLOCK_K // 2], sharedLayoutB
+    )
+    smemB_right = gl.allocate_shared_memory(
+        b_ptr.type.element_ty, [nBuffers, BLOCK_N // 2, BLOCK_K // 2], sharedLayoutB
+    )
+
+    # -- Tile offsets (same as base kernel) --
+    offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, gLoadLayoutA))
+    offs_ak = gl.arange(0, BLOCK_K // 2, gl.SliceLayout(0, gLoadLayoutA))
+    a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    a_offsets_next = a_offsets + (BLOCK_K // 2) * stride_ak
+    a_base = a_ptr + pid_m * BLOCK_M * stride_am
+
+    offs_bn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(1, gLoadLayoutB))
+    offs_bk = gl.arange(0, BLOCK_K // 2, gl.SliceLayout(0, gLoadLayoutB))
+    b_left_offsets = offs_bn[:, None] * stride_bn + offs_bk[None, :] * stride_bk
+    b_right_offsets = b_left_offsets + (BLOCK_N // 2) * stride_bn
+    b_left_offsets_next = b_left_offsets + (BLOCK_K // 2) * stride_bk
+    b_right_offsets_next = b_right_offsets + (BLOCK_K // 2) * stride_bk
+    b_base = b_ptr + pid_n * BLOCK_N * stride_bn
+
+    # -- Preshuffled scale offsets (bypass LDS: offsets in MFMA scale layout) --
+    # A scales: preshuffled (M//32, K), offsets in scale_a_layout
+    offs_m_sc = gl.arange(0, BLOCK_M, gl.SliceLayout(1, scale_a_layout))
+    offs_ks_a = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, scale_a_layout))
+
+    global_m = (pid_m * BLOCK_M + offs_m_sc) % M
+    m_group = global_m // 32
+    M_high = (global_m % 32) // 16
+    M_low = global_m % 16
+    K_high_a = offs_ks_a // 4
+    K_mid_a = offs_ks_a % 4
+
+    ps_col_a = K_mid_a[None, :] * 64 + M_low[:, None] * 4 + K_high_a[None, :] * 2 + M_high[:, None]
+    offs_as = m_group[:, None] * stride_asm + ps_col_a * stride_ask
+    offs_as_next = offs_as + BLOCK_K * stride_ask
+
+    # B scales: preshuffled (N//32, K), offsets in scale_b_layout
+    offs_n_sc = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(1, scale_b_layout))
+    offs_ks_b = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, scale_b_layout))
+
+    global_n = (pid_n * BLOCK_N + offs_n_sc) % N
+    n_group = global_n // 32
+    N_high = (global_n % 32) // 16
+    N_low = global_n % 16
+    K_high_b = offs_ks_b // 4
+    K_mid_b = offs_ks_b % 4
+
+    ps_col_b = K_mid_b[None, :] * 64 + N_low[:, None] * 4 + K_high_b[None, :] * 2 + N_high[:, None]
+    offs_bs_left = n_group[:, None] * stride_bsn + ps_col_b * stride_bsk
+    offs_bs_right = offs_bs_left + (BLOCK_N // 2 // 32) * stride_bsn
+    offs_bs_left_next = offs_bs_left + BLOCK_K * stride_bsk
+    offs_bs_right_next = offs_bs_right + BLOCK_K * stride_bsk
+
+    acc_left = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfma_layout)
+    acc_right = gl.zeros((BLOCK_M, BLOCK_N // 2), gl.float32, mfma_layout)
+
+    iterMax = gl.cdiv(K, BLOCK_K)
+
+    # ====== Prologue: prefetch iter 0 and iter 1 ======
+
+    # -- iter 0: AC tiles + GR scales --
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(0), a_base, a_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
+    a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+    b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
+    gl.amd.cdna4.async_copy.commit_group()
+
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
+    b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
+    gl.amd.cdna4.async_copy.commit_group()
+
+    # -- iter 1: AC tiles + GR scales --
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(1), a_base, a_offsets_next)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
+    a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
+    b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
+    gl.amd.cdna4.async_copy.commit_group()
+
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemB_right.index(1), b_base, b_right_offsets_next
+    )
+    b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
+    gl.amd.cdna4.async_copy.commit_group()
+
+    a_base += (BLOCK_K // 2) * stride_ak * 2
+    b_base += (BLOCK_K // 2) * stride_bk * 2
+    a_scales_ptr += BLOCK_K * stride_ask * 2
+    b_scales_ptr += BLOCK_K * stride_bsk * 2
+
+    # -- Wait for iter 0 tiles and prepare registers --
+    gl.amd.cdna4.async_copy.wait_group(3)
+    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dot_a_layout)
+    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+        smemB_left.index(0).permute([1, 0]), dot_b_layout
+    )
+
+    # Bypass LDS: scales already in MFMA scale layout from buffer_load
+    a_sc_reg_buf0 = a_sc_buf1
+    b_sc_left_reg_buf0 = b_sc_left_buf1
+
+    gl.assume(iterMax > 3)
+
+    # ====== Main loop (step 2, unrolled by 2) ======
+    for k in range(0, iterMax - 2, 2):
+
+        ########################################
+        ## Region 0 (even iter, buffer 0 -> 1)
+        ########################################
+        g_idx = 0
+        l_idx = 1
+
+        # DOT_left
+        acc_left = gl.amd.cdna4.mfma_scaled(
+            a=a,
+            a_scale=a_sc_reg_buf0,
+            a_format="e2m1",
+            b=b_left,
+            b_scale=b_sc_left_reg_buf0,
+            b_format="e2m1",
+            acc=acc_left,
+        )
+
+        # Wait for B_right tile (commit group 1)
+        gl.amd.cdna4.async_copy.wait_group(2)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+        )
+
+        # Bypass LDS: b_sc_right already in MFMA scale layout
+        b_sc_right_reg_buf0 = b_sc_right_buf1
+
+        # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets
+        )
+        a_sc_buf1 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as)
+        b_sc_left_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        ########################################
+        ## Region 1 (even iter, buffer 0 -> 1)
+        ########################################
+
+        # DOT_right
+        acc_right = gl.amd.cdna4.mfma_scaled(
+            a=a,
+            a_scale=a_sc_reg_buf0,
+            a_format="e2m1",
+            b=b_right,
+            b_scale=b_sc_right_reg_buf0,
+            b_format="e2m1",
+            acc=acc_right,
+        )
+
+        # Wait for next A + B_left tiles (commit group 2)
+        gl.amd.cdna4.async_copy.wait_group(2)
+        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
+        )
+
+        # Bypass LDS: scales already in MFMA scale layout
+        a_sc_reg_buf2 = a_sc_buf3
+        b_sc_left_reg_buf2 = b_sc_left_buf3
+
+        # AC next B_right tile + GR next b_sc_right scale
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets
+        )
+        b_sc_right_buf1 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        ## -- loop unrolling --
+
+        g_idx = 1
+        l_idx = 0
+
+        ########################################
+        ## Region 2 (odd iter, buffer 1 -> 0)
+        ########################################
+
+        # DOT_left
+        acc_left = gl.amd.cdna4.mfma_scaled(
+            a=a_next,
+            a_scale=a_sc_reg_buf2,
+            a_format="e2m1",
+            b=b_left,
+            b_scale=b_sc_left_reg_buf2,
+            b_format="e2m1",
+            acc=acc_left,
+        )
+
+        # Wait for B_right tile
+        gl.amd.cdna4.async_copy.wait_group(2)
+        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+        )
+
+        # Bypass LDS: b_sc_right already in MFMA scale layout
+        b_sc_right_reg_buf2 = b_sc_right_buf3
+
+        # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets_next)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(g_idx), b_base, b_left_offsets_next
+        )
+        a_sc_buf3 = gl.amd.cdna4.buffer_load(ptr=a_scales_ptr, offsets=offs_as_next)
+        b_sc_left_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_left_next)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        ########################################
+        ## Region 3 (odd iter, buffer 1 -> 0)
+        ########################################
+
+        # DOT_right
+        acc_right = gl.amd.cdna4.mfma_scaled(
+            a=a_next,
+            a_scale=a_sc_reg_buf2,
+            a_format="e2m1",
+            b=b_right,
+            b_scale=b_sc_right_reg_buf2,
+            b_format="e2m1",
+            acc=acc_right,
+        )
+
+        # Wait for next A + B_left tiles
+        gl.amd.cdna4.async_copy.wait_group(2)
+        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
+        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
+        )
+
+        # Bypass LDS: scales already in MFMA scale layout
+        a_sc_reg_buf0 = a_sc_buf1
+        b_sc_left_reg_buf0 = b_sc_left_buf1
+
+        # AC next B_right tile + GR next b_sc_right scale
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(g_idx), b_base, b_right_offsets_next
+        )
+        b_sc_right_buf3 = gl.amd.cdna4.buffer_load(ptr=b_scales_ptr, offsets=offs_bs_right_next)
+        gl.amd.cdna4.async_copy.commit_group()
+
+        a_base += (BLOCK_K // 2) * stride_ak * 2
+        b_base += (BLOCK_K // 2) * stride_bk * 2
+        a_scales_ptr += BLOCK_K * stride_ask * 2
+        b_scales_ptr += BLOCK_K * stride_bsk * 2
+
+    # ====== Epilogue: last 2 iterations (no new async copies) ======
+
+    # -- Output offset setup --
+    offs_cn_left = pid_n * BLOCK_N + gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
+    c_base = c_ptr
+
+    # -- iterMax - 2 --
+
+    ########################################
+    ## Epilogue Region 0
+    ########################################
+    g_idx = 0
+    l_idx = 1
+
+    acc_left = gl.amd.cdna4.mfma_scaled(
+        a=a,
+        a_scale=a_sc_reg_buf0,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left_reg_buf0,
+        b_format="e2m1",
+        acc=acc_left,
+    )
+
+    gl.amd.cdna4.async_copy.wait_group(2)
+    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+        smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+    )
+
+    b_sc_right_reg_buf0 = b_sc_right_buf1
+
+    ########################################
+    ## Epilogue Region 1
+    ########################################
+    acc_right = gl.amd.cdna4.mfma_scaled(
+        a=a,
+        a_scale=a_sc_reg_buf0,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right_reg_buf0,
+        b_format="e2m1",
+        acc=acc_right,
+    )
+
+    gl.amd.cdna4.async_copy.wait_group(1)
+    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
+    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
+        smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
+    )
+
+    a_sc_reg_buf2 = a_sc_buf3
+    b_sc_left_reg_buf2 = b_sc_left_buf3
+
+    # -- iterMax - 1 --
+
+    ########################################
+    ## Epilogue Region 2 (sliced along M)
+    ########################################
+    g_idx = 1
+
+    # Output offset setup for sliced stores (64 rows per slice)
+    offs_cm_slice = gl.arange(0, BLOCK_M // 4, gl.SliceLayout(1, gStoreLayoutC))
+    c_slice_left_offsets = stride_cm * offs_cm_slice[:, None] + stride_cn * offs_cn_left[None, :]
+    c_slice_right_offsets = c_slice_left_offsets + (BLOCK_N // 2) * stride_cn
+    c00_base = c_base + pid_m * BLOCK_M * stride_cm
+    c01_base = c00_base + 64 * stride_cm
+    c02_base = c01_base + 64 * stride_cm
+    c03_base = c02_base + 64 * stride_cm
+    c10_base = c00_base
+    c11_base = c10_base + 64 * stride_cm
+    c12_base = c11_base + 64 * stride_cm
+    c13_base = c12_base + 64 * stride_cm
+
+    ## slice 0 m[0:64]
+    a0 = extract_slice(a_next, [64, BLOCK_K // 2], [0, 0])
+    a_sc0 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K_SCALE], [0, 0])
+    acc00 = extract_slice(acc_left, [64, BLOCK_N // 2], [0, 0])
+    acc00 = gl.amd.cdna4.mfma_scaled(
+        a=a0, a_scale=a_sc0, a_format="e2m1",
+        b=b_left, b_scale=b_sc_left_reg_buf2, b_format="e2m1", acc=acc00,
+    )
+    gl.amd.cdna4.async_copy.wait_group(0)
+    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
+        smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
+    )
+    b_sc_right_reg_buf2 = b_sc_right_buf3
+
+    ## slice 1 m[64:128]
+    a1 = extract_slice(a_next, [64, BLOCK_K // 2], [64, 0])
+    a_sc1 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K_SCALE], [64, 0])
+    acc01 = extract_slice(acc_left, [64, BLOCK_N // 2], [64, 0])
+    acc01 = gl.amd.cdna4.mfma_scaled(
+        a=a1, a_scale=a_sc1, a_format="e2m1",
+        b=b_left, b_scale=b_sc_left_reg_buf2, b_format="e2m1", acc=acc01,
+    )
+    c00 = acc00.to(c_ptr.type.element_ty)
+    c00 = gl.convert_layout(c00, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c00, c00_base, c_slice_left_offsets)
+
+    ## slice 2 m[128:192]
+    a2 = extract_slice(a_next, [64, BLOCK_K // 2], [128, 0])
+    a_sc2 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K_SCALE], [128, 0])
+    acc02 = extract_slice(acc_left, [64, BLOCK_N // 2], [128, 0])
+    acc02 = gl.amd.cdna4.mfma_scaled(
+        a=a2, a_scale=a_sc2, a_format="e2m1",
+        b=b_left, b_scale=b_sc_left_reg_buf2, b_format="e2m1", acc=acc02,
+    )
+    c01 = acc01.to(c_ptr.type.element_ty)
+    c01 = gl.convert_layout(c01, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c01, c01_base, c_slice_left_offsets)
+
+    ## slice 3 m[192:256]
+    a3 = extract_slice(a_next, [64, BLOCK_K // 2], [192, 0])
+    a_sc3 = extract_slice(a_sc_reg_buf2, [64, BLOCK_K_SCALE], [192, 0])
+    acc03 = extract_slice(acc_left, [64, BLOCK_N // 2], [192, 0])
+    acc03 = gl.amd.cdna4.mfma_scaled(
+        a=a3, a_scale=a_sc3, a_format="e2m1",
+        b=b_left, b_scale=b_sc_left_reg_buf2, b_format="e2m1", acc=acc03,
+    )
+    c02 = acc02.to(c_ptr.type.element_ty)
+    c02 = gl.convert_layout(c02, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c02, c02_base, c_slice_left_offsets)
+
+    ########################################
+    ## Epilogue Region 3 (sliced along M)
+    ########################################
+
+    ## slice 0 m[0:64]
+    acc10 = extract_slice(acc_right, [64, BLOCK_N // 2], [0, 0])
+    acc10 = gl.amd.cdna4.mfma_scaled(
+        a=a0, a_scale=a_sc0, a_format="e2m1",
+        b=b_right, b_scale=b_sc_right_reg_buf2, b_format="e2m1", acc=acc10,
+    )
+    c03 = acc03.to(c_ptr.type.element_ty)
+    c03 = gl.convert_layout(c03, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c03, c03_base, c_slice_left_offsets)
+
+    ## slice 1 m[64:128]
+    acc11 = extract_slice(acc_right, [64, BLOCK_N // 2], [64, 0])
+    acc11 = gl.amd.cdna4.mfma_scaled(
+        a=a1, a_scale=a_sc1, a_format="e2m1",
+        b=b_right, b_scale=b_sc_right_reg_buf2, b_format="e2m1", acc=acc11,
+    )
+    c10 = acc10.to(c_ptr.type.element_ty)
+    c10 = gl.convert_layout(c10, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c10, c10_base, c_slice_right_offsets)
+
+    ## slice 2 m[128:192]
+    acc12 = extract_slice(acc_right, [64, BLOCK_N // 2], [128, 0])
+    acc12 = gl.amd.cdna4.mfma_scaled(
+        a=a2, a_scale=a_sc2, a_format="e2m1",
+        b=b_right, b_scale=b_sc_right_reg_buf2, b_format="e2m1", acc=acc12,
+    )
+    c11 = acc11.to(c_ptr.type.element_ty)
+    c11 = gl.convert_layout(c11, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c11, c11_base, c_slice_right_offsets)
+
+    ## slice 3 m[192:256]
+    acc13 = extract_slice(acc_right, [64, BLOCK_N // 2], [192, 0])
+    acc13 = gl.amd.cdna4.mfma_scaled(
+        a=a3, a_scale=a_sc3, a_format="e2m1",
+        b=b_right, b_scale=b_sc_right_reg_buf2, b_format="e2m1", acc=acc13,
+    )
+    c12 = acc12.to(c_ptr.type.element_ty)
+    c12 = gl.convert_layout(c12, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c12, c12_base, c_slice_right_offsets)
+
+    c13 = acc13.to(c_ptr.type.element_ty)
+    c13 = gl.convert_layout(c13, layout=gStoreLayoutC, assert_trivial=False)
+    gl.amd.cdna4.buffer_store(c13, c13_base, c_slice_right_offsets)
+
+
+def matmul_preshuffle_scales(a, b, a_scales_ps, b_scales_ps):
+    """MXFP4 GEMM with preshuffled scales.
+
+    Args:
+        a: (M, K//2) uint8, K-contiguous
+        b: (N, K//2) uint8, K-contiguous
+        a_scales_ps: (M//32, K) uint8 e8m0, preshuffled via shuffle_scales()
+        b_scales_ps: (N//32, K) uint8 e8m0, preshuffled via shuffle_scales()
+    """
+    M = a.shape[0]
+    K_packed = a.shape[1]
+    K = K_packed * 2
+    N = b.shape[0]
+
+    BLOCK_M, BLOCK_N, BLOCK_K = 256, 256, 256
+    num_warps = 4
+
+    c = torch.empty((M, N), device=a.device, dtype=torch.bfloat16)
+    GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
+    grid = (GRID_MN, 1)
+    NUM_XCDS = 8
+    GROUP_SIZE_M = 4
+
+    a4w4_kernel_preshuffle_scales[grid](
+        a,
+        b,
+        c,
+        a_scales_ps,
+        b_scales_ps,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        a_scales_ps.stride(0),
+        a_scales_ps.stride(1),
+        b_scales_ps.stride(0),
+        b_scales_ps.stride(1),
+        BLOCK_M=BLOCK_M,
+        BLOCK_N=BLOCK_N,
+        BLOCK_K=BLOCK_K,
+        GRID_MN=GRID_MN,
+        NUM_XCDS=NUM_XCDS,
+        GROUP_SIZE_M=GROUP_SIZE_M,
+        num_warps=num_warps,
+    )
+    return c
