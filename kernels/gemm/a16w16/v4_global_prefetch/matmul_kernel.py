@@ -165,8 +165,8 @@ def v4_global_prefetch(
         ## Here we wait for the async_copy issued in the previous iteration (or prologue)
         gl.amd.cdna4.async_copy.wait_group(1)
 
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+        a = smemA.index(l_idx).load(dotOpLayoutA)
+        b = smemB.index(l_idx).load(dotOpLayoutB)
 
         acc = gl.amd.cdna3.mfma(a, b, acc)
 
@@ -177,8 +177,8 @@ def v4_global_prefetch(
 
     gl.amd.cdna4.async_copy.wait_group(0)
     l_idx = (iterMax - 1) % 2
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
 
     acc = gl.amd.cdna3.mfma(a, b, acc)
     c = acc.to(a_ptr.dtype.element_ty)

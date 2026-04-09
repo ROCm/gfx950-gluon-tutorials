@@ -239,8 +239,8 @@ def v8_beyond_hotloop(
 
     gl.amd.cdna4.async_copy.wait_group(3)
     l_idx = 0
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
     gl.assume(iterMax > 3)
 
@@ -263,9 +263,7 @@ def v8_beyond_hotloop(
         acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx), dotOpLayoutB
-        )
+        b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
@@ -279,8 +277,8 @@ def v8_beyond_hotloop(
         acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+        a = smemA.index(l_idx).load(dotOpLayoutA)
+        b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_right.index(g_idx), b_base, b_right_offsets
@@ -304,9 +302,7 @@ def v8_beyond_hotloop(
         acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx), dotOpLayoutB
-        )
+        b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
@@ -320,8 +316,8 @@ def v8_beyond_hotloop(
         acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
 
         gl.amd.cdna4.async_copy.wait_group(2)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+        a = smemA.index(l_idx).load(dotOpLayoutA)
+        b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
             smemB_right.index(g_idx), b_base, b_right_offsets
@@ -347,7 +343,7 @@ def v8_beyond_hotloop(
     acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
 
     gl.amd.cdna4.async_copy.wait_group(2)
-    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+    b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     ########################################
     ## Region 1
@@ -355,8 +351,8 @@ def v8_beyond_hotloop(
     acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
 
     gl.amd.cdna4.async_copy.wait_group(1)
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_left.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
     ## iterMax - 1
 
@@ -383,7 +379,7 @@ def v8_beyond_hotloop(
     acc00 = gl.amd.cdna3.mfma(a0, b_left, acc00)
 
     gl.amd.cdna4.async_copy.wait_group(0)
-    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB_right.index(g_idx), dotOpLayoutB)
+    b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     ## slice 1 m[64:128]n[0:128]
     a1 = extract_slice(a, [64, 64], [64, 0])

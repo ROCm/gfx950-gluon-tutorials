@@ -166,8 +166,8 @@ def v6_loop_unroll(
 
     gl.amd.cdna4.async_copy.wait_group(1)
     l_idx = 0
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
 
     gl.assume(iterMax > 3)
 
@@ -191,8 +191,8 @@ def v6_loop_unroll(
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
-        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+        a_next = smemA.index(l_idx).load(dotOpLayoutA)
+        b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
         a_base += BLOCK_K * stride_ak
         b_base += BLOCK_K * stride_bk
@@ -208,8 +208,8 @@ def v6_loop_unroll(
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+        a = smemA.index(l_idx).load(dotOpLayoutA)
+        b = smemB.index(l_idx).load(dotOpLayoutB)
 
         a_base += BLOCK_K * stride_ak
         b_base += BLOCK_K * stride_bk
@@ -218,8 +218,8 @@ def v6_loop_unroll(
     ## iterMax - 2
     l_idx = 1
     acc = gl.amd.cdna3.mfma(a, b, acc)
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a_next = smemA.index(l_idx).load(dotOpLayoutA)
+    b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     ## iterMax - 1
     acc = gl.amd.cdna3.mfma(a_next, b_next, acc)

@@ -319,15 +319,13 @@ def a4w4_kernel(
 
     # -- Wait for iter 0 tiles (commit group 0) and prepare registers --
     gl.amd.cdna4.async_copy.wait_group(3)
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(0), dot_a_layout)
-    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-        smemB_left.index(0).permute([1, 0]), dot_b_layout
-    )
+    a = smemA.index(0).load(dot_a_layout)
+    b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
 
     smem_as.store(a_sc_buf1)
     smem_bs.store(b_sc_left_buf1)
-    a_sc_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
-    b_sc_left_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+    a_sc_reg_buf0 = smem_as.load(scale_a_layout)
+    b_sc_left_reg_buf0 = smem_bs.load(scale_b_layout)
 
     gl.assume(iterMax > 3)
 
@@ -353,13 +351,11 @@ def a4w4_kernel(
 
         # Wait for B_right tile (commit group 1)
         gl.amd.cdna4.async_copy.wait_group(2)
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-        )
+        b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
 
         # Prepare b_sc_right from prefetched buf1
         smem_bs.store(b_sc_right_buf1)
-        b_sc_right_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+        b_sc_right_reg_buf0 = smem_bs.load(scale_b_layout)
 
         # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets)
@@ -387,16 +383,14 @@ def a4w4_kernel(
 
         # Wait for next A + B_left tiles (commit group 2)
         gl.amd.cdna4.async_copy.wait_group(2)
-        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
-        )
+        a_next = smemA.index(l_idx).load(dot_a_layout)
+        b_left = smemB_left.index(l_idx).permute([1, 0]).load(dot_b_layout)
 
         # Prepare next a_sc + b_sc_left from prefetched buf3
         smem_as.store(a_sc_buf3)
         smem_bs.store(b_sc_left_buf3)
-        a_sc_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
-        b_sc_left_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+        a_sc_reg_buf2 = smem_as.load(scale_a_layout)
+        b_sc_left_reg_buf2 = smem_bs.load(scale_b_layout)
 
         # AC next B_right tile + GR next b_sc_right scale
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
@@ -427,13 +421,11 @@ def a4w4_kernel(
 
         # Wait for B_right tile
         gl.amd.cdna4.async_copy.wait_group(2)
-        b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-        )
+        b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
 
         # Prepare b_sc_right from prefetched buf3
         smem_bs.store(b_sc_right_buf3)
-        b_sc_right_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+        b_sc_right_reg_buf2 = smem_bs.load(scale_b_layout)
 
         # AC next A + B_left tiles + GR next a_sc + b_sc_left scales
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA.index(g_idx), a_base, a_offsets_next)
@@ -461,16 +453,14 @@ def a4w4_kernel(
 
         # Wait for next A + B_left tiles
         gl.amd.cdna4.async_copy.wait_group(2)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
-        b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-            smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
-        )
+        a = smemA.index(l_idx).load(dot_a_layout)
+        b_left = smemB_left.index(l_idx).permute([1, 0]).load(dot_b_layout)
 
         # Prepare next a_sc + b_sc_left from prefetched buf1
         smem_as.store(a_sc_buf1)
         smem_bs.store(b_sc_left_buf1)
-        a_sc_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
-        b_sc_left_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+        a_sc_reg_buf0 = smem_as.load(scale_a_layout)
+        b_sc_left_reg_buf0 = smem_bs.load(scale_b_layout)
 
         # AC next B_right tile + GR next b_sc_right scale
         gl.amd.cdna4.async_copy.buffer_load_to_shared(
@@ -509,12 +499,10 @@ def a4w4_kernel(
     )
 
     gl.amd.cdna4.async_copy.wait_group(2)
-    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-        smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-    )
+    b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
 
     smem_bs.store(b_sc_right_buf1)
-    b_sc_right_reg_buf0 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+    b_sc_right_reg_buf0 = smem_bs.load(scale_b_layout)
 
     ########################################
     ## Epilogue Region 1
@@ -530,15 +518,13 @@ def a4w4_kernel(
     )
 
     gl.amd.cdna4.async_copy.wait_group(1)
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dot_a_layout)
-    b_left = gl.amd.cdna4.async_copy.load_shared_relaxed(
-        smemB_left.index(l_idx).permute([1, 0]), dot_b_layout
-    )
+    a_next = smemA.index(l_idx).load(dot_a_layout)
+    b_left = smemB_left.index(l_idx).permute([1, 0]).load(dot_b_layout)
 
     smem_as.store(a_sc_buf3)
     smem_bs.store(b_sc_left_buf3)
-    a_sc_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_as, scale_a_layout)
-    b_sc_left_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+    a_sc_reg_buf2 = smem_as.load(scale_a_layout)
+    b_sc_left_reg_buf2 = smem_bs.load(scale_b_layout)
 
     # -- iterMax - 1 --
 
@@ -575,11 +561,9 @@ def a4w4_kernel(
         acc=acc00,
     )
     gl.amd.cdna4.async_copy.wait_group(0)
-    b_right = gl.amd.cdna4.async_copy.load_shared_relaxed(
-        smemB_right.index(g_idx).permute([1, 0]), dot_b_layout
-    )
+    b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
     smem_bs.store(b_sc_right_buf3)
-    b_sc_right_reg_buf2 = gl.amd.cdna4.async_copy.load_shared_relaxed(smem_bs, scale_b_layout)
+    b_sc_right_reg_buf2 = smem_bs.load(scale_b_layout)
 
     ## slice 1 m[64:128]
     a1 = extract_slice(a_next, [64, BLOCK_K // 2], [64, 0])
