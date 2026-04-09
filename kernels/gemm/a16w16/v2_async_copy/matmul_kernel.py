@@ -79,8 +79,8 @@ def v2_async_copy(
         )
         gl.amd.cdna4.async_copy.commit_group()
         gl.amd.cdna4.async_copy.wait_group(0)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA, dotOpLayoutA)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB, dotOpLayoutB)
+        a = smemA.load(dotOpLayoutA)
+        b = smemB.load(dotOpLayoutB)
 
         acc = gl.amd.cdna3.mfma(a, b, acc)
 

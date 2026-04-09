@@ -165,8 +165,8 @@ def v5_local_prefetch(
 
     gl.amd.cdna4.async_copy.wait_group(1)
     l_idx = 0
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
 
     for k in range(0, iterMax - 1):
         ## In loop
@@ -192,8 +192,8 @@ def v5_local_prefetch(
         )
         gl.amd.cdna4.async_copy.commit_group()
 
-        a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-        b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+        a_next = smemA.index(l_idx).load(dotOpLayoutA)
+        b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
         a = a_next
         b = b_next

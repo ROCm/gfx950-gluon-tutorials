@@ -78,8 +78,8 @@ def v3_lds_swizzling(
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB, b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
         gl.amd.cdna4.async_copy.wait_group(0)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA, dotOpLayoutA)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB, dotOpLayoutB)
+        a = smemA.load(dotOpLayoutA)
+        b = smemB.load(dotOpLayoutB)
 
         acc = gl.amd.cdna3.mfma(a, b, acc)
 
@@ -210,8 +210,8 @@ def v3_lds_padding(
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB, b_base, b_offsets)
         gl.amd.cdna4.async_copy.commit_group()
         gl.amd.cdna4.async_copy.wait_group(0)
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA, dotOpLayoutA)
-        b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB, dotOpLayoutB)
+        a = smemA.load(dotOpLayoutA)
+        b = smemB.load(dotOpLayoutB)
 
         acc = gl.amd.cdna3.mfma(a, b, acc)
 
