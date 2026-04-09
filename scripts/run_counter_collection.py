@@ -28,8 +28,9 @@ VERSION_MAP = {
     4: "v4_global_prefetch",
     5: "v5_local_prefetch",
     6: "v6_loop_unroll",
-    7: "v7_slice",
-    8: "v8_beyond_hotloop",
+    7: "v7_sliceN",
+    8: "v8_sliceMN",
+    9: "v9_beyond_hotloop",
 }
 
 CONFIG_ENV = {
