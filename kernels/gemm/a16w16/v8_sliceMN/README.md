@@ -16,10 +16,10 @@ This version applies the same idea to M: slice A into two halves (`a_top`, `a_bo
 
 | Tile | v7 size | v7 regs (prefetch) | v8 size | v8 regs (prefetch) |
 |------|---------|--------------------|---------|--------------------|
-| A | 256×64 (full) | 128 | 128×64 (half-M) | **64** |
-| B | 64×128 (half-N) | 64 | 64×128 (half-N) | 64 |
-| C | 256×256 | 256 | 256×256 | 256 |
-| **Total** | | **448** | | **384** |
+| A | 256x64 (full) | 128 | 128x64 (half-M) | **64** |
+| B | 64x128 (half-N) | 64 | 64x128 (half-N) | 64 |
+| C | 256x256 | 256 | 256x256 | 256 |
+| **Total** | - | **448** | - | **384** |
 
 The 64-register headroom improvement (448 → 384) makes room for auxiliary operations (scales, bias, activation) in fused kernels.
 
@@ -30,9 +30,9 @@ But slicing both M and N changes the pipeline structure fundamentally. Instead o
 
 ## 3. Pipeline Design: Four Regions per K-Step
 
-### 3.1. The 2×2 Tiling
+### 3.1. The 2x2 Tiling
 
-The output tile is split into a 2×2 grid of quadrants:
+The output tile is split into a 2x2 grid of quadrants:
 
 ![Slice MN design](../images/v8_sliceMN_design.png)
 
@@ -45,7 +45,7 @@ acc_tr += DOT(A_top, B_right)   # Region 2
 acc_br += DOT(A_bot, B_right)   # Region 3
 ```
 
-### 3.2. Load Order: B_left → A_top → A_bot → B_right
+### 3.2. Load Order: B_left -> A_top -> A_bot -> B_right
 
 The load order within each K-step is carefully chosen. Each region performs three operations: a DOT (matrix multiply-accumulate), an LR (local read: `ds_read` from LDS to registers), and an AC (async copy: `buffer_load_to_lds` from global memory to LDS):
 
@@ -61,13 +61,13 @@ Where `B_left'` and `A_top'` denote data for the *next* K-step (loaded from the 
 This ordering ensures that:
 - Each operand is loaded just before its first use
 - Each operand's last use completes before its register is overwritten by the next load
-- The load sequence `B_left → A_top → A_bot → B_right` cycles through all four half-tiles
+- The load sequence `B_left -> A_top -> A_bot -> B_right` cycles through all four half-tiles
 
 ### 3.3. Why the Copy Problem Disappears
 
 In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), we identified a fundamental problem: when the LLIR scheduler interleaves `ds_read` with MFMA inside a single iteration, the `ds_read` results must remain live across the MFMAs that follow. The register allocator is forced to place `ds_read` results in *different* registers from those expected by the next iteration's MFMA, requiring copy instructions (`v_accvgpr_mov_b32`) at the iteration boundary. This overhead motivated loop unrolling in v6.
 
-With four regions per K-step, this problem disappears — but only because the **load order** is carefully chosen. Consider how the order `B_left → A_top → A_bot → B_right` maps onto the regions:
+With four regions per K-step, this problem disappears — but only because the **load order** is carefully chosen. Consider how the order `B_left -> A_top -> A_bot -> B_right` maps onto the regions:
 
 - Region 0 consumes `A_top` and `B_left`, then loads `A_bot` (for Region 1)
 - Region 1 consumes `A_bot` and `B_left`, then loads `B_right` (for Region 2)
@@ -105,14 +105,14 @@ This eliminates the per-K-step `a_base += BLOCK_K * stride_ak` update. Instead, 
 Using the formula from [v7](../v7_sliceN/README.md#21-register-usage-analysis):
 
 ```
-registers = (M × N × elemType × sharing_factor) / (num_warps × waveSize)
+registers = (M x N x elemType x sharing_factor) / (num_warps x waveSize)
 ```
 
 | Tile | Size | elemType | sharing_factor | Base | With prefetch |
 |------|------|----------|----------------|------|---------------|
-| A (half-M) | 128×64 | 0.5 | 2 | 32 | 64 (×2) |
-| B (half-N) | 64×128 | 0.5 | 2 | 32 | 64 (×2) |
-| C | 256×256 | 1.0 | 1 | 256 | 256 |
+| A (half-M) | 128x64 | 0.5 | 2 | 32 | 64 (x2) |
+| B (half-N) | 64x128 | 0.5 | 2 | 32 | 64 (x2) |
+| C | 256x256 | 1.0 | 1 | 256 | 256 |
 
 **Total: 64 + 64 + 256 = 384 registers**
 
@@ -153,7 +153,7 @@ Note that `dwordx4` and `dword` have the same efficiency (1 byte/cycle), while `
 
 ### 4.4. Steady-State Issue Latency
 
-Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dwordx4` must wait 64 cycles to be issued — 16 cycles per `buffer_load` × 4 waves sharing the TCP. This 64-cycle interval is the expected steady-state issue latency for the 5th through 11th `buffer_load` from each wave.
+Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dwordx4` must wait 64 cycles to be issued — 16 cycles per `buffer_load` x 4 waves sharing the TCP. This 64-cycle interval is the expected steady-state issue latency for the 5th through 11th `buffer_load` from each wave.
 
 > [!NOTE]
 > This 64-cycle issue latency is what the LLIR scheduler uses as the throughput model: 4 MFMAs (at 16 cycles each) per `buffer_load` in the interleaving schedule.
@@ -168,9 +168,9 @@ Let us trace what happens at large K (e.g., K=16384):
 
 In the trace above (yellow rectangles = `buffer_load_to_lds`), the phases unfold as follows:
 
-**Point A — AC B_right**: Each wave issues 4 `buffer_load_to_lds_dwordx4`. Each instruction requests 1 KB of data (64 lanes × 16 bytes). Assuming the TCP starts empty, all 4 waves together fill 4 × 4 × 1 KB = **16 KB**, well within the 32 KB TCP. The loads issue without delay.
+**Point A — AC B_right**: Each wave issues 4 `buffer_load_to_lds_dwordx4`. Each instruction requests 1 KB of data (64 lanes x 16 bytes). Assuming the TCP starts empty, all 4 waves together fill 4 x 4 x 1 KB = **16 KB**, well within the 32 KB TCP. The loads issue without delay.
 
-**AC A + B_left**: Each wave now issues 12 more `buffer_load_to_lds_dwordx4`. After the first 4 of these (combined with the 4 from point A, that is 8 per wave), all 4 waves have issued 8 × 1 KB × 4 waves = **32 KB total in-flight** — the TCP is full.
+**AC A + B_left**: Each wave now issues 12 more `buffer_load_to_lds_dwordx4`. After the first 4 of these (combined with the 4 from point A, that is 8 per wave), all 4 waves have issued 8 x 1 KB x 4 waves = **32 KB total in-flight** — the TCP is full.
 
 **Point B — TCP full**: The next 3 `buffer_load_to_lds_dwordx4` per wave can still be absorbed by the FIFO queue (~12 entries). Each issues at the 64-cycle steady-state interval as the TCP processes requests. No stall yet.
 
@@ -196,13 +196,13 @@ In v8, each region issues only **4 `buffer_load_to_lds_dwordx4` per wave** (one 
 
 Tracing through the phases for v8:
 
-**Point A — AC B_left**: Each wave issues 4 `buffer_load_to_lds_dwordx4`, interleaved with MFMAs. All 4 waves fill 4 × 4 × 1 KB = 16 KB. No TCP pressure yet.
+**Point A — AC B_left**: Each wave issues 4 `buffer_load_to_lds_dwordx4`, interleaved with MFMAs. All 4 waves fill 4 x 4 x 1 KB = 16 KB. No TCP pressure yet.
 
-**AC A_top**: 4 more per wave. After this region, all 4 waves have issued 8 × 1 KB × 4 waves = **32 KB**. **Point B: TCP full.**
+**AC A_top**: 4 more per wave. After this region, all 4 waves have issued 8 x 1 KB x 4 waves = **32 KB**. **Point B: TCP full.**
 
 **AC A_bot**: 4 more per wave. These go into the FIFO queue (~12 entries, 3 per wave). **Point C: FIFO full.**
 
-**AC B_right**: Each wave tries to issue 4 more `buffer_load_to_lds_dwordx4`. But now ~1500 cycles have elapsed since point A — three full regions of MFMA computation (32 MFMAs × 16 cycles = 512 cycles per region × 3 regions ≈ 1500 cycles). This is long enough to cover even the worst-case HBM latency at large K. The buffer loads issued at point A have finished and retired from the TCP, freeing space for the new requests.
+**AC B_right**: Each wave tries to issue 4 more `buffer_load_to_lds_dwordx4`. But now ~1500 cycles have elapsed since point A — three full regions of MFMA computation (32 MFMAs x 16 cycles = 512 cycles per region x 3 regions ≈ 1500 cycles). This is long enough to cover even the worst-case HBM latency at large K. The buffer loads issued at point A have finished and retired from the TCP, freeing space for the new requests.
 
 > [!IMPORTANT]
 > The key insight: both v7 and v8 interleave buffer loads with MFMAs within each region. The difference is the tiling structure. In v7, the AC for B_right and the AC for A + B_left land in consecutive regions, so 16 buffer loads per wave are issued within ~1000 cycles — not enough for HBM to respond at large K. In v8, the four half-tiles (B_left, A_top, A_bot, B_right) are each loaded in a separate region, spreading the 16 buffer loads across ~1500 cycles of MFMA computation. This gives HBM enough time to retire earlier requests and free TCP space before new ones arrive.

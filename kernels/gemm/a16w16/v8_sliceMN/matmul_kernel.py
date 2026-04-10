@@ -185,21 +185,13 @@ def v8_sliceMN(
     ## Prologue
     ## AC iter 0 --> buffer 0 (base offsets)
     g_idx = 0
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemB_left.index(g_idx), b_base, b_left_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemA_top.index(g_idx), a_base, a_top_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(g_idx), a_base, a_top_offsets)
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemA_bot.index(g_idx), a_base, a_bot_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(g_idx), a_base, a_bot_offsets)
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(
-        smemB_right.index(g_idx), b_base, b_right_offsets
-    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
     gl.amd.cdna4.async_copy.commit_group()
 
     ## AC iter 1 --> buffer 1 (_next offsets)
@@ -247,9 +239,7 @@ def v8_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(0).load(dotOpLayoutA)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_left.index(0), b_base, b_left_offsets
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -260,9 +250,7 @@ def v8_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(0).load(dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA_top.index(0), a_base, a_top_offsets
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(0), a_base, a_top_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -273,9 +261,7 @@ def v8_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(1).load(dotOpLayoutB)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemA_bot.index(0), a_base, a_bot_offsets
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(0), a_base, a_bot_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ########################################
@@ -286,9 +272,7 @@ def v8_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(1).load(dotOpLayoutA)
 
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(
-            smemB_right.index(0), b_base, b_right_offsets
-        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
         gl.amd.cdna4.async_copy.commit_group()
 
         ## =============================================================
@@ -399,7 +383,6 @@ def v8_sliceMN(
     c_tl = acc_tl.to(a_ptr.dtype.element_ty)
     c_tl = gl.convert_layout(c_tl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
-
 
     acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
     c_tr = acc_tr.to(a_ptr.dtype.element_ty)
