@@ -14,19 +14,19 @@ In v7, we sliced the output tile along N to reduce B's register footprint from 1
 
 This version applies the same idea to M: slice A into two halves (`a_top`, `a_bot`), reducing A's register footprint from 128 to 64. Combined with v7's N-slicing of B, the block-level total drops further:
 
-| Tile | Size | With prefetch (v7) | With prefetch (v8) |
-|------|------|--------------------|--------------------|
-| A | 128×64 (half-M) | 128 | **64** |
-| B | 64×128 (half-N) | 64 | 64 |
-| C | 256×256 | 256 | 256 |
-| **Total** | | **448** | **384** |
+| Tile | v7 size | v7 regs (prefetch) | v8 size | v8 regs (prefetch) |
+|------|---------|--------------------|---------|--------------------|
+| A | 256×64 (full) | 128 | 128×64 (half-M) | **64** |
+| B | 64×128 (half-N) | 64 | 64×128 (half-N) | 64 |
+| C | 256×256 | 256 | 256×256 | 256 |
+| **Total** | | **448** | | **384** |
 
 The 64-register headroom improvement (448 → 384) makes room for auxiliary operations (scales, bias, activation) in fused kernels.
 
 But slicing both M and N changes the pipeline structure fundamentally. Instead of two regions per K-step (v7: left half, right half), we now have four regions (tl, bl, tr, br). This restructuring has two important consequences explored in this version:
 
 1. **The copy problem from v5 is eliminated by design** (Section 3)
-2. **Buffer load throughput limitations become visible** (Section 4)
+2. **A buffer load stall in v7 at large K is resolved** (Section 4)
 
 ## 3. Pipeline Design: Four Regions per K-Step
 
@@ -36,27 +36,27 @@ The output tile is split into a 2×2 grid of quadrants:
 
 ![Slice MN design](../images/v8_sliceMN_design.png)
 
-A is sliced along M into `a_top` (upper 128 rows) and `a_bot` (lower 128 rows). B is sliced along N into `b_left` (left 128 columns) and `b_right` (right 128 columns). Each K-step computes four DOTs:
+A is sliced along M into `A_top` (upper 128 rows) and `A_bot` (lower 128 rows). B is sliced along N into `B_left` (left 128 columns) and `B_right` (right 128 columns). Each K-step computes four DOTs:
 
 ```
-acc_tl += DOT(a_top, b_left)    # Region 0
-acc_bl += DOT(a_bot, b_left)    # Region 1
-acc_tr += DOT(a_top, b_right)   # Region 2
-acc_br += DOT(a_bot, b_right)   # Region 3
+acc_tl += DOT(A_top, B_left)    # Region 0
+acc_bl += DOT(A_bot, B_left)    # Region 1
+acc_tr += DOT(A_top, B_right)   # Region 2
+acc_br += DOT(A_bot, B_right)   # Region 3
 ```
 
 ### 3.2. Load Order: B_left → A_top → A_bot → B_right
 
-The load order within each K-step is carefully chosen:
+The load order within each K-step is carefully chosen. Each region performs three operations: a DOT (matrix multiply-accumulate), an LR (local read: `ds_read` from LDS to registers), and an AC (async copy: `buffer_load_to_lds` from global memory to LDS):
 
 ```
-Region 0:  MFMA(a_top, b_left)  →  LR a_bot     →  AC B_left
-Region 1:  MFMA(a_bot, b_left)  →  LR b_right   →  AC A_top
-Region 2:  MFMA(a_top, b_right) →  LR b_left'   →  AC A_bot
-Region 3:  MFMA(a_bot, b_right) →  LR a_top'     →  AC B_right
+Region 0:  DOT(A_top, B_left)  →  LR A_bot     →  AC B_left
+Region 1:  DOT(A_bot, B_left)  →  LR B_right   →  AC A_top
+Region 2:  DOT(A_top, B_right) →  LR B_left'   →  AC A_bot
+Region 3:  DOT(A_bot, B_right) →  LR A_top'    →  AC B_right
 ```
 
-Where `b_left'` and `a_top'` denote data for the *next* K-step (loaded from the other LDS buffer).
+Where `B_left'` and `A_top'` denote data for the *next* K-step (loaded from the other LDS buffer).
 
 This ordering ensures that:
 - Each operand is loaded just before its first use
@@ -69,16 +69,16 @@ In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), w
 
 With four regions per K-step, this problem disappears — but only because the **load order** is carefully chosen. Consider how the order `B_left → A_top → A_bot → B_right` maps onto the regions:
 
-- Region 0 consumes `a_top` and `b_left`, then loads `a_bot` (for Region 1)
-- Region 1 consumes `a_bot` and `b_left`, then loads `b_right` (for Region 2)
-- Region 2 consumes `a_top` and `b_right`, then loads `b_left'` (for next iter Region 0)
-- Region 3 consumes `a_bot` and `b_right`, then loads `a_top'` (for next iter Region 0)
+- Region 0 consumes `A_top` and `B_left`, then loads `A_bot` (for Region 1)
+- Region 1 consumes `A_bot` and `B_left`, then loads `B_right` (for Region 2)
+- Region 2 consumes `A_top` and `B_right`, then loads `B_left'` (for next iter Region 0)
+- Region 3 consumes `A_bot` and `B_right`, then loads `A_top'` (for next iter Region 0)
 
-Take `a_top` as an example: it is loaded in Region 3 of iteration k (`LR a_top'` from the next buffer) and first consumed in Region 0 of iteration k+1. Between the load and the first use, only Region 3's MFMA (`DOT(a_bot, b_right)`) executes — and that MFMA uses `a_bot`, not `a_top`. So `a_top`'s register is free to be written by the `ds_read` without conflicting with any live MFMA operand.
+Take `A_top` as an example: it is loaded in Region 3 of iteration k (`LR A_top'` from the next buffer) and first consumed in Region 0 of iteration k+1. Between the load and the first use, only Region 3's DOT (`DOT(A_bot, B_right)`) executes — and that DOT uses `A_bot`, not `A_top`. So `A_top`'s register is free to be written by the `ds_read` without conflicting with any live DOT operand.
 
-The same holds for all four operands: each is loaded in one region and first consumed in the next, with no overlapping live ranges across the boundary. The register allocator can assign the same physical registers to `ds_read` destinations and MFMA inputs — no copies needed, no unrolling required for this purpose.
+The same holds for all four operands: each is loaded in one region and first consumed in the next, with no overlapping live ranges across the boundary. The register allocator can assign the same physical registers to `ds_read` destinations and DOT inputs — no copies needed, no unrolling required for this purpose.
 
-This property depends on the load order. A different order — say, loading `a_top` in Region 0 instead of Region 3 — would force `a_top` to remain live across Regions 1–3 of the next iteration, recreating the overlap problem.
+This property depends on the load order. A different order — say, loading `A_top` in Region 0 instead of Region 3 — would force `A_top` to remain live across Regions 1–3 of the next iteration, recreating the overlap problem.
 
 > [!IMPORTANT]
 > The four-region structure naturally separates load and use across region boundaries, eliminating the copy overhead that v5 suffered. This is a structural advantage of slicing both M and N — register sets alternate within a single iteration, without explicit loop unrolling.
@@ -160,7 +160,7 @@ Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dw
 
 ### 4.5. The v7 Stall Problem at Large K
 
-In v7, two consecutive regions issue async_copy (AC) for different tiles: Region 0 issues AC for B_right (4 loads per wave), and Region 1 issues AC for A + B_left (12 loads per wave — 8 for the full A tile and 4 for B_left). That is **16 `buffer_load_to_lds_dwordx4` per wave across consecutive regions**.
+In v7, two consecutive regions issue AC for different tiles: Region 0 issues AC for B_right (4 loads per wave), and Region 1 issues AC for A + B_left (12 loads per wave — 8 for the full A tile and 4 for B_left). That is **16 `buffer_load_to_lds_dwordx4` per wave across consecutive regions**.
 
 Let us trace what happens at large K (e.g., K=16384):
 
