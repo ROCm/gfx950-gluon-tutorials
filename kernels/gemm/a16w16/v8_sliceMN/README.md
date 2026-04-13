@@ -47,7 +47,11 @@ acc_br += DOT(A_bot, B_right)   # Region 3
 
 ### 3.2. Load Order: B_left -> A_top -> A_bot -> B_right
 
-The load order within each K-step is carefully chosen. Each region performs three operations: a DOT (matrix multiply-accumulate), an LR (local read: `ds_read` from LDS to registers), and an AC (async copy: `buffer_load_to_lds` from global memory to LDS):
+The load order within each K-step is carefully chosen. Each region performs three operations:
+
+- **DOT**: matrix multiply-accumulate (expands to multiple MFMA instructions)
+- **LR**: local read (`ds_read` from LDS to registers)
+- **AC**: async copy (`buffer_load_to_lds` from global memory to LDS)
 
 ```
 Region 0:  DOT(A_top, B_left)  →  LR A_bot     →  AC B_left
@@ -72,7 +76,7 @@ With four regions per K-step, this problem disappears — but only because the *
 - Region 0 consumes `A_top` and `B_left`, then loads `A_bot` (for Region 1)
 - Region 1 consumes `A_bot` and `B_left`, then loads `B_right` (for Region 2)
 - Region 2 consumes `A_top` and `B_right`, then loads `B_left'` (for next iter Region 0)
-- Region 3 consumes `A_bot` and `B_right`, then loads `A_top'` (for next iter Region 0)
+- Region 3 consumes `A_bot` and `B_right`, then loads `A_top'` (for next iter Regions 0 and 2)
 
 Take `A_top` as an example: it is loaded in Region 3 of iteration k (`LR A_top'` from the next buffer) and first consumed in Region 0 of iteration k+1. Between the load and the first use, only Region 3's DOT (`DOT(A_bot, B_right)`) executes — and that DOT uses `A_bot`, not `A_top`. So `A_top`'s register is free to be written by the `ds_read` without conflicting with any live DOT operand.
 
@@ -164,7 +168,7 @@ Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dw
 
 ### 4.5. The v7 Stall Problem at Large K
 
-In v7, two consecutive regions issue AC for different tiles: Region 0 issues AC for B_right (4 loads per wave), and Region 1 issues AC for A + B_left (12 loads per wave — 8 for the full A tile and 4 for B_left). That is **16 `buffer_load_to_lds_dwordx4` per wave across consecutive regions**.
+In v7's loop structure, two consecutive regions issue AC for different tiles: one region issues AC for B_right (4 loads per wave), and the next issues AC for A + B_left (12 loads per wave — 8 for the full A tile and 4 for B_left). That is **16 `buffer_load_to_lds_dwordx4` per wave across consecutive regions**.
 
 Let us trace what happens at large K (e.g., K=16384):
 
@@ -187,7 +191,8 @@ In the trace above (yellow rectangles = `buffer_load_to_lds`), the phases unfold
 - If the HBM round-trip completes in less than ~1000 cycles → no stall, the retired entry frees TCP space in time
 - If the HBM round-trip takes longer than ~1000 cycles → **stall**, as visible in the trace
 
-**Why does HBM latency increase at large K?** The `buffer_load` round-trip time is not a fixed constant — it depends on L2 cache hit rate and HBM contention. At small K (e.g., K=8192), the working set per XCD fits reasonably in L2, and many requests are serviced from L2 rather than HBM. At large K (e.g., K=16384), each workgroup iterates over more K-tiles, increasing the total data footprint. With 256 CUs all streaming through larger regions of the A and B matrices, L2 capacity is exceeded and the miss rate rises. L2 misses must be serviced from HBM (or MALL), which has much higher latency. This pushes the effective `buffer_load` round-trip time beyond the ~1000-cycle budget, triggering the stall.
+> [!NOTE]
+> **Why does HBM latency increase at large K?** The `buffer_load` round-trip time is not a fixed constant — it depends on L2 cache hit rate and HBM contention. At small K (e.g., K=8192), the working set per XCD fits reasonably in L2, and many requests are serviced from L2 rather than HBM. At large K (e.g., K=16384), each workgroup iterates over more K-tiles, increasing the total data footprint. With 256 CUs all streaming through larger regions of the A and B matrices, L2 capacity is exceeded and the miss rate rises. L2 misses must be serviced from HBM (or MALL), which has much higher latency. This pushes the effective `buffer_load` round-trip time beyond the ~1000-cycle budget, triggering the stall.
 
 > [!IMPORTANT]
 > The `s_waitcnt vmcnt(N)` instruction waits for HBM responses, which is a *different* latency from the TCP issue latency. A `buffer_load` can be "issued" (accepted by the TCP) long before the data arrives from HBM. The vmcnt tracks HBM completions; the TCP queue capacity governs issue rate.
