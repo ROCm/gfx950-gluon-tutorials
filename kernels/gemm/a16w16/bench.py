@@ -12,8 +12,9 @@ VERSION_MAP = {
     4: "v4_global_prefetch",
     5: "v5_local_prefetch",
     6: "v6_loop_unroll",
-    7: "v7_slice",
-    8: "v8_beyond_hotloop",
+    7: "v7_sliceN",
+    8: "v8_sliceMN",
+    9: "v9_beyond_hotloop",
 }
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
@@ -83,7 +84,7 @@ def parse_args():
         "--version",
         type=int,
         default=8,
-        choices=range(0, 9),
+        choices=range(0, 10),
         help="Kernel version to benchmark (default: 8)",
     )
     parser.add_argument(

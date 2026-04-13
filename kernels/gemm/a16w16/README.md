@@ -22,8 +22,9 @@ a16w16/
 ├── v4_global_prefetch/   # 2-stage pipeline with double buffering
 ├── v5_local_prefetch/    # 3-stage pipeline with local prefetch
 ├── v6_loop_unroll/       # Loop unrolling to eliminate copy overhead
-├── v7_slice/             # N-slicing for register pressure reduction
-└── v8_beyond_hotloop/    # L2 cache locality and interleaved epilogue
+├── v7_sliceN/            # N-slicing for register pressure reduction
+├── v8_sliceMN/           # M+N slicing, buffer load throughput analysis
+└── v9_beyond_hotloop/    # L2 cache locality and interleaved epilogue
 ```
 
 ## 2. How to Run
@@ -31,26 +32,12 @@ a16w16/
 From the `a16w16` directory:
 
 ```bash
-python bench.py --version 8 --K 8192 --dtype fp16 --use-rocprof
+python bench.py --version 9 --K 8192 --dtype fp16 --use-rocprof
 ```
 
-This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--version` to select a kernel version (0–8) and `--use-rocprof` for accurate performance measurement.
+This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--version` to select a kernel version (0–9) and `--use-rocprof` for accurate performance measurement.
 
-## 3. Optimization Philosophy
-
-Writing a Gluon kernel is only the starting point. Real performance comes from:
-
-- **Codegen quality** — instruction selection, register pressure
-- **Latency hiding** — overlapping memory and compute via pipelining
-- **Instruction scheduling** — MFMA utilization inside the hot loop
-- **Power efficiency** — L2 cache locality, stable power draw
-
-Every intermediate kernel version is preserved so readers can see *what changed*, *why it matters*, and *how it affects hardware execution*.
-
-> [!NOTE]
-> A key theme throughout: **think at the block level, not the instruction level**. Gluon kernels are designed at tensor granularity; fine-grained scheduling belongs in the backend.
-
-## 4. The Optimization Journey
+## 3. The Optimization Journey
 
 This section tells the story of how we transformed a 524 TFLOPS naive kernel into a 1634 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
 
@@ -63,8 +50,9 @@ This section tells the story of how we transformed a 524 TFLOPS naive kernel int
 | v4 | global_prefetch | Latency hiding | 2-stage pipeline, double buffering |
 | v5 | local_prefetch | Latency hiding | 3-stage pipeline, LLIR scheduler introduction |
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
-| v7 | slice | Register pressure | N-slicing, register allocation workarounds |
-| v8 | beyond_hotloop | Power efficiency, epilogue | XCD-aware PID remapping, interleaved epilogue |
+| v7 | sliceN | Register pressure | N-slicing, register allocation workarounds |
+| v8 | sliceMN | Register pressure, throughput | M+N slicing, buffer load TCP stall analysis |
+| v9 | beyond_hotloop | Power efficiency, epilogue | XCD-aware PID remapping, interleaved epilogue |
 
 ### Act I: Getting the Basics Right (v0–v3)
 
@@ -84,7 +72,7 @@ This section tells the story of how we transformed a 524 TFLOPS naive kernel int
 
 Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler operating at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With LLIR scheduling, MFMA efficiency jumps from 59% to 76%.
 
-### Act III: Taming the Hardware (v6–v7)
+### Act III: Taming the Hardware (v6–v8)
 
 **v6 — Loop Unrolling and Power Surprises.** The trace reveals copy instructions at iteration boundaries—moving data between register sets for prefetch. The fix: unroll by 2, alternating register sets naturally. Copies eliminated, MFMA efficiency reaches 88%.
 
@@ -94,9 +82,11 @@ But something strange appears: VALU instructions taking 40–80 cycles instead o
 
 We slice along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448. But the compiler still doesn't allocate optimally, so we add RA flags and **amdgcnas**—an assembly post-processor that applies peephole optimizations. The result: **98% MFMA efficiency**. The hot loop is essentially perfect.
 
-### Act IV: Beyond the Loop (v8)
+**v8 — Slicing Both Dimensions.** v7 sliced only N. v8 also slices M, splitting A into two 128-row halves. Register pressure drops further to 384, and each K-step now has four regions instead of two. This restructuring has two benefits: the **copy problem from v5 disappears** naturally (the four-region load order eliminates overlapping live ranges without unrolling), and a **buffer load stall at large K is resolved** (v7 clustered 16 buffer loads in ~1000 cycles; v8 distributes them across ~1500 cycles of MFMA, giving HBM enough time to respond even under high contention).
 
-**v8 — Two Problems Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop: in **L2 cache locality** and **epilogue design**.
+### Act IV: Beyond the Loop (v9)
+
+**v9 — Two Problems Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop: in **L2 cache locality** and **epilogue design**.
 
 **The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**.
 
@@ -111,20 +101,7 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 > [!IMPORTANT]
 > **The Moral:** Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
 
-## 5. Tools and Infrastructure
-
-This tutorial relies on several tools:
-
-- **[LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves)**: Instruction-level scheduling at LLVM IR level (`TRITON_ENABLE_LLIR_SCHED=1`)
-- **[amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves)**: Assembly post-processor for peephole optimizations (`TRITON_ENABLE_AMDGCN_AS=1`)
-- **[extract_slice](https://github.com/ROCm/triton/tree/matmul_4waves)**: Sub-tile accumulator slicing for interleaved epilogue (v8)
-- **Layout plotting tool**: Visualize blocked, MFMA, and LDS layouts
-- **run_perf_table.py**: Automated performance collection across versions
-- **run_counter_collection.py**: Hardware counter collection for cache analysis
-
-See [scripts/README.md](../../../scripts/README.md) for usage details.
-
-## 6. Beyond FP16
+## 4. Beyond FP16
 
 Although this directory focuses on **FP16 compute-bound GEMM**, the same optimization strategy applies to other data types. After completing this tutorial, the recommended next steps are:
 
@@ -137,7 +114,7 @@ Although this directory focuses on **FP16 compute-bound GEMM**, the same optimiz
 | FP8       | 256×256×128 | Same design, larger BLOCK_K, 32-cycle MFMA |
 | MXFP4     | 256×256×256 | Adds scale pipeline (GR → LW → LR), 16-cycle MFMA |
 
-## 7. How to Read This
+## 5. How to Read This
 
 Recommended order:
 
@@ -146,7 +123,7 @@ Recommended order:
 3. Use thread traces and layout visualizations to build intuition
 4. Pay attention to bottleneck analysis sections—they motivate the next version
 
-If you only want the fastest kernel, jump to v8 with `llirSched + amdgcnas`. If you want to understand **why** it is fast, start from the beginning.
+If you only want the fastest kernel, jump to v9 with `llirSched + amdgcnas`. If you want to understand **why** it is fast, start from the beginning.
 
 > [!TIP]
 > Each README follows a consistent structure: Motivation → Design → Performance Analysis → What Comes Next. This progression builds understanding incrementally.

@@ -5,7 +5,7 @@ from triton.experimental.gluon import language as gl
 
 
 @gluon.jit
-def v7_slice(
+def v7_sliceN(
     a_ptr,
     b_ptr,
     c_ptr,
@@ -339,7 +339,7 @@ def matmul(a, b, c=None):
         c = torch.empty((M, N), device=a.device, dtype=a.dtype)
     GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
     grid = (GRID_MN, 1)
-    v7_slice[grid](
+    v7_sliceN[grid](
         a,
         b,
         c,  #
