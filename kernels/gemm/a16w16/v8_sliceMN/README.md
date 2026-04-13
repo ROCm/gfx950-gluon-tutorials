@@ -120,7 +120,9 @@ Compared to v7's 448, this is 64 fewer registers — headroom that accommodates 
 
 ## 4. Buffer Load Throughput and TCP Limitations
 
-Before examining v8's performance, we need to understand a throughput limitation that affects v7 at large K values. This section explains the hardware mechanism and how v8's four-region structure resolves it.
+This section explains a throughput limitation that affects v7 at large K values and how v8's four-region structure resolves it.
+
+The central concept is the **TCP (Texture Cache Per-CU)** — a 32 KB L1 cache that all memory requests must pass through. The TCP limits how many bytes can be in flight per CU at any given time, and this limit governs whether `buffer_load` instructions stall waiting for earlier requests to complete. For a comprehensive treatment of how TCP capacity interacts with pipeline depth, occupancy, and HBM latency, see the [Memory Bandwidth Model](../../../../docs/memory_bandwidth_model.md).
 
 ### 4.1. Memory Hierarchy
 
@@ -131,7 +133,7 @@ HBM → L2 → TCP (L1) → LDS
                     └→ CU (for regular buffer_load)
 ```
 
-Both `buffer_load` and `buffer_load_to_lds` share the **TCP (Texture Cache Per-CU)**, which is 32 KB. This means direct-to-LDS has the same throughput constraints as regular buffer loads regarding TCP capacity.
+Both `buffer_load` and `buffer_load_to_lds` share the TCP, which is 32 KB. This means direct-to-LDS has the same throughput constraints as regular buffer loads regarding TCP capacity.
 
 ### 4.2. The VMEM Request Queue
 
@@ -148,6 +150,8 @@ The TCP processing time depends on the instruction width:
 | `buffer_load(_to_lds)_dwordx4` | 16 cycles | 16 bytes / 16 cycles |
 | `buffer_load(_to_lds)_dword` | 4 cycles | 4 bytes / 4 cycles |
 | `buffer_load(_to_lds)_dwordx2` | 16 cycles | 8 bytes / 16 cycles (inefficient) |
+
+These processing times assume coalesced addresses (threads access contiguous memory). Non-coalesced accesses take longer because the TCP must service multiple cache lines per request.
 
 Note that `dwordx4` and `dword` have the same efficiency (1 byte/cycle), while `dwordx2` is half as efficient.
 
@@ -183,7 +187,7 @@ In the trace above (yellow rectangles = `buffer_load_to_lds`), the phases unfold
 - If the HBM round-trip completes in less than ~1000 cycles → no stall, the retired entry frees TCP space in time
 - If the HBM round-trip takes longer than ~1000 cycles → **stall**, as visible in the trace
 
-At large K values, increased L2/HBM contention pushes HBM latency beyond this threshold, triggering the stall.
+**Why does HBM latency increase at large K?** The `buffer_load` round-trip time is not a fixed constant — it depends on L2 cache hit rate and HBM contention. At small K (e.g., K=8192), the working set per XCD fits reasonably in L2, and many requests are serviced from L2 rather than HBM. At large K (e.g., K=16384), each workgroup iterates over more K-tiles, increasing the total data footprint. With 256 CUs all streaming through larger regions of the A and B matrices, L2 capacity is exceeded and the miss rate rises. L2 misses must be serviced from HBM (or MALL), which has much higher latency. This pushes the effective `buffer_load` round-trip time beyond the ~1000-cycle budget, triggering the stall.
 
 > [!IMPORTANT]
 > The `s_waitcnt vmcnt(N)` instruction waits for HBM responses, which is a *different* latency from the TCP issue latency. A `buffer_load` can be "issued" (accepted by the TCP) long before the data arrives from HBM. The vmcnt tracks HBM completions; the TCP queue capacity governs issue rate.
