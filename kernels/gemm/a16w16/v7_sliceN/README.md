@@ -1,9 +1,9 @@
-# v7_slice — Reducing Register Pressure via N-Slicing
+# v7_sliceN — Reducing Register Pressure via N-Slicing
 
 ## 1. Directory Structure
 
 ```
-v7_slice/
+v7_sliceN/
 ├── matmul_kernel.py                        # The kernel implementation
 ├── README.md                               # This file
 ├── ir_dump_K8192_fp16/                     # IR dumps for analysis
@@ -192,7 +192,7 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 ### 4.2. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
 
-The v7_slice kernel is designed to reduce register pressure via N-slicing. However, the assembly reveals that v7 consumes *more* registers (512 vs 500) and executes *more* copy instructions per iteration (116 vs 51). This indicates the backend register allocator failed to find an optimal assignment for v7_slice — the allocation strategy introduces overhead despite the kernel design requiring fewer registers.
+The v7_sliceN kernel is designed to reduce register pressure via N-slicing. However, the assembly reveals that v7 consumes *more* registers (512 vs 500) and executes *more* copy instructions per iteration (116 vs 51). This indicates the backend register allocator failed to find an optimal assignment for v7_sliceN — the allocation strategy introduces overhead despite the kernel design requiring fewer registers.
 
 The LLIR scheduler addresses instruction scheduling based on Gluon kernel structure. A similar mechanism is needed for register allocation.
 
@@ -233,4 +233,4 @@ The trace below shows tightly packed MFMA instructions with minimal gaps between
 
 ## 5. What Comes Next
 
-With 98% MFMA efficiency, the main loop is essentially complete. In `v8_beyond_hotloop`, we shift focus to optimizations outside the loop — prologue, epilogue, and other regions that now dominate the remaining overhead.
+With 98% MFMA efficiency, the hot loop of this design is effectively tight. In [`v8_sliceMN`](../v8_sliceMN/README.md), we push slicing further by also splitting A along M — reducing peak register pressure and resolving buffer-load throughput stalls at large K. Then [`v9_beyond_hotloop`](../v9_beyond_hotloop/README.md) shifts focus outside the loop, to L2 cache locality and epilogue store contention.

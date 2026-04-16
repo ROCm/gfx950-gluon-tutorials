@@ -1,9 +1,9 @@
-# v8_beyond_hotloop — Optimizations Beyond the Hot Loop
+# v9_beyond_hotloop — Optimizations Beyond the Hot Loop
 
 ## 1. Directory Structure
 
 ```
-v8_beyond_hotloop/
+v9_beyond_hotloop/
 ├── matmul_kernel.py                        # The kernel implementation
 ├── README.md                               # This file
 ├── ir_dump_K8192_fp16/                     # IR dumps for analysis

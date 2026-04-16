@@ -1,6 +1,8 @@
 # MXFP4 GEMM Kernel (a4w4)
 
-This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). It builds on the design principles from the [a16w16/](../a16w16/) tutorial and [a8w8/](../a8w8/) kernel, with additional complexity from per-group scaling and the microscaling (MX) data format. If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, and the LLIR scheduler.
+This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). The **tile pipeline** is unchanged from [a16w16](../a16w16/) and [a8w8](../a8w8/) — same double-buffered async copy, 3-stage pipeline, N-slicing, loop unrolling by 2, LLIR scheduler, and amdgcnas. What's new is a **separate scale pipeline**: per-group 8-bit scales require a GR → LW → LR round-trip through LDS for layout conversion, with its own register buffering and scheduling considerations.
+
+If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, the LLIR scheduler, and amdgcnas.
 
 ## 1. Directory Structure
 
@@ -112,7 +114,7 @@ The LDS round-trip exists because the two register layouts are fundamentally dif
 
 <br clear="right">
 
-The tiling design is the same as the [a8w8](../a8w8/) and [a16w16 v8](../a16w16/v8_beyond_hotloop/) kernels: the B matrix is split along N into left and right halves (B_l, B_r), and A is shared across both. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right). For scales, we apply the same slicing — B_sc is split into B_sc_l and B_sc_r, while A_sc is shared.
+The tiling design is the same as the [a8w8](../a8w8/) and [a16w16 v9](../a16w16/v9_beyond_hotloop/) kernels: the B matrix is split along N into left and right halves (B_l, B_r), and A is shared across both. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right). For scales, we apply the same slicing — B_sc is split into B_sc_l and B_sc_r, while A_sc is shared.
 
 ### 3.1 3-stage pipeline
 
@@ -128,7 +130,7 @@ Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`
 
 ### 3.2 Detailed pipeline
 
-The pipeline design for tiles is exactly the same as the [a16w16 v8](../a16w16/v8_beyond_hotloop/) and [a8w8](../a8w8/) kernels — double-buffered async copy with loop unrolling by 2. This section focuses on the pipeline design for **scales**, which is the new element in the MXFP4 kernel.
+The pipeline design for tiles is exactly the same as the [a16w16 v9](../a16w16/v9_beyond_hotloop/) and [a8w8](../a8w8/) kernels — double-buffered async copy with loop unrolling by 2. This section focuses on the pipeline design for **scales**, which is the new element in the MXFP4 kernel.
 
 The kernel uses loop unrolling by 2 with 4 regions per unrolled iteration:
 

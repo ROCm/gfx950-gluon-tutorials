@@ -109,7 +109,7 @@ python scripts/run_counter_collection.py --counters TCC_EA0_RDREQ_DRAM_sum,TCP_T
 Collect L2 cache and TCP read counters for v7 and v8:
 
 ```bash
-python scripts/run_counter_collection.py --versions 7 8 --configs base \
+python scripts/run_counter_collection.py --versions 7 9 --configs base \
     --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum --K 4096 --dtype fp16
 ```
 
@@ -119,8 +119,8 @@ python scripts/run_counter_collection.py --versions 7 8 --configs base \
 Config: base
 | Version              | TCC_EA0_RDREQ_DRAM_sum       | TCP_TCC_READ_REQ_sum         | Dispatches |
 |----------------------|------------------------------|------------------------------|------------|
-| v7_slice             |                    2,361,080 |                    8,388,608 |      1,002 |
-| v8_beyond_hotloop    |                    1,574,656 |                    8,388,608 |      1,002 |
+| v7_sliceN            |                    2,361,080 |                    8,388,608 |      1,002 |
+| v9_beyond_hotloop    |                    1,574,656 |                    8,388,608 |      1,002 |
 ```
 
 ## run_att.py

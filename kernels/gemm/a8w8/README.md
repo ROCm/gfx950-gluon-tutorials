@@ -1,6 +1,6 @@
 # BF8 GEMM Kernel (a8w8)
 
-This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. Only the final optimized version is provided. If you haven't completed the a16w16 journey (v0–v8), start there first — this kernel assumes familiarity with all techniques introduced in that series.
+This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. Only the final optimized version is provided. If you haven't completed the a16w16 journey (v0–v9), start there first — this kernel assumes familiarity with all techniques introduced in that series.
 
 After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel, which builds on the same design with additional complexity from per-group scaling.
 
@@ -15,7 +15,7 @@ a8w8/
 
 ## 2. Key Differences from FP16
 
-The BF8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloop`, with parameters adjusted to match BF8 MFMA instruction characteristics.
+The BF8 kernel uses the same optimization techniques as `a16w16/v9_beyond_hotloop`, with parameters adjusted to match BF8 MFMA instruction characteristics.
 
 | Aspect | FP16 (a16w16) | BF8 (a8w8) |
 |--------|---------------|------------|
@@ -28,7 +28,9 @@ The BF8 kernel uses the same optimization techniques as `a16w16/v8_beyond_hotloo
 
 ### 2.1 Why Larger BLOCK_K?
 
-BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same number of MFMA instructions per iteration, BLOCK_K doubles from 64 to 128.
+BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same total MFMA compute time per iteration, BLOCK_K doubles from 64 to 128.
+
+Each BF8 MFMA also takes 32 cycles to execute (vs. 16 for FP16), so pipelining works on a coarser grain: the LLIR scheduler interleaves half as many MFMAs between each memory operation (2 MFMAs per `buffer_load` instead of 4, 2 per `ds_read` instead of 4). `BLOCK_K=128` ensures each iteration still has enough MFMA work to fully hide memory latency behind compute.
 
 ### 2.2 Scaled MFMA
 
@@ -113,8 +115,8 @@ This kernel incorporates all optimizations from the a16w16 tutorial series:
 - **Interleaved epilogue** — Overlaps final MFMA with stores using `extract_slice`
 
 For detailed explanations of these techniques, refer to the corresponding versions in `a16w16/`:
-- XCD remapping and workgroup swizzling: [v8_beyond_hotloop](../a16w16/v8_beyond_hotloop/README.md)
-- N-slicing: [v7_slice](../a16w16/v7_slice/README.md)
+- XCD remapping and workgroup swizzling: [v9_beyond_hotloop](../a16w16/v9_beyond_hotloop/README.md)
+- N-slicing: [v7_sliceN](../a16w16/v7_sliceN/README.md)
 - Loop unrolling: [v6_loop_unroll](../a16w16/v6_loop_unroll/README.md)
 - Local prefetch: [v5_local_prefetch](../a16w16/v5_local_prefetch/README.md)
 - Global prefetch: [v4_global_prefetch](../a16w16/v4_global_prefetch/README.md)

@@ -142,6 +142,9 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 The 3-stage pipeline provides a modest improvement in the baseline case (57% → 59%). However, when combined with the LLIR scheduler, MFMA efficiency increases to 76%.
 
+> [!NOTE]
+> **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward.
+
 Performance is collected using:
 ```bash
 python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --use-rocprof

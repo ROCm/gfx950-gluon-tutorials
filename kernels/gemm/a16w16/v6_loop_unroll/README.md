@@ -136,7 +136,7 @@ When power consumption changes rapidly, the power delivery network cannot respon
 
 In the trace, a long period of low-power instructions (scalar operations, waits) across the iteration boundary is followed by a burst of high-power VALU and MFMA instructions. PIT detects this transition and inserts stalls to prevent a voltage droop.
 
-**Solution**: Increase MFMA efficiency to maintain stable power draw. Keeping the MFMA unit continuously busy avoids the power fluctuations that trigger PIT stalls.
+**Solution**: Increase MFMA efficiency to maintain stable power draw. Keeping the MFMA unit continuously busy keeps current draw steady, so there is no voltage droop for DIDT to throttle on and no upcoming power spike for PIT to preempt. Both mechanisms stay dormant when the workload already looks smooth to the power delivery network.
 
 #### 4.2.2. AGPR ↔ VGPR Copies
 
