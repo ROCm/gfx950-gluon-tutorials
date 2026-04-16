@@ -25,14 +25,14 @@ Gluon is a **block-level** programming model. Kernels operate on tiles and expre
 
 ## 3. What is left for the compiler
 
-Moving dependencies and register budgets to the kernel level does not eliminate the compiler — it narrows its job. The block-level kernel still has to be lowered to thread-level instructions without breaking the invariants the author engineered. In fact, this is the only reason we still need a compiler in the Gluon flow: to bridge the gap between block-level design and thread-level codegen.
+Moving dependencies and register budgets to the kernel level does not eliminate the compiler — it narrows the *discovery-driven* part of its job. The block-level kernel still has to be lowered to thread-level instructions without breaking the invariants the author engineered, and that lowering is what Gluon distinctively asks of a compiler. Everything else a compiler normally does — instruction selection, scalar register management, ABI handling, address arithmetic — continues unchanged; what's different is that scheduling and register allocation are no longer hard problems it has to solve alone.
 
-The remaining work is:
+The narrowed responsibilities are:
 
 - **Interleaving, not scheduling.** Once independence is guaranteed, the compiler's job is to interleave instructions according to the hardware throughput model (e.g., 16 cycles between `ds_read_b128` issues, 64 cycles between `buffer_load` issues, appropriate MFMAs in between). This is O(n) in the number of instructions, not NP-hard. A traditional scheduler's dependency-analysis machinery is unnecessary here and, in practice, gets in the way — it may reorder or cluster MFMAs, destroying the pipeline the author built.
 - **Honoring the register budget.** The author has already proved the block-level budget fits. The compiler allocates accordingly and avoids spills. When it inserts AGPR ↔ VGPR copies or clusters live ranges in ways that blow past the budget, it is failing to honor a design that was already valid on paper.
 
-The compiler is still essential — it manages the details of assembly, handles instruction selection, and targets we would rather not encode by hand. But the hardest parts of its traditional job are done before it runs.
+The compiler is still essential. But the hardest parts of its traditional job — the NP-hard scheduling and graph-coloring allocation — are done before it runs.
 
 ## 4. `llirSched` and `amdgcnas`: scaffolding for the new model
 
@@ -43,13 +43,13 @@ Today's LLVM pipeline was designed for the discovery model. Its IR has no place 
 - **`llirSched`** applies the O(n) throughput-model interleaving that block-level independence makes safe, then disables LLVM's `misched` and `post-misched` so they do not re-cluster the result.
 - **`amdgcnas`** supplies register hints so LLVM allocates MFMA accumulators where the kernel author intended, then applies peephole LICM and instruction-packing on the generated assembly to eliminate stragglers the register allocator could not handle cleanly.
 
-Neither is a general-purpose replacement for its LLVM counterpart. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the stock flow loses; on arbitrary C-like code they would not make sense.
+Neither is a general-purpose replacement for its LLVM counterpart. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses; on arbitrary C-like code they would not make sense.
 
 See [kernels/gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for the mechanical details of each pass.
 
 ## 5. Collaboration with LLVM
 
-The goal is not to maintain `llirSched` and `amdgcnas` as permanent forks of the LLVM flow. The goal is to fold their ideas upstream — to teach LLVM to recognize the block-level contract Gluon provides and exploit it natively. That work is in progress in collaboration with LLVM engineers. When it lands, stock LLVM will produce the same quality of output on Gluon kernels that `llirSched + amdgcnas` produces today, and these prototypes can retire.
+The goal is not to maintain `llirSched` and `amdgcnas` as permanent forks of the LLVM flow. The goal is to fold their ideas upstream — to teach LLVM to recognize the block-level contract Gluon provides and exploit it natively. That work is in progress in collaboration with LLVM engineers. When it lands, upstream LLVM will produce the same quality of output on Gluon kernels that `llirSched + amdgcnas` produces today, and these prototypes can retire.
 
 The lasting contribution is not the tools. It is the **design split**:
 
