@@ -8,18 +8,6 @@ The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive baseline ru
 
 ---
 
-## What Makes This Repo Different
-
-- Kernels are developed **incrementally**, from naive to optimized
-- Every optimization is motivated by a **measured bottleneck**, not a guess
-- Old versions are **kept**, so the optimization journey is documented
-- **Layouts are first-class**: they get their own visualization tool and their own vocabulary
-- Performance is validated at the **instruction trace level**, not just by throughput numbers
-
-This is especially useful for **Triton developers learning Gluon**, where understanding layouts and MFMA execution is the core of the skill jump.
-
----
-
 ## Start Here
 
 If this is your first time in the repo, open **[`kernels/gemm/a16w16/README.md`](kernels/gemm/a16w16/README.md)** and follow the Acts I–IV narrative from `v0_naive` to `v9_beyond_hotloop`. Each version isolates one concept — a layout, a pipeline stage, a scheduling decision. Read it alongside the code, then run the kernel:
@@ -81,11 +69,9 @@ The a16w16 series is the tutorial; a8w8 and a4w4 are what the same design looks 
 
 ---
 
-## Who This Is For
+## What's Next
 
-- **Gluon users** aiming for near-peak performance on MI350 / MI355
-- **Triton developers** learning Gluon
-- **AMD GPU performance and compiler engineers** looking for a worked example with traces and hardware counters
+Today the tutorial covers GEMM for **16-bit (FP16)**, **8-bit (BF8)**, and **MXFP4** compute. Planned additions: **memory-bound GEMM**, **FAv3 prefill**, **FA decode**, and an **MXFP4 MoE** kernel. See [`ROADMAP.md`](ROADMAP.md) for details.
 
 ---
 
