@@ -4,6 +4,8 @@ This kernel applies the design principles developed in the [a16w16/](../a16w16/)
 
 After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel, which builds on the same design with additional complexity from per-group scaling.
 
+This kernel requires the LLIR scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../docs/performance_philosophy.md) for the design rationale behind these tools.
+
 ## 1. Directory Structure
 
 ```

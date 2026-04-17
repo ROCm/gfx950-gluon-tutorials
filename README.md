@@ -33,7 +33,7 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 │       ├── a16w16/       # FP16 GEMM, v0 → v9 (start here)
 │       ├── a8w8/         # BF8 GEMM — same design, adapted for 8-bit
 │       └── a4w4/         # MXFP4 GEMM with per-group microscaling
-├── docs/                 # Mental models: LDS throughput, memory bandwidth, MFMA efficiency
+├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
 ├── profiling/            # Shared helpers used by the profiling scripts
@@ -49,6 +49,7 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Learn the full optimization workflow end to end          | `kernels/gemm/a16w16/`      |
 | Apply the same design to FP8                             | `kernels/gemm/a8w8/`        |
 | Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/a4w4/`        |
+| Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |
 | Build a mental model for LDS or HBM throughput           | `docs/`                     |
 | Automate rocprof, collect counters, generate perf tables | `scripts/`                  |
