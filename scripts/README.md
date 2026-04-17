@@ -36,7 +36,8 @@ Each config sets different environment variables before running the benchmark:
 
 - **base** — no extra env vars (default Triton scheduling)
 - **llir** — `TRITON_ENABLE_LLIR_SCHED=1`
-- **llir+amdgcnas** — `TRITON_ENABLE_LLIR_SCHED=1` + `TRITON_ENABLE_AMDGCN_AS=1`
+- **llir+ra** — `TRITON_ENABLE_LLIR_SCHED=1` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1` (RA hints only, without the amdgcnas post-assembly pass; see [gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for the two-part split)
+- **llir+amdgcnas** — `TRITON_ENABLE_LLIR_SCHED=1` + `TRITON_ENABLE_AMDGCN_AS=1` (RA hints + post-assembly)
 
 ### Examples
 

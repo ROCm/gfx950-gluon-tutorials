@@ -33,11 +33,15 @@ The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://g
 
 **amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_sliceN/README.md#43-register-allocation-workaround). It does two things:
 
-1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure.
+1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure. **Tradeoff**: forcing accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. Acceptable for compute-bound GEMM with large K (~95% time in the main loop), potentially harmful where the epilogue is a larger fraction of runtime. See [a16w16 v7 §4.3](a16w16/v7_sliceN/README.md#43-register-allocation-workaround).
 
 2. **Post-assembly processing**: Optimizes the final generated assembly:
    - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue. When the hoisted instruction's output register is redefined inside the loop, it applies register renaming.
-   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput.
+   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
+
+**Relative contributions.** Parts 1 and 2 of amdgcnas are not equally important. On current Gluon GEMM kernels, the register hints alone close 75–85% of the MFMA-efficiency improvement between `llir` and `llir+amdgcnas`, and land within 1–2% TFLOPS of the full pass on FP16, BF8, and MXFP4. The post-assembly work adds +2pp MFMA efficiency on FP16 and BF8, but +6pp on MXFP4 — the scale pipeline creates denser SALU activity for the peephole to pack. The two parts therefore have different upstream stories: the hints map to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
+
+To measure each piece independently, set `TRITON_ENABLE_AMDGPU_RA_HINTS=1` to enable the hints alone (without the post-assembly pass). `TRITON_ENABLE_AMDGCN_AS=1` enables both. `scripts/run_perf_table.py` exposes these as the `llir+ra` and `llir+amdgcnas` configs.
 
 ### 2.2 Running Benchmarks
 
