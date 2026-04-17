@@ -8,3 +8,12 @@ myplot.tex
 # cache files
 *.hsaco
 *.source
+
+# profiling / rocprofv3 / ATT scratch outputs
+tmp/
+att_output/
+*_rocprof_trace/
+rocprof_*/
+att_matmul.json
+counters.yaml
+gpucore.*
