@@ -300,7 +300,11 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
 
     env = os.environ.copy()
     # Clear any previous config env vars
-    for key in ("TRITON_ENABLE_LLIR_SCHED", "TRITON_ENABLE_AMDGCN_AS", "TRITON_ENABLE_AMDGPU_RA_HINTS"):
+    for key in (
+        "TRITON_ENABLE_LLIR_SCHED",
+        "TRITON_ENABLE_AMDGCN_AS",
+        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+    ):
         env.pop(key, None)
     # Set config-specific env vars
     env.update(CONFIG_ENV[config])

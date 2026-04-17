@@ -151,7 +151,11 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 
     # Build env
     env = os.environ.copy()
-    for key in ("TRITON_ENABLE_LLIR_SCHED", "TRITON_ENABLE_AMDGCN_AS", "TRITON_ENABLE_AMDGPU_RA_HINTS"):
+    for key in (
+        "TRITON_ENABLE_LLIR_SCHED",
+        "TRITON_ENABLE_AMDGCN_AS",
+        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+    ):
         env.pop(key, None)
     env.update(CONFIG_ENV[config])
 
