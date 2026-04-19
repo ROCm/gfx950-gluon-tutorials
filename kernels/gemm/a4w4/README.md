@@ -99,6 +99,16 @@ The LDS round-trip exists because the two register layouts are fundamentally dif
 
    Both layouts scatter the first dimension (M or N) at stride 32 to match the MFMA dot operand distribution, while the blocked global load layout groups consecutive elements for coalesced HBM access.
 
+### 2.5 `ds_read_tr`: hardware-assisted layout conversion for scales
+
+The LDS layout (§2.3) and the MFMA scale layout (§2.4) are related by a transpose: the LDS layout groups scale values for a coalesced LW, while the MFMA scale layout scatters them to match the dot-operand thread mapping. A plain `ds_read` followed by a VGPR shuffle would produce the right result, but MI350 provides a better option.
+
+`ds_read_tr` is a variant of `ds_read` that transposes during the LDS→VGPR transfer. It reads from LDS the same way as `ds_read`, but writes the result into VGPRs in a transposed order — collapsing the layout-conversion step into the LDS read itself. The LR step of the scale pipeline uses `ds_read_tr`, so hardware does the work the software would otherwise have to do in a separate shuffle pass.
+
+From a throughput standpoint, `ds_read_tr` uses the same SP-to-LDS pipeline, the same bank-conflict rules, and the same 8-entry FIFO as `ds_read`, so the throughput model in [`docs/lds_throughput.md`](../../../docs/lds_throughput.md) applies unchanged. The choice between `ds_read` and `ds_read_tr` is a layout-conversion decision, not a throughput decision.
+
+`ds_read_tr` is gfx950-specific. The MXFP4 kernel's round-trip approach to scale layout conversion is practical largely because this instruction exists — on hardware without `ds_read_tr`, the same pipeline would still work, but with a more expensive LR step.
+
 ## 3. Pipeline Design
 
 <img src="images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">
@@ -124,7 +134,7 @@ This kernel follows the same **3-stage pipeline** design as the [a16w16 v5_local
 - **Stage 1**: LDS → registers (LR for tiles) / LW+LR round-trip (for scales)
 - **Stage 2**: MFMA compute (DOT)
 
-For scales, the LW+LR round-trip acts as a single composite operation serving the same purpose as LR for tiles: converting data from the global-load layout to the compute layout. The difference is that tiles go through LDS via `buffer_load_to_lds` (Stage 0) and come out via `ds_read` (Stage 1), while scales go through registers via `buffer_load` (Stage 0) and must round-trip through LDS via `ds_write` + `ds_read` (Stage 1) for layout conversion.
+For scales, the LW+LR round-trip acts as a single composite operation serving the same purpose as LR for tiles: converting data from the global-load layout to the compute layout. The difference is that tiles go through LDS via `buffer_load_to_lds` (Stage 0) and come out via `ds_read` (Stage 1), while scales go through registers via `buffer_load` (Stage 0) and must round-trip through LDS via `ds_write` + `ds_read_tr` (Stage 1) for layout conversion (see §2.5).
 
 Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`, the AC/GR operations load data for iteration `i+2`. The LR operations in each region load data for the *next* iteration (`i+1`), so MFMA always consumes data that was locally prefetched in the previous region.
 
