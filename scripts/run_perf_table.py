@@ -50,8 +50,10 @@ CONFIG_ENV = {
     # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
     # Used to measure how much of the amdgcnas improvement comes from the
     # register-allocation hint vs. the post-assembly peephole / LICM.
-    # Requires the TRITON_ENABLE_AMDGPU_RA_HINTS support in OAI-triton's
-    # third_party/amd/backend/compiler.py.
+    # Requires ROCm/triton branch `ra_hints_only_flag` (or `matmul_4waves`
+    # once the RA_HINTS support is merged into it); the relevant plumbing
+    # is the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var gated in
+    # third_party/amd/backend/compiler.py and python/src/llvm.cc.
     "llir+ra": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",

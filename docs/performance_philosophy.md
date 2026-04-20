@@ -51,7 +51,13 @@ See [kernels/gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-branch--l
 
 ## 5. Collaboration with LLVM
 
-The goal is not to maintain `llirSched` and `amdgcnas` as permanent forks of the LLVM flow. The goal is to fold their ideas upstream — to teach LLVM to recognize the block-level contract Gluon provides and exploit it natively. That work is in progress in collaboration with LLVM engineers. When it lands, upstream LLVM will produce the same quality of output on Gluon kernels that `llirSched + amdgcnas` produces today, and these prototypes can retire.
+The goal is not to maintain `llirSched` and `amdgcnas` as permanent forks of the Triton/LLVM flow. The goal is to fold their ideas upstream in three phases, smallest-lift first:
+
+1. **`llirSched` → Triton mainline** as an opt-in pass gated on backend and kernel shape. This retires most of the dev-branch friction: users on upstream Triton can reach the O(n)-interleaving regime without a custom build.
+2. **RA hint flags → AMD Triton backend, then LLVM's AMDGPU register allocator.** The flags are small, local changes; the challenge is making them *selective* (they must not default on for kernels where the epilogue is a larger share of runtime — see [a16w16 v7 §4.3](../kernels/gemm/a16w16/v7_sliceN/README.md#43-register-allocation-workaround)).
+3. **Post-assembly peephole → LLVM AMDGPU MachineInstr-level pass.** The biggest engineering lift and the smallest measured impact on FP16/BF8 (~2pp MFMA efficiency); may remain a prototype indefinitely.
+
+This work is in progress in collaboration with LLVM engineers. When phases 1 and 2 land, upstream Triton + stock LLVM will produce most of what `llirSched + amdgcnas` produces today on a pinned build, and the dev-branch dependency in this tutorial can retire.
 
 The lasting contribution is not the tools. It is the **design split**:
 
