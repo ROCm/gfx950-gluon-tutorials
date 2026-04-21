@@ -218,6 +218,18 @@ Tracing through the phases for v8:
 
 The total number of buffer loads per K-step is the same (16 per wave in both v7 and v8). The difference is purely in how the tiling structure distributes them over time.
 
+### 4.7. Future hardware: relaxing TCP and buffer_load limits
+
+The TCP-capacity bottleneck analyzed above is specific to current hardware. Several directions would relax it, and they split the same way as the LDS future-designs discussion in [lds_throughput §6](../../../../docs/lds_throughput.md#6-a-note-on-future-lds-designs): parametric changes that scale existing knobs, and architectural changes that shift what the kernel author has to reason about.
+
+**Parametric: larger TCP, deeper VMEM FIFO, faster processing.** A larger TCP would directly remove the v7 stall at large K. With 64 KB instead of 32 KB, v7's 16 consecutive `buffer_load`s per wave would fit entirely in the TCP, and M-slicing would no longer be needed to spread loads over time — it would be a pure register-pressure optimization, matching its role in v7. Similarly, deeper VMEM FIFOs (today ~12 entries per CU) would absorb larger bursts before back-pressure, and faster TCP processing rates would raise the issue-rate ceiling in §4.3. Under all three, the mental model in §§4.1–4.4 applies unchanged; only the specific capacities shift.
+
+**Architectural: a tensor-granularity load engine.** NVIDIA's Hopper GPUs introduced **TMA (Tensor Memory Accelerator)** as an example of what a different load design could look like. TMA has a dedicated HBM → shared-memory path that bypasses L1, and it loads an entire tensor tile with a single instruction. Both properties matter here. With a separate path, shared-memory-targeted transfers no longer compete with register-side loads for TCP capacity — the §4.5 stall analysis collapses for them. With one instruction per tile instead of 16 per wave, there are no throughput-distribution or FIFO-depth issues to schedule around; the kernel author stops reasoning about "how do I spread `buffer_load`s across enough MFMAs to stay in the 64-cycle issue budget?" and starts reasoning only about "how early do I issue the tile load so its HBM round-trip finishes before MFMA needs the data?"
+
+The whole concern that drives v8's four-region structure disappears under this model. v7's concentrated-load structure would just work, and M-slicing would return to being a pure register-pressure optimization.
+
+Unlike the parametric improvements, a tensor-granularity load engine *does* change the mental model — the pipeline-design problem reduces to pure HBM latency hiding, the one concern that remains after TCP pressure and instruction-interleaving are taken off the table.
+
 ## 5. Performance Analysis
 
 The buffer load stall described above is directly measurable. We compare v7 (slice N only) and v8 (slice M and N) at two K values — K=8192 (moderate) and K=16384 (large, high HBM contention):
