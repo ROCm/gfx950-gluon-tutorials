@@ -13,7 +13,7 @@ Both are important,
 but they are solved in different ways and by different parts of the kernel design.
 
 In this tutorial, we focus on building an accurate mental model of `ds_read` throughput. 
-Latency will reappear in another doc, when we discuss prefetching and pipeline depth.
+Latency is discussed separately in §3, and worked through concretely in the [`v5_local_prefetch`](../kernels/gemm/a16w16/v5_local_prefetch/README.md) kernel tutorial.
 
 ## 1. The basic mental model for throughput
 
@@ -57,7 +57,7 @@ Each thread participating in a `ds_read` provides an address.
 For a wave of 64 threads, a single `ds_read` instruction generates 256 bytes of address data (64 threads × 4 bytes per address).
 SIMDs are grouped into SIMD pairs (SPs),
 and each SP has a dedicated 128 B/cycle bus to LDS.
-Each SP must send 512 bytes of address data to LDS for a single `ds_read` instruction,
+When both SIMDs in an SP issue a `ds_read`, the SP must send 512 bytes of address data to LDS,
 which takes 4 cycles.
 
 This address transfer happens before LDS can service the request, 
@@ -110,6 +110,9 @@ Therefore, in steady state:
 > A SIMD should expect to issue one `ds_read_b128` every 16 cycles.
 
 This number describes **throughput**, not latency.
+It also assumes full CU utilization — all four SIMDs in the CU issuing `ds_read_b128` in steady state.
+Under partial utilization (e.g., only one SIMD active) the LDS and SIMD-to-LDS bus are less saturated and the per-SIMD rate can be higher;
+the framing above is the production case that compute-bound kernels drive toward.
 
 
 ### 1.6. Transient behavior: the SP-to-LDS FIFO
@@ -129,15 +132,14 @@ A slow `ds_write` at the head of the queue can block subsequent `ds_read`s behin
 a detail that matters for kernels that mix the two,
 see [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) for a worked example where this dynamic drives the pipeline design.
 
-With SQ issuing every 4 cycles and LDS completing one `ds_read_b128` every 16 cycles,
-the FIFO grows by one slot per 4 cycles and drains by one slot per 16 cycles — a net fill rate of three slots per 16 cycles.
-Starting from empty, the FIFO reaches capacity after roughly ten instructions,
-after which the steady-state model from §1.5 takes over.
-The prefix observed in traces is a handful of instructions, not a sharp cutoff at instruction 9.
+With SQ issuing every 4 cycles and the FIFO depth at 8, the first eight `ds_read`s enter the FIFO without waiting — they issue at the SQ rate of one every 4 cycles, filling the FIFO over ~28 cycles.
+The first completion from LDS arrives ~50–70 cycles after the first issue (this is the LDS pipeline latency, not the 16-cycle steady-state service rate), and subsequent completions arrive every 16 cycles.
+Instruction 9 must therefore wait for the first drain, so its issue latency shows up in traces as a notable gap;
+from instruction 10 onward, issues and drains are matched at the 16-cycle steady-state rate from §1.5.
 
 This has a practical consequence for clustered LDS accesses:
-the first handful of `ds_read`s in a cluster are effectively free relative to the steady-state model,
-but layouts that enlarge a cluster beyond what the FIFO absorbs start paying the throughput cost.
+the first 8 `ds_read`s in a cluster are effectively free relative to the steady-state model,
+but kernels that cluster more than 8 `ds_read`s before returning to compute start paying the throughput cost.
 Interleaving non-LDS work into a cluster lets the FIFO drain and extends the free-burst regime further.
 
 > [!NOTE]
@@ -161,7 +163,26 @@ When done correctly, latency is hidden and throughput is fully utilized.
 This idea - separating latency hiding from throughput saturation - will reappear throughout the kernel optimization journey and is central to building high-performance LDS-heavy kernels.
 
 
-## 3. `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
+## 3. Latency is real — but it is solved differently
+
+None of the above implies that `ds_read` latency is unimportant. 
+On the contrary, a `ds_read_b128` has a long latency, 
+and if data is requested only at the moment it is needed, the kernel will stall.
+
+The key distinction is that **latency and throughput are solved by different techniques**:
+
+- **Latency** is addressed by prefetching: 
+  issuing `ds_read` instructions early so that data is ready when it is needed. 
+  This is the focus of `v5_local_prefetch`.
+- **Throughput** is addressed by interleaving: 
+  issuing `ds_read` instructions at the correct rate and filling the remaining cycles with other useful work.
+
+Confusing these two leads to common mistakes, 
+such as over-issuing LDS loads in an attempt to hide latency, 
+which only creates back-pressure without increasing bandwidth.
+
+
+## 4. `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
 
 So far, we have used `ds_read_b128` as the primary example. 
 The same mental model, however, also applies to `ds_read_b64`, 
@@ -183,7 +204,7 @@ Issuing one `ds_read_b128` is exactly equivalent to issuing two `ds_read_b64` in
 Both transfer the same total amount of data from LDS, 
 and both fully saturate the LDS system when issued at their respective rates.
 
-### 3.1. Why the choice still matters
+### 4.1. Why the choice still matters
 
 Even though the bandwidth is the same, 
 `ds_read_b64` and `ds_read_b128` differ in how they interact with the rest of the kernel.
@@ -214,7 +235,7 @@ This trade-off is not theoretical -
 it shows up directly when tuning kernels that are transitioning from naive LDS usage to pipelined designs.
 
 
-### 3.2. `ds_read_tr`: transposed reads for layout conversion
+### 4.2. `ds_read_tr`: transposed reads for layout conversion
 
 `ds_read_tr` is a third variant worth naming here.
 It reads from LDS exactly like `ds_read`, but the hardware transposes the data during the transfer so that the VGPR result is in a different thread layout than the LDS source.
@@ -224,7 +245,7 @@ The MXFP4 kernel uses `ds_read_tr` for the LR step of its scale pipeline;
 see [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) for the full treatment.
 
 
-## 4. LDS bank conflicts and their impact on throughput
+## 5. LDS bank conflicts and their impact on throughput
 
 The LDS service rates discussed so far describe the peak capability of the hardware.
 Achieving this peak requires that LDS accesses be bank-conflict free.
@@ -285,25 +306,6 @@ but also for ensuring that LDS accesses are bank-conflict free and capable of re
 > The experiment and ATTViewer traces are available [here](../experiments/lds_throughput_validation).
 
 
-## 5. Latency is real — but it is solved differently
-
-None of the above implies that `ds_read` latency is unimportant. 
-On the contrary, a `ds_read_b128` has a long latency, 
-and if data is requested only at the moment it is needed, the kernel will stall.
-
-The key distinction is that **latency and throughput are solved by different techniques**:
-
-- **Latency** is addressed by prefetching: 
-  issuing `ds_read` instructions early so that data is ready when it is needed. 
-  This is the focus of `v5_local_prefetch`.
-- **Throughput** is addressed by interleaving: 
-  issuing `ds_read` instructions at the correct rate and filling the remaining cycles with other useful work.
-
-Confusing these two leads to common mistakes, 
-such as over-issuing LDS loads in an attempt to hide latency, 
-which only creates back-pressure without increasing bandwidth.
-
-
 ## 6. A note on future LDS designs
 
 The throughput limits discussed so far are properties of a specific hardware implementation, not of LDS as a concept.
@@ -339,21 +341,15 @@ Two directions are sometimes suggested as obvious wins but involve real trade-of
 - **Bank-conflict remapping in hardware.** Rather than relying on the programmer to design conflict-free layouts, the LDS controller could apply address hashing so that common access patterns are automatically spread across banks.
   This is attractive but changes the contract software relies on — this repo's layout design work (v3_lds and elsewhere) assumes deterministic bank mapping, and a hashed LDS would rewrite that entire discipline.
 
-### 6.3. The most interesting direction: format-aware LDS
-
-The most significant architectural change worth naming is already visible in a single instruction on MI350: `ds_read_tr` (§3.2).
-By transposing data during the LDS→VGPR transfer,
-`ds_read_tr` collapses a layout-conversion step into an LDS read.
-The MXFP4 kernel's GR → LW → LR scale round-trip ([a4w4 §2.3–§2.5](../kernels/gemm/a4w4/README.md#23-why-scales-need-an-lds-round-trip)) exists specifically to do layout conversion;
-an LDS that natively handled common conversions — transpose, scale-format reshape, bank-swizzle permutation — could eliminate the round-trip entirely.
-On MXFP4-class workloads, a format-aware LDS would be a bigger win than any amount of "more banks."
-
-Unlike the parametric improvements in §6.1, format-aware LDS *does* change the mental model:
-the stages no longer map one-to-one onto the pipeline this doc describes.
-The software patterns this repo develops — prefetching for latency, interleaving for throughput, layout design for conflict avoidance — transfer under the parametric changes.
-Only a structural shift in what LDS is *for* — from a byte-addressable scratchpad to a layout-transforming store — would require a fundamentally new set of patterns.
+Both directions change the implicit contract between software and LDS.
+Whether that contract *should* change at all is the design question — not just "how fast can it go."
 
 
 ## 7. See Also
 
 - [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md) — Practical application of the throughput model to evaluate LDS layout designs (raw, swizzling, padding).
+- [v5_local_prefetch kernel tutorial](../kernels/gemm/a16w16/v5_local_prefetch/README.md) — Where latency hiding (the other side of the latency-vs-throughput distinction in §3) is worked through concretely.
+- [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) — Full treatment of `ds_read_tr` in the MXFP4 scale pipeline.
+- [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) — Worked example of how the SP-to-LDS FIFO (shared between `ds_read` and `ds_write`) drives the scale pipeline design.
+- [LDS throughput validation experiment](../experiments/lds_throughput_validation) — Microbenchmark + ATT traces validating the steady-state model.
+- [Performance philosophy](performance_philosophy.md) — The broader block-level programming model that the LDS throughput model fits inside.
