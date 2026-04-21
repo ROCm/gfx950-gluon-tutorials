@@ -1,8 +1,8 @@
 # v3_lds — Designing and Evaluating LDS Data Layouts
 
 > [!NOTE]
-> **Prerequisites:** This tutorial assumes familiarity with `ds_read` throughput concepts.
-> Before proceeding, read [Understanding ds_read Throughput](../../../../docs/lds_throughput.md).
+> **Prerequisites:** Before proceeding, read [Understanding `ds_read` Throughput](../../../../docs/lds_throughput.md).
+> This is the first version where LDS throughput dominates the analysis, and the mental model that doc builds — steady-state service rate, the SP-to-LDS FIFO, bank conflicts — is used throughout the rest of this tutorial. It is not optional reading.
 
 ## 1. Directory Structure
 

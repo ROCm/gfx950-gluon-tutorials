@@ -1,5 +1,9 @@
 # v4_global_prefetch — Software Pipelining with Global Data Prefetch
 
+> [!NOTE]
+> **Prerequisites:** Before proceeding, read [Memory Bandwidth Model](../../../../docs/memory_bandwidth_model.md).
+> This is the first version where global-memory latency and bandwidth drive the design, and the mental model that doc builds — request count, request size, concurrency, HBM bandwidth — is the basis for reasoning about every pipelining decision from here onward.
+
 ## 1. Directory Structure
 
 ```

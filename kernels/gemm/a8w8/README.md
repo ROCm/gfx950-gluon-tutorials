@@ -1,8 +1,10 @@
 # BF8 GEMM Kernel (a8w8)
 
-This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. Only the final optimized version is provided. If you haven't completed the a16w16 journey (v0–v9), start there first — this kernel assumes familiarity with all techniques introduced in that series.
+This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. **We deliberately do not rebuild the full v0 → v9 journey for BF8** — the story is the same, only the parameters change. What you will find here is the final kernel, with the parameter deltas (tile size, MFMA instruction, `BLOCK_K`, LDS padding) explained in terms of the techniques you already know from a16w16. Think of this as the *checklist proof* that the design transfers cleanly: same 3× speedup pattern, different data type.
 
-After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel, which builds on the same design with additional complexity from per-group scaling.
+If you haven't completed the a16w16 journey (v0–v9), start there first — this kernel assumes familiarity with all techniques introduced in that series.
+
+After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel. Unlike a8w8, a4w4 *does* add a genuinely new element (a per-group scale pipeline) on top of the inherited tile pipeline, so it reads as a continuation rather than another checklist proof.
 
 This kernel requires the LLIR scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../docs/performance_philosophy.md) for the design rationale behind these tools.
 
