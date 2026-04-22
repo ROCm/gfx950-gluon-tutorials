@@ -16,8 +16,8 @@
   \pgfmathsetmacro{\maxTID}{\nonKDim-1}
   \pgfmathsetmacro{\groups}{\waveSize/\nonKDim}
   \pgfmathsetmacro{\maxGID}{\groups-1}
-  %% outVecSize = number of output elements per thread = nonKDim^2 / waveSize
-  \pgfmathsetmacro{\outVec}{int(\nonKDim*\nonKDim/\waveSize)}
+  %% outVec = vec width for drawing = 256 / waveSize (always 4 for wave64, 8 for wave32)
+  \pgfmathsetmacro{\outVec}{int(256/\waveSize)}
   \pgfmathsetmacro{\maxIVec}{\nonKDim*\nonKDim/256-1}
   \pgfmathsetmacro{\verbose}{#3}
   \foreach \iVec in {0,...,\maxIVec} {
@@ -444,10 +444,10 @@
     \drawZoomInVec{4}{1}{vec=4$\times$e8m0}
   }{}
 
-  %% Compute output vector size: vecSize = nonKDim * nonKDim / waveSize
-  %% For 64-thread waves with nonKDim=16: 16*16/64 = 4
-  %% For 32-thread waves with nonKDim=16: 16*16/32 = 8
-  \pgfmathsetmacro{\outVecSize}{int(\mfmaNonKDim*\mfmaNonKDim/\waveSize)}
+  %% Compute output vector size: vecSize = 256 / waveSize
+  %% waveSize=64: vec = 4
+  %% waveSize=32: vec = 8
+  \pgfmathsetmacro{\outVecSize}{int(256/\waveSize)}
   \pgfmathsetmacro{\maxOutVecId}{\outVecSize-1}
 
   %% Draw labels according to mfma.trans or not

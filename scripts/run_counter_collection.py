@@ -36,6 +36,14 @@ VERSION_MAP = {
 CONFIG_ENV = {
     "base": {},
     "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
+    # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
+    # Requires ROCm/triton branch `ra_hints_only_flag` (or `matmul_4waves`
+    # once the RA_HINTS support is merged into it); the relevant plumbing
+    # is the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var.
+    "llir+ra": {
+        "TRITON_ENABLE_LLIR_SCHED": "1",
+        "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
+    },
     "llir+amdgcnas": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGCN_AS": "1",
@@ -144,7 +152,11 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 
     # Build env
     env = os.environ.copy()
-    for key in ("TRITON_ENABLE_LLIR_SCHED", "TRITON_ENABLE_AMDGCN_AS"):
+    for key in (
+        "TRITON_ENABLE_LLIR_SCHED",
+        "TRITON_ENABLE_AMDGCN_AS",
+        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+    ):
         env.pop(key, None)
     env.update(CONFIG_ENV[config])
 

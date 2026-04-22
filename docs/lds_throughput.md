@@ -13,7 +13,7 @@ Both are important,
 but they are solved in different ways and by different parts of the kernel design.
 
 In this tutorial, we focus on building an accurate mental model of `ds_read` throughput. 
-Latency will reappear in another doc, when we discuss prefetching and pipeline depth.
+Latency is discussed separately in §3, and worked through concretely in the [`v5_local_prefetch`](../kernels/gemm/a16w16/v5_local_prefetch/README.md) kernel tutorial.
 
 ## 1. The basic mental model for throughput
 
@@ -57,7 +57,7 @@ Each thread participating in a `ds_read` provides an address.
 For a wave of 64 threads, a single `ds_read` instruction generates 256 bytes of address data (64 threads × 4 bytes per address).
 SIMDs are grouped into SIMD pairs (SPs),
 and each SP has a dedicated 128 B/cycle bus to LDS.
-Each SP must send 512 bytes of address data to LDS for a single `ds_read` instruction,
+When both SIMDs in an SP issue a `ds_read`, the SP must send 512 bytes of address data to LDS,
 which takes 4 cycles.
 
 This address transfer happens before LDS can service the request, 
@@ -110,6 +110,42 @@ Therefore, in steady state:
 > A SIMD should expect to issue one `ds_read_b128` every 16 cycles.
 
 This number describes **throughput**, not latency.
+It also assumes full CU utilization — all four SIMDs in the CU issuing `ds_read_b128` in steady state.
+Under partial utilization (e.g., only one SIMD active) the LDS and SIMD-to-LDS bus are less saturated and the per-SIMD rate can be higher;
+the framing above is the production case that compute-bound kernels drive toward.
+
+
+### 1.6. Transient behavior: the SP-to-LDS FIFO
+
+The derivation above describes steady state, but not the warmup.
+In thread traces, the first several `ds_read` instructions appear to issue in 4–8 cycles,
+and only afterward do subsequent `ds_read`s settle into the 16-cycle-per-instruction rate predicted by the throughput model.
+This prefix is the visible signature of a FIFO queue sitting between instruction issue and LDS service.
+
+Each SIMD pair has its own 8-entry FIFO that buffers outstanding `ds_read` requests to LDS.
+Because a CU contains two SIMD pairs, the CU-level capacity is up to 16 `ds_read`s in flight at once.
+While there is room in the FIFO, SQ issues at its own 4-cycle rate and the SIMD does not wait for LDS to complete the previous request.
+Only when the FIFO fills does back-pressure force the issue rate down to the LDS service rate.
+
+The same FIFO also buffers `ds_write` requests, not just `ds_read`s.
+A slow `ds_write` at the head of the queue can block subsequent `ds_read`s behind it —
+a detail that matters for kernels that mix the two,
+see [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) for a worked example where this dynamic drives the pipeline design.
+
+With SQ issuing every 4 cycles and the FIFO depth at 8, the first eight `ds_read`s enter the FIFO without waiting — they issue at the SQ rate of one every 4 cycles, filling the FIFO over ~28 cycles.
+The first completion from LDS arrives ~50–70 cycles after the first issue (this is the LDS pipeline latency, not the 16-cycle steady-state service rate), and subsequent completions arrive every 16 cycles.
+Instruction 9 must therefore wait for the first drain, so its issue latency shows up in traces as a notable gap;
+from instruction 10 onward, issues and drains are matched at the 16-cycle steady-state rate from §1.5.
+
+This has a practical consequence for clustered LDS accesses:
+the first 8 `ds_read`s in a cluster are effectively free relative to the steady-state model,
+but kernels that cluster more than 8 `ds_read`s before returning to compute start paying the throughput cost.
+Interleaving non-LDS work into a cluster lets the FIFO drain and extends the free-burst regime further.
+
+> [!NOTE]
+> The FIFO depth is a hardware parameter, not a fundamental limit.
+> Deeper FIFOs would absorb larger bursts and shrink the prefix regime —
+> one of the expected directions for future LDS designs (see §6).
 
 
 ## 2. Why this matters for instruction scheduling
@@ -127,7 +163,26 @@ When done correctly, latency is hidden and throughput is fully utilized.
 This idea - separating latency hiding from throughput saturation - will reappear throughout the kernel optimization journey and is central to building high-performance LDS-heavy kernels.
 
 
-## 3. `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
+## 3. Latency is real — but it is solved differently
+
+None of the above implies that `ds_read` latency is unimportant. 
+On the contrary, a `ds_read_b128` has a long latency, 
+and if data is requested only at the moment it is needed, the kernel will stall.
+
+The key distinction is that **latency and throughput are solved by different techniques**:
+
+- **Latency** is addressed by prefetching: 
+  issuing `ds_read` instructions early so that data is ready when it is needed. 
+  This is the focus of `v5_local_prefetch`.
+- **Throughput** is addressed by interleaving: 
+  issuing `ds_read` instructions at the correct rate and filling the remaining cycles with other useful work.
+
+Confusing these two leads to common mistakes, 
+such as over-issuing LDS loads in an attempt to hide latency, 
+which only creates back-pressure without increasing bandwidth.
+
+
+## 4. `ds_read_b64` vs `ds_read_b128`: same bandwidth, different trade-offs
 
 So far, we have used `ds_read_b128` as the primary example. 
 The same mental model, however, also applies to `ds_read_b64`, 
@@ -149,7 +204,7 @@ Issuing one `ds_read_b128` is exactly equivalent to issuing two `ds_read_b64` in
 Both transfer the same total amount of data from LDS, 
 and both fully saturate the LDS system when issued at their respective rates.
 
-### 3.1. Why the choice still matters
+### 4.1. Why the choice still matters
 
 Even though the bandwidth is the same, 
 `ds_read_b64` and `ds_read_b128` differ in how they interact with the rest of the kernel.
@@ -180,7 +235,17 @@ This trade-off is not theoretical -
 it shows up directly when tuning kernels that are transitioning from naive LDS usage to pipelined designs.
 
 
-## 4. LDS bank conflicts and their impact on throughput
+### 4.2. `ds_read_tr`: transposed reads for layout conversion
+
+`ds_read_tr` is a third variant worth naming here.
+It reads from LDS exactly like `ds_read`, but the hardware transposes the data during the transfer so that the VGPR result is in a different thread layout than the LDS source.
+Its throughput profile is identical to `ds_read_b*` — the same SP-to-LDS pipeline, the same bank-conflict rules, and the same 8-entry FIFO — so everything in this doc applies unchanged.
+The choice to use it is a layout-conversion decision, not a throughput decision.
+The MXFP4 kernel uses `ds_read_tr` for the LR step of its scale pipeline;
+see [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) for the full treatment.
+
+
+## 5. LDS bank conflicts and their impact on throughput
 
 The LDS service rates discussed so far describe the peak capability of the hardware.
 Achieving this peak requires that LDS accesses be bank-conflict free.
@@ -241,49 +306,50 @@ but also for ensuring that LDS accesses are bank-conflict free and capable of re
 > The experiment and ATTViewer traces are available [here](../experiments/lds_throughput_validation).
 
 
-## 5. Latency is real — but it is solved differently
-
-None of the above implies that `ds_read` latency is unimportant. 
-On the contrary, a `ds_read_b128` has a long latency, 
-and if data is requested only at the moment it is needed, the kernel will stall.
-
-The key distinction is that **latency and throughput are solved by different techniques**:
-
-- **Latency** is addressed by prefetching: 
-  issuing `ds_read` instructions early so that data is ready when it is needed. 
-  This is the focus of `v5_local_prefetch`.
-- **Throughput** is addressed by interleaving: 
-  issuing `ds_read` instructions at the correct rate and filling the remaining cycles with other useful work.
-
-Confusing these two leads to common mistakes, 
-such as over-issuing LDS loads in an attempt to hide latency, 
-which only creates back-pressure without increasing bandwidth.
-
-
 ## 6. A note on future LDS designs
 
-The throughput limits discussed so far are not fundamental properties of LDS as a concept; 
-they are properties of a specific hardware implementation.
+The throughput limits discussed so far are properties of a specific hardware implementation, not of LDS as a concept.
+As hardware evolves, the numbers change,
+but the core reasoning — that steady-state throughput is determined by the slowest stage, and that bursts below the FIFO depth evade that limit — will keep applying as long as the pipeline structure itself is preserved.
+Understanding where the slowest stages are today also makes it possible to anticipate which future-hardware changes are *parametric* (same mental model, different numbers) versus *architectural* (different mental model).
 
-In the current model, increasing `ds_read` throughput requires improvements in two areas simultaneously: 
-the bandwidth of the LDS-to-SIMD buses and the service rate of LDS itself. 
-Bus bandwidth is relatively straightforward to scale over time through wider buses or higher frequencies.
+### 6.1. Parametric improvements
 
-LDS service rate is more subtle. 
-There are two obvious directions for improvement. 
-One is to increase the number of banks, which increases the total service bandwidth. 
-Another is to allow LDS to service requests from multiple SIMD pairs more independently, 
-reducing contention between them.
+Most plausible near-term evolution falls into this category: same pipeline stages, better numbers.
 
-How these ideas are realized, or whether different approaches are taken entirely,
-is a design choice for future GPU generations. 
-As hardware evolves, the exact numbers will change, 
-but the mental model remains the same: 
-steady-state throughput is determined by the slowest stage in the data path.
+- **LDS-to-SIMD bus bandwidth** can grow through wider buses or higher frequencies, at known area, power, and wire-delay costs.
+  This is not a free lever, but it is the most direct way to raise the per-SIMD service rate.
+- **Number of LDS banks** sets aggregate service bandwidth.
+  More banks is not automatically fewer conflicts, though:
+  conflict patterns depend on the interaction between bank count and the software's access stride,
+  and without additional address hashing in the LDS controller, doubling the bank count may just move the conflict pattern rather than eliminate it.
+- **SP-to-LDS FIFO depth** (§1.6) determines how long a burst of `ds_read`s can run at SQ issue rate before the steady-state throughput model kicks in.
+  Deeper FIFOs help kernels with naturally bursty LDS access — unrolled loops that emit clusters of reads followed by compute — and we expect FIFO depth to grow in future generations.
+- **Latency-side knobs** — shorter pipelines, hardware prefetch into LDS, asynchronous LDS — reduce the cycle cost of the stages already in the mental model without restructuring them.
 
-Understanding that model today makes it much easier to reason about performance tomorrow.
+Under all of these, the mental model in §§1–5 applies unchanged;
+only the specific cycle counts, bank counts, burst lengths, and latencies shift.
+
+### 6.2. Architectural tensions
+
+Two directions are sometimes suggested as obvious wins but involve real trade-offs, not just "more is better."
+
+- **Servicing SIMD pairs more independently.** Giving each SP a dedicated path into LDS (or its own partition) could raise throughput by reducing contention.
+  But LDS exists specifically to be a cross-wave shared scratchpad inside a CU — full per-SP partitioning collapses that property and effectively turns LDS into four independent scratchpads.
+  The design question is how to parallelize LDS service *without* losing the shared-scratchpad semantic:
+  tiered designs, per-SP read buffers in front of a shared pool, or software-visible partitions are all candidate answers.
+- **Bank-conflict remapping in hardware.** Rather than relying on the programmer to design conflict-free layouts, the LDS controller could apply address hashing so that common access patterns are automatically spread across banks.
+  This is attractive but changes the contract software relies on — this repo's layout design work (v3_lds and elsewhere) assumes deterministic bank mapping, and a hashed LDS would rewrite that entire discipline.
+
+Both directions change the implicit contract between software and LDS.
+Whether that contract *should* change at all is the design question — not just "how fast can it go."
 
 
 ## 7. See Also
 
 - [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md) — Practical application of the throughput model to evaluate LDS layout designs (raw, swizzling, padding).
+- [v5_local_prefetch kernel tutorial](../kernels/gemm/a16w16/v5_local_prefetch/README.md) — Where latency hiding (the other side of the latency-vs-throughput distinction in §3) is worked through concretely.
+- [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) — Full treatment of `ds_read_tr` in the MXFP4 scale pipeline.
+- [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) — Worked example of how the SP-to-LDS FIFO (shared between `ds_read` and `ds_write`) drives the scale pipeline design.
+- [LDS throughput validation experiment](../experiments/lds_throughput_validation) — Microbenchmark + ATT traces validating the steady-state model.
+- [Performance philosophy](performance_philosophy.md) — The broader block-level programming model that the LDS throughput model fits inside.

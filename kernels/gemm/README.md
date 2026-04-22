@@ -22,18 +22,30 @@ All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/mat
 
 The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
+**Pinned commit.** The TFLOPS numbers in this tutorial are reproduced against commit [`f2eb09a983`](https://github.com/ROCm/triton/commit/f2eb09a983) of `matmul_4waves`. Later commits on the branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+
+**Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
+
+**Why these tools exist.** Upstream LLVM's scheduling and register-allocation passes were designed for the discovery model: they receive thread-level IR, recover dependencies by analysis, and solve the resulting NP-hard problems with heuristics. Gluon's block-level programming model makes those problems smaller — dependencies are *engineered* at the block level (e.g., `DOT`, `local_load`, and `buffer_load` are designed to be independent within a 3-stage pipeline), so at the instruction level, MFMAs, `ds_read`s, and `buffer_load`s can be interleaved by a simple throughput-model pass. Likewise, register budgets have a closed-form expression at block level, so allocation becomes a matter of honoring that budget rather than solving graph coloring.
+
+`llirSched` and `amdgcnas` are the minimum tools that honor this block-level contract today. They are not general-purpose replacements for LLVM's `misched` or register allocator — on arbitrary C-like code they would not make sense. On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses, and their underlying ideas are being integrated into LLVM itself in collaboration with LLVM engineers, so that upstream LLVM will eventually produce the same output. See [`docs/performance_philosophy.md`](../../docs/performance_philosophy.md) for the full argument.
+
 **LLIR Scheduler** (`TRITON_ENABLE_LLIR_SCHED=1`) is a Triton LLIR-level pass that interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory operation completion rate. To preserve this scheduling, it disables the LLVM backend's pre-RA and post-RA machine schedulers. Without the LLIR scheduler, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
 - Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
 - Distributes MFMAs among anchors based on throughput (e.g., 4 MFMAs per global load for 16-cycle MFMA, 2 for 32-cycle)
 - For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads and allocates remaining MFMAs after ds_write to cover LDS port contention
 
-**amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_slice/README.md#43-register-allocation-workaround). It does two things:
+**amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_sliceN/README.md#43-register-allocation-workaround). It does two things:
 
-1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure.
+1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure. **Tradeoff**: forcing accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. Acceptable for compute-bound GEMM with large K (~95% time in the main loop), potentially harmful where the epilogue is a larger fraction of runtime. See [a16w16 v7 §4.3](a16w16/v7_sliceN/README.md#43-register-allocation-workaround).
 
 2. **Post-assembly processing**: Optimizes the final generated assembly:
    - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue. When the hoisted instruction's output register is redefined inside the loop, it applies register renaming.
-   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput.
+   - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
+
+**Relative contributions.** Parts 1 and 2 of amdgcnas are not equally important. On current Gluon GEMM kernels, the register hints alone close 75–85% of the MFMA-efficiency improvement between `llir` and `llir+amdgcnas`, and land within 1–2% TFLOPS of the full pass on FP16, BF8, and MXFP4. The post-assembly work adds +2pp MFMA efficiency on FP16 and BF8, but +6pp on MXFP4 — the scale pipeline creates denser SALU activity for the peephole to pack. The two parts therefore have different upstream stories: the hints map to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
+
+To measure each piece independently, set `TRITON_ENABLE_AMDGPU_RA_HINTS=1` to enable the hints alone (without the post-assembly pass). `TRITON_ENABLE_AMDGCN_AS=1` enables both. `scripts/run_perf_table.py` exposes these as the `llir+ra` and `llir+amdgcnas` configs.
 
 ### 2.2 Running Benchmarks
 
@@ -87,7 +99,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 9 versions (v0–v8).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 
