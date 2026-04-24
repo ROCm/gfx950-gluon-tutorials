@@ -177,25 +177,29 @@ Both strategies build on v8's M+N slicing, which gives **four 128×128 accumulat
 **Quadrant-level stores (v8-style)**: After finishing the last K-iteration's MFMAs, v8 issues one 128×128 store per quadrant, interleaving stores between quadrants:
 
 ```python
-## Finish iterMax-1 MFMAs in region order, interleaving stores between quadrants
+## Natural-pipeline epilogue: each store follows its MFMA with one
+## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
 acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
 acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
+
 c_tl = acc_tl.to(a_ptr.dtype.element_ty)
 gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
 acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
-c_tr = acc_tr.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
-acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
 c_bl = acc_bl.to(a_ptr.dtype.element_ty)
 gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
+
+acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+
+c_tr = acc_tr.to(a_ptr.dtype.element_ty)
+gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
 c_br = acc_br.to(a_ptr.dtype.element_ty)
 gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
 ```
 
-This yields **four 128×128 stores per CU** with one MFMA between each pair of adjacent stores. In practice, that single-MFMA spacing is enough to prevent the pathological burst — the ATT measurement in §4.5 shows the v8 epilogue is stable across K (12,312 cycles at K=8192 vs 12,356 at K=512). The design v9 builds on is therefore not "fix a broken epilogue" but "compress a working one further."
+This yields **four 128×128 stores per CU** with one MFMA between each pair of adjacent stores. Each store follows its MFMA by one MFMA-cycle gap (except the final `store c_br`, which tails the sequence), so the MFMA unit stays busy while a store drains on the write path. The ATT measurement in §4.5 shows this v8 epilogue is stable across K (roughly constant cycles at K=8192 vs K=512) — the single-MFMA spacing is enough to prevent the pathological burst. The design v9 builds on is therefore not "fix a broken epilogue" but "compress a working one further."
 
 **Sub-tile-level stores (v9-style)**: v9 uses [`extract_slice`](https://github.com/ROCm/triton/tree/matmul_4waves) to split each 128×128 quadrant into **two 64×128 sub-tiles along M**, giving eight stores instead of four. Each sub-tile MFMA is immediately followed by the previous sub-tile's store, so stores are pipelined across the entire epilogue window rather than bunched at the end:
 
@@ -236,25 +240,25 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 8 9 --configs base l
 
 | Config | v8 TFLOPS | v9 TFLOPS | Δ TFLOPS | v8 MFMA Eff. | v9 MFMA Eff. |
 |---|---|---|---|---|---|
-| `base`          | 1259 | 1305 | +46 | 67.89% | 68.52% |
-| `llir`          | 1366 | 1383 | +17 | 81.03% | 82.26% |
-| `llir+amdgcnas` | 1461 | 1486 | +25 | 99.42% | 97.66% |
+| `base`          | 1260 | 1305 | +45 | 67.99% | 68.52% |
+| `llir`          | 1359 | 1383 | +24 | 81.41% | 82.26% |
+| `llir+amdgcnas` | 1455 | 1486 | +31 | 99.17% | 97.66% |
 
 **K = 512 (M=N=4096, fp16)**
 
 | Config | v8 TFLOPS | v9 TFLOPS | Δ TFLOPS | v8 MFMA Eff. | v9 MFMA Eff. |
 |---|---|---|---|---|---|
-| `base`          |  706 |  739 | +33 | 67.75% | 68.59% |
-| `llir`          |  758 |  796 | +38 | 81.55% | 82.40% |
-| `llir+amdgcnas` |  785 |  821 | +36 | 99.39% | 98.49% |
+| `base`          |  707 |  739 | +32 | 67.99% | 68.59% |
+| `llir`          |  767 |  796 | +29 | 81.90% | 82.40% |
+| `llir+amdgcnas` |  795 |  821 | +26 | 99.39% | 98.49% |
 
 ### 4.4 Key Observations
 
-**v9 wins at both K values.** At `llir+amdgcnas`, v9 is +25 TFLOPS (+1.7%) over v8 at K=8192 and +36 TFLOPS (+4.6%) at K=512. The K=8192 delta is dominated by the XCD remapping from §3; the K=512 delta includes both XCD remapping and the sub-tile epilogue. The pattern holds across `base` and `llir` too.
+**v9 wins at both K values.** At `llir+amdgcnas`, v9 is +31 TFLOPS (+2.1%) over v8 at K=8192 and +26 TFLOPS (+3.3%) at K=512. The K=8192 delta is dominated by the XCD remapping from §3; the K=512 delta includes both XCD remapping and the sub-tile epilogue. The pattern holds across `base` and `llir` too.
 
 **MFMA efficiency is roughly flat across v8 and v9.** Both kernels reach ~98–99% MFMA efficiency under `llir+amdgcnas`. The v9 improvements do not come from the hot loop — they come from L2 locality (§3) and epilogue structure (§4), neither of which MFMA efficiency measures.
 
-**v8's quadrant-level interleaving already handles store contention well at small K.** One of the surprises of the ATT measurement in §4.5 is that v8's epilogue is essentially flat across K (+44 cycles from K=8192 to K=512). The four quadrant stores, each separated by one MFMA, turn out to be enough to prevent the severe store burst that a completely bunched epilogue would cause. v9's sub-tile approach is not *rescuing* v8 from store contention; it is *further trimming* an already well-behaved epilogue by ~800 cycles through finer-grained pipelining.
+**v8's quadrant-level interleaving already handles store contention well at small K.** One of the results of the ATT measurement in §4.5 is that v8's epilogue is essentially flat across K (−48 cycles from K=8192 to K=512 — actually slightly shorter at small K, within noise). The four quadrant stores, each separated by one MFMA, are enough to prevent the severe store burst that a completely bunched epilogue would cause. v9's sub-tile approach is not *rescuing* v8 from store contention; it is *further trimming* an already well-behaved epilogue by ~200 cycles through finer-grained pipelining.
 
 ### 4.5 ATT Analysis: Epilogue Cycles Across K
 
@@ -264,8 +268,8 @@ We collected Advanced Thread Trace (ATT) measurements for v8 and v9 at both K va
 
 | Epilogue | K=8192 | K=512 | Δ across K | Δ vs v8 |
 |---|---|---|---|---|
-| v8 (quadrant-level) | 12,312 | 12,356 |  +44 | — |
-| v9 (sub-tile)       | 11,484 | 11,484 |    0 | −828 / −872 |
+| v8 (quadrant-level) | 11,716 | 11,668 |  −48 | — |
+| v9 (sub-tile)       | 11,484 | 11,484 |    0 | −232 / −184 |
 
 Measurement commands:
 
@@ -280,9 +284,9 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
 
 Two observations from the table:
 
-1. **Both epilogues are stable across K.** v8 varies by 44 cycles between K=8192 and K=512; v9 varies by 0. v8's quadrant-level interleaving already absorbs the store burst effectively — the original concern that "plain stores at small K trigger severe contention" turns out to be mitigated even by v8's four-store design on MI355. The four 128×128 stores with one MFMA between each are enough to avoid the pathological case where 256 CUs issue a tight burst simultaneously.
+1. **Both epilogues are stable across K.** v8 varies by −48 cycles between K=8192 and K=512 (within noise); v9 varies by 0. v8's quadrant-level interleaving already absorbs the store burst effectively — the original concern that "plain stores at small K trigger severe contention" turns out to be mitigated even by v8's four-store design on MI355. The four 128×128 stores with one MFMA between each are enough to avoid the pathological case where 256 CUs issue a tight burst simultaneously.
 
-2. **v9 is ~800 cycles shorter than v8 at both K values.** This is not a contention-relief story; it is a finer-pipelining story. Doubling the number of stores (8 × 64×128 instead of 4 × 128×128) halves the time between adjacent stores and lets the type-conversion and `convert_layout` work on one sub-tile overlap with the MFMA and `buffer_store` of the adjacent sub-tile. The result is a strictly shorter epilogue, independent of whether CUs are store-contending.
+2. **v9 is ~200 cycles shorter than v8 at both K values.** This is not a contention-relief story; it is a finer-pipelining story. Doubling the number of stores (8 × 64×128 instead of 4 × 128×128) halves the time between adjacent stores and lets the type-conversion and `convert_layout` work on one sub-tile overlap with the MFMA and `buffer_store` of the adjacent sub-tile. The result is a strictly shorter epilogue, independent of whether CUs are store-contending.
 
 **Why a fully bunched epilogue would still suffer.** Even though v8 already does enough, a hypothetical fully-bunched epilogue — all four stores issued back-to-back with no intervening MFMAs — would concentrate the store traffic from all 256 CUs into a tight window, saturating the L2/HBM write path and extending the trailing `s_endpgm` drain. The progressive `wait_group(n)` → `wait_group(0)` pattern in both v8 and v9 additionally keeps async-copy draining from stalling the epilogue entry. The design lesson is not "v9 fixes a problem v8 has" — it is "both kernels design the epilogue so no pathological burst can form, and v9 goes further to compress cycles overall."
 
@@ -290,16 +294,16 @@ Two observations from the table:
 
 | Strategy | Pros | Cons |
 |---|---|---|
-| Quadrant-level (v8) | Four 128×128 stores with one MFMA between each; simpler code; no `extract_slice` dependency; already stable across K | ~800 cycles longer per-CU epilogue than the sub-tile approach |
-| Sub-tile (v9) | Eight 64×128 stores finely pipelined with MFMAs; ~800 cycles shorter per-CU epilogue than v8 | More `v_accvgpr` data movement; relies on `extract_slice` (currently on the `matmul_4waves` branch) |
+| Quadrant-level (v8) | Four 128×128 stores with one MFMA between each; simpler code; no `extract_slice` dependency; already stable across K | ~200 cycles longer per-CU epilogue than the sub-tile approach |
+| Sub-tile (v9) | Eight 64×128 stores finely pipelined with MFMAs; ~200 cycles shorter per-CU epilogue than v8 | More `v_accvgpr` data movement; relies on `extract_slice` (currently on the `matmul_4waves` branch) |
 
-The sub-tile epilogue is used in v9 not because v8's epilogue is unsafe (it is already stable across K on MI355) but because finer pipelining compresses the epilogue by ~7% on top of v8's baseline. Over a full kernel invocation that ~800-cycle reduction per CU maps to a consistent 25–36 TFLOPS gain (§4.3).
+The sub-tile epilogue is used in v9 not because v8's epilogue is unsafe (it is already stable across K on MI355) but because finer pipelining compresses the epilogue by ~2% on top of v8's baseline. Combined with the XCD remapping in §3, v9 lands a consistent +26–31 TFLOPS gain over v8 at `llir+amdgcnas` (§4.3).
 
 ## 5. Summary
 
 This version demonstrates that achieving peak TFLOPS requires optimization beyond the hot loop:
 
 - **L2 cache locality**: XCD-aware PID remapping and workgroup swizzling (GROUP_SIZE_M) reduce L2 misses by ~40%, lowering power consumption and sustaining higher frequency.
-- **Sub-tile epilogue**: `extract_slice` breaks each accumulator quadrant into two sub-tiles and pipelines stores with MFMA computation. v8's quadrant-level epilogue is already stable across K on MI355; the sub-tile version compresses it by ~800 cycles per CU through finer store–MFMA overlap, which maps to +25–36 TFLOPS of steady improvement in §4.3.
+- **Sub-tile epilogue**: `extract_slice` breaks each accumulator quadrant into two sub-tiles and pipelines stores with MFMA computation. v8's quadrant-level epilogue is already stable across K on MI355; the sub-tile version compresses it by ~200 cycles per CU through finer store–MFMA overlap, which combines with the XCD remapping to produce +26–31 TFLOPS of steady improvement at `llir+amdgcnas` in §4.3.
 
 Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, M+N slicing), this kernel achieves **1486 TFLOPS** at K=8192 and **821 TFLOPS** at K=512 (FP16, M=N=4096, `llir+amdgcnas` config). Most of the absolute uplift lands in v7–v8; v9 contributes the last few percent — XCD-aware PID remapping for L2 locality at large K, and the sub-tile epilogue for small-K store-contention relief.

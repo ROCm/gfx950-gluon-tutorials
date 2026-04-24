@@ -373,6 +373,8 @@ def v8_sliceMN(
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
     ## Iter iterMax - 1
+    ## Natural-pipeline epilogue: each store follows its MFMA with one
+    ## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
     acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
@@ -380,20 +382,22 @@ def v8_sliceMN(
     acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
+
     c_tl = acc_tl.to(a_ptr.dtype.element_ty)
     c_tl = gl.convert_layout(c_tl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
     acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
-    c_tr = acc_tr.to(a_ptr.dtype.element_ty)
-    c_tr = gl.convert_layout(c_tr, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
-
-    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
 
     c_bl = acc_bl.to(a_ptr.dtype.element_ty)
     c_bl = gl.convert_layout(c_bl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
+
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+
+    c_tr = acc_tr.to(a_ptr.dtype.element_ty)
+    c_tr = gl.convert_layout(c_tr, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
     c_br = acc_br.to(a_ptr.dtype.element_ty)
     c_br = gl.convert_layout(c_br, layout=gStoreLayoutC)
