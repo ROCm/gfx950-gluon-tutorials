@@ -145,10 +145,7 @@ The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality t
 **Observations**:
 - v8 (no XCD remapping) and v9 GM=1 (XCD remapping with the suboptimal grouping) sit at the high end of L2 misses — ~5.3M and ~6.1M respectively. v9 GM=1 is *worse* than v8 because XCD remapping with GM=1 forces a column-heavy access pattern across each XCD's 32 workgroups, which is the f(GM) = 18 case in §3.4.
 - GM = 4, 6, and 8 all land at ~4.1–4.4M, matching the math model's prediction that any of those three minimizes f(GM) = 12. GM=4 is slightly best at this shape, but the spread between GM=4/6/8 is small.
-- Reduced L2 traffic translates to higher sustained TFLOPS in healthy GPU power state: lower L2 miss volume reduces HBM and inter-XCD traffic, lowering power consumption, which lets the GPU sustain a higher boost clock.
-
-> [!NOTE]
-> The matching v8 vs v9 TFLOPS measurements are sensitive to GPU power and clock state, which can drift across long benchmark sessions. The L2-miss counter values reported above are robust to clock state and are the primary evidence that the math model is correct. Running the same kernel back-to-back at different times can produce different absolute TFLOPS even though the L2-miss counts stay constant.
+- Reduced L2 traffic translates to higher sustained TFLOPS in steady-state operation: lower L2 miss volume reduces HBM and inter-XCD traffic, lowering power consumption, which lets the GPU sustain a higher boost clock.
 
 Counters are collected using:
 ```bash
