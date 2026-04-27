@@ -24,7 +24,7 @@ a16w16/
 ├── v6_loop_unroll/       # Loop unrolling to eliminate copy overhead
 ├── v7_sliceN/            # N-slicing for register pressure reduction
 ├── v8_sliceMN/           # M+N slicing, buffer load throughput analysis
-└── v9_beyond_hotloop/    # L2 cache locality and interleaved epilogue
+└── v9_beyond_hotloop/    # L2 cache locality via XCD-aware PID remapping
 ```
 
 ## 2. How to Run
@@ -52,7 +52,7 @@ This section tells the story of how we transformed a 524 TFLOPS naive kernel int
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
 | v7 | sliceN | Register pressure | N-slicing, register allocation workarounds |
 | v8 | sliceMN | Register pressure, throughput | M+N slicing, buffer load TCP stall analysis |
-| v9 | beyond_hotloop | Power efficiency, epilogue | XCD-aware PID remapping, interleaved epilogue |
+| v9 | beyond_hotloop | L2 locality | XCD-aware PID remapping with GROUP_SIZE_M |
 
 ### Act I: Getting the Basics Right (v0–v3)
 
@@ -86,11 +86,9 @@ We slice along N: instead of loading a full 256-wide B tile, we load two 128-wid
 
 ### Act IV: Beyond the Loop (v9)
 
-**v9 — Two Problems Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop: in **L2 cache locality** and **epilogue design**.
+**v9 — One Problem Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop, in **L2 cache locality**.
 
-**The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**.
-
-**The epilogue contention problem.** When K is small, all CUs finish the loop at nearly the same time and issue stores simultaneously, saturating the L2/HBM write path. The fix: use `extract_slice` to break the accumulator into sub-tiles and interleave stores with MFMAs—while sub-tile `i+1` is computed, sub-tile `i` is stored. The MFMAs act as natural gaps in the store stream, spreading write traffic over time regardless of how synchronized the CUs are.
+**The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from ~5M to ~4M. Lower cache traffic means lower power, higher sustained frequency, and the last few percent of TFLOPS uplift on top of v8.
 
 ### The Results
 

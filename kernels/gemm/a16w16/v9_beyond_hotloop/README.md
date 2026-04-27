@@ -13,18 +13,13 @@ v9_beyond_hotloop/
 
 ## 2. Motivation
 
-Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management.
+Previous versions focused on improving MFMA efficiency inside the loop—maximizing compute utilization on each CU through pipelining, prefetching, and register pressure management. v8's epilogue (quadrant-level stores with single-MFMA spacing) already handles store-burst contention well across K, so this version focuses on a different lever entirely: **frequency**.
 
-However, TFLOPS depends on more than per-SIMD cycle efficiency. Two additional factors matter:
+Higher power consumption leads to lower sustained clock frequency. As discussed in v7 regarding DIDT protection, reducing power consumption is essential for achieving peak TFLOPS. One way to lower power is to reduce off-chip and inter-XCD memory traffic, which is governed by L2 cache reuse across workgroups.
 
-1. **Frequency**: Higher power consumption leads to lower sustained clock frequency. As discussed in v7 regarding DIDT protection, reducing power consumption is essential for achieving peak TFLOPS.
-
-2. **Epilogue overhead**: After the loop completes, the epilogue converts accumulators to the output type and writes results to global memory. When K is large, the epilogue is a small fraction of total execution time. As K decreases, the epilogue takes a larger share and its inefficiencies directly reduce TFLOPS.
-
-This version addresses both factors with two optimizations:
+This version addresses that with one optimization:
 
 - **L2 cache locality** (Section 3): XCD-aware PID remapping and workgroup swizzling reduce L2 misses, lowering power consumption and sustaining higher frequency.
-- **Interleaved epilogue** (Section 4): `extract_slice` breaks each accumulator half into sub-tiles along the M dimension and interleaves MFMA computation with stores, reducing `buffer_store` contention when CUs reach the epilogue simultaneously. This is distinct from v7's N-slicing (splitting the output into left/right halves along the N dimension for register pressure), which is present in both epilogue strategies discussed here.
 
 ## 3. L2 Cache Locality
 
@@ -133,177 +128,45 @@ The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model
 
 ### 3.5 Validation
 
-The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v7 or v8 with GM=1. Hardware counter measurements confirm this:
+The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v8 (no XCD remapping) or v9 with GM = 1. Hardware counter measurements on MI355 at M=N=4096, K=8192, fp16, llir+amdgcnas confirm this:
 
-| Configuration                  | TFLOPS | MFMA Eff. | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
-|--------------------------------|--------|-----------|------------------------|----------------------|
-| v7 + llirSched + amdgcnas      |   1538 |     98.5% |              5,043,636 |           16,777,216 |
-| v8 + llirSched + amdgcnas GM=1 |   1556 |     98.6% |              4,737,950 |           16,777,216 |
-| v8 + llirSched + amdgcnas GM=4 |   1605 |     98.9% |              3,147,709 |           16,777,216 |
-| v8 + llirSched + amdgcnas GM=6 |   1634 |     98.4% |              3,147,743 |           16,777,216 |
-| v8 + llirSched + amdgcnas GM=8 |   1608 |     98.9% |              3,147,721 |           16,777,216 |
+| Configuration                  | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
+|--------------------------------|------------------------|----------------------|
+| v8 (no XCD remapping)          |              5,282,502 |           16,777,216 |
+| v9 GM=1 (XCD remapping only)   |              6,070,335 |           16,777,216 |
+| v9 GM=4                        |              4,100,918 |           16,777,216 |
+| v9 GM=6                        |              4,331,455 |           16,777,216 |
+| v9 GM=8                        |              4,362,222 |           16,777,216 |
 
 **Counter Definitions**:
 - **TCP_TCC_READ_REQ_sum**: Requests from L1 to L2. All configurations have identical values since all workgroups perform the same computation.
 - **TCC_EA0_RDREQ_DRAM_sum**: Requests from L2 to MALL (memory-side last-level cache), indicating L2 cache misses.
 
 **Observations**:
-- v7 and v8 GM=1 have similar L2 miss counts (~4.7–5.0M), confirming their equivalent data footprints as predicted by the math model.
-- GM = 4, 6, and 8 all achieve ~3.1M L2 misses, matching the optimal f(GM) = 12 prediction.
-- Despite similar MFMA efficiency (~98%), the reduced L2 traffic from GM = 4/6/8 leads to higher sustained TFLOPS due to lower power consumption and higher frequency.
+- v8 (no XCD remapping) and v9 GM=1 (XCD remapping with the suboptimal grouping) sit at the high end of L2 misses — ~5.3M and ~6.1M respectively. v9 GM=1 is *worse* than v8 because XCD remapping with GM=1 forces a column-heavy access pattern across each XCD's 32 workgroups, which is the f(GM) = 18 case in §3.4.
+- GM = 4, 6, and 8 all land at ~4.1–4.4M, matching the math model's prediction that any of those three minimizes f(GM) = 12. GM=4 is slightly best at this shape, but the spread between GM=4/6/8 is small.
+- Reduced L2 traffic translates to higher sustained TFLOPS in healthy GPU power state: lower L2 miss volume reduces HBM and inter-XCD traffic, lowering power consumption, which lets the GPU sustain a higher boost clock.
 
-Performance is collected using:
-```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
-```
+> [!NOTE]
+> The matching v8 vs v9 TFLOPS measurements are sensitive to GPU power and clock state, which can drift across long benchmark sessions. The L2-miss counter values reported above are robust to clock state and are the primary evidence that the math model is correct. Running the same kernel back-to-back at different times can produce different absolute TFLOPS even though the L2-miss counts stay constant.
 
 Counters are collected using:
 ```bash
+# v8 (no XCD remapping)
 python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+
+# v9 with GM=1, 4, 6, 8 — vary GROUP_SIZE_M in v9_beyond_hotloop/matmul_kernel.py's matmul() launcher
+python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-## 4. Epilogue Optimization
+## 4. Summary
 
-### 4.1 The Problem: Store Contention at Small K
+This version demonstrates one optimization beyond the hot loop:
 
-After the loop, the epilogue converts accumulators to the output type and writes results to global memory. A straightforward approach completes all remaining MFMAs, then issues all stores in a burst. This works well when K is large—CUs finish the loop at different times due to natural variation, so their stores are staggered. But when K is small, all CUs complete the loop nearly simultaneously and issue stores at the same time, saturating the L2/HBM write path.
+- **L2 cache locality**: XCD-aware PID remapping and workgroup swizzling (GROUP_SIZE_M) reduce L2 misses by ~30% (5.28M → 4.10M for the optimal GM=4 configuration on MI355 at K=8192), lowering HBM and inter-XCD traffic. The math model in §3.4 makes the optimal GM choice predictable: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD.
 
-### 4.2 Two Epilogue Strategies
+The hot loop and epilogue are unchanged from v8 — v8 already covers M+N slicing, async-copy pipelining, and quadrant-level store interleaving. v9's contribution sits entirely outside the loop, in workgroup placement.
 
-Both strategies build on v8's M+N slicing, which gives **four 128×128 accumulator quadrants** (`acc_tl`, `acc_bl`, `acc_tr`, `acc_br`). The difference is the granularity at which the final MFMAs and stores are interleaved.
-
-**Quadrant-level stores (v8-style)**: After finishing the last K-iteration's MFMAs, v8 issues one 128×128 store per quadrant, interleaving stores between quadrants:
-
-```python
-## Natural-pipeline epilogue: each store follows its MFMA with one
-## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
-acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
-acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
-
-c_tl = acc_tl.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
-
-acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
-
-c_bl = acc_bl.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
-
-acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
-
-c_tr = acc_tr.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
-
-c_br = acc_br.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
-```
-
-This yields **four 128×128 stores per CU** with one MFMA between each pair of adjacent stores. Each store follows its MFMA by one MFMA-cycle gap (except the final `store c_br`, which tails the sequence), so the MFMA unit stays busy while a store drains on the write path. The ATT measurement in §4.5 shows this v8 epilogue is stable across K (roughly constant cycles at K=8192 vs K=512) — the single-MFMA spacing is enough to prevent the pathological burst. The design v9 builds on is therefore not "fix a broken epilogue" but "compress a working one further."
-
-**Sub-tile-level stores (v9-style)**: v9 uses [`extract_slice`](https://github.com/ROCm/triton/tree/matmul_4waves) to split each 128×128 quadrant into **two 64×128 sub-tiles along M**, giving eight stores instead of four. Each sub-tile MFMA is immediately followed by the previous sub-tile's store, so stores are pipelined across the entire epilogue window rather than bunched at the end:
-
-```python
-## Region 0: acc_tl sub-tiles, interleaved with stores
-a_top_0 = extract_slice(a_top, [64, 64], [0, 0])
-acc_tl_0 = extract_slice(acc_tl, [64, 128], [0, 0])
-acc_tl_0 = gl.amd.cdna3.mfma(a_top_0, b_left, acc_tl_0)
-
-a_top_1 = extract_slice(a_top, [64, 64], [64, 0])
-acc_tl_1 = extract_slice(acc_tl, [64, 128], [64, 0])
-acc_tl_1 = gl.amd.cdna3.mfma(a_top_1, b_left, acc_tl_1)
-c_tl0 = acc_tl_0.to(a_ptr.dtype.element_ty)
-gl.amd.cdna3.buffer_store(stored_value=c_tl0, ptr=c_tl0_base, offsets=c_slice_offsets)
-
-## Region 1: acc_bl sub-tiles, interleaved with acc_tl_1 and acc_bl_0 stores
-## ... (same pattern continues for all eight 64×128 sub-tiles across regions 0–3)
-```
-
-`extract_slice` is not yet upstreamed; it lives on the `matmul_4waves` development branch. The full sub-tile schedule is in [`v9_beyond_hotloop/matmul_kernel.py`](./matmul_kernel.py). The net effect is eight smaller stores spread across the entire epilogue window, with MFMAs between each pair — so inter-CU store contention at small K is absorbed by MFMA time rather than serialized on the L2/HBM write path.
-
-### 4.3 Performance Comparison
-
-Comparing v8 (quadrant-level stores) and v9 (sub-tile-level stores) at two K values. v9 also adds the XCD-aware PID remapping from §3 on top of v8's baseline — so the gain at K=8192 is dominated by the L2-locality effect, while the gain at K=512 is dominated by the epilogue. Configs:
-
-- **`base`**: Default LLVM instruction scheduler.
-- **`llir`**: LLIR scheduler, which reorders instructions in the **loop body only**. The epilogue still uses the default LLVM scheduler.
-- **`llir+amdgcnas`**: Same as `llir`, with additional AMD GCN assembly-level scheduling passes (also loop-only).
-
-Performance collected on MI355 with:
-
-```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 8 9 --configs base llir llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
-python scripts/run_perf_table.py --kernel a16w16 --versions 8 9 --configs base llir llir+amdgcnas --K 512  --dtype fp16 --use-rocprof
-```
-
-**K = 8192 (M=N=4096, fp16)**
-
-| Config | v8 TFLOPS | v9 TFLOPS | Δ TFLOPS | v8 MFMA Eff. | v9 MFMA Eff. |
-|---|---|---|---|---|---|
-| `base`          | 1260 | 1305 | +45 | 67.99% | 68.52% |
-| `llir`          | 1359 | 1383 | +24 | 81.41% | 82.26% |
-| `llir+amdgcnas` | 1455 | 1486 | +31 | 99.17% | 97.66% |
-
-**K = 512 (M=N=4096, fp16)**
-
-| Config | v8 TFLOPS | v9 TFLOPS | Δ TFLOPS | v8 MFMA Eff. | v9 MFMA Eff. |
-|---|---|---|---|---|---|
-| `base`          |  707 |  739 | +32 | 67.99% | 68.59% |
-| `llir`          |  767 |  796 | +29 | 81.90% | 82.40% |
-| `llir+amdgcnas` |  795 |  821 | +26 | 99.39% | 98.49% |
-
-### 4.4 Key Observations
-
-**v9 wins at both K values.** At `llir+amdgcnas`, v9 is +31 TFLOPS (+2.1%) over v8 at K=8192 and +26 TFLOPS (+3.3%) at K=512. The K=8192 delta is dominated by the XCD remapping from §3; the K=512 delta includes both XCD remapping and the sub-tile epilogue. The pattern holds across `base` and `llir` too.
-
-**MFMA efficiency is roughly flat across v8 and v9.** Both kernels reach ~98–99% MFMA efficiency under `llir+amdgcnas`. The v9 improvements do not come from the hot loop — they come from L2 locality (§3) and epilogue structure (§4), neither of which MFMA efficiency measures.
-
-**v8's quadrant-level interleaving already handles store contention well at small K.** One of the results of the ATT measurement in §4.5 is that v8's epilogue is essentially flat across K (−48 cycles from K=8192 to K=512 — actually slightly shorter at small K, within noise). The four quadrant stores, each separated by one MFMA, are enough to prevent the severe store burst that a completely bunched epilogue would cause. v9's sub-tile approach is not *rescuing* v8 from store contention; it is *further trimming* an already well-behaved epilogue by ~200 cycles through finer-grained pipelining.
-
-### 4.5 ATT Analysis: Epilogue Cycles Across K
-
-We collected Advanced Thread Trace (ATT) measurements for v8 and v9 at both K values to measure the epilogue effect directly. The `llir+amdgcnas` config was used for both kernels; the per-wave epilogue duration is averaged across the traced wave.
-
-**Epilogue cycles vs K (llir+amdgcnas config)**
-
-| Epilogue | K=8192 | K=512 | Δ across K | Δ vs v8 |
-|---|---|---|---|---|
-| v8 (quadrant-level) | 11,716 | 11,668 |  −48 | — |
-| v9 (sub-tile)       | 11,484 | 11,484 |    0 | −232 / −184 |
-
-Measurement commands:
-
-```bash
-cd kernels/gemm/a16w16
-# Update att_matmul.json kernel_include_regex to v8_sliceMN / v9_beyond_hotloop as needed.
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-    python ../../../scripts/run_att.py --att-output att_output/v8_K8192 \
-    python bench.py --K 8192 --dtype fp16 --version 8
-# ...repeat for v8_K512, v9_K8192, v9_K512.
-```
-
-Two observations from the table:
-
-1. **Both epilogues are stable across K.** v8 varies by −48 cycles between K=8192 and K=512 (within noise); v9 varies by 0. v8's quadrant-level interleaving already absorbs the store burst effectively — the original concern that "plain stores at small K trigger severe contention" turns out to be mitigated even by v8's four-store design on MI355. The four 128×128 stores with one MFMA between each are enough to avoid the pathological case where 256 CUs issue a tight burst simultaneously.
-
-2. **v9 is ~200 cycles shorter than v8 at both K values.** This is not a contention-relief story; it is a finer-pipelining story. Doubling the number of stores (8 × 64×128 instead of 4 × 128×128) halves the time between adjacent stores and lets the type-conversion and `convert_layout` work on one sub-tile overlap with the MFMA and `buffer_store` of the adjacent sub-tile. The result is a strictly shorter epilogue, independent of whether CUs are store-contending.
-
-**Why a fully bunched epilogue would still suffer.** Even though v8 already does enough, a hypothetical fully-bunched epilogue — all four stores issued back-to-back with no intervening MFMAs — would concentrate the store traffic from all 256 CUs into a tight window, saturating the L2/HBM write path and extending the trailing `s_endpgm` drain. The progressive `wait_group(n)` → `wait_group(0)` pattern in both v8 and v9 additionally keeps async-copy draining from stalling the epilogue entry. The design lesson is not "v9 fixes a problem v8 has" — it is "both kernels design the epilogue so no pathological burst can form, and v9 goes further to compress cycles overall."
-
-### 4.6 Summary
-
-| Strategy | Pros | Cons |
-|---|---|---|
-| Quadrant-level (v8) | Four 128×128 stores with one MFMA between each; simpler code; no `extract_slice` dependency; already stable across K | ~200 cycles longer per-CU epilogue than the sub-tile approach |
-| Sub-tile (v9) | Eight 64×128 stores finely pipelined with MFMAs; ~200 cycles shorter per-CU epilogue than v8 | More `v_accvgpr` data movement; relies on `extract_slice` (currently on the `matmul_4waves` branch) |
-
-The sub-tile epilogue is used in v9 not because v8's epilogue is unsafe (it is already stable across K on MI355) but because finer pipelining compresses the epilogue by ~2% on top of v8's baseline. Combined with the XCD remapping in §3, v9 lands a consistent +26–31 TFLOPS gain over v8 at `llir+amdgcnas` (§4.3).
-
-## 5. Summary
-
-This version demonstrates that achieving peak TFLOPS requires optimization beyond the hot loop:
-
-- **L2 cache locality**: XCD-aware PID remapping and workgroup swizzling (GROUP_SIZE_M) reduce L2 misses by ~40%, lowering power consumption and sustaining higher frequency.
-- **Sub-tile epilogue**: `extract_slice` breaks each accumulator quadrant into two sub-tiles and pipelines stores with MFMA computation. v8's quadrant-level epilogue is already stable across K on MI355; the sub-tile version compresses it by ~200 cycles per CU through finer store–MFMA overlap, which combines with the XCD remapping to produce +26–31 TFLOPS of steady improvement at `llir+amdgcnas` in §4.3.
-
-Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, M+N slicing), this kernel achieves **1486 TFLOPS** at K=8192 and **821 TFLOPS** at K=512 (FP16, M=N=4096, `llir+amdgcnas` config). Most of the absolute uplift lands in v7–v8; v9 contributes the last few percent — XCD-aware PID remapping for L2 locality at large K, and the sub-tile epilogue for small-K store-contention relief.
+Combined with optimizations from previous versions (pipelining, local prefetch, loop unrolling, M+N slicing), this kernel achieves measurable additional throughput over v8 in healthy GPU power state. Most of the absolute uplift in the a16w16 series lands in v7–v8; v9 contributes the last few percent through L2 locality.

@@ -251,4 +251,4 @@ At K=8192, both kernels achieve ~98–99% MFMA efficiency — HBM latency is mod
 
 ## 6. What Comes Next
 
-In `v9_beyond_hotloop`, we shift focus to optimizations outside the loop — L2 cache locality via XCD-aware PID remapping and interleaved epilogue design for small-K scenarios.
+In `v9_beyond_hotloop`, we shift focus to optimizations outside the loop — L2 cache locality via XCD-aware PID remapping and `GROUP_SIZE_M` workgroup swizzling.
