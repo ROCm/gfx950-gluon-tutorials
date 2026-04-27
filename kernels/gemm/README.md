@@ -22,7 +22,7 @@ All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/mat
 
 The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**Pinned commit.** The TFLOPS numbers in this tutorial are reproduced against commit [`f2eb09a983`](https://github.com/ROCm/triton/commit/f2eb09a983) of `matmul_4waves`. Later commits on the branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+**Pinned commit.** Build Triton from the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) tag on `ROCm/triton` (an annotated tag pointing at a specific commit of `matmul_4waves`). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `matmul_4waves` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
 
 **Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
