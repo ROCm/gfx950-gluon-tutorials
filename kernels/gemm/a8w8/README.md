@@ -132,12 +132,10 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 | Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------|--------|-------|--------|-----------|
 | base                            |   1406 |   512 |      1 |    58.87% |
-| llirSched                       |   1972 |   474 |      0 |     ~99%* |
+| llirSched                       |   1980 |   474 |      0 |    93.02% |
 | llirSched + amdgcnas            |   2031 |   512 |      0 |    99.72% |
 
-*The llirSched row's MFMA efficiency reading was a parser failure in `process_json.py`; the comparable TFLOPS / loop-time profile to the `amdgcnas` row indicates the kernel is operating near the hardware limit.
-
-The M+N slicing in this kernel (vs. the older N-slicing-only design) eliminates the heavy register spilling that the `llirSched`-alone path used to suffer on the previous a8w8 layout — the four 128×128 quadrants give the register allocator more headroom, so `llirSched` now runs spill-free on its own.
+The M+N slicing in this kernel (vs. the older N-slicing-only design) eliminates the heavy register spilling that the `llirSched`-alone path used to suffer on the previous a8w8 layout — the four 128×128 quadrants give the register allocator more headroom, so `llirSched` now runs spill-free on its own (0 spills vs. 111 spills before).
 
 The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) both come from the `matmul_4waves` development branch. With both enabled, MFMA efficiency reaches 99.72%, indicating the hot loop is essentially saturated.
 
