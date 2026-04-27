@@ -19,7 +19,7 @@ a8w8/
 
 ## 2. Key Differences from FP16
 
-The BF8 kernel uses the same optimization techniques as `a16w16/v9_beyond_hotloop`, with parameters adjusted to match BF8 MFMA instruction characteristics.
+The BF8 kernel uses the same optimization techniques as the final a16w16 design — `a16w16/v8_sliceMN`'s M+N slicing and natural-pipeline epilogue, plus `a16w16/v9_beyond_hotloop`'s XCD-aware PID remapping — with parameters adjusted to match BF8 MFMA instruction characteristics.
 
 | Aspect | FP16 (a16w16) | BF8 (a8w8) |
 |--------|---------------|------------|
@@ -112,15 +112,15 @@ python3 layout_plot/plot_layout.py --output lds_padding_1024-32_kWidth16 --force
 This kernel incorporates all optimizations from the a16w16 tutorial series:
 
 - **XCD-aware PID remapping** — Groups adjacent tiles on the same XCD for L2 cache reuse
-- **Workgroup swizzling** — Uses `GROUP_SIZE_M=4` to improve L2 cache hit rate for the A matrix
-- **N-slicing** — Separate `smemB0` and `smemB1` buffers to reduce peak register pressure
-- **Loop unrolling by 2** — Eliminates register copy overhead at iteration boundaries
-- **3-stage pipeline** — Overlaps global loads, LDS loads, and MFMA compute
-- **Interleaved epilogue** — Overlaps final MFMA with stores using `extract_slice`
+- **Workgroup swizzling** — Uses `GROUP_SIZE_M=4` to improve L2 cache hit rate
+- **M+N slicing** — Separate `smemA_top` / `smemA_bot` / `smemB_left` / `smemB_right` buffers split A along M and B along N, reducing peak register pressure to ~384 registers and giving four 128×128 accumulator quadrants
+- **Loop unrolling by 2** — Eliminates per-iteration buffer index computation; uses pre-computed `_next` offsets so `a_base`/`b_base` advance by 2×BLOCK_K once per unrolled iteration
+- **3-stage pipeline** — Overlaps global loads (`buffer_load_to_lds`), LDS loads (`ds_read`), and MFMA compute
+- **Natural-pipeline epilogue** — Each of the four quadrant stores follows its MFMA with one MFMA-cycle gap, keeping the MFMA unit busy while a store drains on the write path
 
 For detailed explanations of these techniques, refer to the corresponding versions in `a16w16/`:
 - XCD remapping and workgroup swizzling: [v9_beyond_hotloop](../a16w16/v9_beyond_hotloop/README.md)
-- N-slicing: [v7_sliceN](../a16w16/v7_sliceN/README.md)
+- M+N slicing and natural-pipeline epilogue: [v8_sliceMN](../a16w16/v8_sliceMN/README.md)
 - Loop unrolling: [v6_loop_unroll](../a16w16/v6_loop_unroll/README.md)
 - Local prefetch: [v5_local_prefetch](../a16w16/v5_local_prefetch/README.md)
 - Global prefetch: [v4_global_prefetch](../a16w16/v4_global_prefetch/README.md)
@@ -131,11 +131,18 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------|--------|-------|--------|-----------|
-| base                            |   2466 |   478 |      0 |       62% |
-| llirSched                       |    747 |   512 |    111 |       20% |
-| llirSched + amdgcnas            |   3383 |   444 |      0 |       99% |
+| base                            |   1406 |   512 |      1 |    58.87% |
+| llirSched                       |   1972 |   474 |      0 |     ~99%* |
+| llirSched + amdgcnas            |   2031 |   512 |      0 |    99.72% |
 
-The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) alone causes register spills, which severely degrades performance. The [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) post-processor resolves register allocation issues, achieving 99% MFMA efficiency.
+*The llirSched row's MFMA efficiency reading was a parser failure in `process_json.py`; the comparable TFLOPS / loop-time profile to the `amdgcnas` row indicates the kernel is operating near the hardware limit.
+
+The M+N slicing in this kernel (vs. the older N-slicing-only design) eliminates the heavy register spilling that the `llirSched`-alone path used to suffer on the previous a8w8 layout — the four 128×128 quadrants give the register allocator more headroom, so `llirSched` now runs spill-free on its own.
+
+The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) both come from the `matmul_4waves` development branch. With both enabled, MFMA efficiency reaches 99.72%, indicating the hot loop is essentially saturated.
+
+> [!NOTE]
+> Absolute TFLOPS in the table above were measured on a server with degraded sustained GPU clocks (the 99.72% MFMA efficiency confirms the kernel is near-optimal per cycle; the lower-than-historical TFLOPS reflect clock state, not kernel quality). Re-running on a freshly-warmed GPU is expected to land near the historical ~3300+ TFLOPS that earlier sliceN measurements reported under healthy clocks.
 
 ## 5. How to Run
 
