@@ -104,6 +104,9 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
 
+> [!NOTE]
+> These numbers were collected on an earlier `matmul_4waves` snapshot. The currently pinned [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) build has an LLIR-scheduler regression that produces invalid IR for v6's unrolled loop and crashes during compilation. The kernel design and the relative performance story are unchanged; reproducing the exact numbers requires either an earlier `matmul_4waves` snapshot or a future build where the regression has been fixed.
+
 Performance is collected using:
 ```bash
 python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --use-rocprof

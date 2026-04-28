@@ -16,22 +16,27 @@ import matplotlib.pyplot as plt
 def main():
     # Performance data from MI355, shape 4096x4096x8192, FP16
     # (version, tflops, variant, mfma_efficiency)
+    # v6 rows are from an earlier matmul_4waves snapshot — the currently pinned
+    # build has an LLIR-scheduler regression on v6's unrolled loop (see v6 README).
     data = [
-        ("v0", 524, "base", 25),
-        ("v1", 514, "base", 24),
-        ("v2", 697, "base", 36),
-        ("v3", 774, "base", 42),
-        ("v4", 1113, "base", 57),
-        ("v5", 1134, "base", 59),
-        ("v5", 1283, "llirSched", 76),
+        ("v0", 522, "base", 25),
+        ("v1", 504, "base", 24),
+        ("v2", 669, "base", 36),
+        ("v3", 764, "base", 42),
+        ("v4", 1043, "base", 57),
+        ("v5", 1049, "base", 59),
+        ("v5", 1262, "llirSched", 76),
         ("v6", 1088, "base", 61),
         ("v6", 1260, "llirSched", 88),
-        ("v7", 1279, "base", 65),
-        ("v7", 1411, "llirSched", 79),
-        ("v7", 1523, "llirSched+amdgcnas", 98),
-        ("v8", 1336, "base", 67),
-        ("v8", 1470, "llirSched", 77),
-        ("v8", 1610, "llirSched+amdgcnas", 99),
+        ("v7", 1318, "base", 66),
+        ("v7", 1458, "llirSched", 87),
+        ("v7", 1554, "llirSched+amdgcnas", 99),
+        ("v8", 1339, "base", 68),
+        ("v8", 1479, "llirSched", 81),
+        ("v8", 1563, "llirSched+amdgcnas", 99),
+        ("v9", 1377, "base", 68),
+        ("v9", 1476, "llirSched", 82),
+        ("v9", 1619, "llirSched+amdgcnas", 98),
     ]
 
     # Create labels for x-axis
@@ -57,7 +62,7 @@ def main():
     colors = [color_map[v] for v in variants]
 
     # Create figure with two y-axes
-    fig, ax1 = plt.subplots(figsize=(14, 6))
+    fig, ax1 = plt.subplots(figsize=(16, 6))
     ax2 = ax1.twinx()
 
     # Bar chart for TFLOPS
@@ -103,7 +108,7 @@ def main():
     ax1.set_ylabel("TFLOPS", fontsize=12)
     ax1.set_xlabel("Kernel Version", fontsize=12)
     ax1.set_title("FP16 GEMM Performance on MI355 (4096×4096×8192)", fontsize=14, fontweight="bold")
-    ax1.set_ylim(0, 1800)
+    ax1.set_ylim(0, 1900)
     ax1.grid(axis="y", alpha=0.3)
 
     ax2.set_ylabel("MFMA Efficiency (%)", fontsize=12, color="#e74c3c")
