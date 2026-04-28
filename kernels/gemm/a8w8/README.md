@@ -127,7 +127,17 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Performance numbers will be re-measured on a freshly-warmed GPU and added here. The kernel itself reaches near-saturation MFMA efficiency under `llir+amdgcnas`, and the M+N slicing in this kernel (vs. the older N-slicing-only design) eliminates the heavy register spilling that the `llirSched`-alone path used to suffer — the four 128×128 quadrants give the register allocator more headroom, so `llirSched` now runs spill-free on its own.
+Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
+
+| Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|---------------------------------|--------|-------|--------|-----------|
+| base                            |   2652 |   512 |      1 |    58.90% |
+| llirSched                       |   3346 |   474 |      0 |    92.84% |
+| llirSched + amdgcnas            |   3438 |   512 |      0 |    99.72% |
+
+**M+N slicing eliminates the `llirSched`-alone spill cliff.** The old N-slicing-only a8w8 kernel hit 111 register spills under `llirSched` alone, dropping it to 747 TFLOPS. The new M+N slicing splits A across two `smemA_top` / `smemA_bot` allocations and gives four 128×128 accumulator quadrants, reducing peak register pressure enough that `llirSched` now runs spill-free at **3346 TFLOPS** without needing `amdgcnas` to clean up.
+
+**`amdgcnas` adds the last 3% to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.72% — the hot loop is essentially saturated.
 
 The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) both come from the `matmul_4waves` development branch.
 
