@@ -177,7 +177,7 @@ However, latency hiding alone is not sufficient to achieve peak performance. The
 The bottleneck is the dependency between `ds_read` and MFMA. While MFMA has no dependency on `buffer_load` (it does not wait for global loads), **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from starting until the `ds_read` results are ready.
 
 > [!NOTE]
-> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's talk on MFMA Ordering ([TR20241121](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744185703/Presentation)).
+> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's [talk on MFMA Ordering](../../../../docs/talks/mfma_ordering.pdf).
 
 ## 5. What Comes Next
 

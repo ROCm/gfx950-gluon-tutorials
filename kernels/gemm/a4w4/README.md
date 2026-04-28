@@ -109,6 +109,8 @@ From a throughput standpoint, `ds_read_tr` uses the same SP-to-LDS pipeline, the
 
 `ds_read_tr` is gfx950-specific. The MXFP4 kernel's round-trip approach to scale layout conversion is practical largely because this instruction exists — on hardware without `ds_read_tr`, the same pipeline would still work, but with a more expensive LR step.
 
+For a more detailed treatment of the instruction itself, see Nicola Zaghen's [talk on `ds_read_tr`](../../../docs/talks/ds_read_tr.pdf).
+
 ## 3. Pipeline Design
 
 <img src="images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">

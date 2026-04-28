@@ -12,15 +12,15 @@ v1_buffer_load/
 
 ## 2. Background: Buffer Operations in Triton
 
-Buffer operations are an AMD-specific memory access mechanism with built-in out-of-bounds (OOB) checking. Giuseppe Rossini laid the foundation for buffer op support in Triton and presented the details in [TR20241031](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744185703/Presentation).
+Buffer operations are an AMD-specific memory access mechanism with built-in out-of-bounds (OOB) checking. Giuseppe Rossini laid the foundation for buffer op support in Triton and presented the details in [these slides](../../../../docs/talks/buffer_ops.pdf).
 
 The key insight is that buffer ops handle OOB checks in hardware, eliminating the need for branches in the generated code. This is particularly valuable for masked loads common in GEMM kernels.
 
 ### Evolution of Buffer Op Support
 
 1. **Giuseppe Rossini** — Initial buffer op support, identified the 32-bit offset limitation and the need for range analysis
-2. **Maks** — Enhanced range analysis, enabled the assume mechanism to work with the pipeliner
-3. **Shuxin** — Fixed bugs in range analysis, revealed that 32-bit range is difficult to reason about inside the compiler
+2. **Maksim Levental** (no longer at AMD) — Enhanced range analysis, enabled the assume mechanism to work with the pipeliner
+3. **Shuxin Yang** — Fixed bugs in range analysis, revealed that 32-bit range is difficult to reason about inside the compiler
 
 ## 3. Pros and Cons
 
