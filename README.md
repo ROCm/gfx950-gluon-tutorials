@@ -36,7 +36,6 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
-├── profiling/            # Shared helpers used by the profiling scripts
 ├── experiments/          # Standalone validations referenced from kernel READMEs
 ├── ROADMAP.md            # What's done, in progress, and planned
 └── CHANGELOG.md          # Changes driven by upstream Triton / compiler evolution
