@@ -10,9 +10,9 @@ Measured on MI355:
 
 | Data Type | Shape | TFLOPS | MFMA Eff. |
 |-----------|-------|--------|-----------|
-| FP16 | 4096x4096x8192 | 1634 | 98% |
-| BF8 | 4096x4096x16384 | 3383 | 99% |
-| MXFP4 | 4096x4096x32768 | 5270 | 92% |
+| FP16 | 4096x4096x8192 | 1619 | 98% |
+| BF8 | 4096x4096x16384 | 3456 | 99% |
+| MXFP4 | 4096x4096x32768 | 5783 | 92% |
 
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
@@ -99,7 +99,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 522 TFLOPS baseline to a near-optimal 1619 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 
