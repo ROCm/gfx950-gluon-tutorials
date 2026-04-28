@@ -10,9 +10,9 @@ Measured on MI355:
 
 | Data Type | Shape | TFLOPS | MFMA Eff. |
 |-----------|-------|--------|-----------|
-| FP16 | 4096x4096x8192 | 1634 | 98% |
-| BF8 | 4096x4096x16384 | 3383 | 99% |
-| MXFP4 | 4096x4096x32768 | 5270 | 92% |
+| FP16 | 4096x4096x8192 | 1619 | 98% |
+| BF8 | 4096x4096x16384 | 3456 | 99% |
+| MXFP4 | 4096x4096x32768 | 5783 | 92% |
 
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
@@ -22,7 +22,7 @@ All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/mat
 
 The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**Pinned commit.** The TFLOPS numbers in this tutorial are reproduced against commit [`f2eb09a983`](https://github.com/ROCm/triton/commit/f2eb09a983) of `matmul_4waves`. Later commits on the branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+**Pinned commit.** Build Triton from the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) tag on `ROCm/triton` (an annotated tag pointing at a specific commit of `matmul_4waves`). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `matmul_4waves` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
 
 **Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -99,7 +99,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 524 TFLOPS baseline to a near-optimal 1634 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 522 TFLOPS baseline to a near-optimal 1619 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

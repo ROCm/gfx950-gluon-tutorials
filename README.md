@@ -4,7 +4,7 @@ A hands-on tutorial for writing **high-performance Gluon kernels** on AMD **MI35
 
 **Why Gluon, not Triton?** Triton kernels leave performance on the table on AMD GPUs because the compiler cannot see your pipeline structure — it reorders MFMAs, inserts register copies you did not ask for, and treats your carefully designed loops as generic code to schedule from scratch. Gluon is a **block-level programming model** that fixes this by letting you engineer pipelines, budget registers, and design layouts explicitly at the block level. The compiler's job narrows to faithful lowering and throughput-aware interleaving; the hard parts of traditional GPU compilation (NP-hard scheduling, graph-coloring register allocation) become design problems the kernel author owns. See [`docs/performance_philosophy.md`](docs/performance_philosophy.md) for the full argument.
 
-The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive Gluon baseline runs at **524 TFLOPS**. Nine versions later, it reaches **1634 TFLOPS** — a **3× speedup**, every step motivated by a thread trace or a hardware counter. This repo is not a collection of finished kernels; it is the record of that journey, kept so readers can see *how* near-peak performance is built, not just what the final kernel looks like.
+The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive Gluon baseline runs at **522 TFLOPS**. Nine versions later, it reaches **1619 TFLOPS** — a **3× speedup**, every step motivated by a thread trace or a hardware counter. This repo is not a collection of finished kernels; it is the record of that journey, kept so readers can see *how* near-peak performance is built, not just what the final kernel looks like.
 
 ---
 
@@ -36,7 +36,6 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
-├── profiling/            # Shared helpers used by the profiling scripts
 ├── experiments/          # Standalone validations referenced from kernel READMEs
 ├── ROADMAP.md            # What's done, in progress, and planned
 └── CHANGELOG.md          # Changes driven by upstream Triton / compiler evolution

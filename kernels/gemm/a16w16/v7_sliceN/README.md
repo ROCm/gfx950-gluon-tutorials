@@ -4,12 +4,8 @@
 
 ```
 v7_sliceN/
-├── matmul_kernel.py                        # The kernel implementation
-├── README.md                               # This file
-├── ir_dump_K8192_fp16/                     # IR dumps for analysis
-├── ir_dump_K8192_fp16_llirSched/           # IR dumps with LLIR scheduler
-├── ir_dump_K8192_fp16_llirSched_RA/        # IR dumps with LLIR scheduler + RA
-└── ir_dump_K8192_fp16_llirSched_amdgcnas/  # IR dumps with LLIR scheduler + amdgcnas
+├── matmul_kernel.py    # The kernel implementation
+└── README.md           # This file
 ```
 
 ## 2. Motivation
@@ -181,12 +177,15 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir l
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-| Version                        | TFLOPS | VGPRs | Copies | MFMA Eff. |
-|--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1266 |   500 |     51 |       88% |
-| v7 + LLIR scheduler            |   1411 |   512 |    116 |       79% |
-| v7 + LLIR scheduler + RA       |   1508 |   460 |      0 |       96% |
-| v7 + LLIR scheduler + amdgcnas |   1523 |   460 |      0 |       98% |
+| Version                        | TFLOPS | VGPRs | MFMA Eff. |
+|--------------------------------|--------|-------|-----------|
+| v6 + LLIR scheduler            |   1266 |   500 |       88% |
+| v7 + LLIR scheduler            |   1503 |   474 |    87.14% |
+| v7 + LLIR scheduler + RA       |   1508 |   460 |       96% |
+| v7 + LLIR scheduler + amdgcnas |   1550 |   512 |    98.40% |
+
+> [!NOTE]
+> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier `matmul_4waves` snapshots: v6+llir hits a compiler regression in the currently pinned [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) build (see the v6 README), and the RA-only configuration requires the [`ra_hints_only_flag`](https://github.com/ROCm/triton/tree/ra_hints_only_flag) branch which adds a `TRITON_ENABLE_AMDGPU_RA_HINTS` env var that gates only the LLVM allocator hints without running the post-assembly `amdgcnas` pass. The other two rows are fresh measurements on the pinned build.
 
 **Copies**: count of `v_accvgpr_*` and `v_mov` instructions inside the main loop. These AGPR ↔ VGPR copy instructions transfer data between accumulator and vector register files.
 
@@ -233,4 +232,4 @@ The trace below shows tightly packed MFMA instructions with minimal gaps between
 
 ## 5. What Comes Next
 
-With 98% MFMA efficiency, the hot loop of this design is effectively tight. In [`v8_sliceMN`](../v8_sliceMN/README.md), we push slicing further by also splitting A along M — reducing peak register pressure and resolving buffer-load throughput stalls at large K. Then [`v9_beyond_hotloop`](../v9_beyond_hotloop/README.md) shifts focus outside the loop, to L2 cache locality and epilogue store contention.
+With 98% MFMA efficiency, the hot loop of this design is effectively tight. In [`v8_sliceMN`](../v8_sliceMN/README.md), we push slicing further by also splitting A along M — reducing peak register pressure and resolving buffer-load throughput stalls at large K. Then [`v9_beyond_hotloop`](../v9_beyond_hotloop/README.md) shifts focus outside the loop, to L2 cache locality via XCD-aware PID remapping.

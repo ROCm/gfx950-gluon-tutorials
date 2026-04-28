@@ -4,11 +4,8 @@
 
 ```
 v6_loop_unroll/
-├── matmul_kernel.py                       # The kernel implementation
-├── README.md                              # This file
-├── ir_dump_K8192_fp16/                    # IR dumps for analysis
-├── ir_dump_K8192_fp16_llirSched/          # IR dumps with LLIR scheduler
-└── ir_dump_K8192_fp16_llirSched_amdgcnas/ # IR dumps with LLIR scheduler + amdgcnas
+├── matmul_kernel.py    # The kernel implementation
+└── README.md           # This file
 ```
 
 ## 2. Motivation
@@ -103,6 +100,9 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 | v6 + LLIR scheduler  |   1260 |   500 |       88% |
 
 With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
+
+> [!NOTE]
+> These numbers were collected on an earlier `matmul_4waves` snapshot. The currently pinned [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) build has an LLIR-scheduler regression that produces invalid IR for v6's unrolled loop and crashes during compilation. The kernel design and the relative performance story are unchanged; reproducing the exact numbers requires either an earlier `matmul_4waves` snapshot or a future build where the regression has been fixed.
 
 Performance is collected using:
 ```bash

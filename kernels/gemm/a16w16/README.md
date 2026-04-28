@@ -24,7 +24,7 @@ a16w16/
 ├── v6_loop_unroll/       # Loop unrolling to eliminate copy overhead
 ├── v7_sliceN/            # N-slicing for register pressure reduction
 ├── v8_sliceMN/           # M+N slicing, buffer load throughput analysis
-└── v9_beyond_hotloop/    # L2 cache locality and interleaved epilogue
+└── v9_beyond_hotloop/    # L2 cache locality via XCD-aware PID remapping
 ```
 
 ## 2. How to Run
@@ -39,7 +39,7 @@ This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--v
 
 ## 3. The Optimization Journey
 
-This section tells the story of how we transformed a 524 TFLOPS naive kernel into a 1634 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
+This section tells the story of how we transformed a 522 TFLOPS naive kernel into a 1619 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
 
 | Version | Name | Focus | Key Concept |
 |---------|------|-------|-------------|
@@ -52,21 +52,21 @@ This section tells the story of how we transformed a 524 TFLOPS naive kernel int
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
 | v7 | sliceN | Register pressure | N-slicing, register allocation workarounds |
 | v8 | sliceMN | Register pressure, throughput | M+N slicing, buffer load TCP stall analysis |
-| v9 | beyond_hotloop | Power efficiency, epilogue | XCD-aware PID remapping, interleaved epilogue |
+| v9 | beyond_hotloop | L2 locality | XCD-aware PID remapping with GROUP_SIZE_M |
 
 ### Act I: Getting the Basics Right (v0–v3)
 
-**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 524 TFLOPS at 25% MFMA efficiency. But correctness comes first—this is our foundation.
+**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 522 TFLOPS at 25% MFMA efficiency. But correctness comes first—this is our foundation.
 
 **v1 — The Branch Problem.** Examining the generated assembly, we find 140 branch instructions. Why? Masked loads generate branches for out-of-bounds checking. The fix is elegant: `buffer_load` handles OOB in hardware. Branches drop from 140 to 4. The lesson: *sometimes the best optimization is choosing the right instruction.*
 
-**v2 — Eliminating the Middleman.** Data flows from HBM → registers → LDS → registers → MFMA. But why stage in registers? With `buffer_load ... lds`, data goes directly from HBM to LDS. We save 100+ VGPRs and eliminate all `ds_write` instructions. Performance jumps to 697 TFLOPS.
+**v2 — Eliminating the Middleman.** Data flows from HBM → registers → LDS → registers → MFMA. But why stage in registers? With `buffer_load ... lds`, data goes directly from HBM to LDS. We save 100+ VGPRs and eliminate all `ds_write` instructions. Performance jumps to 669 TFLOPS.
 
 **v3 — The Bank Conflict Detective.** LDS has 64 banks. When threads collide on the same bank, throughput drops. We design three layouts—raw, swizzled, and padded—and measure steady-state `ds_read` throughput. Raw layout: 4-way conflicts, 64-cycle issue latency. Padded layout: conflict-free, 16-cycle issue latency. The winner is clear, and we have a methodology for future designs.
 
 ### Act II: Hiding Latency (v4–v5)
 
-**v4 — The Pipeline Revolution.** So far, our loop is embarrassingly sequential: load, wait, compute, repeat. Global memory latency (~400 cycles) stalls everything. The solution: *prefetch the next iteration's data while computing on the current iteration's data.* With double buffering and a 2-stage pipeline, we overlap memory latency with compute. Performance leaps to 1113 TFLOPS—a **44% jump** from the previous version.
+**v4 — The Pipeline Revolution.** So far, our loop is embarrassingly sequential: load, wait, compute, repeat. Global memory latency (~400 cycles) stalls everything. The solution: *prefetch the next iteration's data while computing on the current iteration's data.* With double buffering and a 2-stage pipeline, we overlap memory latency with compute. Performance leaps to 1043 TFLOPS—a **36% jump** from the previous version.
 
 **v5 — One More Stage.** MFMA still waits for `ds_read`. We add a third pipeline stage: while MFMA computes iteration k, `ds_read` loads iteration k+1, and `buffer_load` prefetches iteration k+2. Now MFMA, `ds_read`, and `buffer_load` can all run concurrently—if only the compiler would schedule them that way.
 
@@ -86,11 +86,9 @@ We slice along N: instead of loading a full 256-wide B tile, we load two 128-wid
 
 ### Act IV: Beyond the Loop (v9)
 
-**v9 — Two Problems Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop: in **L2 cache locality** and **epilogue design**.
+**v9 — One Problem Outside the Loop.** With 98% MFMA efficiency, where does the remaining performance come from? The answer lies outside the hot loop, in **L2 cache locality**.
 
-**The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from 5M to 3.1M. Lower cache traffic means lower power, higher sustained frequency, and **1634 TFLOPS**.
-
-**The epilogue contention problem.** When K is small, all CUs finish the loop at nearly the same time and issue stores simultaneously, saturating the L2/HBM write path. The fix: use `extract_slice` to break the accumulator into sub-tiles and interleave stores with MFMAs—while sub-tile `i+1` is computed, sub-tile `i` is stored. The MFMAs act as natural gaps in the store stream, spreading write traffic over time regardless of how synchronized the CUs are.
+**The L2 locality puzzle.** MI350 has 8 XCDs, each with its own L2 cache. By default, adjacent workgroups land on different XCDs, destroying cache reuse. We remap PIDs so adjacent tiles share an XCD, then use **GROUP_SIZE_M** to reshape tile layout within each XCD. A simple math model emerges: minimize GM + ⌈P/GM⌉ where P is workgroups per XCD. For P=32, the optimal GM is 4, 6, or 8. Hardware counters confirm: L2 misses drop from ~5M to ~4M. Lower cache traffic means lower power, higher sustained frequency, and the last few percent of TFLOPS uplift on top of v8.
 
 ### The Results
 

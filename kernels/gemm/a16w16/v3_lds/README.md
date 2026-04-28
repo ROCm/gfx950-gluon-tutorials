@@ -120,7 +120,7 @@ Threads access vectors linearly along K, and the distance between vectors remain
 ### 3.2 Swizzling
 
 Swizzling rearranges data in LDS to redistribute accesses across banks and eliminate conflicts.
-The details are explained in [Lei's blog](https://www.lei.chat/posts/triton-bespoke-layouts/#swizzled-shared-layout) and [related documentation](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744193312/Triton+Layout+Introduction).
+The details are explained in [Lei's blog](https://www.lei.chat/posts/triton-bespoke-layouts/#swizzled-shared-layout).
 
 **Layout visualization with swizzling:**
 

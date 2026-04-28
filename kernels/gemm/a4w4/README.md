@@ -109,6 +109,8 @@ From a throughput standpoint, `ds_read_tr` uses the same SP-to-LDS pipeline, the
 
 `ds_read_tr` is gfx950-specific. The MXFP4 kernel's round-trip approach to scale layout conversion is practical largely because this instruction exists — on hardware without `ds_read_tr`, the same pipeline would still work, but with a more expensive LR step.
 
+For a more detailed treatment of the instruction itself, see Nicola Zaghen's [talk on `ds_read_tr`](../../../docs/talks/ds_read_tr.pdf).
+
 ## 3. Pipeline Design
 
 <img src="images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">
@@ -124,7 +126,7 @@ From a throughput standpoint, `ds_read_tr` uses the same SP-to-LDS pipeline, the
 
 <br clear="right">
 
-The tiling design is the same as the [a8w8](../a8w8/) and [a16w16 v9](../a16w16/v9_beyond_hotloop/) kernels: the B matrix is split along N into left and right halves (B_l, B_r), and A is shared across both. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right). For scales, we apply the same slicing — B_sc is split into B_sc_l and B_sc_r, while A_sc is shared.
+The tiling design uses **N-slicing only** — equivalent to the `a16w16/v7_sliceN` design rather than the M+N slicing now used by `a16w16/v8_sliceMN`, `a16w16/v9_beyond_hotloop`, and `a8w8`. The B matrix is split along N into left and right halves (B_l, B_r), and A is shared across both. Each iteration computes `C_left += A * B_l` (DOT_left) and `C_right += A * B_r` (DOT_right). For scales, we apply the same slicing — B_sc is split into B_sc_l and B_sc_r, while A_sc is shared. (Migrating a4w4 to M+N slicing would require redesigning the scale pipeline, which is closely tied to the current four-region cadence; the gain is small enough that this hasn't been done.)
 
 ### 3.1 3-stage pipeline
 
@@ -140,7 +142,7 @@ Data is prefetched 2 iterations ahead: while regions 0–1 compute iteration `i`
 
 ### 3.2 Detailed pipeline
 
-The pipeline design for tiles is exactly the same as the [a16w16 v9](../a16w16/v9_beyond_hotloop/) and [a8w8](../a8w8/) kernels — double-buffered async copy with loop unrolling by 2. This section focuses on the pipeline design for **scales**, which is the new element in the MXFP4 kernel.
+The pipeline design for tiles uses double-buffered async copy with loop unrolling by 2, the same general pattern as `a16w16/v8_sliceMN`, `a16w16/v9_beyond_hotloop`, and `a8w8` (with the caveat above that a4w4 stops at N-slicing rather than M+N slicing). This section focuses on the pipeline design for **scales**, which is the new element in the MXFP4 kernel.
 
 The kernel uses loop unrolling by 2 with 4 regions per unrolled iteration:
 

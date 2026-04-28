@@ -9,8 +9,7 @@
 ```
 v4_global_prefetch/
 ├── matmul_kernel.py      # The kernel implementation
-├── README.md             # This file
-└── ir_dump_K4096_fp16/   # IR dumps for analysis
+└── README.md             # This file
 ```
 
 ## 2. Motivation
@@ -138,12 +137,12 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 ## 4. Performance Analysis
 
-| Version            | TFLOPS | VGPRs | MFMA Eff. |
-|--------------------|--------|-------|-----------|
-| v3_lds             |    774 |   420 |       42% |
-| v4_global_prefetch |   1113 |   446 |       57% |
+| Version            | TFLOPS | VGPRs |
+|--------------------|--------|-------|
+| v3_lds             |    746 |   412 |
+| v4_global_prefetch |   1038 |   434 |
 
-Software pipelining delivers a **44% performance improvement** (774 → 1113 TFLOPS) by overlapping global memory latency with compute.
+Software pipelining delivers a **39% performance improvement** (746 → 1038 TFLOPS) by overlapping global memory latency with compute.
 
 Performance is collected using:
 ```bash
@@ -178,7 +177,7 @@ However, latency hiding alone is not sufficient to achieve peak performance. The
 The bottleneck is the dependency between `ds_read` and MFMA. While MFMA has no dependency on `buffer_load` (it does not wait for global loads), **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from starting until the `ds_read` results are ready.
 
 > [!NOTE]
-> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's talk on MFMA Ordering ([TR20241121](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744185703/Presentation)).
+> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's [talk on MFMA Ordering](../../../../docs/talks/mfma_ordering.pdf).
 
 ## 5. What Comes Next
 

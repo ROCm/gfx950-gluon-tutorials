@@ -134,13 +134,13 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 ## 4. Performance Analysis
 
-| Version        | TFLOPS | VGPRs | MFMA Eff. |
-|----------------|--------|-------|-----------|
-| v4             |   1113 |   446 |       57% |
-| v5             |   1134 |   452 |       59% |
-| v5 + llirSched |   1283 |   510 |       76% |
+| Version        | TFLOPS | VGPRs |
+|----------------|--------|-------|
+| v4             |   1038 |   434 |
+| v5             |   1053 |   452 |
+| v5 + llirSched |   1262 |   510 |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (57% → 59%). However, when combined with the LLIR scheduler, MFMA efficiency increases to 76%.
+The 3-stage pipeline provides a modest improvement in the baseline case (1038 → 1053 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1262 TFLOPS — a **20% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md).

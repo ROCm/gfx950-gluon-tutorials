@@ -2,7 +2,6 @@ import torch
 import triton
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
-from triton.experimental.gluon.language.amd.cdna3 import extract_slice
 
 
 @gluon.jit
@@ -337,33 +336,20 @@ def v9_beyond_hotloop(
         a_base += BLOCK_K * stride_ak * 2
         b_base += BLOCK_K * stride_bk * 2
 
-    ## =========================================================================
-    ## Epilogue with interleaved stores via extract_slice
-    ## =========================================================================
-    ## Each 128x128 accumulator is split into two 64x128 sub-tiles along M.
-    ## Stores for sub-tile i are pipelined with the MFMA computing sub-tile i+1.
+    ## Epilogue: 4-quadrant stores with natural-pipeline ordering (matches v8).
+    ## v9's contribution lives in the prologue / pid remapping (§3); the epilogue
+    ## is unchanged from v8 because the sub-tile variant produced only ~200 cycles
+    ## of additional savings — within noise relative to the full kernel.
 
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
 
-    offs_cm_slice = gl.arange(0, BLOCK_M // 4, gl.SliceLayout(1, gStoreLayoutC))
+    offs_cm = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
-    c_slice_offsets = stride_cm * offs_cm_slice[:, None] + stride_cn * offs_cn[None, :]
-
     c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
-
-    # Sub-tile base addresses for the 2x2 x 2 = 8 sub-tiles
-    # top-left quadrant: m[0:64], m[64:128] x n[0:128]
-    c_tl0_base = c_base
-    c_tl1_base = c_base + 64 * stride_cm
-    # bottom-left quadrant: m[128:192], m[192:256] x n[0:128]
-    c_bl0_base = c_base + BLOCK_M * stride_cm // 2
-    c_bl1_base = c_bl0_base + 64 * stride_cm
-    # top-right quadrant: m[0:64], m[64:128] x n[128:256]
-    c_tr0_base = c_base + BLOCK_N * stride_cn // 2
-    c_tr1_base = c_tr0_base + 64 * stride_cm
-    # bottom-right quadrant: m[128:192], m[192:256] x n[128:256]
-    c_br0_base = c_base + BLOCK_M * stride_cm // 2 + BLOCK_N * stride_cn // 2
-    c_br1_base = c_br0_base + 64 * stride_cm
+    c_tl_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_tr_offsets = c_tl_offsets + BLOCK_N * stride_cn // 2
+    c_bl_offsets = c_tl_offsets + BLOCK_M * stride_cm // 2
+    c_br_offsets = c_bl_offsets + BLOCK_N * stride_cn // 2
 
     ## Iter iterMax - 2: same 4-region pattern as main loop, no AC
     acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
@@ -384,77 +370,36 @@ def v9_beyond_hotloop(
     gl.amd.cdna4.async_copy.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
-    ## Iter iterMax - 1: interleaved sub-tile MFMAs + stores
-
-    ## Region 0: acc_tl sub-tiles, interleaved with stores
-    a_top_0 = extract_slice(a_top, [64, 64], [0, 0])
-    acc_tl_0 = extract_slice(acc_tl, [64, 128], [0, 0])
-    acc_tl_0 = gl.amd.cdna3.mfma(a_top_0, b_left, acc_tl_0)
-
+    ## Iter iterMax - 1
+    ## Natural-pipeline epilogue: each store follows its MFMA with one
+    ## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
+    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
-    a_top_1 = extract_slice(a_top, [64, 64], [64, 0])
-    acc_tl_1 = extract_slice(acc_tl, [64, 128], [64, 0])
-    acc_tl_1 = gl.amd.cdna3.mfma(a_top_1, b_left, acc_tl_1)
-
-    c_tl0 = acc_tl_0.to(a_ptr.dtype.element_ty)
-    c_tl0 = gl.convert_layout(c_tl0, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_tl0, ptr=c_tl0_base, offsets=c_slice_offsets)
-
-    ## Region 1: acc_bl sub-tiles
-    a_bot_0 = extract_slice(a_bot, [64, 64], [0, 0])
-    acc_bl_0 = extract_slice(acc_bl, [64, 128], [0, 0])
-    acc_bl_0 = gl.amd.cdna3.mfma(a_bot_0, b_left, acc_bl_0)
-
-    c_tl1 = acc_tl_1.to(a_ptr.dtype.element_ty)
-    c_tl1 = gl.convert_layout(c_tl1, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_tl1, ptr=c_tl1_base, offsets=c_slice_offsets)
-
-    a_bot_1 = extract_slice(a_bot, [64, 64], [64, 0])
-    acc_bl_1 = extract_slice(acc_bl, [64, 128], [64, 0])
-    acc_bl_1 = gl.amd.cdna3.mfma(a_bot_1, b_left, acc_bl_1)
-
-    c_bl0 = acc_bl_0.to(a_ptr.dtype.element_ty)
-    c_bl0 = gl.convert_layout(c_bl0, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_bl0, ptr=c_bl0_base, offsets=c_slice_offsets)
-
+    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
-    ## Region 2: acc_tr sub-tiles
-    acc_tr_0 = extract_slice(acc_tr, [64, 128], [0, 0])
-    acc_tr_0 = gl.amd.cdna3.mfma(a_top_0, b_right, acc_tr_0)
+    c_tl = acc_tl.to(a_ptr.dtype.element_ty)
+    c_tl = gl.convert_layout(c_tl, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
-    c_bl1 = acc_bl_1.to(a_ptr.dtype.element_ty)
-    c_bl1 = gl.convert_layout(c_bl1, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_bl1, ptr=c_bl1_base, offsets=c_slice_offsets)
+    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
 
-    acc_tr_1 = extract_slice(acc_tr, [64, 128], [64, 0])
-    acc_tr_1 = gl.amd.cdna3.mfma(a_top_1, b_right, acc_tr_1)
+    c_bl = acc_bl.to(a_ptr.dtype.element_ty)
+    c_bl = gl.convert_layout(c_bl, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
 
-    c_tr0 = acc_tr_0.to(a_ptr.dtype.element_ty)
-    c_tr0 = gl.convert_layout(c_tr0, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_tr0, ptr=c_tr0_base, offsets=c_slice_offsets)
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
 
-    ## Region 3: acc_br sub-tiles
-    acc_br_0 = extract_slice(acc_br, [64, 128], [0, 0])
-    acc_br_0 = gl.amd.cdna3.mfma(a_bot_0, b_right, acc_br_0)
+    c_tr = acc_tr.to(a_ptr.dtype.element_ty)
+    c_tr = gl.convert_layout(c_tr, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
-    c_tr1 = acc_tr_1.to(a_ptr.dtype.element_ty)
-    c_tr1 = gl.convert_layout(c_tr1, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_tr1, ptr=c_tr1_base, offsets=c_slice_offsets)
-
-    acc_br_1 = extract_slice(acc_br, [64, 128], [64, 0])
-    acc_br_1 = gl.amd.cdna3.mfma(a_bot_1, b_right, acc_br_1)
-
-    c_br0 = acc_br_0.to(a_ptr.dtype.element_ty)
-    c_br0 = gl.convert_layout(c_br0, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_br0, ptr=c_br0_base, offsets=c_slice_offsets)
-
-    c_br1 = acc_br_1.to(a_ptr.dtype.element_ty)
-    c_br1 = gl.convert_layout(c_br1, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(stored_value=c_br1, ptr=c_br1_base, offsets=c_slice_offsets)
+    c_br = acc_br.to(a_ptr.dtype.element_ty)
+    c_br = gl.convert_layout(c_br, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
 
 
 def matmul(a, b, c=None):

@@ -292,8 +292,13 @@ def process_wave_file(path, loop_index, epilogue_index, loop_last_index=None):
 
 
 def analyze_waves(folder, loop_index, epilogue_index, loop_last_index=None):
-    """Process se0_sm0_sl0_wv*.json files and compute durations + average."""
-    pattern = os.path.join(folder, "se0_sm0_sl0_wv*.json")
+    """Process se*_sm0_sl0_wv*.json files and compute durations + average.
+
+    The leading shader-engine index can vary by GPU — runs on GPU 0 produce
+    se0_*, runs on other GPUs may produce se1_* / se2_* / etc. We glob across
+    all SE indices and use whichever SM0 wave files the ATT decoder wrote.
+    """
+    pattern = os.path.join(folder, "se*_sm0_sl0_wv*.json")
     files = sorted(glob(pattern))
     if not files:
         raise FileNotFoundError(f"No files matching {pattern}")
@@ -313,7 +318,7 @@ def analyze_waves(folder, loop_index, epilogue_index, loop_last_index=None):
                 wave_iters.append(w_iters)
 
     if not durations:
-        raise ValueError("No valid loop durations found in any se0_sm0_sl0_wv*.json file")
+        raise ValueError("No valid loop durations found in any se*_sm0_sl0_wv*.json file")
 
     avg_duration = sum(durations.values()) / len(durations)
     avg_pro_dur = sum(pro_dur.values()) / len(pro_dur)

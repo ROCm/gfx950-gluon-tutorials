@@ -14,7 +14,7 @@ MFMA efficiency is cycle-based and independent of clock frequency, making it mor
 
 ## 3. How to Measure It
 
-1. **Collect thread traces** using `rocprofv3`. Detailed steps are available at: [Triton Profiling with ATT](https://amd.atlassian.net/wiki/spaces/MLSE/pages/744188574/Triton+Profiling+with+ATT)
+1. **Collect thread traces** using `rocprofv3`.
 
 2. **Process the traces** using the [`process_json.py`](../scripts/process_json.py) script on the generated `ui_` directory:
 
