@@ -4,11 +4,8 @@
 
 ```
 v9_beyond_hotloop/
-├── matmul_kernel.py                        # The kernel implementation
-├── README.md                               # This file
-├── ir_dump_K8192_fp16/                     # IR dumps for analysis
-├── ir_dump_K8192_fp16_llirSched/           # IR dumps with llirSched
-└── ir_dump_K8192_fp16_llirSched_amdgcnas/  # IR dumps with llirSched + amdgcnas
+├── matmul_kernel.py    # The kernel implementation
+└── README.md           # This file
 ```
 
 ## 2. Motivation

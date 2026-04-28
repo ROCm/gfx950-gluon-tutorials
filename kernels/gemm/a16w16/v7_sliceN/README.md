@@ -4,12 +4,8 @@
 
 ```
 v7_sliceN/
-├── matmul_kernel.py                        # The kernel implementation
-├── README.md                               # This file
-├── ir_dump_K8192_fp16/                     # IR dumps for analysis
-├── ir_dump_K8192_fp16_llirSched/           # IR dumps with LLIR scheduler
-├── ir_dump_K8192_fp16_llirSched_RA/        # IR dumps with LLIR scheduler + RA
-└── ir_dump_K8192_fp16_llirSched_amdgcnas/  # IR dumps with LLIR scheduler + amdgcnas
+├── matmul_kernel.py    # The kernel implementation
+└── README.md           # This file
 ```
 
 ## 2. Motivation

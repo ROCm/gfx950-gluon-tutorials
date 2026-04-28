@@ -9,8 +9,7 @@
 ```
 v4_global_prefetch/
 ├── matmul_kernel.py      # The kernel implementation
-├── README.md             # This file
-└── ir_dump_K4096_fp16/   # IR dumps for analysis
+└── README.md             # This file
 ```
 
 ## 2. Motivation
