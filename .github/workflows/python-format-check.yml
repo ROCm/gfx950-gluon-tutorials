@@ -4,7 +4,7 @@ on:
   push:
     branches: ["*"]
   pull_request:
-    branches: [main, gemm_16_8_bit]
+    branches: [main]
 
 jobs:
   format-check:

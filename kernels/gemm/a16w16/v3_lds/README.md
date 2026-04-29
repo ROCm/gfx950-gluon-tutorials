@@ -16,6 +16,8 @@ v3_lds/
     └── padding_512-16/
 ```
 
+The dump artifacts are reproduced against the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+
 ## 2. Motivation: How Do We Evaluate ds_read Performance?
 
 In this version of the kernel, our goal is not to optimize the entire GEMM.

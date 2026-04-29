@@ -10,6 +10,8 @@ v5_local_prefetch/
 └── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
 ```
 
+The dump artifacts are reproduced against the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+
 ## 2. Motivation
 
 In v4, we identified the bottleneck: MFMA must wait for `ds_read` to complete because it depends on data loaded from LDS to registers. This dependency prevents MFMA from starting at the beginning of each iteration.
