@@ -176,9 +176,6 @@ However, latency hiding alone is not sufficient to achieve peak performance. The
 
 The bottleneck is the dependency between `ds_read` and MFMA. While MFMA has no dependency on `buffer_load` (it does not wait for global loads), **MFMA must wait for `ds_read` to complete** because it consumes the data loaded from LDS into registers. This dependency prevents MFMA from starting until the `ds_read` results are ready.
 
-> [!NOTE]
-> For a deeper understanding of how to schedule `ds_read` and MFMA when they have dependencies, see David Tanner's [talk on MFMA Ordering](../../../../docs/talks/mfma_ordering.pdf).
-
 ## 5. What Comes Next
 
 In `v5_local_prefetch`, we address this bottleneck by prefetching the LDS → register transfer. By issuing `ds_read` for the next iteration while the current iteration's MFMA is executing, we break the dependency between MFMA and `ds_read` within the same iteration, allowing MFMA to execute earlier and improving MFMA efficiency.
