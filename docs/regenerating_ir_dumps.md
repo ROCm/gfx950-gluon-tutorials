@@ -27,8 +27,6 @@ The `.s` file checked into this repository is **not** produced directly by Trito
 sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' input.amdgcn > output.s
 ```
 
-(This matches the `getReg.sh` post-processing used during development; only the sed lines are reproduced here, the surrounding script is internal.)
-
 The standard regeneration workflow is therefore:
 
 1. **Point Triton at a fresh cache directory** so the run produces artifacts deterministically (and so multiple variants don't collide):
