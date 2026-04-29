@@ -12,7 +12,7 @@ v1_buffer_load/
 
 ## 2. Background: Buffer Operations in Triton
 
-Buffer operations are an AMD-specific memory access mechanism with built-in out-of-bounds (OOB) checking. Giuseppe Rossini laid the foundation for buffer op support in Triton and presented the details in [these slides](../../../../docs/talks/buffer_ops.pdf).
+Buffer operations are an AMD-specific memory access mechanism with built-in out-of-bounds (OOB) checking. Giuseppe Rossini laid the foundation for buffer op support in Triton and presented the details in a technical talk. The slide deck is intentionally omitted from this initial open-source release while it goes through separate publication review; the key concepts needed for this tutorial are summarized below.
 
 The key insight is that buffer ops handle OOB checks in hardware, eliminating the need for branches in the generated code. This is particularly valuable for masked loads common in GEMM kernels.
 
