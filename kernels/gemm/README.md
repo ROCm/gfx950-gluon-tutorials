@@ -12,7 +12,7 @@ Measured on MI355:
 |-----------|-------|--------|-----------|
 | FP16 | 4096x4096x8192 | 1619 | 98% |
 | BF8 | 4096x4096x16384 | 3456 | 99% |
-| MXFP4 | 4096x4096x32768 | 5783 | 92% |
+| MXFP4 | 4096x4096x32768 | 5728 | 92% |
 
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
