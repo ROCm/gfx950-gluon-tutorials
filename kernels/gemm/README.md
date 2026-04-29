@@ -14,6 +14,9 @@ Measured on MI355:
 | BF8 | 4096x4096x16384 | 3456 | 99% |
 | MXFP4 | 4096x4096x32768 | 5728 | 92% |
 
+> [!NOTE]
+> Measured on a single MI355 with ROCm 7.x and Triton built from the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) tag, collected via `scripts/run_perf_table.py --use-rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+
 All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
 
 ## 2. Prerequisites
