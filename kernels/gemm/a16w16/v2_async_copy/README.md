@@ -12,7 +12,7 @@ v2_async_copy/
 
 ## 2. Background: Direct-to-LDS in Triton
 
-Alexander Weinrauch presented a comprehensive overview of direct-to-LDS support in Triton in [these slides](../../../../docs/talks/direct_to_lds.pdf). The talk covers:
+Alexander Weinrauch presented a comprehensive overview of direct-to-LDS support in Triton in a technical talk. The slide deck is intentionally omitted from this initial open-source release while it goes through separate publication review. The talk covers:
 
 - Triton support for lowering async copy operations
 - Pipelining considerations
