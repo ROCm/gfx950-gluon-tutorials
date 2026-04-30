@@ -1,0 +1,14 @@
+# CODEOWNERS for ROCm/gfx950-gluon-tutorials
+#
+# This file defines individuals or teams responsible for code in this
+# repository. Code owners are automatically requested for review when
+# someone opens a pull request that modifies code they own.
+#
+# Reference:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Syntax: pattern  @owner1 @owner2
+# The last matching pattern wins.
+
+# Default owner for all files
+*       @zhanglx13
