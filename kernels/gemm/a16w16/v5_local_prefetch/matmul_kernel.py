@@ -253,7 +253,7 @@ def matmul(a, b, c=None):
     grid = (GRID_MN, 1)
 
     ## To enjoy the interleaving of mfma and mem instructions,
-    ## switch to https://github.com/ROCm/triton/tree/matmul_4waves as the triton compiler
+    ## switch to https://github.com/triton-lang/triton/tree/gfx950-tutorial as the triton compiler
 
     v5_local_prefetch[grid](
         a,

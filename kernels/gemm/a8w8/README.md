@@ -139,7 +139,7 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 **`amdgcnas` adds the last 3% to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.72% — the hot loop is essentially saturated.
 
-The [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) both come from the `matmul_4waves` development branch.
+The [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) both come from the `gfx950-tutorial` development branch.
 
 ## 5. How to Run
 

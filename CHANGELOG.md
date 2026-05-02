@@ -20,7 +20,7 @@ smem.load(layout)
 load and any in-flight `buffer_load_to_lds` async copies, so the LLVM backend
 wouldn't insert overly conservative `vmcnt` waits. As of OAI-triton commit
 [`d78665bc2b`](https://github.com/ROCm/triton/commit/d78665bc2b) on the
-`matmul_4waves` branch (the asyncMarker / `wait_asyncmark` rework), the
+`gfx950-tutorial` branch (the asyncMarker / `wait_asyncmark` rework), the
 no-alias relationship is now derived automatically from the dependency chain
 `async_copy` → `commit_group` → `wait_group` → `local_load`. The relaxed
 variant is no longer needed — the standard `smem.load()` lowers to identical

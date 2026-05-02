@@ -10,7 +10,7 @@ v5_local_prefetch/
 └── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
 ```
 
-The dump artifacts are reproduced against the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+The dump artifacts are reproduced against the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
 
 ## 2. Motivation
 
@@ -203,7 +203,7 @@ The scheduler:
 
 ### 5.2. How to Use It
 
-The LLIR scheduler is available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch.
+The LLIR scheduler is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
 
 Enable the LLIR scheduler by setting the environment variable:
 

@@ -61,7 +61,7 @@ CONFIG_ENV = {
     "base": {},
     "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
     # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
-    # Requires ROCm/triton branch `ra_hints_only_flag` (or `matmul_4waves`
+    # Requires ROCm/triton branch `ra_hints_only_flag` (or `gfx950-tutorial`
     # once the RA_HINTS support is merged into it); the relevant plumbing
     # is the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var.
     "llir+ra": {

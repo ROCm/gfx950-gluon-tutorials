@@ -185,7 +185,7 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 | v7 + LLIR scheduler + amdgcnas |   1550 |   512 |    98.40% |
 
 > [!NOTE]
-> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier `matmul_4waves` snapshots: v6+llir hits a compiler regression in the currently pinned [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) build (see the v6 README), and the RA-only configuration requires the [`ra_hints_only_flag`](https://github.com/ROCm/triton/tree/ra_hints_only_flag) branch which adds a `TRITON_ENABLE_AMDGPU_RA_HINTS` env var that gates only the LLVM allocator hints without running the post-assembly `amdgcnas` pass. The other two rows are fresh measurements on the pinned build.
+> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier Triton snapshots: v6+llir hit a compiler regression in the previously pinned `ROCm/triton` `matmul_4waves` build (see the v6 README; whether it still reproduces against [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) needs re-measurement), and the RA-only configuration requires the [`ra_hints_only_flag`](https://github.com/ROCm/triton/tree/ra_hints_only_flag) branch which adds a `TRITON_ENABLE_AMDGPU_RA_HINTS` env var that gates only the LLVM allocator hints without running the post-assembly `amdgcnas` pass. The other two rows are fresh measurements on the pinned build.
 
 **Copies**: count of `v_accvgpr_*` and `v_mov` instructions inside the main loop. These AGPR ↔ VGPR copy instructions transfer data between accumulator and vector register files.
 
@@ -216,7 +216,7 @@ The trace above shows that removing `v_accvgpr` copies also eliminates VALU stal
 
 ### 4.4. amdgcnas Assembly Processor
 
-**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It is available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch.
+**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
 
 Enable it by setting the environment variable:
 
