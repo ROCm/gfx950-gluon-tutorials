@@ -185,7 +185,7 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 | v7 + LLIR scheduler + amdgcnas |   1550 |   512 |    98.40% |
 
 > [!NOTE]
-> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier Triton snapshots: v6+llir hit a compiler regression in the previously pinned `ROCm/triton` `matmul_4waves` build (see the v6 README; whether it still reproduces against [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) needs re-measurement), and the RA-only configuration requires the [`ra_hints_only_flag`](https://github.com/ROCm/triton/tree/ra_hints_only_flag) branch which adds a `TRITON_ENABLE_AMDGPU_RA_HINTS` env var that gates only the LLVM allocator hints without running the post-assembly `amdgcnas` pass. The other two rows are fresh measurements on the pinned build.
+> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier Triton snapshots: v6+llir hit a compiler regression in the previously pinned `ROCm/triton` `matmul_4waves` build (see the v6 README; whether it still reproduces against [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) needs re-measurement). The RA-only configuration is gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var, which sets just the LLVM allocator hints without running the post-assembly `amdgcnas` pass — supported natively by the `gfx950-tutorial-v0.1` pin. The other two rows are fresh measurements on the pinned build.
 
 **Copies**: count of `v_accvgpr_*` and `v_mov` instructions inside the main loop. These AGPR ↔ VGPR copy instructions transfer data between accumulator and vector register files.
 
