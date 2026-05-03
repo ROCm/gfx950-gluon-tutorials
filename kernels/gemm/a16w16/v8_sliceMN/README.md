@@ -243,8 +243,8 @@ The buffer load stall described above is directly measurable. We compare v7 (sli
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
-python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 16384 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 16384 --dtype fp16 --rocprof
 ```
 
 At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384, v7 drops to 93.64% while v8 maintains 98.32%. The 4.7 percentage-point gap in MFMA efficiency is the direct consequence of the TCP stall: v7's 16 consecutive buffer loads per wave exceed the ~1000-cycle HBM budget, while v8's distributed 4-loads-per-region structure stays within the ~1500-cycle budget.

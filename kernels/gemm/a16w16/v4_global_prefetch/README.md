@@ -111,8 +111,8 @@ for k in range(0, iterMax - 1):
     gl.amd.cdna4.async_copy.wait_group(1)
 
     # Consume from buffer l_idx
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
     acc = gl.amd.cdna3.mfma(a, b, acc)
 
     a_base += BLOCK_K * stride_ak
@@ -130,8 +130,8 @@ After the loop, we process the final tile that was prefetched in the last loop i
 ## Epilogue
 gl.amd.cdna4.async_copy.wait_group(0)  # Wait for all async copies
 l_idx = (iterMax - 1) % 2
-a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+a = smemA.index(l_idx).load(dotOpLayoutA)
+b = smemB.index(l_idx).load(dotOpLayoutB)
 acc = gl.amd.cdna3.mfma(a, b, acc)
 ```
 
@@ -146,7 +146,7 @@ Software pipelining delivers a **39% performance improvement** (746 → 1038 TFL
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 3 4 --configs base --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 3 4 --configs base --K 8192 --dtype fp16 --rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 

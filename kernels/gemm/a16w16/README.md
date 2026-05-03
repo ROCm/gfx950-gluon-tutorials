@@ -32,10 +32,10 @@ a16w16/
 From the `a16w16` directory:
 
 ```bash
-python bench.py --version 9 --K 8192 --dtype fp16 --use-rocprof
+python bench.py --version 9 --K 8192 --dtype fp16
 ```
 
-This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--version` to select a kernel version (0–9) and `--use-rocprof` for accurate performance measurement.
+This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--version` to select a kernel version (0–9) and `--rocprof` for accurate performance measurement.
 
 ## 3. The Optimization Journey
 

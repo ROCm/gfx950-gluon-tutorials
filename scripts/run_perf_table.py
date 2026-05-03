@@ -41,7 +41,7 @@ Usage:
     python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --use-rocprof
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
 """
 
 import argparse
@@ -241,6 +241,8 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     cmd = [
         "rocprofv3",
         "--kernel-trace",
+        "-f",
+        "csv",
         "--kernel-include-regex",
         version_dir,
         "-d",
@@ -458,7 +460,7 @@ def parse_args():
         help="Data type for benchmark (default: fp16). Ignored for a8w8.",
     )
     parser.add_argument(
-        "--use-rocprof",
+        "--rocprof",
         action="store_true",
         help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
     )
@@ -493,7 +495,7 @@ def main():
                 args.K,
                 args.dtype,
                 kernel=args.kernel,
-                use_rocprof=args.use_rocprof,
+                use_rocprof=args.rocprof,
             )
             results[config].append(row)
 

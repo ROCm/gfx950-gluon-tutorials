@@ -59,7 +59,7 @@ Instead, scales must go through a 3-step pipeline:
 
 1. **GR** (Global Read): `buffer_load` loads scales from HBM into registers in a `BlockedLayout` optimized for coalesced access
 2. **LW** (Local Write): `store` writes scales from registers to LDS
-3. **LR** (Local Read): `load_shared_relaxed` reads scales back from LDS into the MFMA scale layout
+3. **LR** (Local Read): `smem.load` reads scales back from LDS into the MFMA scale layout
 
 The LDS round-trip exists because the two register layouts are fundamentally different. The `BlockedLayout` for global load groups consecutive M (or N) elements per thread for coalesced HBM access. The MFMA scale layout distributes M/N positions to match the MFMA dot operand thread mapping — each thread's scale values must correspond to the data elements it feeds to MFMA. These two distributions are incompatible, so LDS serves as the intermediary to redistribute data between them.
 
@@ -118,7 +118,7 @@ A deeper technical talk on `ds_read_tr` is planned as a follow-up appendix after
 **Legend:**
 - **AC**: `async_copy` (buffer_load_to_shared) for tiles
 - **GR**: global read (`buffer_load`) for scales into registers
-- **LR**: local read (`load_shared_relaxed`) for tiles and scales
+- **LR**: local read (`smem.load`) for tiles and scales
 - **LW**: local write (`store` to shared memory) for scales
 - **A[0,1]**: tile A register buffers
 - **B_l, B_r**: B_left and B_right tile registers

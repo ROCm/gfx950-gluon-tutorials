@@ -82,8 +82,8 @@ gl.amd.cdna4.async_copy.commit_group()
 ## wait buffer 0, local_load A0, B0
 gl.amd.cdna4.async_copy.wait_group(1)
 l_idx = 0
-a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+a = smemA.index(l_idx).load(dotOpLayoutA)
+b = smemB.index(l_idx).load(dotOpLayoutB)
 ```
 
 ### 3.3 Main Loop
@@ -115,8 +115,8 @@ for k in range(0, iterMax - 1):
     gl.amd.cdna4.async_copy.commit_group()
 
     # Local load for k+1
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a_next = smemA.index(l_idx).load(dotOpLayoutA)
+    b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     a = a_next
     b = b_next
@@ -149,7 +149,7 @@ The 3-stage pipeline provides a modest improvement in the baseline case (1038 â†
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 
@@ -214,7 +214,7 @@ TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 8192 --dtype fp16 --version 5
 Or when using `run_perf_table.py`, use the `llir` config:
 
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
 The implementation is at `third_party/amd/lib/TritonAMDGPUToLLVM/LLIRSchedule.cpp`.

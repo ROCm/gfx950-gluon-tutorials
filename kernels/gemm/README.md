@@ -15,7 +15,7 @@ Measured on MI355:
 | MXFP4 | 4096x4096x32768 | 5728 | 92% |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm 6.5.0 and Triton built from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag, collected via `scripts/run_perf_table.py --use-rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+> Measured on a single MI355 with ROCm 6.5.0 and Triton built from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
 
 All kernels require the [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) for optimal performance.
 
@@ -56,13 +56,13 @@ The easiest way to run benchmarks with all optimizations enabled is `run_perf_ta
 
 ```bash
 # FP16 (a16w16)
-python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --rocprof
 
 # BF8 (a8w8)
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --rocprof
 
 # MXFP4 (a4w4)
-python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --use-rocprof
+python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --rocprof
 ```
 
 This script automatically:
@@ -87,10 +87,12 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
 
-1. Collect the kernel trace (`-d` specifies the output directory):
+1. Collect the kernel trace (`-d` specifies the output directory; `-f csv`
+   selects CSV output, which `calc_kernel_time.py` reads — recent rocprofv3
+   versions default to a different format):
    ```bash
    TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-       rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+       rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
    ```
 
 2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:

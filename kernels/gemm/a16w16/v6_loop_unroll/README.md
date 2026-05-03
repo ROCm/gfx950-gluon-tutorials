@@ -42,8 +42,8 @@ for k in range(0, iterMax - 2, 2):
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets, ...)
     gl.amd.cdna4.async_copy.commit_group()
 
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a_next = smemA.index(l_idx).load(dotOpLayoutA)
+    b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     a_base += BLOCK_K * stride_ak
     b_base += BLOCK_K * stride_bk
@@ -59,8 +59,8 @@ for k in range(0, iterMax - 2, 2):
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets, ...)
     gl.amd.cdna4.async_copy.commit_group()
 
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
 
     a_base += BLOCK_K * stride_ak
     b_base += BLOCK_K * stride_bk
@@ -81,8 +81,8 @@ With loop unrolling, the epilogue handles the remaining iterations. Since the ma
 ## iterMax - 2
 l_idx = 1
 acc = gl.amd.cdna3.mfma(a, b, acc)
-a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+a_next = smemA.index(l_idx).load(dotOpLayoutA)
+b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
 ## iterMax - 1
 acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
@@ -106,7 +106,7 @@ With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).

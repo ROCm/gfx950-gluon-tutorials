@@ -14,7 +14,7 @@ If this is your first time in the repo, open **[`kernels/gemm/a16w16/README.md`]
 
 ```bash
 cd kernels/gemm/a16w16
-python bench.py --version 0 --K 8192 --dtype fp16 --use-rocprof
+python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
 Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling.
