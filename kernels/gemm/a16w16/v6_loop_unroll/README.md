@@ -102,7 +102,7 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
 
 > [!NOTE]
-> These numbers were collected on an earlier Triton snapshot. The previously pinned `ROCm/triton` `matmul_4waves` build had a dominance bug in a `hoistVoffsetCompute` epilogue-scheduling pass that produced invalid IR for v6's unrolled loop and crashed during compilation; that pass was dropped during the upstream-Triton migration, and v6+llir compiles cleanly against the current [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) pin. The numbers above predate the migration and remain a faithful reference for the v5 → v6 MFMA-efficiency story; absolute TFLOPS may shift slightly on the new pin and will be refreshed in a future perf pass.
+> These numbers were collected on an earlier Triton snapshot and will be refreshed against the current [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) pin in a future perf pass. The kernel design and the relative v5 → v6 MFMA-efficiency story are unchanged.
 
 Performance is collected using:
 ```bash
