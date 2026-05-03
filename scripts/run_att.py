@@ -54,9 +54,7 @@ def run_rocprof_att(att_output_dir, python_cmd):
     env = os.environ.copy()
     # Allow user override via the standard env var. If not set, fall back to a
     # common install location for the rocprof-trace-decoder package.
-    env.setdefault(
-        "ROCPROF_ATT_LIBRARY_PATH", "/opt/rocm/lib/"
-    )
+    env.setdefault("ROCPROF_ATT_LIBRARY_PATH", "/opt/rocm/lib/")
 
     cmd = [
         "rocprofv3",
