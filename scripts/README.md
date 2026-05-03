@@ -224,9 +224,8 @@ python scripts/calc_kernel_time.py <csv_file> <kernel_name> [--unit ns|us|ms]
 ### Example
 
 ```bash
-# Collect kernel trace (-f csv is required: recent rocprofv3 versions default
-# to a binary format that calc_kernel_time.py cannot read).
-rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+# Collect kernel trace
+rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
 
 # Calculate average kernel time
 python scripts/calc_kernel_time.py out/kernel_trace.csv matmul_kernel
