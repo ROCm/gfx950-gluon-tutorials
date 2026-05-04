@@ -15,11 +15,23 @@ Measured on MI355:
 | MXFP4 | 4096x4096x32768 | 5728 | 92% |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm 6.5.0 and Triton built from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
 
 All kernels require the [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) for optimal performance.
 
 ## 2. Prerequisites
+
+### 2.0 ROCm
+
+This tutorial assumes **ROCm ≥ 7.0**. The benchmarking and trace
+collection scripts (`scripts/run_perf_table.py`, `scripts/run_att.py`,
+`scripts/run_counter_collection.py`, `scripts/calc_kernel_time.py`) drive
+`rocprofv3` from the ROCm 7.0 line; in particular they pass `-f csv`
+where rocprofv3 7.0+ now defaults to a binary `.db` output, and
+`scripts/install_att_decoder.sh` fetches the ROCm 7.0-style
+`librocprof-trace-decoder.so` artifact. Earlier ROCm releases (notably
+6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
+and different CLI defaults, and are not supported by these scripts.
 
 ### 2.1 Triton Branch — LLIR Scheduler and amdgcnas
 
@@ -87,10 +99,12 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
 
-1. Collect the kernel trace (`-d` specifies the output directory):
+1. Collect the kernel trace (`-d` specifies the output directory; `-f csv`
+   selects CSV output, which `calc_kernel_time.py` reads — rocprofv3 on
+   ROCm 7.0+ defaults to a binary `.db` format):
    ```bash
    TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-       rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+       rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
    ```
 
 2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:

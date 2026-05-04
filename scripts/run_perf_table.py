@@ -241,6 +241,8 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     cmd = [
         "rocprofv3",
         "--kernel-trace",
+        "-f",
+        "csv",
         "--kernel-include-regex",
         version_dir,
         "-d",
