@@ -116,15 +116,11 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir -
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### 4.1. Reading the spill count from the assembly
+### 4.1. Diagnosing the spills
 
 The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 99 split across both regions, and only the in-loop subset drives the regression.
 
-### 4.2. What an in-loop spill actually costs
-
 Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way. The fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot hide. A handful per iteration drags MFMA efficiency from 76% down to 19%.
-
-### 4.3. Where this gets fixed
 
 The closed-form register accounting that quantifies the spill — and the design change that resolves it — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 fixes the problem by construction.
 
