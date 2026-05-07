@@ -94,15 +94,12 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 ## 4. Performance Analysis
 
-| Version              | TFLOPS | VGPRs | MFMA Eff. |
-|----------------------|--------|-------|-----------|
-| v5 + LLIR scheduler  |   1283 |   510 |       76% |
-| v6 + LLIR scheduler  |   1260 |   500 |       88% |
+| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------|--------|-------|--------|-----------|
+| v5 + LLIR scheduler  |   1278 |   510 |      0 |       76% |
+| v6 + LLIR scheduler  |    346 |   512 |     99 |       19% |
 
-With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
-
-> [!NOTE]
-> These numbers were collected on an earlier Triton snapshot and will be refreshed against the current [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) pin in a future perf pass. The kernel design and the relative v5 → v6 MFMA-efficiency story are unchanged.
+The unroll-by-2 that was supposed to eliminate copy overhead instead produces a **73% TFLOPS regression**. v5 fits its working set in 510 VGPRs with zero spills; v6, structurally identical but unrolled, hits the 512-VGPR ceiling and spills 99 VGPRs to scratch memory. MFMA efficiency collapses from 76% to 19%.
 
 Performance is collected using:
 ```bash
@@ -111,40 +108,24 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir -
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### 4.1. Trace Comparison
+### 4.1. Reading the spill count from the assembly
 
-Comparing thread traces of v5 and v6 with the LLIR scheduler. Each screenshot shows one iteration of the main loop:
+The `.vgpr_spill_count` field in the kernel descriptor at the bottom of the generated `.amdgcn` (in `~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total number of VGPRs the register allocator had to spill across the kernel. To see *where* they spill, grep for `scratch_load` / `scratch_store` and check whether each one falls inside the inner loop or in the prologue/epilogue.
 
-![v5 with LLIR scheduler trace](../images/v5-llirSched_bottleneck_zoomin.png)
+**Where the spill lives matters far more than how many there are.** Spills outside the hot loop are paid once per kernel launch and amortize over thousands of MFMA cycles — they barely register in the perf number. v5 + LLIR scheduler is the clean baseline at zero spills end-to-end. v6 + LLIR scheduler, by contrast, has 99 spills, of which 33 fall inside the unrolled loop body and 52 in the prologue/epilogue. The 52 outside contribute almost nothing; the 33 inside drive the regression.
 
-![v6 with LLIR scheduler trace](../images/v6-llirSched_bottleneck_zoomin.png)
+### 4.2. What an in-loop spill actually costs
 
-In v5 (top), copy instructions appear at the end of each iteration. In v6 (bottom), these copies are eliminated—the register sets alternate naturally.
+When a register is spilled, the compiler inserts a `scratch_load` to bring the value back from private memory before its next use, followed by `s_waitcnt vmcnt(0)` to ensure the load has completed. `scratch_load` goes through L1 and, on a miss, all the way to HBM — hundreds of cycles in the worst case. The `vmcnt(0)` wait stalls the wave until that load is fence-resolved, which in turn stalls every MFMA instruction whose input depends on the spilled value.
 
-### 4.2. Remaining Bottlenecks
+This is why MFMA efficiency drops from 76% to 19% even though v6 schedules the same MFMA + `ds_read` + `buffer_load` pattern as v5: the LLIR scheduler interleaves memory operations to hide their latency, but it cannot hide a `scratch_load` / `vmcnt(0)` pair sitting on the MFMA critical path. Each in-loop spill round-trip serializes the pipeline against HBM, and 33 of them per unrolled iteration is enough to keep the MFMA unit idle most of the time.
 
-Even with 88% MFMA efficiency, room for improvement remains. The v6 trace shows MFMA gaps scattered throughout the iteration.
+### 4.3. Why does v6 spill?
 
-#### 4.2.1. VALU Stalls from Power Management
+The short answer is that v6's register footprint exceeds the 512-VGPR budget that gfx9 provides per SIMD. Loop unrolling by 2 widens the live ranges of the prefetch staging registers — both `a/b` and `a_next/b_next` pairs are simultaneously live across the unrolled body — and the LLIR scheduler's aggressive interleaving leaves the allocator no room to reuse them. v5 fits in 510 VGPRs without spills; v6 needs 512 + 99 spills to compile.
 
-The area marked by the **purple circle** shows instructions across iteration boundaries. VALU instructions in this region take 40-80 cycles instead of the expected 4 cycles due to power management mechanisms.
-
-When power consumption changes rapidly, the power delivery network cannot respond quickly enough, causing voltage instability. MI350 uses two mechanisms to prevent this:
-
-- **DIDT (Digital Integrated Droop Tracking)**: Hardware that detects voltage droops and stretches the clock (lowering frequency) until voltage stabilizes.
-- **PIT (Power Instruction Throttling)**: Firmware that looks ahead at upcoming instructions and proactively inserts stalls to smooth out power spikes before they trigger DIDT.
-
-In the trace, a long period of low-power instructions (scalar operations, waits) across the iteration boundary is followed by a burst of high-power VALU and MFMA instructions. PIT detects this transition and inserts stalls to prevent a voltage droop.
-
-**Solution**: Increase MFMA efficiency to maintain stable power draw. Keeping the MFMA unit continuously busy keeps current draw steady, so there is no voltage droop for DIDT to throttle on and no upcoming power spike for PIT to preempt. Both mechanisms stay dormant when the workload already looks smooth to the power delivery network.
-
-#### 4.2.2. AGPR ↔ VGPR Copies
-
-The generated assembly still contains copy instructions between AGPRs and VGPRs. While we eliminated the `a/b` ↔ `a_next/b_next` copies, the compiler inserts data movement between accumulator registers (AGPRs) and vector registers (VGPRs) for certain operations.
+The closed-form register accounting that quantifies this, and the design change that fixes it, is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 is where the spill problem gets solved by construction.
 
 ## 5. What Comes Next
 
-The next versions address the two bottlenecks identified above:
-
-- **Register pressure optimization** — to eliminate AGPR ↔ VGPR copy overhead
-- **Increased MFMA efficiency** — to maintain stable power draw and avoid PIT stalls
+v6 has hit the register-budget ceiling. The remedy is not to coax the allocator into a tighter packing — that strategy plateaus quickly — but to design the kernel so the register footprint fits comfortably under 512 VGPRs *by construction*. v7 introduces slicing along N to halve the B tile's register cost, opening enough headroom to absorb the prefetch buffers and cleanly eliminate the spills.
