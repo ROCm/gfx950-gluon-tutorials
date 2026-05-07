@@ -121,6 +121,7 @@ def is_reported(kernel, config, version):
     """Return True if this (kernel, config, version) appears in the tutorial."""
     return version in REPORTED_COMBINATIONS.get(kernel, {}).get(config, set())
 
+
 TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
 
 ATT_MATMUL_TEMPLATE = {
@@ -545,8 +546,7 @@ def main():
     for config in args.configs:
         results[config] = []
         active_versions = [
-            v for v in versions
-            if args.allow_unreported or is_reported(args.kernel, config, v)
+            v for v in versions if args.allow_unreported or is_reported(args.kernel, config, v)
         ]
         if not active_versions:
             continue
