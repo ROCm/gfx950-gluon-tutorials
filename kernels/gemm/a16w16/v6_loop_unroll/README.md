@@ -99,14 +99,14 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 | v5 + LLIR scheduler  |   1278 |   510 |      0 |       76% |
 | v6 + LLIR scheduler  |    346 |   512 |     99 |       19% |
 
-The unroll-by-2 in v6 eliminates the per-iteration copy as designed — at the IR level, that part of the change works. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
+The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
 
 - In **v5**, each iteration ends with a copy `a ← a_next; b ← b_next`. The LLIR scheduler can place that copy in a slot where the backend can reuse VGPRs across iterations. The footprint fits cleanly inside the 512-VGPR budget.
 - In **v6**, the unroll removes the copy by alternating buffer roles. In the first sub-iteration, `mfma` reads from `(a, b)` while `ds_read` simultaneously writes into `(a_next, b_next)`; the two operations are concurrent by construction, so their VGPR sets must be disjoint — there is no opportunity for reuse. The footprint blows past 512 and the allocator has to spill 99 VGPRs to scratch.
 
 Two lessons fall out of this:
 
-1. **A solution for one bottleneck can introduce a new one.** v6 cleanly eliminates v5's copy overhead at the IR level; the cost re-emerges one layer down, in register allocation — exactly where the original copies were silently helping.
+1. **A solution for one bottleneck can introduce a new one.** v6 cleanly eliminates v5's copy overhead; the cost re-emerges one layer down, in register allocation — exactly where the original copies were silently helping.
 2. **A regression is not a reason to revert.** The unrolling design is correct; what it surfaces is a real problem that v5 was hiding. The right response is to look deeper, find what actually changed (here, the live-range overlap that the copies had been masking), and fix that — not to throw the unroll away. v7 takes that path.
 
 Performance is collected using:
@@ -118,15 +118,11 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ### 4.1. Reading the spill count from the assembly
 
-The `.vgpr_spill_count` field in the kernel descriptor at the bottom of the generated `.amdgcn` (in `~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total number of VGPRs the register allocator had to spill across the kernel. To see *where* they spill, grep for `scratch_load` / `scratch_store` and check whether each one falls inside the inner loop or in the prologue/epilogue.
-
-**Where the spill lives matters far more than how many there are.** Spills outside the hot loop are paid once per kernel launch and amortize over thousands of MFMA cycles — they barely register in the perf number. v5 + LLIR scheduler is the clean baseline at zero spills end-to-end. v6 + LLIR scheduler distributes its 99 spills across both regions; only the in-loop spills drive the regression while the rest amortize to noise.
+The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 99 split across both regions, and only the in-loop subset drives the regression.
 
 ### 4.2. What an in-loop spill actually costs
 
-When a register is spilled, the compiler inserts a `scratch_load` to bring the value back from private memory before its next use, followed by `s_waitcnt vmcnt(0)` to ensure the load has completed. `scratch_load` goes through L1 and, on a miss, all the way to HBM — hundreds of cycles in the worst case. The `vmcnt(0)` wait stalls the wave until that load is fence-resolved, which in turn stalls every MFMA instruction whose input depends on the spilled value.
-
-This is why MFMA efficiency drops from 76% to 19% even though v6 schedules the same MFMA + `ds_read` + `buffer_load` pattern as v5: the LLIR scheduler interleaves memory operations to hide their latency, but it cannot hide a `scratch_load` / `vmcnt(0)` pair sitting on the MFMA critical path. Each in-loop spill round-trip serializes the pipeline against HBM, and a handful of them per unrolled iteration is enough to keep the MFMA unit idle most of the time.
+Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way. The fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot hide. A handful per iteration drags MFMA efficiency from 76% down to 19%.
 
 ### 4.3. Where this gets fixed
 
