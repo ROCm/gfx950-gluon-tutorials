@@ -187,17 +187,49 @@ def load_code_json(folder):
 
 
 def find_loop_branch(sorted_code):
-    """Find the loop back-edge branch (s_cbranch_scc0/scc1).
+    """Find the inner-loop back-edge.
 
-    Returns the position in sorted_code, or None if not found.
-    This is more robust than hitcount heuristics since it uses the
-    actual control flow structure.
+    Picks an s_cbranch instruction with the maximum hitcount among all
+    cbranches; among those, prefers one whose target jumps backward. AMDGPU
+    s_cbranch* encodes its target as a 16-bit signed relative offset, which
+    code.json surfaces as an unsigned integer in the instruction name (e.g.
+    `s_cbranch_execz 64855` means offset -681). A back-edge always has a
+    negative offset, so unsigned > 32767. Ties broken by program order
+    (last wins) so that, when the only cbranches are mid-loop guards, we
+    still land on the latest one — closest to the actual back-edge.
+
+    This handles three kernel shapes that the simpler "first s_cbranch_scc"
+    rule got wrong:
+      - v5_local_prefetch: early-out scc branches before the loop steal
+        precedence over the real back-edge, producing mfma_count_in_loop=0.
+      - v0_naive / v2_async_copy: many in-loop s_cbranch_execz mask-load
+        branches share the back-edge's hitcount, and the back-edge itself
+        is also an execz (not an scc).
+
+    Returns the position of the chosen branch in sorted_code, or None.
     """
-    for i, ins in enumerate(sorted_code):
-        name = ins[0].lower()
-        if "s_cbranch_scc0" in name or "s_cbranch_scc1" in name:
-            return i
-    return None
+    cbranches = [
+        (i, ins) for i, ins in enumerate(sorted_code) if ins[0].lower().startswith("s_cbranch_")
+    ]
+    if not cbranches:
+        return None
+
+    max_hit = max(ins[6] for _, ins in cbranches)
+    top = [(i, ins) for i, ins in cbranches if ins[6] == max_hit]
+
+    def is_backward(ins):
+        parts = ins[0].split()
+        if len(parts) < 2:
+            return False
+        try:
+            return int(parts[1]) > 32767
+        except ValueError:
+            return False
+
+    backward = [(i, ins) for i, ins in top if is_backward(ins)]
+    if backward:
+        return backward[-1][0]
+    return top[-1][0]
 
 
 def analyze_code(code_list):
@@ -217,7 +249,16 @@ def analyze_code(code_list):
         # Loop starts at the first instruction with the same hitcount
         loop_first_pos = next(i for i, h in enumerate(hitcounts) if h == loop_hit)
         loop_last_pos = branch_pos
-        epilogue_first_pos = branch_pos + 1 if branch_pos + 1 < len(hitcounts) else None
+        # Epilogue starts at the first post-back-edge instruction whose
+        # hitcount is below the loop's but still nonzero. Plain "branch_pos
+        # + 1" lands on dead code (hit=0) or trailing in-loop instructions
+        # (hit == loop_hit) for kernels like v0_naive whose back-edge has
+        # masked-load fall-through.
+        epilogue_first_pos = None
+        for j in range(branch_pos + 1, len(hitcounts)):
+            if 0 < hitcounts[j] < loop_hit:
+                epilogue_first_pos = j
+                break
     else:
         # Fallback: hitcount-based detection
         max_hit = max(hitcounts)

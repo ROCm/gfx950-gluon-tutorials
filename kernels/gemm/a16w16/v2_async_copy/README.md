@@ -53,14 +53,14 @@ gl.amd.cdna4.async_copy.buffer_load_to_shared(
 )
 gl.amd.cdna4.async_copy.commit_group()
 gl.amd.cdna4.async_copy.wait_group(0)
-a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA, dotOpLayoutA)
+a = smemA.load(dotOpLayoutA)
 ```
 
 The flow is:
 1. `buffer_load_to_shared` — Initiate async copy from global memory to LDS
 2. `commit_group` — Commit the async copy group
 3. `wait_group(0)` — Wait for all pending copies to complete
-4. `load_shared_relaxed` — Read from LDS into registers with the desired layout
+4. `smem.load` — Read from LDS into registers with the desired layout (see [CHANGELOG](../../../../CHANGELOG.md) for the migration from `load_shared_relaxed`)
 
 ## 5. Impact on Generated Code
 

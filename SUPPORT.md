@@ -6,9 +6,9 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) annotated tag in `ROCm/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
+All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) annotated tag in `triton-lang/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
 
-Later commits on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
+Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
 
 ## Upstream trajectory
 

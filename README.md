@@ -4,7 +4,7 @@ A hands-on tutorial for writing **high-performance Gluon kernels** on AMD **MI35
 
 **Why Gluon, not Triton?** Triton's strength is hardware-portable productivity: kernel authors describe what to compute and the compiler decides scheduling, register allocation, and layout. That abstraction is the right call for most kernels. For peak-performance kernels on a specific architecture, the compiler has to rediscover pipeline structure from generic IR, and the last 10–20% of performance is hard to reach. Gluon is a Triton dialect that closes that gap: a **block-level programming model** where you engineer pipelines, budget registers, and design layouts explicitly. The compiler's job narrows to faithful lowering and throughput-aware interleaving; the hard parts of traditional GPU compilation (NP-hard scheduling, graph-coloring register allocation) become design problems the kernel author owns. Triton remains the right tool for portable code; Gluon is the tool when you need to extract every last percent on a target GPU. See [`docs/performance_philosophy.md`](docs/performance_philosophy.md) for the full argument.
 
-The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive Gluon baseline runs at **522 TFLOPS**. Nine versions later, it reaches **1619 TFLOPS** — a **3× speedup**, every step motivated by a thread trace or a hardware counter. This repo is not a collection of finished kernels; it is the record of that journey, kept so readers can see *how* near-peak performance is built, not just what the final kernel looks like.
+The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive Gluon baseline runs at **520 TFLOPS**. Nine versions later, it reaches **1489 TFLOPS** — a **~3× speedup**, every step motivated by a thread trace or a hardware counter. This repo is not a collection of finished kernels; it is the record of that journey, kept so readers can see *how* near-peak performance is built, not just what the final kernel looks like.
 
 ---
 
@@ -14,7 +14,7 @@ If this is your first time in the repo, open **[`kernels/gemm/a16w16/README.md`]
 
 ```bash
 cd kernels/gemm/a16w16
-python bench.py --version 0 --K 8192 --dtype fp16 --use-rocprof
+python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
 Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling.

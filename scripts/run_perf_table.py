@@ -41,7 +41,7 @@ Usage:
     python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --use-rocprof
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
 """
 
 import argparse
@@ -74,10 +74,9 @@ CONFIG_ENV = {
     # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
     # Used to measure how much of the amdgcnas improvement comes from the
     # register-allocation hint vs. the post-assembly peephole / LICM.
-    # Requires ROCm/triton branch `ra_hints_only_flag` (or `matmul_4waves`
-    # once the RA_HINTS support is merged into it); the relevant plumbing
-    # is the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var gated in
-    # third_party/amd/backend/compiler.py and python/src/llvm.cc.
+    # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var (in
+    # third_party/amd/backend/compiler.py and python/src/llvm.cc) and
+    # supported natively by the `gfx950-tutorial-v0.1` pin.
     "llir+ra": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
@@ -87,6 +86,41 @@ CONFIG_ENV = {
         "TRITON_ENABLE_AMDGCN_AS": "1",
     },
 }
+
+# (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
+# number in the tutorial. Pairs not in this set are skipped by default — they
+# either crash at compile time (e.g. v0..v4 + llir segfault) or produce results
+# that aren't part of the documented optimization story (e.g. v6 + llir+amdgcnas
+# FAILs, v5 + amdgcnas spills 246 VGPRs).
+#
+# Single-kernel benchmarks (a8w8, a4w4) use `None` as the version sentinel,
+# matching how main() already represents them.
+#
+# Pass --allow-unreported to bypass the gate (e.g. for development).
+REPORTED_COMBINATIONS = {
+    "a16w16": {
+        "base": {0, 2, 3, 4, 5},
+        "llir": {5, 6, 7},
+        "llir+ra": {7},
+        "llir+amdgcnas": {7, 8, 9},
+    },
+    "a8w8": {
+        "base": {None},
+        "llir": {None},
+        "llir+amdgcnas": {None},
+    },
+    "a4w4": {
+        "base": {None},
+        "llir": {None},
+        "llir+amdgcnas": {None},
+    },
+}
+
+
+def is_reported(kernel, config, version):
+    """Return True if this (kernel, config, version) appears in the tutorial."""
+    return version in REPORTED_COMBINATIONS.get(kernel, {}).get(config, set())
+
 
 TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
 
@@ -242,6 +276,8 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
     cmd = [
         "rocprofv3",
         "--kernel-trace",
+        "-f",
+        "csv",
         "--kernel-include-regex",
         version_dir,
         "-d",
@@ -459,9 +495,17 @@ def parse_args():
         help="Data type for benchmark (default: fp16). Ignored for a8w8.",
     )
     parser.add_argument(
-        "--use-rocprof",
+        "--rocprof",
         action="store_true",
         help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
+    )
+    parser.add_argument(
+        "--allow-unreported",
+        action="store_true",
+        help="Run (version, config) pairs that do not have a published number "
+        "in the tutorial. Off by default — unreported pairs include known "
+        "crashes (e.g. v0..v4 + llir segfault) and configs that aren't part "
+        "of the documented optimization story.",
     )
     return parser.parse_args()
 
@@ -480,21 +524,43 @@ def main():
                 sys.exit(1)
         versions = args.versions
 
+    # Filter (config, version) pairs to those reported in the tutorial unless
+    # --allow-unreported is set. Skipped pairs are listed up front so the user
+    # sees exactly what was dropped.
+    skipped = []
+    for config in args.configs:
+        for version in versions:
+            if not args.allow_unreported and not is_reported(args.kernel, config, version):
+                skipped.append((config, version))
+
+    if skipped:
+        print(f"\n{'='*60}")
+        print("Skipped (not reported in tutorial; pass --allow-unreported to run):")
+        for config, version in skipped:
+            label = VERSION_MAP[version] if version is not None else args.kernel
+            print(f"  {label} + {config}")
+        print(f"{'='*60}")
+
     # Collect results grouped by config
     results = {}
     for config in args.configs:
+        results[config] = []
+        active_versions = [
+            v for v in versions if args.allow_unreported or is_reported(args.kernel, config, v)
+        ]
+        if not active_versions:
+            continue
         print(f"\n{'='*60}")
         print(f"Config: {config}")
         print(f"{'='*60}")
-        results[config] = []
-        for version in versions:
+        for version in active_versions:
             row = run_benchmark(
                 version,
                 config,
                 args.K,
                 args.dtype,
                 kernel=args.kernel,
-                use_rocprof=args.use_rocprof,
+                use_rocprof=args.rocprof,
             )
             results[config].append(row)
 
@@ -503,7 +569,8 @@ def main():
     print("RESULTS SUMMARY")
     print(f"{'='*60}")
     for config in args.configs:
-        print_table(config, results[config])
+        if results[config]:
+            print_table(config, results[config])
 
 
 if __name__ == "__main__":

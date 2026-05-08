@@ -59,7 +59,7 @@ Instead, scales must go through a 3-step pipeline:
 
 1. **GR** (Global Read): `buffer_load` loads scales from HBM into registers in a `BlockedLayout` optimized for coalesced access
 2. **LW** (Local Write): `store` writes scales from registers to LDS
-3. **LR** (Local Read): `load_shared_relaxed` reads scales back from LDS into the MFMA scale layout
+3. **LR** (Local Read): `smem.load` reads scales back from LDS into the MFMA scale layout
 
 The LDS round-trip exists because the two register layouts are fundamentally different. The `BlockedLayout` for global load groups consecutive M (or N) elements per thread for coalesced HBM access. The MFMA scale layout distributes M/N positions to match the MFMA dot operand thread mapping — each thread's scale values must correspond to the data elements it feeds to MFMA. These two distributions are incompatible, so LDS serves as the intermediary to redistribute data between them.
 
@@ -118,7 +118,7 @@ A deeper technical talk on `ds_read_tr` is planned as a follow-up appendix after
 **Legend:**
 - **AC**: `async_copy` (buffer_load_to_shared) for tiles
 - **GR**: global read (`buffer_load`) for scales into registers
-- **LR**: local read (`load_shared_relaxed`) for tiles and scales
+- **LR**: local read (`smem.load`) for tiles and scales
 - **LW**: local write (`store` to shared memory) for scales
 - **A[0,1]**: tile A register buffers
 - **B_l, B_r**: B_left and B_right tile registers
@@ -214,17 +214,17 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
-| Configuration | TFLOPS | VGPRs | MFMA Eff. |
-|---------------|--------|-------|-----------|
-| base | 4331 | 492 | 49.88% |
-| llirSched | 5399 | 509 | 68.23% |
-| llirSched + amdgcnas | 5728 | 512 | 92.25% |
+| Configuration         | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|-----------------------|--------|-------|--------|-----------|
+| base                  |   4225 |   510 |      0 |    50.39% |
+| llirSched             |   4784 |   512 |     22 |    68.66% |
+| llirSched + amdgcnas  |   5255 |   512 |      0 |    92.41% |
 
 See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of LLIR scheduler**: Improves the kernel from 4331 to 5399 TFLOPS (1.25x), with MFMA efficiency rising from 49.88% to 68.23%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
+**Effect of LLIR scheduler**: Improves the kernel from 4225 to 4784 TFLOPS (1.13x), with MFMA efficiency rising from 50.39% to 68.66%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
 
-**Effect of amdgcnas**: Further improves from 5399 to 5728 TFLOPS, raising MFMA efficiency to 92.25%. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue.
+**Effect of amdgcnas**: Further improves from 4784 to 5255 TFLOPS, raising MFMA efficiency to 92.41%. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation; the hint also clears the 22-spill regression that `llirSched` alone leaves behind. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue.
 
 ## 5. How to Run
 

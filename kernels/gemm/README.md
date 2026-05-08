@@ -8,24 +8,36 @@ The goal is not just to provide fast kernels, but to **teach how to design, anal
 
 Measured on MI355:
 
-| Data Type | Shape | TFLOPS | MFMA Eff. |
-|-----------|-------|--------|-----------|
-| FP16 | 4096x4096x8192 | 1619 | 98% |
-| BF8 | 4096x4096x16384 | 3456 | 99% |
-| MXFP4 | 4096x4096x32768 | 5728 | 92% |
+| Data Type | Shape           | TFLOPS | MFMA Eff. |
+|-----------|-----------------|--------|-----------|
+| FP16      | 4096x4096x8192  |   1489 |    98.75% |
+| BF8       | 4096x4096x16384 |   3257 |    99.72% |
+| MXFP4     | 4096x4096x32768 |   5255 |    92.41% |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm 6.5.0 and Triton built from the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) tag, collected via `scripts/run_perf_table.py --use-rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
 
-All kernels require the [LLIR Scheduler](https://github.com/ROCm/triton/tree/matmul_4waves) and [amdgcnas](https://github.com/ROCm/triton/tree/matmul_4waves) for optimal performance.
+All kernels require the [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) for optimal performance.
 
 ## 2. Prerequisites
 
+### 2.0 ROCm
+
+This tutorial assumes **ROCm ≥ 7.0**. The benchmarking and trace
+collection scripts (`scripts/run_perf_table.py`, `scripts/run_att.py`,
+`scripts/run_counter_collection.py`, `scripts/calc_kernel_time.py`) drive
+`rocprofv3` from the ROCm 7.0 line; in particular they pass `-f csv`
+where rocprofv3 7.0+ now defaults to a binary `.db` output, and
+`scripts/install_att_decoder.sh` fetches the ROCm 7.0-style
+`librocprof-trace-decoder.so` artifact. Earlier ROCm releases (notably
+6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
+and different CLI defaults, and are not supported by these scripts.
+
 ### 2.1 Triton Branch — LLIR Scheduler and amdgcnas
 
-The LLIR Scheduler and amdgcnas are available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
+The LLIR Scheduler and amdgcnas are available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**Pinned commit.** Build Triton from the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) tag on `ROCm/triton` (an annotated tag pointing at a specific commit of `matmul_4waves`). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `matmul_4waves` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+**Pinned commit.** Build Triton from the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) annotated tag on `triton-lang/triton` (which points at a specific commit on the `gfx950-tutorial` branch). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `gfx950-tutorial` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
 
 **Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -56,13 +68,13 @@ The easiest way to run benchmarks with all optimizations enabled is `run_perf_ta
 
 ```bash
 # FP16 (a16w16)
-python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --rocprof
 
 # BF8 (a8w8)
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --use-rocprof
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --rocprof
 
 # MXFP4 (a4w4)
-python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --use-rocprof
+python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --rocprof
 ```
 
 This script automatically:
@@ -87,10 +99,12 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
 
-1. Collect the kernel trace (`-d` specifies the output directory):
+1. Collect the kernel trace (`-d` specifies the output directory; `-f csv`
+   selects CSV output, which `calc_kernel_time.py` reads — rocprofv3 on
+   ROCm 7.0+ defaults to a binary `.db` format):
    ```bash
    TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-       rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+       rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
    ```
 
 2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:
@@ -102,7 +116,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 522 TFLOPS baseline to a near-optimal 1619 TFLOPS implementation—a **3× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 520 TFLOPS baseline to a near-optimal 1489 TFLOPS implementation—a **~3× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

@@ -1,16 +1,16 @@
 # Experiment of `ds_read` throughput and bank conflicts
 
 Command to run the benchmark:
-```python
+```bash
 python kernel.py
 ```
 The default settings and where you can change it:
 - `num_warps=4`. You can change it to `num_warps=1` at [this line](kernel.py#L104).
 - Padding is `1024:+16`. You can change it at [this line](kernel.py#L21).
 
-Command to collect thread trace (rocm7.0 docker)
-```
-ROCPROF_ATT_LIBRARY_PATH=/root/rocprof-trace-decoder-manylinux-2.28-0.1.6-Linux/opt/rocm/lib/ rocprofv3 --att -i att.json -d att_output -- python kernel.py
+Command to collect thread trace (ROCm ≥ 7.0). Run [`scripts/install_att_decoder.sh`](../../scripts/install_att_decoder.sh) once first to drop the decoder library at `/opt/rocm/lib/`, which is what `rocprofv3 --att` looks up via `ROCPROF_ATT_LIBRARY_PATH`:
+```bash
+ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ rocprofv3 --att -i att.json -d att_output -- python kernel.py
 ```
 
 ## 1 wave

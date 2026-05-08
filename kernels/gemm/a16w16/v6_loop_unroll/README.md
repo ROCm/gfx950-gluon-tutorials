@@ -42,8 +42,8 @@ for k in range(0, iterMax - 2, 2):
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets, ...)
     gl.amd.cdna4.async_copy.commit_group()
 
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a_next = smemA.index(l_idx).load(dotOpLayoutA)
+    b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     a_base += BLOCK_K * stride_ak
     b_base += BLOCK_K * stride_bk
@@ -59,8 +59,8 @@ for k in range(0, iterMax - 2, 2):
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB.index(g_idx), b_base, b_offsets, ...)
     gl.amd.cdna4.async_copy.commit_group()
 
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a = smemA.index(l_idx).load(dotOpLayoutA)
+    b = smemB.index(l_idx).load(dotOpLayoutB)
 
     a_base += BLOCK_K * stride_ak
     b_base += BLOCK_K * stride_bk
@@ -81,8 +81,8 @@ With loop unrolling, the epilogue handles the remaining iterations. Since the ma
 ## iterMax - 2
 l_idx = 1
 acc = gl.amd.cdna3.mfma(a, b, acc)
-a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+a_next = smemA.index(l_idx).load(dotOpLayoutA)
+b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
 ## iterMax - 1
 acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
@@ -94,57 +94,36 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 ## 4. Performance Analysis
 
-| Version              | TFLOPS | VGPRs | MFMA Eff. |
-|----------------------|--------|-------|-----------|
-| v5 + LLIR scheduler  |   1283 |   510 |       76% |
-| v6 + LLIR scheduler  |   1260 |   500 |       88% |
+| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------|--------|-------|--------|-----------|
+| v5 + LLIR scheduler  |   1282 |   510 |      0 |    75.79% |
+| v6 + LLIR scheduler  |    345 |   512 |     99 |    19.15% |
 
-With the LLIR scheduler, MFMA efficiency improves from 76% to 88% by eliminating copy overhead.
+The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
 
-> [!NOTE]
-> These numbers were collected on an earlier `matmul_4waves` snapshot. The currently pinned [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) build has an LLIR-scheduler regression that produces invalid IR for v6's unrolled loop and crashes during compilation. The kernel design and the relative performance story are unchanged; reproducing the exact numbers requires either an earlier `matmul_4waves` snapshot or a future build where the regression has been fixed.
+- In **v5**, each iteration ends with a copy `a ← a_next; b ← b_next`. The LLIR scheduler can place that copy in a slot where the backend can reuse VGPRs across iterations. The footprint fits cleanly inside the 512-VGPR budget.
+- In **v6**, the unroll removes the copy by alternating buffer roles. In the first sub-iteration, `mfma` reads from `(a, b)` while `ds_read` simultaneously writes into `(a_next, b_next)`; the two operations are concurrent by construction, so their VGPR sets must be disjoint — there is no opportunity for reuse. The footprint blows past 512 and the allocator has to spill 99 VGPRs to scratch.
+
+Two lessons fall out of this:
+
+1. **A solution for one bottleneck can introduce a new one.** v6 cleanly eliminates v5's copy overhead; the cost re-emerges one layer down, in register allocation — exactly where the original copies were silently helping.
+2. **A regression is not a reason to revert.** The unrolling design is correct; what it surfaces is a real problem that v5 was hiding. The right response is to look deeper, find what actually changed (here, the live-range overlap that the copies had been masking), and fix that — not to throw the unroll away. v7 takes that path.
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### 4.1. Trace Comparison
+### 4.1. Diagnosing the spills
 
-Comparing thread traces of v5 and v6 with the LLIR scheduler. Each screenshot shows one iteration of the main loop:
+The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 99 split across both regions, and only the in-loop subset drives the regression.
 
-![v5 with LLIR scheduler trace](../images/v5-llirSched_bottleneck_zoomin.png)
+Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way. The fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot hide. A handful per iteration drags MFMA efficiency from 76% down to 19%.
 
-![v6 with LLIR scheduler trace](../images/v6-llirSched_bottleneck_zoomin.png)
-
-In v5 (top), copy instructions appear at the end of each iteration. In v6 (bottom), these copies are eliminated—the register sets alternate naturally.
-
-### 4.2. Remaining Bottlenecks
-
-Even with 88% MFMA efficiency, room for improvement remains. The v6 trace shows MFMA gaps scattered throughout the iteration.
-
-#### 4.2.1. VALU Stalls from Power Management
-
-The area marked by the **purple circle** shows instructions across iteration boundaries. VALU instructions in this region take 40-80 cycles instead of the expected 4 cycles due to power management mechanisms.
-
-When power consumption changes rapidly, the power delivery network cannot respond quickly enough, causing voltage instability. MI350 uses two mechanisms to prevent this:
-
-- **DIDT (Digital Integrated Droop Tracking)**: Hardware that detects voltage droops and stretches the clock (lowering frequency) until voltage stabilizes.
-- **PIT (Power Instruction Throttling)**: Firmware that looks ahead at upcoming instructions and proactively inserts stalls to smooth out power spikes before they trigger DIDT.
-
-In the trace, a long period of low-power instructions (scalar operations, waits) across the iteration boundary is followed by a burst of high-power VALU and MFMA instructions. PIT detects this transition and inserts stalls to prevent a voltage droop.
-
-**Solution**: Increase MFMA efficiency to maintain stable power draw. Keeping the MFMA unit continuously busy keeps current draw steady, so there is no voltage droop for DIDT to throttle on and no upcoming power spike for PIT to preempt. Both mechanisms stay dormant when the workload already looks smooth to the power delivery network.
-
-#### 4.2.2. AGPR ↔ VGPR Copies
-
-The generated assembly still contains copy instructions between AGPRs and VGPRs. While we eliminated the `a/b` ↔ `a_next/b_next` copies, the compiler inserts data movement between accumulator registers (AGPRs) and vector registers (VGPRs) for certain operations.
+The closed-form register accounting that quantifies the spill — and the design change that resolves it — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 fixes the problem by construction.
 
 ## 5. What Comes Next
 
-The next versions address the two bottlenecks identified above:
-
-- **Register pressure optimization** — to eliminate AGPR ↔ VGPR copy overhead
-- **Increased MFMA efficiency** — to maintain stable power draw and avoid PIT stalls
+v6 has hit the register-budget ceiling. The remedy is not to coax the allocator into a tighter packing — that strategy plateaus quickly — but to design the kernel so the register footprint fits comfortably under 512 VGPRs *by construction*. v7 introduces slicing along N to halve the B tile's register cost, opening enough headroom to absorb the prefetch buffers and cleanly eliminate the spills.

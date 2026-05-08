@@ -2,6 +2,37 @@
 
 Helper scripts for profiling and benchmarking Triton GEMM kernels.
 
+## install_att_decoder.sh
+
+One-shot installer for the [`rocprof-trace-decoder`](https://github.com/ROCm/rocprof-trace-decoder)
+library that `rocprofv3 --att` (and therefore `run_att.py`, `run_perf_table.py
+--rocprof`) needs at decode time. The decoder is not bundled with ROCm; it must
+be fetched separately from the public release page.
+
+### Prerequisites
+
+- `curl` and `tar` in `PATH`
+- write access to `/opt/rocm/lib/` (or the `--prefix` you choose)
+
+### Usage
+
+```bash
+# default: installs to /opt/rocm/lib/ (no further setup needed)
+sudo scripts/install_att_decoder.sh
+
+# alternative prefix; remember to export ROCPROF_ATT_LIBRARY_PATH afterwards
+scripts/install_att_decoder.sh --prefix $HOME/.local
+export ROCPROF_ATT_LIBRARY_PATH=$HOME/.local/lib/
+
+# pin a different release version
+VERSION=0.1.6 scripts/install_att_decoder.sh
+```
+
+The default `0.1.6` release is the version this tutorial is tested against.
+`run_att.py` looks for `librocprof-trace-decoder.so` under the path in the
+`ROCPROF_ATT_LIBRARY_PATH` environment variable; if unset, it falls back to
+`/opt/rocm/lib/`, which is where this installer's default prefix lands.
+
 ## run_perf_table.py
 
 Automates running benchmarks across kernel versions and scheduler configs, collecting TFLOPS, VGPR count, spills, and MFMA efficiency, then printing a markdown performance table.
@@ -193,8 +224,9 @@ python scripts/calc_kernel_time.py <csv_file> <kernel_name> [--unit ns|us|ms]
 ### Example
 
 ```bash
-# Collect kernel trace
-rocprofv3 --kernel-trace -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+# Collect kernel trace (-f csv is required: rocprofv3 on ROCm 7.0+
+# defaults to a binary format that calc_kernel_time.py cannot read).
+rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
 
 # Calculate average kernel time
 python scripts/calc_kernel_time.py out/kernel_trace.csv matmul_kernel

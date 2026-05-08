@@ -10,7 +10,7 @@ v5_local_prefetch/
 └── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
 ```
 
-The dump artifacts are reproduced against the [`gfx9-gluon-tutorials-pin`](https://github.com/ROCm/triton/tree/gfx9-gluon-tutorials-pin) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+The dump artifacts are reproduced against the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
 
 ## 2. Motivation
 
@@ -82,8 +82,8 @@ gl.amd.cdna4.async_copy.commit_group()
 ## wait buffer 0, local_load A0, B0
 gl.amd.cdna4.async_copy.wait_group(1)
 l_idx = 0
-a = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-b = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+a = smemA.index(l_idx).load(dotOpLayoutA)
+b = smemB.index(l_idx).load(dotOpLayoutB)
 ```
 
 ### 3.3 Main Loop
@@ -115,8 +115,8 @@ for k in range(0, iterMax - 1):
     gl.amd.cdna4.async_copy.commit_group()
 
     # Local load for k+1
-    a_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemA.index(l_idx), dotOpLayoutA)
-    b_next = gl.amd.cdna4.async_copy.load_shared_relaxed(smemB.index(l_idx), dotOpLayoutB)
+    a_next = smemA.index(l_idx).load(dotOpLayoutA)
+    b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     a = a_next
     b = b_next
@@ -136,20 +136,20 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 ## 4. Performance Analysis
 
-| Version        | TFLOPS | VGPRs |
-|----------------|--------|-------|
-| v4             |   1038 |   434 |
-| v5             |   1053 |   452 |
-| v5 + llirSched |   1262 |   510 |
+| Version        | TFLOPS | VGPRs | MFMA Eff. |
+|----------------|--------|-------|-----------|
+| v4             |   1129 |   434 |    57.73% |
+| v5             |   1137 |   452 |    58.35% |
+| v5 + llirSched |   1282 |   510 |    75.79% |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (1038 → 1053 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1262 TFLOPS — a **20% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
+The 3-stage pipeline provides a modest improvement in the baseline case (1129 → 1137 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1282 TFLOPS — a **13% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md).
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 4 5 --configs base llir --K 8192 --dtype fp16 --rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for more details.
 
@@ -203,7 +203,7 @@ The scheduler:
 
 ### 5.2. How to Use It
 
-The LLIR scheduler is available on the [`matmul_4waves`](https://github.com/ROCm/triton/tree/matmul_4waves) development branch.
+The LLIR scheduler is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
 
 Enable the LLIR scheduler by setting the environment variable:
 
@@ -214,7 +214,7 @@ TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 8192 --dtype fp16 --version 5
 Or when using `run_perf_table.py`, use the `llir` config:
 
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --use-rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
 The implementation is at `third_party/amd/lib/TritonAMDGPUToLLVM/LLIRSchedule.cpp`.

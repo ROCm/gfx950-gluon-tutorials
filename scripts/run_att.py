@@ -52,7 +52,11 @@ def get_git_root():
 
 def run_rocprof_att(att_output_dir, python_cmd):
     env = os.environ.copy()
-    env["ROCPROF_ATT_LIBRARY_PATH"] = "/var/lib/jenkins/att-decoder-v3-3.0.0-Linux/opt/rocm/lib/"
+    # Allow user override via the standard env var. If not set, fall back to a
+    # common install location for the rocprof-trace-decoder package (ROCm 7.0+
+    # layout). On ROCm 7.0+, scripts/install_att_decoder.sh drops the .so at
+    # /opt/rocm/lib/librocprof-trace-decoder.so by default.
+    env.setdefault("ROCPROF_ATT_LIBRARY_PATH", "/opt/rocm/lib/")
 
     cmd = [
         "rocprofv3",
