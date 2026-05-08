@@ -96,8 +96,8 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler  |   1278 |   510 |      0 |       76% |
-| v6 + LLIR scheduler  |    346 |   512 |     99 |       19% |
+| v5 + LLIR scheduler  |   1282 |   510 |      0 |    75.79% |
+| v6 + LLIR scheduler  |    345 |   512 |     99 |    19.15% |
 
 The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
 

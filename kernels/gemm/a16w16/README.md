@@ -39,7 +39,7 @@ This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--v
 
 ## 3. The Optimization Journey
 
-This section tells the story of how we transformed a 522 TFLOPS naive kernel into a 1619 TFLOPS near-optimal implementation—a **3× improvement** through systematic optimization.
+This section tells the story of how we transformed a 520 TFLOPS naive kernel into a 1489 TFLOPS near-optimal implementation—a **~3× improvement** through systematic optimization.
 
 | Version | Name | Focus | Key Concept |
 |---------|------|-------|-------------|
@@ -56,31 +56,29 @@ This section tells the story of how we transformed a 522 TFLOPS naive kernel int
 
 ### Act I: Getting the Basics Right (v0–v3)
 
-**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 522 TFLOPS at 25% MFMA efficiency. But correctness comes first—this is our foundation.
+**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 520 TFLOPS at 25% MFMA efficiency. But correctness comes first—this is our foundation.
 
 **v1 — The Branch Problem.** Examining the generated assembly, we find 140 branch instructions. Why? Masked loads generate branches for out-of-bounds checking. The fix is elegant: `buffer_load` handles OOB in hardware. Branches drop from 140 to 4. The lesson: *sometimes the best optimization is choosing the right instruction.*
 
-**v2 — Eliminating the Middleman.** Data flows from HBM → registers → LDS → registers → MFMA. But why stage in registers? With `buffer_load ... lds`, data goes directly from HBM to LDS. We save 100+ VGPRs and eliminate all `ds_write` instructions. Performance jumps to 669 TFLOPS.
+**v2 — Eliminating the Middleman.** Data flows from HBM → registers → LDS → registers → MFMA. But why stage in registers? With `buffer_load ... lds`, data goes directly from HBM to LDS. We save 100+ VGPRs and eliminate all `ds_write` instructions. Performance jumps to 674 TFLOPS.
 
 **v3 — The Bank Conflict Detective.** LDS has 64 banks. When threads collide on the same bank, throughput drops. We design three layouts—raw, swizzled, and padded—and measure steady-state `ds_read` throughput. Raw layout: 4-way conflicts, 64-cycle issue latency. Padded layout: conflict-free, 16-cycle issue latency. The winner is clear, and we have a methodology for future designs.
 
 ### Act II: Hiding Latency (v4–v5)
 
-**v4 — The Pipeline Revolution.** So far, our loop is embarrassingly sequential: load, wait, compute, repeat. Global memory latency (~400 cycles) stalls everything. The solution: *prefetch the next iteration's data while computing on the current iteration's data.* With double buffering and a 2-stage pipeline, we overlap memory latency with compute. Performance leaps to 1043 TFLOPS—a **36% jump** from the previous version.
+**v4 — The Pipeline Revolution.** So far, our loop is embarrassingly sequential: load, wait, compute, repeat. Global memory latency (~400 cycles) stalls everything. The solution: *prefetch the next iteration's data while computing on the current iteration's data.* With double buffering and a 2-stage pipeline, we overlap memory latency with compute. Performance leaps to 1129 TFLOPS—a **47% jump** from the previous version.
 
 **v5 — One More Stage.** MFMA still waits for `ds_read`. We add a third pipeline stage: while MFMA computes iteration k, `ds_read` loads iteration k+1, and `buffer_load` prefetches iteration k+2. Now MFMA, `ds_read`, and `buffer_load` can all run concurrently—if only the compiler would schedule them that way.
 
-Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler operating at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With LLIR scheduling, MFMA efficiency jumps from 59% to 76%.
+Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler operating at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With LLIR scheduling, MFMA efficiency jumps from 58% to 76%.
 
 ### Act III: Taming the Hardware (v6–v8)
 
-**v6 — Loop Unrolling and Power Surprises.** The trace reveals copy instructions at iteration boundaries—moving data between register sets for prefetch. The fix: unroll by 2, alternating register sets naturally. Copies eliminated, MFMA efficiency reaches 88%.
+**v6 — Loop Unrolling and a Hidden Cost.** The trace reveals copy instructions at iteration boundaries—moving data between register sets for prefetch. The fix: unroll by 2, alternating register sets naturally. The copies do disappear from the assembly, but performance collapses to 19% MFMA efficiency. The unroll forces both register sets to live concurrently, blowing past the 512-VGPR budget and spilling 99 VGPRs to scratch memory; each spill round-trip stalls the MFMA critical path. The lesson: the per-iteration copy v5 was paying was also helping the register allocator find reuse across iterations. Removing it isn't free.
 
-But something strange appears: VALU instructions taking 40–80 cycles instead of 4. This is **DIDT** and **PIT**—power management mechanisms that throttle execution when power spikes. When low-power scalar operations are followed by high-power VALU/MFMA bursts, firmware inserts stalls to prevent voltage droops. The solution? Keep MFMA running continuously to maintain stable power draw.
+**v7 — Fixing the Register Budget by Design.** With 256×256 tiles and prefetching, we need ~512 registers—exactly what gfx950 provides. No headroom. v7 slices along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448 by construction, dissolving the live-range overlap that forced v6 to spill. v7 + LLIR scheduler runs at 480 VGPRs, **zero spills, 87.68% MFMA efficiency** — back on track.
 
-**v7 — The Register Budget.** With 256×256 tiles and prefetching, we need ~512 registers—exactly what gfx950 provides. No headroom. The kernel works, but the compiler struggles with allocation, inserting AGPR↔VGPR copies that hurt performance.
-
-We slice along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448. But the compiler still doesn't allocate optimally, so we add RA flags and **amdgcnas**—an assembly post-processor that applies peephole optimizations. The result: **98% MFMA efficiency**. The hot loop is essentially perfect.
+The remaining gap (87.68% → 98%) comes from a separate problem now that the spills are gone: the allocator schedules many AGPR↔VGPR copies inside the loop. We add RA flags and **amdgcnas**—an assembly post-processor that applies peephole optimizations. The result: **98% MFMA efficiency**. The hot loop is essentially perfect.
 
 **v8 — Slicing Both Dimensions.** v7 sliced only N. v8 also slices M, splitting A into two 128-row halves. Register pressure drops further to 384, and each K-step now has four regions instead of two. This restructuring has two benefits: the **copy problem from v5 disappears** naturally (the four-region load order eliminates overlapping live ranges without unrolling), and a **buffer load stall at large K is resolved** (v7 clustered 16 buffer loads in ~1000 cycles; v8 distributes them across ~1500 cycles of MFMA, giving HBM enough time to respond even under high contention).
 
@@ -97,7 +95,7 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 ![Performance Chart](images/performance_chart.png)
 
 > [!IMPORTANT]
-> **The Moral:** Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a 3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
+> **The Moral:** Each optimization seemed small in isolation: choose the right instruction, add a pipeline stage, unroll a loop. But together, they compound into a ~3× speedup. More importantly, each step taught us something about the hardware—and that knowledge transfers to future kernels.
 
 ## 4. Beyond FP16
 

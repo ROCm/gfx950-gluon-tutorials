@@ -131,13 +131,13 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------|--------|-------|--------|-----------|
-| base                            |   2652 |   512 |      1 |    58.90% |
-| llirSched                       |   3346 |   474 |      0 |    92.84% |
-| llirSched + amdgcnas            |   3438 |   512 |      0 |    99.72% |
+| base                            |   2625 |   512 |      1 |    58.88% |
+| llirSched                       |   3161 |   474 |      0 |    93.20% |
+| llirSched + amdgcnas            |   3257 |   512 |      0 |    99.72% |
 
-**M+N slicing eliminates the `llirSched`-alone spill cliff.** The old N-slicing-only a8w8 kernel hit 111 register spills under `llirSched` alone, dropping it to 747 TFLOPS. The new M+N slicing splits A across two `smemA_top` / `smemA_bot` allocations and gives four 128×128 accumulator quadrants, reducing peak register pressure enough that `llirSched` now runs spill-free at **3346 TFLOPS** without needing `amdgcnas` to clean up.
+**M+N slicing eliminates the `llirSched`-alone spill cliff.** The old N-slicing-only a8w8 kernel hit 111 register spills under `llirSched` alone, dropping it to 747 TFLOPS. The new M+N slicing splits A across two `smemA_top` / `smemA_bot` allocations and gives four 128×128 accumulator quadrants, reducing peak register pressure enough that `llirSched` now runs spill-free at **3161 TFLOPS** without needing `amdgcnas` to clean up.
 
-**`amdgcnas` adds the last 3% to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.72% — the hot loop is essentially saturated.
+**`amdgcnas` adds the last few percent to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.72% — the hot loop is essentially saturated.
 
 The [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) both come from the `gfx950-tutorial` development branch.
 

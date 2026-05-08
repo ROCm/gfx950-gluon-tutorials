@@ -177,23 +177,20 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir l
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-| Version                        | TFLOPS | VGPRs | MFMA Eff. |
-|--------------------------------|--------|-------|-----------|
-| v6 + LLIR scheduler            |   1266 |   500 |       88% |
-| v7 + LLIR scheduler            |   1503 |   474 |    87.14% |
-| v7 + LLIR scheduler + RA       |   1508 |   460 |       96% |
-| v7 + LLIR scheduler + amdgcnas |   1550 |   512 |    98.40% |
-
-> [!NOTE]
-> The `v6 + LLIR scheduler` and `v7 + LLIR scheduler + RA` rows are from earlier Triton snapshots and will be refreshed against the current [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) pin in a future perf pass. The RA-only configuration is gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var, which sets just the LLVM allocator hints without running the post-assembly `amdgcnas` pass — supported natively by the `gfx950-tutorial-v0.1` pin. The other two rows are fresh measurements on the pinned build.
-
-**Copies**: count of `v_accvgpr_*` and `v_mov` instructions inside the main loop. These AGPR ↔ VGPR copy instructions transfer data between accumulator and vector register files.
+| Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|--------------------------------|--------|-------|--------|-----------|
+| v6 + LLIR scheduler            |    345 |   512 |     99 |    19.15% |
+| v7 + LLIR scheduler            |   1376 |   480 |      0 |    87.68% |
+| v7 + LLIR scheduler + RA       |   1419 |   468 |      0 |    96.00% |
+| v7 + LLIR scheduler + amdgcnas |   1428 |   512 |      0 |    98.65% |
 
 ### 4.2. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
 
-The v7_sliceN kernel is designed to reduce register pressure via N-slicing. However, the assembly reveals that v7 consumes *more* registers (512 vs 500) and executes *more* copy instructions per iteration (116 vs 51). This indicates the backend register allocator failed to find an optimal assignment for v7_sliceN — the allocation strategy introduces overhead despite the kernel design requiring fewer registers.
+v6 is dominated by VGPR spills. The unroll-by-2 forces the prefetch staging registers (`a`/`b` and `a_next`/`b_next`) to live concurrently across each unrolled body, and the LLVM register allocator can no longer reuse them across iterations the way v5's per-iteration copy let it; the live-range overlap blows past the 512-VGPR budget and spills 99 VGPRs to scratch (see [v6 §4](../v6_loop_unroll/README.md#4-performance-analysis)). MFMA efficiency drops to 19.15% because every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip that the LLIR scheduler cannot hide.
 
-The LLIR scheduler addresses instruction scheduling based on Gluon kernel structure. A similar mechanism is needed for register allocation.
+v7's N-slicing halves the B tile's register footprint by design, dissolving the live-range overlap that forced the spill. The kernel now compiles in 480 VGPRs with **zero spills** and recovers MFMA efficiency to 87.68%.
+
+87.68% is still well below the 98% ceiling, though, and now that the spills are gone the residual gap surfaces a different bottleneck: the register allocator schedules many `v_accvgpr_*` / `v_mov` copy instructions inside the main loop to shuffle values between AGPRs and VGPRs. The slicing fixed v6's spill regression; sections 4.3 and 4.4 address the AGPR↔VGPR copy traffic with explicit allocator hints and the `amdgcnas` peephole pass.
 
 ### 4.3. Register Allocation Workaround
 
