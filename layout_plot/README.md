@@ -34,6 +34,29 @@ sudo apt-get install texlive-latex-base texlive-latex-extra texlive-fonts-recomm
 
 ```
 
+### Troubleshooting: `! TeX capacity exceeded` on large plots
+Large tiles produce a lot of TikZ nodes and can exhaust pdflatex's default
+main-memory pool (`main_memory = 5000000`), printing
+`! TeX capacity exceeded, sorry [main memory size=5000000]` and producing no
+PDF. This is most common for big LDS tiles and for the transpose-load access
+pattern (`--mnContig --mfma-trans-load`), e.g. a 64x512 tile.
+
+`main_memory` is baked into the pdflatex *format* at build time, so it cannot
+be raised per-run; raise it once and rebuild the format. On a Debian/Ubuntu
+TeX Live install:
+```bash
+# bump the pool (12M is plenty for the tiles in this repo; default is 5M)
+echo 'main_memory = 12000000' | sudo tee /etc/texmf/texmf.d/90memory.cnf
+sudo update-texmf
+sudo fmtutil-sys --byfmt pdflatex   # rebuild the pdflatex format
+
+# to revert later, just remove the file and rebuild again
+sudo rm /etc/texmf/texmf.d/90memory.cnf && sudo update-texmf && sudo fmtutil-sys --byfmt pdflatex
+```
+Set only `main_memory` — adding `extra_mem_top`/`extra_mem_bot` alongside it can
+make `fmtutil` fail with `Ouch---my internal constants have been clobbered`.
+Verify the new value with `kpsewhich -var-value main_memory`.
+
 ## Draw blocked layout (`python plot_layout.py blocked`)
 
 The blocked subcommand supports three GPU architectures:
