@@ -179,18 +179,18 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |    345 |   512 |     99 |    19.15% |
-| v7 + LLIR scheduler            |   1376 |   480 |      0 |    87.68% |
-| v7 + LLIR scheduler + RA       |   1419 |   468 |      0 |    96.00% |
-| v7 + LLIR scheduler + amdgcnas |   1428 |   512 |      0 |    98.65% |
+| v6 + LLIR scheduler            |    344 |   512 |    104 |    19.23% |
+| v7 + LLIR scheduler            |   1377 |   494 |      0 |    87.00% |
+| v7 + LLIR scheduler + RA       |   1426 |   464 |      0 |    95.64% |
+| v7 + LLIR scheduler + amdgcnas |   1433 |   512 |      0 |    98.25% |
 
 ### 4.2. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
 
-v6 is dominated by VGPR spills. The unroll-by-2 forces the prefetch staging registers (`a`/`b` and `a_next`/`b_next`) to live concurrently across each unrolled body, and the LLVM register allocator can no longer reuse them across iterations the way v5's per-iteration copy let it; the live-range overlap blows past the 512-VGPR budget and spills 99 VGPRs to scratch (see [v6 §4](../v6_loop_unroll/README.md#4-performance-analysis)). MFMA efficiency drops to 19.15% because every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip that the LLIR scheduler cannot hide.
+v6 is dominated by VGPR spills. The unroll-by-2 forces the prefetch staging registers (`a`/`b` and `a_next`/`b_next`) to live concurrently across each unrolled body, and the LLVM register allocator can no longer reuse them across iterations the way v5's per-iteration copy let it; the live-range overlap blows past the 512-VGPR budget and spills 104 VGPRs to scratch (see [v6 §4](../v6_loop_unroll/README.md#4-performance-analysis)). MFMA efficiency drops to 19.23% because every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip that the LLIR scheduler cannot hide.
 
-v7's N-slicing halves the B tile's register footprint by design, dissolving the live-range overlap that forced the spill. The kernel now compiles in 480 VGPRs with **zero spills** and recovers MFMA efficiency to 87.68%.
+v7's N-slicing halves the B tile's register footprint by design, dissolving the live-range overlap that forced the spill. The kernel now compiles in 494 VGPRs with **zero spills** and recovers MFMA efficiency to 87.00%.
 
-87.68% is still well below the 98% ceiling, though, and now that the spills are gone the residual gap surfaces a different bottleneck: the register allocator schedules many `v_accvgpr_*` / `v_mov` copy instructions inside the main loop to shuffle values between AGPRs and VGPRs. The slicing fixed v6's spill regression; sections 4.3 and 4.4 address the AGPR↔VGPR copy traffic with explicit allocator hints and the `amdgcnas` peephole pass.
+87.00% is still well below the 98% ceiling, though, and now that the spills are gone the residual gap surfaces a different bottleneck: the register allocator schedules many `v_accvgpr_*` / `v_mov` copy instructions inside the main loop to shuffle values between AGPRs and VGPRs. The slicing fixed v6's spill regression; sections 4.3 and 4.4 address the AGPR↔VGPR copy traffic with explicit allocator hints and the `amdgcnas` peephole pass.
 
 ### 4.3. Register Allocation Workaround
 

@@ -10,7 +10,7 @@ v5_local_prefetch/
 └── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
 ```
 
-The dump artifacts are reproduced against the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+The dump artifacts are reproduced against the [`gfx950-tutorial-v0.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.2) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
 
 ## 2. Motivation
 
@@ -138,11 +138,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1129 |   434 |    57.73% |
-| v5             |   1137 |   452 |    58.35% |
-| v5 + llirSched |   1282 |   510 |    75.79% |
+| v4             |   1123 |   434 |    57.80% |
+| v5             |   1133 |   452 |    58.31% |
+| v5 + llirSched |   1264 |   510 |    73.59% |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (1129 → 1137 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1282 TFLOPS — a **13% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
+The 3-stage pipeline provides a modest improvement in the baseline case (1123 → 1133 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1264 TFLOPS — a **12% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md).

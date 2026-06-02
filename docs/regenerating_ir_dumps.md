@@ -6,14 +6,14 @@ Two kernel versions in this tutorial bundle compiler dump artifacts so the READM
 - `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16/`
 - `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16_llirSched/`
 
-Each directory contains four files: `.ttgir` (Triton GPU IR), `.llir` (LLVM IR), `.amdgcn` (final assembly as Triton emits it, with debug labels), and `.s` (the same assembly with `.loc` directives and `.Ltmp` labels stripped, which is what the READMEs link to so the cited line numbers stay stable). All artifacts in this repository were produced against the [`gfx950-tutorial-v0.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.1) tag in `triton-lang/triton`. To verify them, or regenerate after a Triton bump, follow the steps below.
+Each directory contains four files: `.ttgir` (Triton GPU IR), `.llir` (LLVM IR), `.amdgcn` (final assembly as Triton emits it, with debug labels), and `.s` (the same assembly with `.loc` directives and `.Ltmp` labels stripped, which is what the READMEs link to so the cited line numbers stay stable). All artifacts in this repository were produced against the [`gfx950-tutorial-v0.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.2) tag in `triton-lang/triton`. To verify them, or regenerate after a Triton bump, follow the steps below.
 
 ## Prerequisites
 
-Triton is built from the `gfx950-tutorial-v0.1` tag (or any commit reachable from it):
+Triton is built from the `gfx950-tutorial-v0.2` tag (or any commit reachable from it):
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v0.1 /tmp/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v0.2 /tmp/triton
 cd /tmp/triton && pip install -e .
 ```
 
