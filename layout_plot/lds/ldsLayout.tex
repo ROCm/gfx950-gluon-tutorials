@@ -150,7 +150,10 @@
   \pgfmathsetmacro{\rows}{#2}
   \pgfmathsetmacro{\cols}{#3}
   \pgfmathsetmacro{\maxBankId}{\banks-1}
-  \pgfmathsetmacro{\tensorHeight}{\rows*\cols*\bytesPerElem/4/\banks*\elemH}
+  % Reorder so divisions apply before the products: the running value then
+  % never exceeds pgfmath's ~16384 limit (rows*cols alone overflows for large
+  % tiles, e.g. 64x512). The result is unchanged.
+  \pgfmathsetmacro{\tensorHeight}{\bytesPerElem/4/\banks*\elemH*\cols*\rows}
   \def\gapT{4}
   \def\gapB{2}
   \pgfmathsetmacro{\LDSHeight}{\tensorHeight+\gapT*\elemH+\gapB*\elemH}
@@ -410,8 +413,9 @@
       \ifthenelse{\hasSwizzle=3}{
         \pgfmathtruncatemacro{\offVecInt}{\offVec}
         \pgfmathsetmacro{\LDSRow}{\csname sharedrow\offVecInt\endcsname}
-        %% sharedvec is in swizzleVec units; convert to vec units for drawing.
-        \pgfmathsetmacro{\LDSVec}{(\csname sharedvec\offVecInt\endcsname*\swizzleVec)/\vec}
+        %% sharedvec is the element offset within the LDS row; divide by vec to
+        %% get the (possibly fractional) horizontal vec position.
+        \pgfmathsetmacro{\LDSVec}{(\csname sharedvec\offVecInt\endcsname)/\vec}
       }{}
 
       \coordinate (vec TL) at ($(TL)+(\LDSVec*\vecInBytes*\bsize, -\LDSRow*\elemH)$);

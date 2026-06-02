@@ -216,15 +216,15 @@ Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
 | Configuration         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------------|--------|-------|--------|-----------|
-| base                  |   4225 |   510 |      0 |    50.39% |
-| llirSched             |   4784 |   512 |     22 |    68.66% |
-| llirSched + amdgcnas  |   5255 |   512 |      0 |    92.41% |
+| base                  |   4274 |   512 |      0 |    50.65% |
+| llirSched             |   4785 |   512 |     23 |    68.67% |
+| llirSched + amdgcnas  |   5253 |   512 |      0 |    90.06% |
 
 See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of LLIR scheduler**: Improves the kernel from 4225 to 4784 TFLOPS (1.13x), with MFMA efficiency rising from 50.39% to 68.66%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
+**Effect of LLIR scheduler**: Improves the kernel from 4274 to 4785 TFLOPS (1.12x), with MFMA efficiency rising from 50.65% to 68.67%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
 
-**Effect of amdgcnas**: Further improves from 4784 to 5255 TFLOPS, raising MFMA efficiency to 92.41%. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation; the hint also clears the 22-spill regression that `llirSched` alone leaves behind. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue.
+**Effect of amdgcnas**: Further improves from 4785 to 5253 TFLOPS, raising MFMA efficiency to 90.06%. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation; the hint also clears the 23-spill regression that `llirSched` alone leaves behind. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue.
 
 ## 5. How to Run
 

@@ -62,7 +62,7 @@ CONFIG_ENV = {
     "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
     # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
     # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var, supported
-    # natively by the `gfx950-tutorial-v0.1` pin.
+    # natively by the `gfx950-tutorial-v0.2` pin.
     "llir+ra": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",

@@ -128,8 +128,25 @@ def _build_shared_layout_lookup(
     vec_in_bytes = int(vec * elem_type_in_bytes)
     elems_per_lds_row = int(lds_row_bytes / elem_type_in_bytes)
 
-    row_start_offsets = [0 for _ in range(dim0)]
     vecs_per_lds_row = int(lds_row_bytes / vec_in_bytes)
+
+    # row_start_offsets is indexed by compact_row, which is an LDS-row index
+    # (see compact_row below), not a tensor-row index: a single wide tensor row
+    # can span several LDS rows, so the number of LDS rows is generally larger
+    # than dim0. Size the list to the largest compact_row the loop can produce
+    # (sizing it to dim0 under-allocated for wide tensors and raised
+    # IndexError, e.g. a 64x512 bf16 tile with vec=8 needs 256 LDS rows).
+    if max_off_vec > 0:
+        num_lds_rows = (
+            max(
+                (max_off_vec - 1) // vecs_per_lds_row,
+                (max_off_vec - 1) // vecs_per_row,
+            )
+            + 1
+        )
+    else:
+        num_lds_rows = 0
+    row_start_offsets = [0 for _ in range(num_lds_rows)]
 
     for off_vec in range(max_off_vec):
         tensor_row = off_vec // vecs_per_row
@@ -149,7 +166,14 @@ def _build_shared_layout_lookup(
         if gp == 0:
             row_start_offsets[compact_row] = int(abs_row * lds_row_bytes)
         lookup_rows.append(compact_row)
-        lookup_vecs.append((padded_elem_off % elems_per_lds_row) // swizzle_vec)
+        # Store the exact element offset within the LDS row; the tex divides by
+        # vec to get the (possibly fractional) horizontal vec position. Storing
+        # the raw offset is exact for every vec/swizzleVec relationship:
+        #   - // swizzle_vec collapsed vecs onto one column when vec < swizzle_vec
+        #     (mfma-transpose-load, vec=4 < swizzleVec=16) -- they overlapped.
+        #   - // vec truncated sub-vec padding when vec > swizzle_vec (a8w8
+        #     kWidth=32 with a 16-element pad lands a vec at byte 16 = pos 0.5).
+        lookup_vecs.append(padded_elem_off % elems_per_lds_row)
 
     return lookup_rows, lookup_vecs, row_start_offsets
 
@@ -271,12 +295,14 @@ def draw_lds_access_cmd(dim0, dim1, dtype, mfmaNonKDim, ldsConfig, sharedLayout)
         vec = ldsConfig.kWidth
     elif useMfmaTransLD == 0:
         # case 2
-        swizzleVec = 16 / elemTypeInBytes
+        # int() keeps vec/swizzleVec integral: they index ranges and divide LDS
+        # offsets in _build_shared_layout_lookup, where a float raises TypeError.
+        swizzleVec = int(16 / elemTypeInBytes)
         accessVec = 1
         vec = swizzleVec
     else:
         # case 3
-        vec = 8 / elemTypeInBytes
+        vec = int(8 / elemTypeInBytes)
         swizzleVec = mfmaNonKDim
         accessVec = ldsConfig.accessVec
 

@@ -96,13 +96,13 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler  |   1282 |   510 |      0 |    75.79% |
-| v6 + LLIR scheduler  |    345 |   512 |     99 |    19.15% |
+| v5 + LLIR scheduler  |   1264 |   510 |      0 |    73.59% |
+| v6 + LLIR scheduler  |    344 |   512 |    104 |    19.23% |
 
 The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
 
 - In **v5**, each iteration ends with a copy `a ← a_next; b ← b_next`. The LLIR scheduler can place that copy in a slot where the backend can reuse VGPRs across iterations. The footprint fits cleanly inside the 512-VGPR budget.
-- In **v6**, the unroll removes the copy by alternating buffer roles. In the first sub-iteration, `mfma` reads from `(a, b)` while `ds_read` simultaneously writes into `(a_next, b_next)`; the two operations are concurrent by construction, so their VGPR sets must be disjoint — there is no opportunity for reuse. The footprint blows past 512 and the allocator has to spill 99 VGPRs to scratch.
+- In **v6**, the unroll removes the copy by alternating buffer roles. In the first sub-iteration, `mfma` reads from `(a, b)` while `ds_read` simultaneously writes into `(a_next, b_next)`; the two operations are concurrent by construction, so their VGPR sets must be disjoint — there is no opportunity for reuse. The footprint blows past 512 and the allocator has to spill 104 VGPRs to scratch.
 
 Two lessons fall out of this:
 
@@ -118,7 +118,7 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ### 4.1. Diagnosing the spills
 
-The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 99 split across both regions, and only the in-loop subset drives the regression.
+The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 104 split across both regions, and only the in-loop subset drives the regression.
 
 Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way. The fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot hide. A handful per iteration drags MFMA efficiency from 76% down to 19%.
 
