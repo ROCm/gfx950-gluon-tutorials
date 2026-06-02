@@ -21,10 +21,24 @@ cd /tmp/triton && pip install -e .
 
 When a Triton kernel is compiled, the resulting IR / assembly artifacts land in the Triton cache directory (`$TRITON_CACHE_DIR`, default `~/.triton/cache/<hash>/`). Each compilation produces `<kernel_name>.ttgir` (Triton GPU IR), `<kernel_name>.llir` (LLVM IR), and `<kernel_name>.amdgcn` (final assembly with debug labels) alongside the compiled binary.
 
-The `.s` file checked into this repository is **not** produced directly by Triton — it is a cleaned-up copy of `.amdgcn` with `.loc` directives and `.Ltmp*:` temp labels stripped, so the line numbers cited from the READMEs stay stable. The cleanup is a two-line `sed`:
+The `.s` file checked into this repository is **not** produced directly by Triton — it is a cleaned-up copy of `.amdgcn` with `.loc` directives and `.Ltmp*:` temp labels stripped, so the line numbers cited from the READMEs stay stable.
+
+In addition, **all four artifacts** (`.ttgir`, `.llir`, `.amdgcn`, `.s`) are *path-normalized*: the absolute build paths Triton embeds (in `loc(...)` strings and `.file` directives) are rewritten to repo-relative form, so the dumps reproduce identically across machines and don't leak local checkout paths. The cleanup is a small shell helper:
 
 ```bash
-sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' input.amdgcn > output.s
+# $1 = cache dir holding <kernel>.{ttgir,llir,amdgcn}, $2 = dest dir, $3 = kernel name
+emit() {
+  local SRC="$1" DEST="$2" K="$3"; mkdir -p "$DEST"
+  # .ttgir / .llir / .amdgcn — path-normalize only
+  for ext in ttgir llir amdgcn; do
+    sed -e 's#/[^" ]*/kernels/#kernels/#g' -e 's#/[^" ]*/python/triton/#python/triton/#g' \
+        "$SRC/$K.$ext" > "$DEST/$K.$ext"
+  done
+  # .s — strip .loc / .Ltmp labels, then path-normalize
+  sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' \
+      -e 's#/[^" ]*/kernels/#kernels/#g' -e 's#/[^" ]*/python/triton/#python/triton/#g' \
+      "$SRC/$K.amdgcn" > "$DEST/$K.s"
+}
 ```
 
 The standard regeneration workflow is therefore:
@@ -61,13 +75,11 @@ export TRITON_CACHE_DIR=/tmp/triton_cache_v3_<variant>
 rm -rf "$TRITON_CACHE_DIR"
 python bench.py --version 3 --K 4096 --dtype fp16
 
-# Locate the matching cache subdirectory and copy + clean artifacts:
-DEST=v3_lds/ir_dump_K4096_fp16/<variant>
-cp "$TRITON_CACHE_DIR"/*/v3_lds_*.{ttgir,llir,amdgcn} "$DEST/"
-for f in "$DEST"/*.amdgcn; do
-    sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' \
-        "$f" > "${f%.amdgcn}.s"
-done
+# Locate the matching cache subdirectory, then copy + clean + path-normalize
+# with the emit() helper defined above. The kernel name is v3_lds_swizzling
+# for the no_swizzling / swizzling_8-2-8 variants and v3_lds_padding for padding.
+SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v3_lds_*.amdgcn | head -1)")
+emit "$SRC" v3_lds/ir_dump_K4096_fp16/<variant> <kernel_name>
 ```
 
 ## v5_local_prefetch — base, llirSched, and llirSched+amdgcnas variants
@@ -75,34 +87,29 @@ done
 ```bash
 cd kernels/gemm/a16w16
 
+# (uses the emit() helper defined above)
+
 # --- base variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_base
 rm -rf "$TRITON_CACHE_DIR"
 python bench.py --version 5 --K 4096 --dtype fp16
-DEST=v5_local_prefetch/ir_dump_K4096_fp16
-cp "$TRITON_CACHE_DIR"/*/v5_local_prefetch.{ttgir,llir,amdgcn} "$DEST/"
-sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' \
-    "$DEST/v5_local_prefetch.amdgcn" > "$DEST/v5_local_prefetch.s"
+SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
+emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16 v5_local_prefetch
 
 # --- llirSched variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_llir
 rm -rf "$TRITON_CACHE_DIR"
 TRITON_ENABLE_LLIR_SCHED=1 python bench.py --version 5 --K 4096 --dtype fp16
-DEST=v5_local_prefetch/ir_dump_K4096_fp16_llirSched
-cp "$TRITON_CACHE_DIR"/*/v5_local_prefetch.{ttgir,llir,amdgcn} "$DEST/"
-sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' \
-    "$DEST/v5_local_prefetch.amdgcn" > "$DEST/v5_local_prefetch.s"
+SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
+emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched v5_local_prefetch
 
 # --- llirSched + amdgcnas variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_amdgcnas
 rm -rf "$TRITON_CACHE_DIR"
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
     python bench.py --version 5 --K 4096 --dtype fp16
-DEST=v5_local_prefetch/ir_dump_K4096_fp16_llirSched_amdgcnas
-mkdir -p "$DEST"
-cp "$TRITON_CACHE_DIR"/*/v5_local_prefetch.{ttgir,llir,amdgcn} "$DEST/"
-sed -e '/^[[:space:]]*\.loc[[:space:]]/d' -e '/^\.Ltmp[0-9]*:/d' \
-    "$DEST/v5_local_prefetch.amdgcn" > "$DEST/v5_local_prefetch.s"
+SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
+emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched_amdgcnas v5_local_prefetch
 ```
 
 > [!NOTE]

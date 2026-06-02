@@ -235,18 +235,18 @@ This improvement directly reflects the throughput model of memory operations —
 
 Even with the LLIR scheduler, MFMA efficiency is 76% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
 
-Examining the generated assembly in [`ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s`](./ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s) (lines 814–907), we see a block of copy instructions at the end of each iteration:
+Examining the generated assembly in [`ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s`](./ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s) (lines 828–921), we see a block of copy instructions at the end of each iteration:
 
 ```asm
-v_accvgpr_mov_b32 a120, a128
-v_accvgpr_mov_b32 a121, a129
+v_accvgpr_mov_b32 a72, a128
+v_accvgpr_mov_b32 a73, a129
 ...
-v_accvgpr_mov_b32 a56, a204
-v_accvgpr_mov_b32 a57, a205
+v_accvgpr_mov_b32 a28, a204
+v_accvgpr_mov_b32 a29, a205
 ...
 ```
 
-These instructions copy the `ds_read` results (which landed in registers like `a[128:131]`, `a[204:207]`) to the registers that MFMA will consume in the next iteration (like `a[120:123]`, `a[56:59]`). This overhead is inherent to the prefetch design: since `a_next` and `b_next` are loaded into different registers than `a` and `b`, the data must be copied before the next iteration can use it.
+These instructions copy the `ds_read` results (which landed in registers like `a[128:131]`, `a[204:207]`) to the registers that MFMA will consume in the next iteration (like `a[72:75]`, `a[28:31]`). This overhead is inherent to the prefetch design: since `a_next` and `b_next` are loaded into different registers than `a` and `b`, the data must be copied before the next iteration can use it.
 
 A natural question arises: why do these copy instructions not appear in the v5 trace *without* the LLIR scheduler?
 

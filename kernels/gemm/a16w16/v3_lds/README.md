@@ -159,7 +159,7 @@ This increases register pressure.
 
 Additionally, swizzling introduces overhead on the global-load side due to
 hardware constraints in async copy instructions (check [Lei's blog](https://www.lei.chat/posts/triton-bespoke-layouts/#rationale) for more details).
-For example, `ds_bpermute` is used for address calculation in [generated assembly](./ir_dump_K4096_fp16/swizzling_8-2-8/v3_lds_swizzling.s#L427).
+For example, `ds_bpermute` is used for address calculation in [generated assembly](./ir_dump_K4096_fp16/swizzling_8-2-8/v3_lds_swizzling.s#L429).
 
 **Summary:** Swizzling trades bank conflicts for increased complexity and register usage.
 
@@ -228,10 +228,12 @@ While rare, this constraint can influence layout decisions for large tiles.
 ### 4.2 LLVM Scheduling
 
 LLVM scheduling behavior differs across layouts.
-In the raw ([code](./ir_dump_K4096_fp16/no_swizzling/v3_lds_swizzling.s#L476-L507)) and
-padding ([code](./ir_dump_K4096_fp16/padding_512-16/v3_lds_padding.s#L483-L514)) cases,
+In the padding ([code](./ir_dump_K4096_fp16/padding_512-16/v3_lds_padding.s#L493-L524)) case,
 all 32 `ds_read_b128` instructions are issued back-to-back.
-In the swizzling ([code](./ir_dump_K4096_fp16/swizzling_8-2-8/v3_lds_swizzling.s#L559-L737)) case,
+The raw ([code](./ir_dump_K4096_fp16/no_swizzling/v3_lds_swizzling.s#L558-L607)) case keeps the
+reads grouped as well — they stay in two tight runs, lightly split by register copies rather than
+interleaved with compute.
+In the swizzling ([code](./ir_dump_K4096_fp16/swizzling_8-2-8/v3_lds_swizzling.s#L555-L783)) case,
 only the first few are consecutive, and the rest are interleaved with mfma.
 
 We did not explicitly request rescheduling.
