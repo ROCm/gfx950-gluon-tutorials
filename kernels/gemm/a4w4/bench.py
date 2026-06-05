@@ -64,7 +64,9 @@ def mxfp4_to_f32(x):
 
 def e8m0_to_f32(x):
     """Convert e8m0 scale values to float32."""
-    return 2 ** ((x - 127).to(torch.float32))
+    x_fp32 = 2 ** (x.to(torch.float32) - 127)
+    x_fp32[x == 255] = float("nan")  # 255 in E8M0 is reserved for NaNs
+    return x_fp32
 
 
 def generate_mxfp4_inputs(M, N, K):
