@@ -23,10 +23,17 @@
 ##############################################################################
 
 import argparse
+import importlib
 
 import torch
 import triton
-from matmul_kernel import matmul
+
+# Map --version flag to subdirectory name. Each version directory exports a
+# `matmul(a_fp4, b_fp4, a_scales, b_scales)` callable from `matmul_kernel`.
+VERSION_MAP = {
+    0: "v0_sliceN",
+    1: "v1_sliceMN",
+}
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
@@ -156,6 +163,13 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MXFP4 GEMM benchmark")
     parser.add_argument("--K", type=int, default=None, help="Select GEMM problem size with given K")
     parser.add_argument(
+        "--version",
+        type=int,
+        default=max(VERSION_MAP),
+        choices=sorted(VERSION_MAP),
+        help=f"Kernel version to benchmark (default: {max(VERSION_MAP)})",
+    )
+    parser.add_argument(
         "--rocprof",
         action="store_true",
         help="Rocprof mode: run kernel 1000 times without do_bench. "
@@ -171,7 +185,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def test_correctness(gemm_sizes):
+def test_correctness(matmul, gemm_sizes, version_dir):
     for M, N, K in gemm_sizes:
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
 
@@ -182,10 +196,10 @@ def test_correctness(gemm_sizes):
         torch_output = torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16)
 
         if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
-            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch match")
+            print(f"[{version_dir}] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[a4w4] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(f"[{version_dir}] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
@@ -211,7 +225,7 @@ def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
     return a_list, b_list, as_list, bs_list, block_count
 
 
-def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
+def run_rocprof_iterations(matmul, gemm_sizes, version_dir, n_iters=1000, rotating_buffer_size_mb=512):
     """Run kernel n_iters times with rotating tensors for cache-cold profiling."""
     for M, N, K in gemm_sizes:
         a_list, b_list, as_list, bs_list, block_count = gen_rotating_tensors(
@@ -219,7 +233,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
         )
         total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32))
         print(
-            f"[a4w4] {M=} {N=} {K=}: "
+            f"[{version_dir}] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, "
             f"{total_bytes / 1024**2:.0f} MB"
         )
@@ -230,18 +244,25 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
             idx = i % block_count
             matmul(a_list[idx], b_list[idx], as_list[idx], bs_list[idx])
         torch.cuda.synchronize()
-        print(f"[a4w4] {M=} {N=} {K=}: {n_iters} iterations done")
+        print(f"[{version_dir}] {M=} {N=} {K=}: {n_iters} iterations done")
 
 
 def main():
     args = parse_args()
 
+    version_dir = VERSION_MAP[args.version]
+    module = importlib.import_module(f"{version_dir}.matmul_kernel")
+    matmul = module.matmul
+
     gemm_sizes = get_gemm_sizes(args.K)
 
-    test_correctness(gemm_sizes)
+    test_correctness(matmul, gemm_sizes, version_dir)
 
     if args.rocprof:
-        run_rocprof_iterations(gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size)
+        run_rocprof_iterations(
+            matmul, gemm_sizes, version_dir,
+            rotating_buffer_size_mb=args.rotating_buffer_size,
+        )
         return
 
     configs = [
@@ -272,7 +293,7 @@ def main():
 
         return perf(ms), perf(max_ms), perf(min_ms)
 
-    print("\na4w4_kernel:")
+    print(f"\na4w4_kernel ({version_dir}):")
     benchmark.run(show_plots=False, print_data=True)
 
 

@@ -29,7 +29,7 @@ Learning Gluon is learning layouts. The MXFP4 kernel introduces **scale layouts*
 
 The following diagram shows the complete layout for the MXFP4 GEMM — A, B, C matrices with their dot operand layouts, and the scale layouts used by `mfma_scale_f32_16x16x128_f8f6f4` with `CBSZ=4, BLGP=4`:
 
-![MXFP4 MFMA Scale Layout](images/mfma_scale_mxfp4.png)
+![MXFP4 MFMA Scale Layout](../images/mfma_scale_mxfp4.png)
 
 <details>
 <summary>Command to generate this layout</summary>
@@ -113,7 +113,7 @@ A deeper technical talk on `ds_read_tr` is planned as a follow-up appendix after
 
 ## 3. Pipeline Design
 
-<img src="images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">
+<img src="../images/mxfp4_tiling_design.png" alt="MXFP4 Tiling Design" width="400" align="right">
 
 **Legend:**
 - **AC**: `async_copy` (buffer_load_to_shared) for tiles
@@ -146,7 +146,7 @@ The pipeline design for tiles uses double-buffered async copy with loop unrollin
 
 The kernel uses loop unrolling by 2 with 4 regions per unrolled iteration:
 
-![MXFP4 Kernel Pipeline Design](images/mxfp4_kernel_design.png)
+![MXFP4 Kernel Pipeline Design](../images/mxfp4_kernel_design.png)
 
 The diagram shows the pipeline for one unrolled iteration (2 K-iterations across 4 regions). Columns represent register buffers. The arrows show the **liveness** of each register buffer — from when it is produced to when all consumers are done using it. (Note: we use the term "buffer" loosely here to refer to register groups holding a particular value; this is not buffer memory in the traditional sense, but makes the pipeline design easier to reason about.)
 
