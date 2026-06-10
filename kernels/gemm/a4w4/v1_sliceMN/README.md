@@ -39,14 +39,16 @@ average):
 | base | 4122 | 4433 | 60.4% |
 | llirSched | 4532 | 4728 | 70.5% |
 | llirSched + amdgcnas | 5002 | 5112 | 94.4% |
-| llirSched + amdgcnas + nobar | — | 5163 | 95.7% |
+| llirSched + amdgcnas + nobar | 5001 | 5163 | 96.1% |
 
 `nobar` adds `TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER=1`, which keeps only the
 first `s_barrier` per loop iteration. The four waves progress uniformly in
 this kernel, so the remaining 7 region barriers are redundant — verified
-correct for v1_sliceMN; do not assume for other kernels.
+correct for both versions, but a clear win only for v1; do not assume either
+for other kernels.
 
-At K=65536 v1 reaches 5561 TFLOPS (94.8% MFMA eff).
+At K=65536: amdgcnas 5390 (v0) / 5541 (v1); +nobar 5457 / **5583** TFLOPS
+(94.8% MFMA eff).
 
 ## 3. How to Run
 
