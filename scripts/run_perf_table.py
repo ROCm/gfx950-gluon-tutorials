@@ -545,7 +545,9 @@ def main():
         # Validate versions for a4w4
         for v in args.versions:
             if v not in A4W4_VERSION_MAP:
-                print(f"Error: version {v} not in A4W4_VERSION_MAP. Valid: {list(A4W4_VERSION_MAP.keys())}")
+                print(
+                    f"Error: version {v} not in A4W4_VERSION_MAP. Valid: {list(A4W4_VERSION_MAP.keys())}"
+                )
                 sys.exit(1)
         versions = args.versions
     else:

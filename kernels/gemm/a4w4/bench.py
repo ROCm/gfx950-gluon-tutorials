@@ -200,7 +200,9 @@ def test_correctness(matmul, gemm_sizes, version_dir):
             print(f"[{version_dir}] {M=} {N=} {K=}: Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[{version_dir}] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(
+                f"[{version_dir}] {M=} {N=} {K=}: Triton and Torch differ (max_diff={max_diff:.4f})"
+            )
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
@@ -226,7 +228,9 @@ def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
     return a_list, b_list, as_list, bs_list, block_count
 
 
-def run_rocprof_iterations(matmul, gemm_sizes, version_dir, n_iters=1000, rotating_buffer_size_mb=512):
+def run_rocprof_iterations(
+    matmul, gemm_sizes, version_dir, n_iters=1000, rotating_buffer_size_mb=512
+):
     """Run kernel n_iters times with rotating tensors for cache-cold profiling."""
     for M, N, K in gemm_sizes:
         a_list, b_list, as_list, bs_list, block_count = gen_rotating_tensors(
@@ -261,7 +265,9 @@ def main():
 
     if args.rocprof:
         run_rocprof_iterations(
-            matmul, gemm_sizes, version_dir,
+            matmul,
+            gemm_sizes,
+            version_dir,
             rotating_buffer_size_mb=args.rotating_buffer_size,
         )
         return

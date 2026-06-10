@@ -302,14 +302,18 @@ def v1_sliceMN(
     # bump in the loop, mirroring v0_sliceN).
     # ------------------------------------------------------------------
     offs_ks_a = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales_half))
-    offs_asm_top = (pid_m * BLOCK_M + gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, blocked_scales_half))) % M
+    offs_asm_top = (
+        pid_m * BLOCK_M + gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, blocked_scales_half))
+    ) % M
     a_sc_top_offsets = offs_asm_top[:, None] * stride_asm + offs_ks_a[None, :] * stride_ask
     a_sc_bot_offsets = a_sc_top_offsets + (BLOCK_M // 2) * stride_asm
     a_sc_top_offsets_next = a_sc_top_offsets + (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask
     a_sc_bot_offsets_next = a_sc_bot_offsets + (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask
 
     offs_ks_b = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales_half))
-    offs_bsn_left = (pid_n * BLOCK_N + gl.arange(0, BLOCK_N // 2, gl.SliceLayout(1, blocked_scales_half))) % N
+    offs_bsn_left = (
+        pid_n * BLOCK_N + gl.arange(0, BLOCK_N // 2, gl.SliceLayout(1, blocked_scales_half))
+    ) % N
     b_sc_left_offsets = offs_bsn_left[:, None] * stride_bsn + offs_ks_b[None, :] * stride_bsk
     b_sc_right_offsets = b_sc_left_offsets + (BLOCK_N // 2) * stride_bsn
     b_sc_left_offsets_next = b_sc_left_offsets + (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk
@@ -332,31 +336,55 @@ def v1_sliceMN(
     # a tile+scale pair (matches the diagram's "AC X, X_sc[0]" rows).
     g_idx = 0
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_l.index(g_idx), b_scales_ptr, b_sc_left_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_b_sc_l.index(g_idx), b_scales_ptr, b_sc_left_offsets
+    )
     gl.amd.cdna4.async_copy.commit_group()
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(g_idx), a_base, a_top_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_t.index(g_idx), a_scales_ptr, a_sc_top_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_a_sc_t.index(g_idx), a_scales_ptr, a_sc_top_offsets
+    )
     gl.amd.cdna4.async_copy.commit_group()
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(g_idx), a_base, a_bot_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_b.index(g_idx), a_scales_ptr, a_sc_bot_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_a_sc_b.index(g_idx), a_scales_ptr, a_sc_bot_offsets
+    )
     gl.amd.cdna4.async_copy.commit_group()
     gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_r.index(g_idx), b_scales_ptr, b_sc_right_offsets)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_b_sc_r.index(g_idx), b_scales_ptr, b_sc_right_offsets
+    )
     gl.amd.cdna4.async_copy.commit_group()
 
     # AC iter 1 --> buffer 1 (_next offsets). Same 4 pairs.
     g_idx = 1
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(g_idx), b_base, b_left_offsets_next)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_l.index(g_idx), b_scales_ptr, b_sc_left_offsets_next)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemB_left.index(g_idx), b_base, b_left_offsets_next
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_b_sc_l.index(g_idx), b_scales_ptr, b_sc_left_offsets_next
+    )
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(g_idx), a_base, a_top_offsets_next)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_t.index(g_idx), a_scales_ptr, a_sc_top_offsets_next)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemA_top.index(g_idx), a_base, a_top_offsets_next
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_a_sc_t.index(g_idx), a_scales_ptr, a_sc_top_offsets_next
+    )
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(g_idx), a_base, a_bot_offsets_next)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_b.index(g_idx), a_scales_ptr, a_sc_bot_offsets_next)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemA_bot.index(g_idx), a_base, a_bot_offsets_next
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_a_sc_b.index(g_idx), a_scales_ptr, a_sc_bot_offsets_next
+    )
     gl.amd.cdna4.async_copy.commit_group()
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(g_idx), b_base, b_right_offsets_next)
-    gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_r.index(g_idx), b_scales_ptr, b_sc_right_offsets_next)
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smemB_right.index(g_idx), b_base, b_right_offsets_next
+    )
+    gl.amd.cdna4.async_copy.buffer_load_to_shared(
+        smem_b_sc_r.index(g_idx), b_scales_ptr, b_sc_right_offsets_next
+    )
     gl.amd.cdna4.async_copy.commit_group()
 
     a_base += (BLOCK_K // 2) * stride_ak * 2
@@ -399,7 +427,9 @@ def v1_sliceMN(
         a_bot = smemA_bot.index(0).load(dot_a_layout)
         a_sc_bot = smem_a_sc_b.index(0).load(scale_a_layout)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_l.index(0), b_scales_ptr, b_sc_left_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_b_sc_l.index(0), b_scales_ptr, b_sc_left_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 1: C_bl = DOT(a_bot, b_left)
@@ -416,7 +446,9 @@ def v1_sliceMN(
         b_right = smemB_right.index(0).permute([1, 0]).load(dot_b_layout)
         b_sc_right = smem_b_sc_r.index(0).load(scale_b_layout)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(0), a_base, a_top_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_t.index(0), a_scales_ptr, a_sc_top_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_a_sc_t.index(0), a_scales_ptr, a_sc_top_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 2: C_tr = DOT(a_top, b_right)
@@ -433,7 +465,9 @@ def v1_sliceMN(
         b_left = smemB_left.index(1).permute([1, 0]).load(dot_b_layout)
         b_sc_left = smem_b_sc_l.index(1).load(scale_b_layout)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(0), a_base, a_bot_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_b.index(0), a_scales_ptr, a_sc_bot_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_a_sc_b.index(0), a_scales_ptr, a_sc_bot_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 3: C_br = DOT(a_bot, b_right)
@@ -450,7 +484,9 @@ def v1_sliceMN(
         a_top = smemA_top.index(1).load(dot_a_layout)
         a_sc_top = smem_a_sc_t.index(1).load(scale_a_layout)
         gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_r.index(0), b_scales_ptr, b_sc_right_offsets)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_b_sc_r.index(0), b_scales_ptr, b_sc_right_offsets
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # ----------------------------------------------------------------
@@ -470,8 +506,12 @@ def v1_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(1).load(dot_a_layout)
         a_sc_bot = smem_a_sc_b.index(1).load(scale_a_layout)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_l.index(1), b_scales_ptr, b_sc_left_offsets_next)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_left.index(1), b_base, b_left_offsets_next
+        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_b_sc_l.index(1), b_scales_ptr, b_sc_left_offsets_next
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 1: C_bl = DOT(a_bot, b_left)
@@ -487,8 +527,12 @@ def v1_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(1).permute([1, 0]).load(dot_b_layout)
         b_sc_right = smem_b_sc_r.index(1).load(scale_b_layout)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_top.index(1), a_base, a_top_offsets_next)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_t.index(1), a_scales_ptr, a_sc_top_offsets_next)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemA_top.index(1), a_base, a_top_offsets_next
+        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_a_sc_t.index(1), a_scales_ptr, a_sc_top_offsets_next
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 2: C_tr = DOT(a_top, b_right)
@@ -504,8 +548,12 @@ def v1_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
         b_sc_left = smem_b_sc_l.index(0).load(scale_b_layout)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemA_bot.index(1), a_base, a_bot_offsets_next)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_a_sc_b.index(1), a_scales_ptr, a_sc_bot_offsets_next)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemA_bot.index(1), a_base, a_bot_offsets_next
+        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_a_sc_b.index(1), a_scales_ptr, a_sc_bot_offsets_next
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         # Region 3: C_br = DOT(a_bot, b_right)
@@ -521,8 +569,12 @@ def v1_sliceMN(
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(0).load(dot_a_layout)
         a_sc_top = smem_a_sc_t.index(0).load(scale_a_layout)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smemB_right.index(1), b_base, b_right_offsets_next)
-        gl.amd.cdna4.async_copy.buffer_load_to_shared(smem_b_sc_r.index(1), b_scales_ptr, b_sc_right_offsets_next)
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smemB_right.index(1), b_base, b_right_offsets_next
+        )
+        gl.amd.cdna4.async_copy.buffer_load_to_shared(
+            smem_b_sc_r.index(1), b_scales_ptr, b_sc_right_offsets_next
+        )
         gl.amd.cdna4.async_copy.commit_group()
 
         a_base += (BLOCK_K // 2) * stride_ak * 2
@@ -547,8 +599,12 @@ def v1_sliceMN(
 
     # Iter iterMax - 2 (l_idx = (iterMax - 2) % 2)
     acc_tl = gl.amd.cdna4.mfma_scaled(
-        a=a_top, a_scale=a_sc_top, a_format="e2m1",
-        b=b_left, b_scale=b_sc_left, b_format="e2m1",
+        a=a_top,
+        a_scale=a_sc_top,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left,
+        b_format="e2m1",
         acc=acc_tl,
     )
     gl.amd.cdna4.async_copy.wait_group(5)
@@ -557,8 +613,12 @@ def v1_sliceMN(
     a_sc_bot = smem_a_sc_b.index(l_idx).load(scale_a_layout)
 
     acc_bl = gl.amd.cdna4.mfma_scaled(
-        a=a_bot, a_scale=a_sc_bot, a_format="e2m1",
-        b=b_left, b_scale=b_sc_left, b_format="e2m1",
+        a=a_bot,
+        a_scale=a_sc_bot,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left,
+        b_format="e2m1",
         acc=acc_bl,
     )
     gl.amd.cdna4.async_copy.wait_group(4)
@@ -566,8 +626,12 @@ def v1_sliceMN(
     b_sc_right = smem_b_sc_r.index(l_idx).load(scale_b_layout)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
-        a=a_top, a_scale=a_sc_top, a_format="e2m1",
-        b=b_right, b_scale=b_sc_right, b_format="e2m1",
+        a=a_top,
+        a_scale=a_sc_top,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right,
+        b_format="e2m1",
         acc=acc_tr,
     )
     gl.amd.cdna4.async_copy.wait_group(3)
@@ -576,8 +640,12 @@ def v1_sliceMN(
     b_sc_left = smem_b_sc_l.index(g_idx).load(scale_b_layout)
 
     acc_br = gl.amd.cdna4.mfma_scaled(
-        a=a_bot, a_scale=a_sc_bot, a_format="e2m1",
-        b=b_right, b_scale=b_sc_right, b_format="e2m1",
+        a=a_bot,
+        a_scale=a_sc_bot,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right,
+        b_format="e2m1",
         acc=acc_br,
     )
     gl.amd.cdna4.async_copy.wait_group(2)
@@ -586,8 +654,12 @@ def v1_sliceMN(
 
     # Iter iterMax - 1: final MFMAs interleaved with stores
     acc_tl = gl.amd.cdna4.mfma_scaled(
-        a=a_top, a_scale=a_sc_top, a_format="e2m1",
-        b=b_left, b_scale=b_sc_left, b_format="e2m1",
+        a=a_top,
+        a_scale=a_sc_top,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left,
+        b_format="e2m1",
         acc=acc_tl,
     )
     gl.amd.cdna4.async_copy.wait_group(1)
@@ -595,8 +667,12 @@ def v1_sliceMN(
     a_sc_bot = smem_a_sc_b.index(g_idx).load(scale_a_layout)
 
     acc_bl = gl.amd.cdna4.mfma_scaled(
-        a=a_bot, a_scale=a_sc_bot, a_format="e2m1",
-        b=b_left, b_scale=b_sc_left, b_format="e2m1",
+        a=a_bot,
+        a_scale=a_sc_bot,
+        a_format="e2m1",
+        b=b_left,
+        b_scale=b_sc_left,
+        b_format="e2m1",
         acc=acc_bl,
     )
     gl.amd.cdna4.async_copy.wait_group(0)
@@ -608,8 +684,12 @@ def v1_sliceMN(
     gl.amd.cdna4.buffer_store(c_tl, c_base, c_tl_offsets)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
-        a=a_top, a_scale=a_sc_top, a_format="e2m1",
-        b=b_right, b_scale=b_sc_right, b_format="e2m1",
+        a=a_top,
+        a_scale=a_sc_top,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right,
+        b_format="e2m1",
         acc=acc_tr,
     )
 
@@ -618,8 +698,12 @@ def v1_sliceMN(
     gl.amd.cdna4.buffer_store(c_bl, c_base, c_bl_offsets)
 
     acc_br = gl.amd.cdna4.mfma_scaled(
-        a=a_bot, a_scale=a_sc_bot, a_format="e2m1",
-        b=b_right, b_scale=b_sc_right, b_format="e2m1",
+        a=a_bot,
+        a_scale=a_sc_bot,
+        a_format="e2m1",
+        b=b_right,
+        b_scale=b_sc_right,
+        b_format="e2m1",
         acc=acc_br,
     )
 
