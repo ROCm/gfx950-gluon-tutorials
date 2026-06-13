@@ -68,24 +68,13 @@ VERSION_MAP = {
     9: "v9_beyond_hotloop",
 }
 
-CONFIG_ENV = {
-    "base": {},
-    "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
-    # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
-    # Used to measure how much of the amdgcnas improvement comes from the
-    # register-allocation hint vs. the post-assembly peephole / LICM.
-    # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var (in
-    # third_party/amd/backend/compiler.py and python/src/llvm.cc) and
-    # supported natively by the `gfx950-tutorial-v0.2` pin.
-    "llir+ra": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
-    },
-    "llir+amdgcnas": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGCN_AS": "1",
-    },
-}
+# Config names, mirrored from bench.py's CONFIG. bench.py owns the actual
+# config -> knob mapping; the driver just forwards --config to it. The LLIR
+# scheduler is enabled via the schedule_hint="gemm-4waves" compile option (which
+# now also pulls in the MFMA register flags — they are coupled), and amdgcnas via
+# env vars that bench.py sets. "base" runs nothing; "+nobar" adds the risky
+# barrier-removal pass, valid only for M+N-sliced (uniform-wave) kernels.
+CONFIGS = ["base", "llir", "llir+amdgcnas", "llir+amdgcnas+nobar"]
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
 # number in the tutorial. Pairs not in this set are skipped by default — they
@@ -102,7 +91,6 @@ REPORTED_COMBINATIONS = {
     "a16w16": {
         "base": {0, 2, 3, 4, 5},
         "llir": {5, 6, 7},
-        "llir+ra": {7},
         "llir+amdgcnas": {7, 8, 9},
     },
     "a8w8": {
@@ -273,7 +261,7 @@ def avg_kernel_time_ns(csv_path, kernel_name, last_n=100):
     return sum(tail) / len(tail), len(durations)
 
 
-def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type="a16w16"):
+def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, config, kernel_type="a16w16"):
     """Run rocprofv3 --kernel-trace to collect kernel timestamps.
 
     Returns TFLOPS computed from the average kernel time, or None on failure.
@@ -298,6 +286,8 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
         "--rocprof",
         "--K",
         str(K),
+        "--config",
+        config,
     ]
     if kernel_type == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
@@ -373,15 +363,14 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     run_att_path = os.path.join(git_root, "scripts", "run_att.py")
 
     env = os.environ.copy()
-    # Clear any previous config env vars
+    # bench.py applies the config itself (schedule_hint for the LLIR scheduler,
+    # env vars for amdgcnas). Clear any inherited amdgcnas vars so a config
+    # without amdgcnas starts from a clean slate.
     for key in (
-        "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+        "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER",
     ):
         env.pop(key, None)
-    # Set config-specific env vars
-    env.update(CONFIG_ENV[config])
 
     cmd = [
         sys.executable,
@@ -392,6 +381,8 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         "bench.py",
         "--K",
         str(K),
+        "--config",
+        config,
     ]
     if kernel == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
@@ -437,7 +428,7 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     # Run rocprofv3 to get TFLOPS from kernel timestamps
     if use_rocprof:
         tflops = run_rocprof_trace(
-            version_dir, K, dtype, version, work_dir, env, kernel_type=kernel
+            version_dir, K, dtype, version, work_dir, env, config, kernel_type=kernel
         )
         result["tflops"] = tflops
 
@@ -493,8 +484,8 @@ def parse_args():
     parser.add_argument(
         "--configs",
         nargs="+",
-        choices=list(CONFIG_ENV.keys()),
-        default=list(CONFIG_ENV.keys()),
+        choices=CONFIGS,
+        default=CONFIGS,
         help="Scheduler configs to test (default: all)",
     )
     parser.add_argument(

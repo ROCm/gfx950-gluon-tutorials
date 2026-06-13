@@ -24,9 +24,52 @@
 
 import argparse
 import importlib
+import os
 
 import torch
 import triton
+
+# Scheduler / post-assembly configs, mirroring run_perf_table.py's --configs so
+# `bench.py --config <name>` reproduces a table row standalone. The LLIR
+# scheduler is a Triton compile option (schedule_hint="gemm-4waves") injected
+# into every kernel launch, which keeps the tutorial kernels themselves agnostic
+# to scheduling; amdgcnas is a post-assembly pass gated by env vars read by the
+# compiler. Both turn on together once the LLIR schedule takes effect.
+CONFIG = {
+    "base": {"schedule_hint": "none", "env": {}},
+    "llir": {"schedule_hint": "gemm-4waves", "env": {}},
+    "llir+amdgcnas": {
+        "schedule_hint": "gemm-4waves",
+        "env": {"TRITON_ENABLE_AMDGCN_AS": "1"},
+    },
+    "llir+amdgcnas+nobar": {
+        "schedule_hint": "gemm-4waves",
+        "env": {
+            "TRITON_ENABLE_AMDGCN_AS": "1",
+            "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER": "1",
+        },
+    },
+}
+
+
+def apply_config(config):
+    """Enable the knobs for a perf-table config before the first kernel launch:
+    amdgcnas via env vars, and the LLIR scheduler by injecting
+    schedule_hint="gemm-4waves" into every Gluon kernel launch."""
+    cfg = CONFIG[config]
+    for key, val in cfg["env"].items():
+        os.environ[key] = val
+    hint = cfg["schedule_hint"]
+    if hint != "none":
+        from triton.runtime.jit import JITFunction
+
+        original_run = JITFunction.run
+
+        def run(self, *args, **kwargs):
+            kwargs.setdefault("schedule_hint", hint)
+            return original_run(self, *args, **kwargs)
+
+        JITFunction.run = run
 
 # Map --version flag to subdirectory name. Each version directory exports a
 # `matmul(a_fp4, b_fp4, a_scales, b_scales)` callable from `matmul_kernel`.
@@ -183,6 +226,13 @@ def parse_args():
         help="Total size (MB) of rotating tensors for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
     )
+    parser.add_argument(
+        "--config",
+        choices=list(CONFIG.keys()),
+        default="base",
+        help="Scheduler / post-assembly config (default: base). Enables the LLIR "
+        "scheduler and/or amdgcnas; matches run_perf_table.py's --configs.",
+    )
     return parser.parse_args()
 
 
@@ -254,6 +304,7 @@ def run_rocprof_iterations(
 
 def main():
     args = parse_args()
+    apply_config(args.config)
 
     version_dir = VERSION_MAP[args.version]
     module = importlib.import_module(f"{version_dir}.matmul_kernel")
