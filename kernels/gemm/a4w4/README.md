@@ -37,7 +37,7 @@ timing + MFMA efficiency. For the full version × config table:
 
 ```bash
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+amdgcnas llir+amdgcnas+nobar --K 32768 --rocprof
+  --configs base llir llir+amdgcnas --K 32768 --rocprof
 ```
 
 ## 3. The Two Versions
@@ -63,7 +63,7 @@ average), `llirSched + amdgcnas`:
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
 | v0_sliceN  | 5265 | 91.6% |
-| v1_sliceMN | 5387 | 94.5% |
+| v1_sliceMN | **5387** | 94.5% |
 
-v1 reaches **5419 TFLOPS** (96.0% MFMA eff) with the `+nobar` pass, and 5583 at
-K=65536. See each version's README for the full table.
+v1 reaches **5541 TFLOPS** at K=65536. See each version's README for the full
+per-config table.
