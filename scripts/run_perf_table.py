@@ -85,14 +85,6 @@ CONFIG_ENV = {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGCN_AS": "1",
     },
-    # amdgcnas plus the risky barrier-removal pass: keeps only the first
-    # s_barrier in the loop. Only valid for kernels whose waves progress
-    # uniformly (M+N sliced double-buffer pattern).
-    "llir+amdgcnas+nobar": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGCN_AS": "1",
-        "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER": "1",
-    },
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
@@ -122,7 +114,6 @@ REPORTED_COMBINATIONS = {
         "base": {0, 1},
         "llir": {0, 1},
         "llir+amdgcnas": {0, 1},
-        "llir+amdgcnas+nobar": {0, 1},
     },
 }
 
@@ -387,7 +378,6 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
         "TRITON_ENABLE_AMDGPU_RA_HINTS",
-        "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER",
     ):
         env.pop(key, None)
     # Set config-specific env vars
