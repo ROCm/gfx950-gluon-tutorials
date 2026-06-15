@@ -65,5 +65,4 @@ average), `llirSched + amdgcnas`:
 | v0_sliceN  | 5265 | 91.6% |
 | v1_sliceMN | **5387** | 94.5% |
 
-v1 reaches **5541 TFLOPS** at K=65536. See each version's README for the full
-per-config table.
+See each version's README for the full per-config table.
