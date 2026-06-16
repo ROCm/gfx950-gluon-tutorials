@@ -59,8 +59,8 @@ K (less per-quadrant register pressure, cleaner natural-pipeline epilogue).
 
 Each K-step runs four regions (one DOT + one LR + one AC each), and the loop is
 unrolled by 2 so LDS buffer indices alternate without runtime computation. With
-the §1.1 change, every `AC X` issues `AC X` **and** `AC X_sc` in one commit
-group, and every `LR X` issues `LR X` **and** `LR X_sc` — so the scale for each
+the §1.1 change, every `AC X` issues `AC X` and `AC X_sc` in one commit
+group, and every `LR X` issues `LR X` and `LR X_sc` — so the scale for each
 quadrant is always in registers right before its DOT.
 
 ## 3. Performance
@@ -72,16 +72,9 @@ average), one config per invocation:
 |------------------|-----------|------------|--------------|
 | base | 4258 | 4589 | 60.4% |
 | llirSched | 4780 | 4892 | 70.6% |
-| llirSched + amdgcnas | 5265 | 5387 | 94.5% |
-| llirSched + amdgcnas + nobar | 5311 | **5419** | 96.0% |
+| llirSched + amdgcnas | 5265 | **5387** | 94.5% |
 
-`nobar` adds `TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER=1`, which keeps only the
-first `s_barrier` per loop iteration. The four waves progress uniformly in this
-kernel, so the remaining per-region barriers are redundant — verified correct
-for both versions; do not assume for other kernels.
-
-At K=65536: llirSched + amdgcnas 5390 (v0) / 5541 (v1); + nobar 5457 / **5583**
-TFLOPS (94.8% MFMA eff).
+At K=65536: llirSched + amdgcnas 5390 (v0) / **5541** (v1, 93.3% MFMA eff).
 
 ## 4. How to Run
 
