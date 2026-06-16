@@ -63,6 +63,6 @@ average), `llirSched + amdgcnas`:
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
 | v0_sliceN  | 5265 | 91.6% |
-| v1_sliceMN | **5387** | 94.5% |
+| v1_sliceMN | 5387 | 94.5% |
 
 See each version's README for the full per-config table.

@@ -72,9 +72,9 @@ average), one config per invocation:
 |------------------|-----------|------------|--------------|
 | base | 4258 | 4589 | 60.4% |
 | llirSched | 4780 | 4892 | 70.6% |
-| llirSched + amdgcnas | 5265 | **5387** | 94.5% |
+| llirSched + amdgcnas | 5265 | 5387 | 94.5% |
 
-At K=65536: llirSched + amdgcnas 5390 (v0) / **5541** (v1, 93.3% MFMA eff).
+At K=65536: llirSched + amdgcnas 5390 (v0) / 5541 (v1, 93.3% MFMA eff).
 
 ## 4. How to Run
 
@@ -86,5 +86,5 @@ python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+amdgcnas llir+amdgcnas+nobar --K 32768 --rocprof
+  --configs base llir llir+amdgcnas --K 32768 --rocprof
 ```
