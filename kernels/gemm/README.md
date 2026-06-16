@@ -12,7 +12,7 @@ Measured on MI355:
 |-----------|-----------------|--------|-----------|
 | FP16      | 4096x4096x8192  |   1489 |    98.25% |
 | BF8       | 4096x4096x16384 |   3277 |    99.98% |
-| MXFP4     | 4096x4096x32768 |   5253 |    90.06% |
+| MXFP4     | 4096x4096x32768 |   5387 |    94.50% |
 
 > [!NOTE]
 > Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v0.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.2) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
@@ -74,7 +74,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amd
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --rocprof
 
 # MXFP4 (a4w4)
-python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --rocprof
+python scripts/run_perf_table.py --kernel a4w4 --versions 1 --configs llir+amdgcnas --K 32768 --rocprof
 ```
 
 This script automatically:
@@ -94,7 +94,7 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
 
 # MXFP4 (from kernels/gemm/a4w4/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 1 --K 32768
 ```
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
