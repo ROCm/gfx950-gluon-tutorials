@@ -5,6 +5,28 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-06-15 — MXFP4 (a4w4): add `v1_sliceMN`, version the directory
+
+The `a4w4/` directory is now versioned like `a16w16/`: the original kernel
+becomes `v0_sliceN`, and a new `v1_sliceMN` is added (both kept as a
+progression; `bench.py --version` and `run_perf_table.py --versions` select
+between them).
+
+`v1_sliceMN` makes two changes over `v0_sliceN`:
+- **Async scale pipeline.** Scales stream straight into LDS via
+  `buffer_load_to_lds` alongside the input tiles, replacing v0's
+  `buffer_load → local_store → local_load` round-trip — no `ds_write`, so the
+  LLIR scheduler no longer has to reason about it in the hot loop.
+- **M+N slicing.** A is sliced along M and B along N into a 2×2 grid of
+  128×128 accumulator quadrants (the `a16w16/v8_sliceMN` pattern), for a more
+  balanced buffer-load distribution at large K.
+
+Measured on MI355 at 4096×4096×32768 with `llirSched + amdgcnas`, `v1_sliceMN`
+reaches **5387 TFLOPS / 94.5% MFMA efficiency**, up from `v0_sliceN`'s
+5265 / 91.6%. The MXFP4 headline in `kernels/gemm/README.md` now reports the
+v1 number. No Triton pin change — both kernels use the existing
+`gfx950-tutorial-v0.2` toolchain.
+
 ## 2026-06-01 — Re-pin to `gfx950-tutorial-v0.2` (rebase onto upstream main)
 
 The pinned Triton commit moved from `gfx950-tutorial-v0.1` to
