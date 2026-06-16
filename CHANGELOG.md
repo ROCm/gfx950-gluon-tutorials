@@ -5,7 +5,7 @@ compiler / Triton evolution.
 
 ---
 
-## 2026-06-16 — MXFP4 (a4w4): add `v1_sliceMN`, version the directory
+## 2026-06-15 — MXFP4 (a4w4): add `v1_sliceMN`, version the directory
 
 The `a4w4/` directory is now versioned like `a16w16/`: the original kernel
 becomes `v0_sliceN`, and a new `v1_sliceMN` is added (both kept as a
