@@ -69,7 +69,7 @@ def get_pids(
 
 
 @gluon.jit
-def a4w4_kernel(
+def v0_sliceN(
     a_ptr,
     b_ptr,
     c_ptr,
@@ -616,7 +616,7 @@ def matmul(a, b, a_scales, b_scales):
     NUM_XCDS = 8
     GROUP_SIZE_M = 4
 
-    a4w4_kernel[grid](
+    v0_sliceN[grid](
         a,
         b,
         c,

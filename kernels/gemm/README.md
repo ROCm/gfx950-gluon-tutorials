@@ -12,7 +12,7 @@ Measured on MI355:
 |-----------|-----------------|--------|-----------|
 | FP16      | 4096x4096x8192  |   1489 |    98.25% |
 | BF8       | 4096x4096x16384 |   3277 |    99.98% |
-| MXFP4     | 4096x4096x32768 |   5253 |    90.06% |
+| MXFP4     | 4096x4096x32768 |   5387 |    94.50% |
 
 > [!NOTE]
 > Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v0.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.2) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
@@ -58,7 +58,7 @@ The LLIR Scheduler and amdgcnas are available on the [`gfx950-tutorial`](https:/
    - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue. When the hoisted instruction's output register is redefined inside the loop, it applies register renaming.
    - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
-**Relative contributions.** Parts 1 and 2 of amdgcnas are not equally important. On current Gluon GEMM kernels, the register hints alone close 75–85% of the MFMA-efficiency improvement between `llir` and `llir+amdgcnas`, and land within 1–2% TFLOPS of the full pass on FP16, BF8, and MXFP4. The post-assembly work adds +2pp MFMA efficiency on FP16 and BF8, but +6pp on MXFP4 — the scale pipeline creates denser SALU activity for the peephole to pack. The two parts therefore have different upstream stories: the hints map to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
+**Relative contributions.** Parts 1 and 2 of amdgcnas are not equally important. On the FP16 and BF8 kernels, the register hints alone close 75–85% of the MFMA-efficiency improvement between `llir` and `llir+amdgcnas`, land within 1–2% TFLOPS of the full pass, and the post-assembly work adds only +2pp MFMA efficiency on top. MXFP4 leans more heavily on the post-assembly pass: on the `v1_sliceMN` kernel the register hints close only about half the efficiency gap (`llir` ~71% → `llir+ra` ~84%), and the post-assembly peephole adds the remaining ~+10pp to reach ~94% — the paired scale loads create denser SALU activity for the peephole to pack. The two parts therefore have different upstream stories: the hints map to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
 
 To measure each piece independently, set `TRITON_ENABLE_AMDGPU_RA_HINTS=1` to enable the hints alone (without the post-assembly pass). `TRITON_ENABLE_AMDGCN_AS=1` enables both. `scripts/run_perf_table.py` exposes these as the `llir+ra` and `llir+amdgcnas` configs.
 
@@ -74,7 +74,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amd
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 16384 --rocprof
 
 # MXFP4 (a4w4)
-python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 32768 --rocprof
+python scripts/run_perf_table.py --kernel a4w4 --versions 1 --configs llir+amdgcnas --K 32768 --rocprof
 ```
 
 This script automatically:
@@ -94,7 +94,7 @@ TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8
 TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
 
 # MXFP4 (from kernels/gemm/a4w4/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
+TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 1 --K 32768
 ```
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
@@ -122,7 +122,7 @@ The [a16w16/](a16w16/) directory documents a step-by-step optimization journey f
 
 ## 4. BF8 and MXFP4: Applying the Same Design
 
-The optimization principles from the FP16 journey apply directly to BF8 and MXFP4. All three kernels share the same fundamental design: N-slicing, 3-stage pipeline, loop unrolling by 2, and the LLIR scheduler + amdgcnas optimizations.
+The optimization principles from the FP16 journey apply directly to BF8 and MXFP4. The final kernel for all three data types shares the same fundamental design: M+N slicing, 3-stage pipeline, loop unrolling by 2, and the LLIR scheduler + amdgcnas optimizations.
 
 | Aspect | FP16 (a16w16) | BF8 (a8w8) | MXFP4 (a4w4) |
 |--------|---------------|------------|--------------|
@@ -134,5 +134,5 @@ The optimization principles from the FP16 journey apply directly to BF8 and MXFP
 
 The [a8w8/](a8w8/) directory provides the final optimized BF8 kernel. If you understand the FP16 journey, you will understand the BF8 kernel. The key differences are tile shape, MFMA instruction, and LDS padding.
 
-The [a4w4/](a4w4/) directory implements the MXFP4 kernel, which introduces new challenges: per-group scale loading (GR → LW → LR round-trip), LDS port contention between ds_write and buffer_load_to_lds, and scale layout conversion. See the [a4w4 README](a4w4/README.md) for full details.
+The [a4w4/](a4w4/) directory implements the MXFP4 kernel, whose genuinely new element is the per-group scale pipeline: every 32 e2m1 elements share an 8-bit e8m0 scale that must be loaded and laid out for `mfma_scaled`. It ships in two versions — `v0_sliceN` stages scales through LDS with a `local_store` → `local_load` round-trip, while the final `v1_sliceMN` loads them straight into LDS via `buffer_load_to_lds` alongside the input tiles (no `local_store`) and uses M+N slicing for a more balanced design. See the [a4w4 README](a4w4/README.md) for full details.
 
