@@ -288,3 +288,36 @@ v7 pulls clearly ahead at 128×256 (`+agpr` v7 1156 vs v8 1038, +11%) and 128×1
 - At these fixed-occupancy sizes the kernels are small/fast, so absolute TFLOPS are
   low and carry more launch-overhead and run-to-run jitter than the full 4096³ case;
   use them for the cross-config *comparison*, not as headline numbers.
+
+---
+
+## Follow-up investigations
+
+### 1. Does v8 (sliceMN) beat v7 (sliceN) at large K?
+**Experiment:** re-ran the v6/v7/v8 comparison (5 shapes, base/llir/+agpr, fixed
+occupancy) at K=16384 vs the K=8192 table — see "v6 vs v7 vs v8 at K=16384" above.
+**Conclusion:** No, not at these occupancy-fixed, spill-free sizes. The mean v8/v7
+TFLOPS advantage *drops* with K (+1.6% at K=8192 → −1.1% at K=16384); doubling K shifts
+the balance toward v7, the opposite of the tutorial's claim. v8's edge presumably needs
+a regime where v7's larger accumulator spills, which 1 wave/SIMD never reaches here.
+
+### 2. Is v6 → v7 only the N-slicing? Do they share prologue/epilogue?
+**Experiment:** source-diffed `v6_loop_unroll` vs `v7_sliceN`.
+**Conclusion:** No — beyond N-slicing, v7 also differs in commit-group granularity and
+async-wait depth (loop `wait_group(2)` keeping 2 groups in flight, vs v6 `wait_group(0)`
+draining every step), in the store `BlockedLayout` (`[4,16]` vs `[2,32]` threadsPerWarp),
+and in the epilogue (v7 overlaps the `c_left` store with the `acc_right` compute; v6 does
+both dots then one store). They *do* share the same 2×-unrolled K-loop and `nBuffers=2`.
+So the prologue and epilogue are **not** identical. (This different synchronization
+structure is also a plausible reason v7 avoids v6's narrow-tile race — see issues.md.)
+
+### 3. Why is v8's MFMA-eff below v7's under the scheduler (256×256×64, +agpr)?
+**Experiment:** ran v7 and v8 with `force-agpr`, collected ATT MFMA-eff and disassembled
+the hot loops. Both loops issue identical work (256 MFMA, 64 ds_read, 32 global-loads).
+**Conclusion:** v8's M+N slicing halves each dot (`[128,128]` → 32 MFMA/region vs v7's
+`[256,128]` → 64), so the scheduler emits **twice the regions (8 vs 4) and twice the
+per-iteration workgroup `s_barrier`s (8 vs 4, one per region boundary)**. Those extra
+barrier stalls cap v8 ~1pp below v7 under the scheduler (94.8% vs 95.9%). Under `base`
+the deciding factor is instead register pressure, where v8's smaller accumulators win
+(436 vs 460 VGPRs, eff 68.9% vs 65.0%) — so the lever flips: register pressure favors v8
+unscheduled, barrier/region count favors v7 once the scheduler packs the MFMAs.
