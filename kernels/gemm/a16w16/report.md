@@ -204,6 +204,43 @@ configs:
 
 ---
 
+## v6 vs v7 vs v8 at K=16384 (does v8 win at large K?)
+
+The tutorial claims v8 (sliceMN) beats v7 (sliceN) for large K. Re-running the same
+5 shapes / 3 configs / fixed occupancy with **K = 16384** (double the K=8192 table):
+
+| shape | kernel | base TFLOPS | base eff | llir TFLOPS | llir eff | +agpr TFLOPS | +agpr eff |
+|---|---|---|---|---|---|---|---|
+| **256×256×64** | v6 | 1029 | 52.14% | 345 | 12.24% | 1312 | 86.94% |
+| | v7 | 1259 | 64.63% | 1427 | 86.32% | 1480 | 94.83% |
+| | v8 | 1257 | 66.24% | 1410 | 84.22% | **1484** | 94.73% |
+| **256×128×64** | v6 | 689 | 51.39% | 697 | 65.68% | 695 | 63.46% |
+| | v7 | 1017 | 56.85% | 1094 | 85.86% | 1093 | 86.17% |
+| | v8 | **1113** | 63.49% | **1105** | 83.39% | **1104** | 83.93% |
+| **128×256×64** | v6 | 784 | 51.55% | 785 | 64.85% | 784 | 63.27% |
+| | v7 | 1036 | 55.80% | **1154** | 84.77% | **1156** | 84.73% |
+| | v8 | 1035 | 65.71% | 1049 | 83.93% | 1038 | 83.91% |
+| **128×128×64** | v6 | 505 | 36.21% | 498 | 36.36% | 493 | 36.35% |
+| | v7 | 804 | 54.71% | **812** | 66.13% | 805 | 66.07% |
+| | v8 | 797 | 55.66% | 777 | 67.69% | 797 | 68.60% |
+| **64×256×64** | v6 | 490 | 34.84% | 479 | 34.78% | 482 | 34.10% |
+| | v7 | 719 | 48.70% | **712** | 54.37% | 713 | 55.09% |
+| | v8 | 715 | 49.03% | 704 | 54.01% | 712 | 53.97% |
+
+**The claim does not hold at these (occupancy-fixed, spill-free) sizes.** The mean v8/v7
+TFLOPS advantage actually *drops* with K — **+1.6% at K=8192 → −1.1% at K=16384** (a
+−2.7pp shift toward v7). Doubling K moves the balance the *opposite* way from the claim:
+v7 pulls clearly ahead at 128×256 (`+agpr` v7 1156 vs v8 1038, +11%) and 128×128 (`llir`
++4.5%), while v8 wins only at 256×128 (and at 256×256 `+agpr` by a hair: 1484 vs 1480).
+- **Why:** here neither v7 nor v8 spills (0 spills everywhere), so v8's advantage — smaller
+  per-quadrant accumulators relieving register pressure over a long K-loop — never gets to
+  matter. The tutorial's "v8 for large K" likely refers to a regime where v7's larger
+  accumulator *spills* at high K; at 1 wave/SIMD on these shapes that regime isn't reached.
+- v6@256×256 `llir` still craters (345 TFLOPS / 76 spills) at K=16384 — the AGPR-spill
+  dependence is K-independent. (Single-run rocprof; small-tile cells carry run-to-run jitter.)
+
+---
+
 ## Conclusions
 
 1. **The scheduler applies successfully at every tile in every config**
