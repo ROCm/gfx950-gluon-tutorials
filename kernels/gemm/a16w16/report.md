@@ -115,6 +115,50 @@ N-sliced (B = `BLOCK_N // 2`), so correct on every tile. Spills are 0 throughout
 
 (`n/a` = ATT eff-collection failed on the tiniest kernels; TFLOPS still valid.)
 
+### v8 (sliceMN) — full 18-tile grid
+
+Slices **both** M and N (A = `BLOCK_M//2`, B = `BLOCK_N//2`, 4 accumulator
+quadrants), so also correct on all 18 tiles and spill-free throughout.
+
+| tile | M×N | cfg | TFLOPS | MFMA-eff | spills | VGPRs | sched? |
+|---|---|---|---|---|---|---|---|
+| **256×256×64** | 4096×4096 | base | 1251 | 68.92% | 0 | 496 | – |
+| | | llir | **1423** | 93.65% | 0 | 436 | YES |
+| 256×256×32 | 4096×4096 | base | 974 | 51.11% | 0 | 496 | – |
+| | | llir | 1062 | 91.13% | 0 | 416 | YES |
+| 256×128×64 | 4096×2048 | base | 1117 | 63.40% | 0 | 264 | – |
+| | | llir | 1193 | 83.39% | 0 | 272 | YES |
+| 256×128×32 | 4096×2048 | base | 718 | 54.85% | 0 | 276 | – |
+| | | llir | 719 | 57.88% | 0 | 232 | YES |
+| 256×64×64 | 4096×1024 | base | 738 | 43.81% | 0 | 254 | – |
+| | | llir | 736 | 48.01% | 0 | 200 | YES |
+| 256×64×32 | 4096×1024 | base | 431 | 31.84% | 0 | 154 | – |
+| | | llir | 426 | 31.48% | 0 | 164 | YES |
+| 128×256×64 | 2048×4096 | base | 1116 | 66.04% | 0 | 242 | – |
+| | | llir | 1210 | 83.36% | 0 | 260 | YES |
+| 128×256×32 | 2048×4096 | base | 810 | 51.45% | 0 | 242 | – |
+| | | llir | 833 | 60.79% | 0 | 200 | YES |
+| 128×128×64 | 2048×2048 | base | 954 | 55.65% | 0 | 142 | – |
+| | | llir | 950 | 68.44% | 0 | 152 | YES |
+| 128×128×32 | 2048×2048 | base | 640 | 44.34% | 0 | 130 | – |
+| | | llir | 652 | 48.37% | 0 | 132 | YES |
+| 128×64×64 | 2048×1024 | base | 620 | 40.09% | 0 | 100 | – |
+| | | llir | 626 | 42.85% | 0 | 108 | YES |
+| 128×64×32 | 2048×1024 | base | 359 | 26.02% | 0 | 82 | – |
+| | | llir | 364 | 26.38% | 0 | 92 | YES |
+| 64×256×64 | 1024×4096 | base | 732 | 49.40% | 0 | 234 | – |
+| | | llir | 729 | 56.52% | 0 | 180 | YES |
+| 64×256×32 | 1024×4096 | base | 535 | 35.33% | 0 | 126 | – |
+| | | llir | 515 | 35.51% | 0 | 124 | YES |
+| 64×128×64 | 1024×2048 | base | 607 | 42.70% | 0 | 92 | – |
+| | | llir | 606 | 47.17% | 0 | 100 | YES |
+| 64×128×32 | 1024×2048 | base | 389 | 29.10% | 0 | 66 | – |
+| | | llir | 379 | 26.50% | 0 | 72 | YES |
+| 64×64×64 | 1024×1024 | base | 367 | 27.49% | 0 | 60 | – |
+| | | llir | 370 | 28.65% | 0 | 60 | YES |
+| 64×64×32 | 1024×1024 | base | 212 | n/a | 0 | 70 | – |
+| | | llir | 210 | n/a | 0 | 84 | YES |
+
 ---
 
 ## Experiment 2 — variable occupancy (M = N = 4096 for every tile)
@@ -199,6 +243,18 @@ have higher occupancy. Shown for contrast — the small-tile regressions here ar
    that better interleaving actually buys throughput. The slicing is what enables
    both the tile-parametric layouts (all 18 correct) and the scheduler's
    effectiveness across tiles.
+
+6. **v8 (sliceMN) confirms the pattern and raises the base.** Slicing both M and N
+   is also correct on all 18 tiles and spill-free. Its **base** TFLOPS/eff are
+   generally the highest of the four kernels (the finer slicing already pipelines
+   well), and the scheduler still adds on top at the larger tiles — 256×256×64
+   +14% (eff 69→94%), 256×256×32 **+9% with eff 51→91%**, 256×128×64 +7%,
+   128×256×64 +8%. Because v8's base is already strong, the scheduler's *relative*
+   gain is a bit smaller than v7's, but absolute llir TFLOPS at the top tiles
+   match v7 (~1420). Small tiles (64×N) again see flat/slightly-negative returns.
+   Net: v7 and v8 (the sliced kernels) are both robustly schedulable and
+   beneficial across the grid; v8 has the better base, v7 the larger relative
+   uplift.
 
 ### Caveats
 - The parametric kernels pin `warps_per_cta=[2,2]` and `load_contig=8`, so non-default
