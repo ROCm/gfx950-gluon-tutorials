@@ -13,9 +13,11 @@ compare **base** vs **gemm-4waves (llir)**.
   (triton-lang/triton#10302); the matching coalesced global-load `DistributedLinearLayout`
   is derived from it (reimplementing `CoalesceAsyncCopy`'s padded-encoding logic);
   the MFMA layout keeps `warps_per_cta=[2,2]`.
-- **7 of 18 tiles** are numerically correct with this approach; the other 11 need
-  the exact `load_contig` (currently pinned to 8), which lives in the C++
-  `CoalesceAsyncCopy` pass. Only the correct tiles are reported.
+- Tile coverage depends on the kernel: **v5/v6 are correct on 7 of 18 tiles**
+  (the other 11 need the exact `load_contig`, currently pinned to 8, which lives
+  in the C++ `CoalesceAsyncCopy` pass); **v7, which slices B along N
+  (`BLOCK_N // 2`), is correct on all 18** — the smaller B tile keeps the derived
+  layouts valid across the whole grid. Only the correct tiles are reported.
 - Metrics: **TFLOPS, MFMA-eff, spills, VGPRs**, collected with `--rocprof`
   (rocprofv3 kernel-trace, 1000 dispatches, last-100 avg; MFMA-eff from ATT,
   hot-loop per-iteration). `sched?` = whether the LLIR scheduler actually applied
@@ -67,6 +69,51 @@ the scheduler's effect from occupancy.
 | | | llir | 604 | 39.79% | 0 | 196 | YES |
 | 64×256×64 | 1024×4096 | base | 545 | 36.64% | 0 | 162 | – |
 | | | llir | 529 | 36.38% | 0 | 244 | YES |
+
+### v7 (sliceN) — full 18-tile grid
+
+N-sliced (B = `BLOCK_N // 2`), so correct on every tile. Spills are 0 throughout.
+
+| tile | M×N | cfg | TFLOPS | MFMA-eff | spills | VGPRs | sched? |
+|---|---|---|---|---|---|---|---|
+| **256×256×64** | 4096×4096 | base | 1226 | 64.99% | 0 | 496 | – |
+| | | llir | **1427** | 96.14% | 0 | 460 | YES |
+| 256×256×32 | 4096×4096 | base | 1095 | 66.86% | 0 | 420 | – |
+| | | llir | 1101 | 87.90% | 0 | 420 | YES |
+| 256×128×64 | 4096×2048 | base | 1077 | 56.92% | 0 | 271 | – |
+| | | llir | 1183 | 86.51% | 0 | 320 | YES |
+| 256×128×32 | 4096×2048 | base | 692 | 44.76% | 0 | 240 | – |
+| | | llir | 796 | 51.40% | 0 | 276 | YES |
+| 256×64×64 | 4096×1024 | base | 713 | 44.39% | 0 | 236 | – |
+| | | llir | 733 | 51.77% | 0 | 248 | YES |
+| 256×64×32 | 4096×1024 | base | 460 | 27.95% | 0 | 186 | – |
+| | | llir | 464 | 29.12% | 0 | 216 | YES |
+| 128×256×64 | 2048×4096 | base | 1011 | 56.48% | 0 | 246 | – |
+| | | llir | **1225** | 84.44% | 0 | 268 | YES |
+| 128×256×32 | 2048×4096 | base | 764 | 48.38% | 0 | 248 | – |
+| | | llir | 868 | 61.16% | 0 | 228 | YES |
+| 128×128×64 | 2048×2048 | base | 900 | 54.39% | 0 | 148 | – |
+| | | llir | 920 | 64.30% | 0 | 176 | YES |
+| 128×128×32 | 2048×2048 | base | 604 | 39.82% | 0 | 136 | – |
+| | | llir | 618 | 42.04% | 0 | 148 | YES |
+| 128×64×64 | 2048×1024 | base | 526 | 36.52% | 0 | 124 | – |
+| | | llir | 537 | 37.89% | 0 | 136 | YES |
+| 128×64×32 | 2048×1024 | base | 325 | n/a | 0 | 128 | – |
+| | | llir | 342 | n/a | 0 | 144 | YES |
+| 64×256×64 | 1024×4096 | base | 742 | 49.00% | 0 | 130 | – |
+| | | llir | 731 | 57.50% | 0 | 180 | YES |
+| 64×256×32 | 1024×4096 | base | 564 | 34.85% | 0 | 100 | – |
+| | | llir | 561 | 35.90% | 0 | 128 | YES |
+| 64×128×64 | 1024×2048 | base | 563 | 41.51% | 0 | 90 | – |
+| | | llir | 561 | 42.20% | 0 | 108 | YES |
+| 64×128×32 | 1024×2048 | base | 362 | n/a | 0 | 118 | – |
+| | | llir | 367 | n/a | 0 | 124 | YES |
+| 64×64×64 | 1024×1024 | base | 324 | n/a | 0 | 94 | – |
+| | | llir | 318 | n/a | 0 | 116 | YES |
+| 64×64×32 | 1024×1024 | base | 201 | n/a | 0 | 70 | – |
+| | | llir | 202 | n/a | 0 | 80 | YES |
+
+(`n/a` = ATT eff-collection failed on the tiniest kernels; TFLOPS still valid.)
 
 ---
 
@@ -141,8 +188,21 @@ have higher occupancy. Shown for contrast — the small-tile regressions here ar
    AGPR coupling makes its `local_prefetch` pipeline **spill (248 VGPRs)**. The
    coupling's register cost is what separates the two kernels.
 
+5. **v7 (sliceN) is where the scheduler is robustly *beneficial* across tiles.**
+   Unlike v5/v6 — where MFMA-eff rose at non-default tiles but TFLOPS stayed flat
+   (memory-bound) — v7's eff **and** TFLOPS rise together: e.g. 128×256×64 eff
+   56→84% / **+21%**, 256×128×64 57→87% / +10%, 256×128×32 +15%, plus the default
+   256×256×64 +16%. Wins span the whole M·N ≥ 128×128, N ≥ 128 region; only the
+   64×N tiles see diminishing/slightly-negative returns (kernel too small to fill
+   the wave). N-slicing keeps the accumulators half-size (`acc_left`/`acc_right`),
+   so there are **0 spills** everywhere and the hot loop has enough MFMA headroom
+   that better interleaving actually buys throughput. The slicing is what enables
+   both the tile-parametric layouts (all 18 correct) and the scheduler's
+   effectiveness across tiles.
+
 ### Caveats
 - The parametric kernels pin `warps_per_cta=[2,2]` and `load_contig=8`, so non-default
   base perf is partly a kernel-tuning artifact, not purely the scheduler.
-- 11 of 18 tiles are not yet numerically correct; the full grid needs the exact
-  `load_contig` exposed from the C++ `CoalesceAsyncCopy` path (a follow-up to #10302).
+- For v5/v6, 11 of 18 tiles are not yet numerically correct; the full grid needs the
+  exact `load_contig` exposed from the C++ `CoalesceAsyncCopy` path (a follow-up to
+  #10302). v7's N-slicing sidesteps this and covers all 18.
