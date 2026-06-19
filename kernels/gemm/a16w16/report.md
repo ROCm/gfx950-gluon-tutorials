@@ -168,6 +168,42 @@ Same as v7: `llir` and `+agpr` are interchangeable across all 9 tiles, 0 spills.
 
 ---
 
+## v6 vs v7 vs v8 — shapes where v6 is numerically correct
+
+`v6_loop_unroll` is only correct on 5 of the 9 tiles; it produces wrong results on
+the 4 narrow tiles (256×64, 128×64, 64×128, 64×64) due to a non-deterministic race
+in its unrolled pipeline — see [issues.md](issues.md). On the 5 shapes where v6 *is*
+correct, here is the head-to-head with v7/v8 for `[TFLOPS, MFMA-eff]` across all three
+configs:
+
+| shape | kernel | base TFLOPS | base eff | llir TFLOPS | llir eff | +agpr TFLOPS | +agpr eff |
+|---|---|---|---|---|---|---|---|
+| **256×256×64** | v6 | 992 | 53.20% | 312 | 17.25% | 1273 | 95.70% |
+| | v7 | 1226 | 64.99% | 1375 | 88.32% | **1427** | **96.14%** |
+| | v8 | 1251 | 68.92% | 1363 | 84.75% | 1423 | 93.65% |
+| **256×128×64** | v6 | 892 | 51.79% | 885 | 63.71% | 889 | 65.26% |
+| | v7 | 1077 | 56.92% | 1186 | 85.85% | 1183 | 86.51% |
+| | v8 | 1117 | 63.40% | **1195** | 83.24% | **1193** | 83.39% |
+| **128×256×64** | v6 | 903 | 51.63% | 900 | 67.01% | 902 | 67.36% |
+| | v7 | 1011 | 56.48% | **1235** | 84.64% | **1225** | 84.44% |
+| | v8 | 1116 | 66.04% | 1215 | 83.87% | 1210 | 83.36% |
+| **128×128×64** | v6 | 619 | 42.46% | 615 | 40.76% | 614 | 41.27% |
+| | v7 | 900 | 54.39% | 917 | 66.27% | 920 | 64.30% |
+| | v8 | 954 | 55.65% | **945** | **67.22%** | **950** | **68.44%** |
+| **64×256×64** | v6 | 549 | 36.57% | 545 | 36.38% | 545 | 35.95% |
+| | v7 | 742 | 49.00% | **734** | 56.74% | **731** | 57.50% |
+| | v8 | 732 | 49.40% | 730 | 56.13% | 729 | 56.52% |
+
+- **v7 and v8 beat v6 on every shape** in both TFLOPS and MFMA-eff (in all three configs):
+  slicing keeps the accumulator small, so the sliced kernels are strictly better here even
+  apart from v6's correctness bug.
+- **v6's only standout is 256×256 `+agpr` (1273 / 95.7%)**, and it needs `force-agpr`:
+  its `llir` (no-AGPR) craters to **312 / 17%** (the 76-spill case). v7/v8 reach ~1370–1420
+  in *both* configs, spill-free, so they don't depend on AGPR forcing.
+- For v7/v8 `llir ≈ +agpr` everywhere; v6 only benefits from `+agpr` at 256×256.
+
+---
+
 ## Conclusions
 
 1. **The scheduler applies successfully at every tile in every config**
