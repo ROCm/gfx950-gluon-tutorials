@@ -22,10 +22,39 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import os
+import math
 import torch
 import triton
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
+from triton.experimental.gluon.language.amd import cdna4 as ttgl_cdna4
+from triton.runtime.jit import constexpr_function
+
+
+@constexpr_function
+def compute_gload_layout(shared_layout, load_contig, num_warps, threads_per_warp=64):
+    """Derive the coalesced global-load linear layout that matches a PaddedSharedLayout.
+
+    Reimplements CoalesceAsyncCopy's padded-encoding derivation (the inline logic in
+    third_party/amd/lib/TritonAMDGPUTransforms/CoalesceAsyncCopy.cpp): partition the
+    shared layout's offset bases into reg/lane/warp so each warp writes contiguous LDS
+    offsets. With the PR #10302 shared-layout helper this reproduces the hand-written
+    gLoad layouts at 256x256x64 and generalizes to any tile.
+    """
+    bases = [list(b) for b in shared_layout.offset_bases]
+    rank = len(shared_layout.shape)
+    n_reg = int(math.log2(load_contig))
+    n_lane = int(math.log2(threads_per_warp))
+    n_warp = int(math.log2(num_warps))
+    reg = bases[:n_reg]
+    lane = bases[n_reg:n_reg + n_lane]
+    warp = bases[n_reg + n_lane:n_reg + n_lane + n_warp]
+    while len(warp) < n_warp:  # zero-pad (broadcast) if we ran out of bases
+        warp.append([0] * rank)
+    reg += bases[n_reg + n_lane + n_warp:]
+    return gl.DistributedLinearLayout(reg_bases=reg, lane_bases=lane, warp_bases=warp,
+                                      block_bases=[], shape=list(shared_layout.shape))
 
 
 @gluon.jit
@@ -97,65 +126,21 @@ def v8_sliceMN(
     pid_m = pid // num_pid_n
     pid_n = pid % num_pid_n
 
-    # Half-M global load layout: drop the [128, 0] register base from v7's A layout.
-    gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [4, 0], [8, 0]],
-        lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [64, 0]],
-        warp_bases=[[1, 0], [2, 0]],
-        block_bases=[],
-        shape=[BLOCK_M // 2, BLOCK_K],
+    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[2, 2]
     )
-    # Half-N global load layout: same as v7.
-    gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[1, 0], [2, 0], [4, 0], [0, 4], [0, 8]],
-        lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 64]],
-        warp_bases=[[0, 1], [0, 2]],
-        block_bases=[],
-        shape=[BLOCK_K, BLOCK_N // 2],
-    )
+    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
+    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
-    # Half-M padded shared layout: drop the [128, 0] base from v7's A layout.
-    sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
-        [[512, 16]],
-        [
-            [0, 1],
-            [0, 2],
-            [0, 4],
-            [0, 8],
-            [0, 16],
-            [0, 32],
-            [16, 0],
-            [32, 0],
-            [64, 0],
-            [1, 0],
-            [2, 0],
-            [4, 0],
-            [8, 0],
-        ],
-        [],
-        [BLOCK_M // 2, BLOCK_K],
-    )
-    # Half-N padded shared layout: same as v7.
-    sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
-        [[512, 16]],
-        [
-            [1, 0],
-            [2, 0],
-            [4, 0],
-            [8, 0],
-            [16, 0],
-            [32, 0],
-            [0, 16],
-            [0, 32],
-            [0, 64],
-            [0, 1],
-            [0, 2],
-            [0, 4],
-            [0, 8],
-        ],
-        [],
-        [BLOCK_K, BLOCK_N // 2],
-    )
+    # PaddedSharedLayout auto-computed for this tile/dtype (triton-lang/triton#10302);
+    # the matching coalesced global-load layout is derived from it. v8 slices both M
+    # and N, so A's tile is [BLOCK_M // 2, BLOCK_K] and B's is [BLOCK_K, BLOCK_N // 2].
+    sharedLayoutA: gl.constexpr = ttgl_cdna4.compute_efficient_padded_shared_layout(
+        dotOpLayoutA, [BLOCK_M // 2, BLOCK_K], a_ptr.dtype.element_ty)
+    sharedLayoutB: gl.constexpr = ttgl_cdna4.compute_efficient_padded_shared_layout(
+        dotOpLayoutB, [BLOCK_K, BLOCK_N // 2], b_ptr.dtype.element_ty)
+    gLoadLayoutA: gl.constexpr = compute_gload_layout(sharedLayoutA, 8, 4)
+    gLoadLayoutB: gl.constexpr = compute_gload_layout(sharedLayoutB, 8, 4)
 
     nBuffers: gl.constexpr = 2
     smemA_top = gl.allocate_shared_memory(
@@ -191,13 +176,6 @@ def v8_sliceMN(
     a_bot_offsets_next = a_bot_offsets + BLOCK_K * stride_ak
     b_left_offsets_next = b_left_offsets + BLOCK_K * stride_bk
     b_right_offsets_next = b_right_offsets + BLOCK_K * stride_bk
-
-    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[2, 2]
-    )
-
-    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
-    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
     acc_tl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
     acc_bl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
@@ -433,7 +411,9 @@ def matmul(a, b, c=None):
     assert a.is_contiguous(), "Matrix A must be contiguous"
     M, K = a.shape
     K, N = b.shape
-    BLOCK_M, BLOCK_N, BLOCK_K = 256, 256, 64
+    BLOCK_M = int(os.environ.get("TILE_M", 256))
+    BLOCK_N = int(os.environ.get("TILE_N", 256))
+    BLOCK_K = int(os.environ.get("TILE_K", 64))
     num_warps = 4
     if c is None:
         c = torch.empty((M, N), device=a.device, dtype=a.dtype)

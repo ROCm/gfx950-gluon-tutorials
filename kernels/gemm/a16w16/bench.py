@@ -38,12 +38,16 @@ import triton
 CONFIG = {
     "base": {"schedule_hint": "none", "env": {}},
     "llir": {"schedule_hint": "gemm-4waves", "env": {}},
-    "llir+amdgcnas": {
-        "schedule_hint": "gemm-4waves",
+    # Scheduler + forced AGPR accumulators (amdgpu-agpr-alloc=256 +
+    # amdgpu-mfma-vgpr-form=0). After the gemm-4waves/force-agpr split this is an
+    # explicit opt-in; "llir" alone no longer forces AGPRs.
+    "llir+agpr": {"schedule_hint": "gemm-4waves, force-agpr", "env": {}},
+    "llir+agpr+amdgcnas": {
+        "schedule_hint": "gemm-4waves, force-agpr",
         "env": {"TRITON_ENABLE_AMDGCN_AS": "1"},
     },
-    "llir+amdgcnas+nobar": {
-        "schedule_hint": "gemm-4waves",
+    "llir+agpr+amdgcnas+nobar": {
+        "schedule_hint": "gemm-4waves, force-agpr",
         "env": {
             "TRITON_ENABLE_AMDGCN_AS": "1",
             "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER": "1",

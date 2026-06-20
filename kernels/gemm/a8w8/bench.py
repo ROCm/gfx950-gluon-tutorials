@@ -38,12 +38,13 @@ from matmul_kernel import matmul
 CONFIG = {
     "base": {"schedule_hint": "none", "env": {}},
     "llir": {"schedule_hint": "gemm-4waves", "env": {}},
-    "llir+amdgcnas": {
-        "schedule_hint": "gemm-4waves",
+    "llir+agpr": {"schedule_hint": "gemm-4waves, force-agpr", "env": {}},
+    "llir+agpr+amdgcnas": {
+        "schedule_hint": "gemm-4waves, force-agpr",
         "env": {"TRITON_ENABLE_AMDGCN_AS": "1"},
     },
-    "llir+amdgcnas+nobar": {
-        "schedule_hint": "gemm-4waves",
+    "llir+agpr+amdgcnas+nobar": {
+        "schedule_hint": "gemm-4waves, force-agpr",
         "env": {
             "TRITON_ENABLE_AMDGCN_AS": "1",
             "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER": "1",

@@ -32,16 +32,16 @@ a markdown performance table.
 
 Usage:
     # a16w16 kernels (run from anywhere):
-    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+agpr+amdgcnas --K 4096 --dtype fp16
 
     # a8w8 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a8w8 --configs llir+agpr+amdgcnas --K 8192
 
     # a4w4 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+agpr+amdgcnas --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+agpr+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
 """
 
 import argparse
@@ -71,15 +71,16 @@ VERSION_MAP = {
 # Config names, mirrored from bench.py's CONFIG. bench.py owns the actual
 # config -> knob mapping; the driver just forwards --config to it. The LLIR
 # scheduler is enabled via the schedule_hint="gemm-4waves" compile option (which
-# now also pulls in the MFMA register flags — they are coupled), and amdgcnas via
-# env vars that bench.py sets. "base" runs nothing; "+nobar" adds the risky
-# barrier-removal pass, valid only for M+N-sliced (uniform-wave) kernels.
-CONFIGS = ["base", "llir", "llir+amdgcnas", "llir+amdgcnas+nobar"]
+# runs the scheduler + disables misched only; AGPR forcing is now a separate
+# opt-in via the "force-agpr" token), and amdgcnas via env vars that bench.py
+# sets. "base" runs nothing; "+nobar" adds the risky barrier-removal pass, valid
+# only for M+N-sliced (uniform-wave) kernels.
+CONFIGS = ["base", "llir", "llir+agpr", "llir+agpr+amdgcnas", "llir+agpr+amdgcnas+nobar"]
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
 # number in the tutorial. Pairs not in this set are skipped by default — they
 # either crash at compile time (e.g. v0..v4 + llir segfault) or produce results
-# that aren't part of the documented optimization story (e.g. v6 + llir+amdgcnas
+# that aren't part of the documented optimization story (e.g. v6 + llir+agpr+amdgcnas
 # FAILs, v5 + amdgcnas spills 246 VGPRs).
 #
 # Single-kernel benchmarks (a8w8) use `None` as the version sentinel.
@@ -91,17 +92,17 @@ REPORTED_COMBINATIONS = {
     "a16w16": {
         "base": {0, 2, 3, 4, 5},
         "llir": {5, 6, 7},
-        "llir+amdgcnas": {7, 8, 9},
+        "llir+agpr+amdgcnas": {7, 8, 9},
     },
     "a8w8": {
         "base": {None},
         "llir": {None},
-        "llir+amdgcnas": {None},
+        "llir+agpr+amdgcnas": {None},
     },
     "a4w4": {
         "base": {0, 1},
         "llir": {0, 1},
-        "llir+amdgcnas": {0, 1},
+        "llir+agpr+amdgcnas": {0, 1},
     },
 }
 
