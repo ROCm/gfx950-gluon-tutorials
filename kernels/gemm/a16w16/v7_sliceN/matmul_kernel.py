@@ -319,14 +319,18 @@ def v7_sliceN(
     acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
-    c_left = acc_left.to(a_ptr.dtype.element_ty)
-    c_left = gl.convert_layout(c_left, layout=gStoreLayoutC)
-    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_left_offsets, stored_value=c_left)
-
     ########################################
     ## Region 3
     ########################################
     acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+
+    ## Naive epilogue: compute both slices to completion (left/right MFMAs
+    ## back-to-back, pretending acc is not sliced), then downcast -> convert ->
+    ## store each. No store is interleaved between the slice MFMAs, so the
+    ## epilogue structurally matches v6 and the v6-vs-v7 delta isolates slicing.
+    c_left = acc_left.to(a_ptr.dtype.element_ty)
+    c_left = gl.convert_layout(c_left, layout=gStoreLayoutC)
+    gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_left_offsets, stored_value=c_left)
 
     c_right = acc_right.to(a_ptr.dtype.element_ty)
     c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)
