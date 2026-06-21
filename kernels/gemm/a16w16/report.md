@@ -321,3 +321,92 @@ barrier stalls cap v8 ~1pp below v7 under the scheduler (94.8% vs 95.9%). Under 
 the deciding factor is instead register pressure, where v8's smaller accumulators win
 (436 vs 460 VGPRs, eff 68.9% vs 65.0%) — so the lever flips: register pressure favors v8
 unscheduled, barrier/region count favors v7 once the scheduler packs the MFMAs.
+
+---
+
+## Cold-cache K-scaling at full size: v6 / v7 / v8 at K ∈ {8192, 16384, 32768}
+
+The sweeps above fix occupancy at small tiles to isolate the scheduler. This section
+asks the complementary question: at the full 4096³ tile, **how do the three loop
+pipelines hold up as K (and the memory working set) grows, with caches genuinely
+cold?** Config is **`llir+agpr+amdgcnas`** (scheduler + `force-agpr` + the amdgcnas
+post-assembly pass), fp16, `BLOCK = 256×256×64`, 1 wave/SIMD.
+
+**Method — true cold cache.** `bench.py --rocprof` cycles through
+`floor(rotating_buffer_size / working_set)` tensor copies. With the default 512 MB that
+count collapses to **1** at K ≥ 16384 (working sets 288 / 544 MB), so the single reused
+buffer stays cache-resident and *inflates* TFLOPS — at K=16384 it falsely reads
+~1300 / 86% for v6. We instead pass **`--rotating-buffer-size 2048`** → **12 / 7 / 3**
+copies at K = 8192 / 16384 / 32768, forcing eviction at every K. TFLOPS is rocprofv3
+kernel-trace (last-100 of 1000 dispatches, `AMD_SERIALIZE_KERNEL=3`); MFMA-eff, the
+prologue/loop/epilogue cycle split, and the in-loop buffer_load stall are from ATT
+(`process_json.py` + a back-edge loop scan) over the same cold rotating path.
+
+### TFLOPS
+
+| K | v6 | v7 | v8 |
+|---|---|---|---|
+| 8192 | 1267 | 1431 | **1444** |
+| 16384 | 1066 | 1402 | **1459** |
+| 32768 | 898 | **1316** | 1301 |
+
+### MFMA efficiency
+
+| K | v6 | v7 | v8 |
+|---|---|---|---|
+| 8192 | 92.7% | 97.1% | **97.7%** |
+| 16384 | 58.7% | 90.2% | **96.6%** |
+| 32768 | 38.2% | **82.8%** | 77.6% |
+
+### Cycle breakdown — prologue / loop / epilogue (ATT clock cycles)
+
+| K | kernel | prologue | loop | epilogue | total | iters | loop/iter |
+|---|---|---|---|---|---|---|---|
+| 8192 | v6 | 5,416 | 278,524 | 14,740 | 298,680 | 63 | 4,421 |
+| | v7 | 5,072 | 265,784 | 14,936 | 285,792 | 63 | 4,218 |
+| | v8 | 5,360 | 264,268 | 13,128 | 282,756 | 63 | 4,194 |
+| 16384 | v6 | 6,140 | 886,140 | 14,712 | 906,992 | 127 | 6,977 |
+| | v7 | 5,804 | 576,708 | 13,584 | 596,096 | 127 | 4,541 |
+| | v8 | 5,688 | 538,392 | 12,668 | 556,748 | 127 | 4,239 |
+| 32768 | v6 | 9,212 | 2,733,840 | 14,816 | 2,757,868 | 255 | 10,720 |
+| | v7 | 7,220 | 1,261,636 | 13,648 | 1,282,504 | 255 | 4,947 |
+| | v8 | 7,796 | 1,345,328 | 12,692 | 1,365,816 | 255 | 5,275 |
+
+Prologue (~5–9k) and epilogue (~13–15k) are essentially K-independent — pipeline fill,
+final MFMA drain, downcast + store — so the epilogue fades from ~5 % of the kernel at
+K=8192 to ~0.5 % at K=32768. All the scaling is in the loop.
+
+### In-loop buffer_load stall — averaged stall cycles per buffer_load
+
+Mean over the 32 `buffer_load` instructions in the loop body of each load's
+`stall / hit` (its ATT stall counter averaged across the loop's iterations) — the stall
+an individual global load incurs per iteration. (×32 gives the total load-stall cycles
+charged to one K-loop iteration.)
+
+| K | v6 | v7 | v8 |
+|---|---|---|---|
+| 8192 | 15.5 | 4.3 | 7.5 |
+| 16384 | 45.1 | 10.0 | **6.9** |
+| 32768 | 114.6 | **25.7** | 31.6 |
+
+### Reading the four tables together
+
+- **v6 collapses, monotonically.** TFLOPS 1267 → 1066 → 898, MFMA-eff 93 → 59 → 38 %,
+  loop/iter ballooning 4,421 → 6,977 → 10,720 cycles. The cause is direct: the average
+  per-load stall explodes **7.4×** (15.5 → 114.6 cyc); summed over all 32 in-loop loads
+  that is ~3,670 cyc/iter — about a third of the 10,720-cycle iteration at K=32768.
+  v6's flat (un-sliced) pipeline can't keep the global
+  loads ahead of the MFMAs once the working set goes cold, so the loads stall and the
+  MFMA units starve. *(The default 512 MB run hid this — it falsely showed K=16384
+  rising to 1300; with true rotation v6 already drops to 1066 / 59 % there.)*
+- **v7 stays fed.** per-load stall 4.3 → 10.0 → 25.7 cyc (3–4.5× lower than v6 at every K),
+  loop/iter near-flat (4,218 → 4,947, +17 % over a 4× K range), eff 97 → 90 → 83 %.
+- **v8 wins at K ≤ 16384, v7 overtakes at K=32768.** v8's smaller 128-row A tile gives
+  it the **lowest** per-load stall at K=16384 (6.9 cyc, even below v7's 10.0) → highest
+  eff (96.6 %) and TFLOPS (1459). But at K=32768 v8's stall (31.6 cyc) passes v7's (25.7), its
+  eff drops below v7 (77.6 vs 82.8 %), and v7 takes the TFLOPS lead (1316 vs 1301). The
+  buffer_load stall is the mechanism behind the v7/v8 crossover the tutorial points at —
+  and it lands at K=32768, not K=16384.
+- The buffer_load stall tracks MFMA-eff one-for-one across all nine cells, confirming the
+  efficiency loss at large K is **global-load latency the pipeline fails to hide**, not
+  compute throughput or register pressure.
