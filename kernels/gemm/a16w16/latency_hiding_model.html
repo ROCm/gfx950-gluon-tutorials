@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why slicing hides HBM latency — a model for v6 / v7 / v8</title>
+<style>
+  :root{
+    --v6:#e4572e; --v7:#3a86ff; --v8:#1ca97c;
+    --ink:#1b2230; --mut:#5d6b82; --line:#e3e8f0; --bg:#f6f8fc; --card:#fff;
+    --aload:#f4a259; --bload:#7986cb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px 80px}
+  header{background:linear-gradient(135deg,#16233b,#26395f 60%,#2a5d6e);color:#fff;
+    padding:46px 0 38px;margin-bottom:34px;box-shadow:0 2px 24px rgba(20,30,55,.18)}
+  header .wrap{padding-bottom:0}
+  h1{margin:0 0 8px;font-size:30px;letter-spacing:-.4px;font-weight:740}
+  header p{margin:0;color:#cdd8ee;font-size:16px;max-width:760px}
+  h2{font-size:21px;margin:42px 0 12px;letter-spacing:-.2px;display:flex;align-items:center;gap:10px}
+  h2::before{content:"";width:5px;height:21px;border-radius:3px;background:var(--v8)}
+  h3{font-size:16px;margin:24px 0 6px}
+  p,li{color:#28324a}
+  .lead{color:var(--mut)}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;box-shadow:0 1px 3px rgba(30,45,80,.05);margin:14px 0}
+  .formula{background:#0f1830;color:#e8eef9;border-radius:12px;padding:16px 20px;margin:16px 0;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;line-height:1.9;overflow-x:auto}
+  .formula b{color:#7fd1b9}.formula .hl{color:#ffcf6b}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 11px;text-align:center}
+  th{background:#eef2f9;font-weight:650}
+  td.l,th.l{text-align:left}
+  .chip{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+  .k6{color:var(--v6);font-weight:680}.k7{color:var(--v7);font-weight:680}.k8{color:var(--v8);font-weight:680}
+  .controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    background:#eef3fb;border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:8px 0 6px}
+  .controls input[type=range]{flex:1;min-width:240px;accent-color:#2a5d6e}
+  .lval{font-family:ui-monospace,monospace;font-weight:700;font-size:16px;color:#16233b;min-width:108px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--mut);margin:4px 0 2px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  .note{font-size:13px;color:var(--mut)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12.5px;font-weight:650}
+  .ok{background:#dcf5ea;color:#0d7a52}.bad{background:#fde4dd;color:#bb3a1c}
+  ul.tight{margin:8px 0;padding-left:20px}ul.tight li{margin:4px 0}
+  .kbadge{font-family:ui-monospace,monospace;font-weight:700;padding:1px 7px;border-radius:6px;color:#fff}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Why slicing hides HBM latency</h1>
+  <p>A first-order latency-hiding model for the a16w16 GEMM kernels — generalized across
+  <b style="color:#ffb37a">v6</b> (no slice), <b style="color:#9cc0ff">v7</b> (slice N), and
+  <b style="color:#86e3c4">v8</b> (slice M+N). Drag the latency slider to see when each kernel stalls.</p>
+</div></header>
+
+<div class="wrap">
+
+<h2>The setup</h2>
+<div class="card">
+<p class="lead">Each loop iteration is a double-buffered software pipeline: while the MFMA units
+compute one K-buffer, the global loads for the <em>next</em> buffer stream in from HBM. The kernel
+stays at peak throughput only if the compute is long enough to cover that load latency.</p>
+<p>Fixed quantities for the 256×256×64 tile (per wave, 4 warps):</p>
+<div class="formula">
+C&nbsp;&nbsp;= <b>2048</b> cyc&nbsp;&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># MFMA compute per buffer (512 MFMA ÷ 4 warps × 16 cyc)</span><br>
+N&nbsp;&nbsp;= <b>16</b> loads&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># buffer_loads to fill one buffer (8 for A + 8 for B)</span><br>
+t&nbsp;&nbsp;= <b>64</b> cyc&nbsp;&nbsp;&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># to push one buffer_load through the memory pipe</span><br>
+L&nbsp;&nbsp;= <span class="hl">?</span> cyc&nbsp;&nbsp;&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># HBM round-trip latency (~1000 idle; grows with K &amp; contention)</span>
+</div>
+</div>
+
+<h2>The model</h2>
+<div class="card">
+<p>A kernel is described by how finely it slices its two inputs: <code>s_A</code> row-blocks of A and
+<code>s_B</code> col-blocks of B, giving <code>R = s_A·s_B</code> compute regions. The pipeline can start
+a region as soon as <em>its</em> A-block and B-block have landed — so what matters is not the whole
+buffer, but the loads needed for the <b>first region</b>:</p>
+<div class="formula">
+N_first = <b>8/s_A + 8/s_B</b>&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># loads before the first MFMA can fire</span><br><br>
+<span class="hl">stall(L)</span> = max(0,&nbsp; L + N_first·t − C )&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># idle cycles per buffer</span><br>
+<span class="hl">L*</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= C − N_first·t&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note" style="color:#8da3c8"># latency the kernel tolerates before stalling</span>
+</div>
+<p>Slicing shrinks <code>N_first</code>, which raises the latency tolerance <code>L*</code>. Crucially,
+<code>N_first = 8/s_A + 8/s_B</code> only drops the term you actually slice:</p>
+<table>
+<tr><th class="l">kernel</th><th>(s_A, s_B)</th><th>regions R</th><th>region compute</th><th>N_first</th><th>L* tolerance</th><th>worst single block</th></tr>
+<tr><td class="l"><span class="chip" style="background:var(--v6)"></span><b class="k6">v6</b> · no slice</td><td>(1, 1)</td><td>1</td><td>2048</td><td><b>16</b></td><td>1024</td><td>8 &nbsp;(A)</td></tr>
+<tr><td class="l"><span class="chip" style="background:var(--v7)"></span><b class="k7">v7</b> · slice N (B)</td><td>(1, 2)</td><td>2</td><td>1024</td><td><b>12</b></td><td>1280</td><td><b>8 &nbsp;(A un-sliced)</b></td></tr>
+<tr><td class="l"><span class="chip" style="background:var(--v8)"></span><b class="k8">v8</b> · slice M+N</td><td>(2, 2)</td><td>4</td><td>512</td><td><b>8</b></td><td>1536</td><td>4</td></tr>
+</table>
+<p class="note"><b>Why v7 is imbalanced:</b> it halves B (8→4) but leaves A monolithic (8), so
+<code>N_first = 8 + 4 = 12</code> — only halfway to v8's 8. Both regions still wait on the full A load,
+which stays on the critical path. Only slicing <em>both</em> inputs cuts both terms.</p>
+</div>
+
+<h2>Interactive: the pipeline timeline</h2>
+<div class="card">
+<div class="controls">
+  <span>HBM latency&nbsp;<b>L</b></span>
+  <input id="slider" type="range" min="700" max="4000" step="25" value="1450">
+  <span class="lval" id="lval">L = 1450</span>
+</div>
+<div class="legend">
+  <span><span class="chip" style="background:var(--aload)"></span>A load</span>
+  <span><span class="chip" style="background:var(--bload)"></span>B load</span>
+  <span><span class="chip" style="background:#c9d4e6"></span>MFMA region (buffer 0)</span>
+  <span><span class="chip" style="background:#9fb0cc"></span>MFMA region (buffer 1)</span>
+  <span><span class="chip" style="background:#e4572e"></span>stall (MFMA idle, waiting on HBM)</span>
+</div>
+<svg id="timeline" viewBox="0 0 920 250" role="img"></svg>
+<p class="note">Two loop iterations shown. Buffer&nbsp;1 is the steady state: its loads are issued while
+buffer&nbsp;0 computes, so the only exposed latency is the <b>N_first</b> loads needed to <em>start</em>
+buffer&nbsp;1. The coarser the kernel, the more it must wait → the bigger the red stall.</p>
+</div>
+
+<h2>Interactive: efficiency vs. latency</h2>
+<div class="card">
+<svg id="effchart" viewBox="0 0 920 340" role="img"></svg>
+<p class="note">MFMA efficiency = <code>C / (C + stall)</code>. Each kernel runs flat-out until L crosses its
+threshold <b>L*</b> (the kink), then falls as <code>1 / (1 + (L−L*)/C)</code>. v6 tips first (L*=1024),
+v8 last (L*=1536). As K grows the working set goes cold and the effective L climbs — which is exactly
+the order in which the kernels collapse in the measured data below.</p>
+</div>
+
+<h2>The two axes of slicing</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>1 · Compute granularity (regions R)</h3>
+    <p class="note">Finer regions let the MFMA pipe start sooner and follow the load front
+    closely, shrinking the start-up bubble. v6→v7→v8 = 1→2→4 regions.</p>
+    <svg id="axisR" viewBox="0 0 440 130"></svg>
+  </div>
+  <div class="card">
+    <h3>2 · Load balance (worst input block)</h3>
+    <p class="note">The largest single un-sliced input is a serial dependency every region waits on.
+    v7 fixes only B, so its A-block (8 loads) stays as big as v6's — that's the imbalance.</p>
+    <svg id="axisB" viewBox="0 0 440 130"></svg>
+  </div>
+</div>
+<p class="note">v8 wins by improving <b>both</b> axes; v7 improves only the compute axis; v6 neither.
+Symmetric slicing is what drives <code>N_first = 8/s_A + 8/s_B</code> down on both terms at once.</p>
+
+<h2>When do you need slicing?</h2>
+<div class="card">
+<ul class="tight">
+  <li><b>Compute the threshold</b> <code>L* = C − N_first·t</code>. For an un-sliced kernel that's
+  <code>C − N·t</code> (here 1024).</li>
+  <li><b>Slice if your effective L &gt; L*.</b> Effective L grows with the working set (K), cache
+  coldness, and how many CUs hammer HBM at once. If a buffer's latency clears L*, the un-sliced
+  kernel stalls every iteration — slice to raise L*.</li>
+  <li><b>Slice symmetrically.</b> <code>N_first = 8/s_A + 8/s_B</code> drops fastest when you raise
+  <em>both</em> s_A and s_B. Slicing one side (v7) leaves the other input's full load on the critical
+  path.</li>
+  <li><b>Diminishing returns + overhead.</b> The first split helps most (16→8); further splitting
+  adds region/barrier overhead. At very large K both v7 and v8 clear the latency bar, and v8's extra
+  per-region barriers let v7 edge ahead (the measured K=32768 crossover).</li>
+  <li><b>Bonus the model omits:</b> slicing also spreads the loads out (less bursty), which lowers
+  the <em>effective L</em> itself under contention — so the real gap is wider than this single-L model
+  predicts.</li>
+</ul>
+</div>
+
+<h2>Validation against measured data</h2>
+<div class="card">
+<p class="note">Cold-cache <code>--rocprof</code> MFMA-efficiency (5-run medians), from <code>report.md</code>.
+Larger K → colder, larger effective L → the model's predicted collapse order (v6 first):</p>
+<table>
+<tr><th class="l">MFMA-eff</th><th>K=8192</th><th>K=16384</th><th>K=32768</th><th class="l">model says</th></tr>
+<tr><td class="l"><b class="k6">v6</b></td><td>85.0%</td><td>59.4%</td><td>38.2%</td><td class="l">lowest L* (1024) → collapses first</td></tr>
+<tr><td class="l"><b class="k7">v7</b></td><td>98.1%</td><td>93.3%</td><td>83.9%</td><td class="l">mid L* (1280) → holds, then dips</td></tr>
+<tr><td class="l"><b class="k8">v8</b></td><td>99.0%</td><td>95.1%</td><td>79.7%</td><td class="l">highest L* (1536); loses to v7 at 32768 on barrier overhead</td></tr>
+</table>
+</div>
+
+<h2>Limitations</h2>
+<div class="card">
+<ul class="tight">
+  <li>First-order: a single scalar <b>L</b> and a fixed per-load <b>t≈64</b>; both are really
+  distributions that inflate under contention.</li>
+  <li>It models the <b>start-up dependency</b> (N_first) that gates each buffer; it does not model
+  per-region steady-state throughput, LDS-read (lgkmcnt) latency, or bandwidth saturation.</li>
+  <li>It omits the second-order <b>region/barrier overhead</b> that grows with slicing — the reason
+  v7 overtakes v8 at the largest K.</li>
+  <li>Numbers are for the 256×256×64 fp16 tile with 4 warps; the <em>shape</em> of the model
+  (<code>N_first = loadsA/s_A + loadsB/s_B</code>) generalizes, the constants do not.</li>
+</ul>
+</div>
+
+<p class="note" style="margin-top:30px">Model &amp; figures generated for the gfx950 a16w16 GEMM tutorial.
+Open this file in a browser; everything is self-contained (no external dependencies).</p>
+
+</div>
+
+<script>
+const C=2048, T=64, ALOADS=8, BLOADS=8;
+const KERNELS=[
+  {id:'v6',name:'v6 · no slice',  sA:1,sB:1,color:'#e4572e'},
+  {id:'v7',name:'v7 · slice N',   sA:1,sB:2,color:'#3a86ff'},
+  {id:'v8',name:'v8 · slice M+N', sA:2,sB:2,color:'#1ca97c'},
+];
+const nfirst=k=>ALOADS/k.sA+BLOADS/k.sB;
+const Lstar =k=>C-nfirst(k)*T;
+const iterT =(k,L)=>Math.max(C,L+nfirst(k)*T);
+const eff   =(k,L)=>C/iterT(k,L);
+const SVGNS="http://www.w3.org/2000/svg";
+
+// ---- build per-kernel load sequence + regions ----
+function structure(k){
+  const seq=[], aEach=ALOADS/k.sA, bEach=BLOADS/k.sB, mx=Math.max(k.sA,k.sB);
+  for(let i=0;i<mx;i++){
+    if(i<k.sA) for(let j=0;j<aEach;j++) seq.push({type:'A',blk:i});
+    if(i<k.sB) for(let j=0;j<bEach;j++) seq.push({type:'B',blk:i});
+  }
+  const regions=[];
+  for(let i=0;i<k.sA;i++) for(let j=0;j<k.sB;j++) regions.push({A:i,B:j});
+  return {seq,regions};
+}
+// ---- depth-2 pipeline simulation, 2 buffers ----
+function simulate(k,L){
+  const st=structure(k), c=C/(k.sA*k.sB), loads=[], regs=[];
+  let pipeFree=0; const computeStart=[];
+  for(let b=0;b<2;b++){
+    const issueStart = b===0?0:computeStart[b-1];
+    const readyA={}, readyB={};
+    st.seq.forEach((ld,i)=>{
+      const t0=issueStart+i*T, t1=t0+T, ready=t1+L;
+      loads.push({b,type:ld.type,t0,t1});
+      const r=ld.type==='A'?readyA:readyB;
+      r[ld.blk]=Math.max(r[ld.blk]||0,ready);
+    });
+    const ord=[...st.regions].sort((p,q)=>
+      Math.max(readyA[p.A],readyB[p.B])-Math.max(readyA[q.A],readyB[q.B]));
+    let first=true;
+    ord.forEach(r=>{
+      const rd=Math.max(readyA[r.A],readyB[r.B]);
+      const start=Math.max(pipeFree,rd), stall=start-pipeFree;
+      regs.push({b,t0:start,t1:start+c,stall0:pipeFree,stall});
+      if(first){computeStart[b]=start;first=false;}
+      pipeFree=start+c;
+    });
+  }
+  return {loads,regs,end:pipeFree};
+}
+function el(tag,attr,parent){const e=document.createElementNS(SVGNS,tag);
+  for(const a in attr)e.setAttribute(a,attr[a]); if(parent)parent.appendChild(e); return e;}
+function txt(x,y,s,attr,parent){const e=el('text',Object.assign({x,y},attr),parent);e.textContent=s;return e;}
+
+// ---- timeline render ----
+function drawTimeline(L){
+  const svg=document.getElementById('timeline'); svg.innerHTML='';
+  const W=920,padL=58,padR=14,plotW=W-padL-padR;
+  const sims=KERNELS.map(k=>simulate(k,L));
+  const tmax=Math.max(...sims.map(s=>s.end))*1.02;
+  const x=t=>padL+t/tmax*plotW;
+  // hatch for stall
+  const defs=el('defs',{},svg);
+  const pat=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);
+  el('rect',{width:6,height:6,fill:'#fbe1d8'},pat);
+  el('rect',{width:2.4,height:6,fill:'#e4572e'},pat);
+  const rowH=72, top=18;
+  // time axis
+  for(let tk=0;tk<=tmax;tk+=1000){
+    const X=x(tk); el('line',{x1:X,y1:top-4,x2:X,y2:top+rowH*3-12,stroke:'#eef1f7'},svg);
+    txt(X,12,tk,{'font-size':10,fill:'#9aa7bd','text-anchor':'middle'},svg);
+  }
+  txt(x(tmax)-2,12,'cycles →',{'font-size':10,fill:'#9aa7bd','text-anchor':'end'},svg);
+  KERNELS.forEach((k,ki)=>{
+    const y0=top+ki*rowH, memY=y0+18, compY=y0+38;
+    txt(4,memY+9,k.id,{'font-size':13,'font-weight':700,fill:k.color},svg);
+    txt(4,compY+13,'',{},svg);
+    txt(padL,y0+8,'',{},svg);
+    // lane labels
+    txt(padL-2,memY-4,'loads',{'font-size':9,fill:'#9aa7bd','text-anchor':'end'},svg);
+    txt(padL-2,compY+11,'MFMA',{'font-size':9,fill:'#9aa7bd','text-anchor':'end'},svg);
+    const s=sims[ki];
+    s.loads.forEach(ld=>{
+      el('rect',{x:x(ld.t0),y:memY,width:Math.max(1,x(ld.t1)-x(ld.t0)-0.6),height:13,rx:1.5,
+        fill:ld.type==='A'?'#f4a259':'#7986cb',opacity:ld.b===0?.95:.62},svg);
+    });
+    s.regs.forEach(r=>{
+      if(r.stall>2){
+        el('rect',{x:x(r.stall0),y:compY,width:x(r.t0)-x(r.stall0),height:17,rx:2,fill:'url(#hatch)',
+          stroke:'#e4572e','stroke-width':.6},svg);
+      }
+      el('rect',{x:x(r.t0),y:compY,width:Math.max(1.5,x(r.t1)-x(r.t0)-0.6),height:17,rx:2.5,
+        fill:r.b===0?'#c9d4e6':'#9fb0cc',stroke:'#fff','stroke-width':.6},svg);
+    });
+    // stall annotation for buffer 1
+    const b1=s.regs.find(r=>r.b===1);
+    if(b1&&b1.stall>2){
+      const mid=(x(b1.stall0)+x(b1.t0))/2;
+      txt(mid,compY-4,Math.round(b1.stall)+' cyc stall',{'font-size':9.5,'font-weight':700,fill:'#c0381a','text-anchor':'middle'},svg);
+    } else {
+      const r1=s.regs.find(r=>r.b===1);
+      if(r1) txt(x(r1.t0)+4,compY-4,'no stall',{'font-size':9.5,'font-weight':700,fill:'#0d7a52'},svg);
+    }
+  });
+}
+// ---- efficiency vs L chart ----
+function drawEff(L){
+  const svg=document.getElementById('effchart'); svg.innerHTML='';
+  const W=920,H=340,padL=52,padR=120,padT=16,padB=34;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  const Lmin=700,Lmax=4000, ymin=0.3,ymax=1.0;
+  const X=l=>padL+(l-Lmin)/(Lmax-Lmin)*plotW;
+  const Y=e=>padT+(ymax-e)/(ymax-ymin)*plotH;
+  // grid + axes
+  for(let e=0.3;e<=1.001;e+=0.1){const y=Y(e);
+    el('line',{x1:padL,y1:y,x2:padL+plotW,y2:y,stroke:'#eef1f7'},svg);
+    txt(padL-8,y+3,Math.round(e*100)+'%',{'font-size':10,fill:'#9aa7bd','text-anchor':'end'},svg);}
+  for(let l=1000;l<=Lmax;l+=500){const xx=X(l);
+    el('line',{x1:xx,y1:padT,x2:xx,y2:padT+plotH,stroke:'#f3f5fa'},svg);
+    txt(xx,H-16,l,{'font-size':10,fill:'#9aa7bd','text-anchor':'middle'},svg);}
+  txt(padL+plotW/2,H-3,'HBM latency  L  (cycles)',{'font-size':11,fill:'#5d6b82','text-anchor':'middle'},svg);
+  txt(padL-40,padT+plotH/2,'MFMA efficiency',{'font-size':11,fill:'#5d6b82','text-anchor':'middle','transform':`rotate(-90 ${padL-40} ${padT+plotH/2})`},svg);
+  // curves
+  KERNELS.forEach(k=>{
+    let d='';
+    for(let l=Lmin;l<=Lmax;l+=8){const e=eff(k,l); d+=(d?'L':'M')+X(l).toFixed(1)+' '+Y(e).toFixed(1)+' ';}
+    el('path',{d,fill:'none',stroke:k.color,'stroke-width':2.6},svg);
+    // L* marker (the kink)
+    const ls=Lstar(k);
+    el('circle',{cx:X(ls),cy:Y(1),r:3.5,fill:k.color,stroke:'#fff','stroke-width':1.4},svg);
+    txt(X(ls),Y(1)-7,'L*='+ls,{'font-size':9.5,'font-weight':700,fill:k.color,'text-anchor':'middle'},svg);
+    // right-edge label + live value
+    txt(padL+plotW+8,Y(eff(k,L))+3,k.id+'  '+(eff(k,L)*100).toFixed(0)+'%',
+      {'font-size':12.5,'font-weight':700,fill:k.color},svg);
+  });
+  // current-L vertical line
+  el('line',{x1:X(L),y1:padT,x2:X(L),y2:padT+plotH,stroke:'#16233b','stroke-width':1.4,'stroke-dasharray':'4 3'},svg);
+  txt(X(L),padT-3,'L='+L,{'font-size':11,'font-weight':700,fill:'#16233b','text-anchor':'middle'},svg);
+}
+// ---- the two-axis bar mini charts ----
+function drawAxisBars(){
+  // R: regions; B: worst block
+  const mk=(svgId,vals,maxv,fmt)=>{
+    const svg=document.getElementById(svgId); svg.innerHTML='';
+    const W=440,padL=44,padR=16,top=10,bh=26,gap=12;
+    KERNELS.forEach((k,i)=>{
+      const y=top+i*(bh+gap), v=vals[i], w=(v/maxv)*(W-padL-padR);
+      txt(0,y+bh/2+4,k.id,{'font-size':12,'font-weight':700,fill:k.color},svg);
+      el('rect',{x:padL,y,width:W-padL-padR,height:bh,rx:5,fill:'#eef2f9'},svg);
+      el('rect',{x:padL,y,width:Math.max(6,w),height:bh,rx:5,fill:k.color,opacity:.85},svg);
+      txt(padL+Math.max(6,w)+7,y+bh/2+4,fmt(v),{'font-size':12,'font-weight':700,fill:'#28324a'},svg);
+    });
+  };
+  mk('axisR',KERNELS.map(k=>k.sA*k.sB),4,v=>v+(v===1?' region':' regions'));
+  mk('axisB',KERNELS.map(k=>Math.max(ALOADS/k.sA,BLOADS/k.sB)),8,v=>v+' loads');
+}
+// ---- wire up ----
+function render(L){drawTimeline(L);drawEff(L);}
+const slider=document.getElementById('slider'), lval=document.getElementById('lval');
+slider.addEventListener('input',()=>{const L=+slider.value;lval.textContent='L = '+L;render(L);});
+drawAxisBars(); render(+slider.value);
+</script>
+</body>
+</html>
