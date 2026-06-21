@@ -342,41 +342,48 @@ kernel-trace (last-100 of 1000 dispatches, `AMD_SERIALIZE_KERNEL=3`); MFMA-eff, 
 prologue/loop/epilogue cycle split, and the in-loop buffer_load stall are from ATT
 (`process_json.py` + a back-edge loop scan) over the same cold rotating path.
 
+**Single-dispatch jitter → medians.** ATT traces one dispatch (iteration 15), whose
+cold-cache state varies run-to-run (±~3 pp on MFMA-eff, ±~25 % on the stall counter).
+So every ATT-derived value below — MFMA-eff, the prologue/loop/epilogue cycles, and the
+buffer_load stall — is the **median of 5 ATT runs** per cell. TFLOPS is a 100-dispatch
+average (kernel-trace) and stable, shown from a single run.
+
 ### TFLOPS
 
 | K | v6 | v7 | v8 |
 |---|---|---|---|
-| 8192 | 1267 | 1431 | **1444** |
-| 16384 | 1066 | 1402 | **1459** |
-| 32768 | 898 | **1316** | 1301 |
+| 8192 | 1265 | 1432 | **1447** |
+| 16384 | 1068 | 1405 | **1458** |
+| 32768 | 896 | **1316** | 1298 |
 
-### MFMA efficiency
+### MFMA efficiency (median of 5)
 
 | K | v6 | v7 | v8 |
 |---|---|---|---|
-| 8192 | 92.7% | 97.1% | **97.7%** |
-| 16384 | 58.7% | 90.2% | **96.6%** |
-| 32768 | 38.2% | **82.8%** | 77.6% |
+| 8192 | 85.0% | 98.1% | **99.0%** |
+| 16384 | 59.4% | 93.3% | **95.1%** |
+| 32768 | 38.5% | **83.9%** | 79.7% |
 
-### Cycle breakdown — prologue / loop / epilogue (ATT clock cycles)
+### Cycle breakdown — prologue / loop / epilogue (ATT clock cycles, median of 5)
 
 | K | kernel | prologue | loop | epilogue | total | iters | loop/iter |
 |---|---|---|---|---|---|---|---|
-| 8192 | v6 | 5,416 | 278,524 | 14,740 | 298,680 | 63 | 4,421 |
-| | v7 | 5,072 | 265,784 | 14,936 | 285,792 | 63 | 4,218 |
-| | v8 | 5,360 | 264,268 | 13,128 | 282,756 | 63 | 4,194 |
-| 16384 | v6 | 6,140 | 886,140 | 14,712 | 906,992 | 127 | 6,977 |
-| | v7 | 5,804 | 576,708 | 13,584 | 596,096 | 127 | 4,541 |
-| | v8 | 5,688 | 538,392 | 12,668 | 556,748 | 127 | 4,239 |
-| 32768 | v6 | 9,212 | 2,733,840 | 14,816 | 2,757,868 | 255 | 10,720 |
-| | v7 | 7,220 | 1,261,636 | 13,648 | 1,282,504 | 255 | 4,947 |
-| | v8 | 7,796 | 1,345,328 | 12,692 | 1,365,816 | 255 | 5,275 |
+| 8192 | v6 | 5,332 | 303,408 | 14,896 | 323,636 | 63 | 4,816 |
+| | v7 | 5,028 | 263,036 | 14,312 | 282,376 | 63 | 4,175 |
+| | v8 | 5,252 | 260,736 | 12,712 | 278,700 | 63 | 4,138 |
+| 16384 | v6 | 6,476 | 875,164 | 14,820 | 896,460 | 127 | 6,891 |
+| | v7 | 5,884 | 557,364 | 13,992 | 577,240 | 127 | 4,388 |
+| | v8 | 6,060 | 546,992 | 12,748 | 565,800 | 127 | 4,307 |
+| 32768 | v6 | 8,880 | 2,716,620 | 14,152 | 2,739,652 | 255 | 10,653 |
+| | v7 | 7,384 | 1,244,852 | 14,408 | 1,266,644 | 255 | 4,881 |
+| | v8 | 7,372 | 1,310,004 | 12,696 | 1,330,072 | 255 | 5,137 |
 
 Prologue (~5–9k) and epilogue (~13–15k) are essentially K-independent — pipeline fill,
 final MFMA drain, downcast + store — so the epilogue fades from ~5 % of the kernel at
-K=8192 to ~0.5 % at K=32768. All the scaling is in the loop.
+K=8192 to ~0.5 % at K=32768. All the scaling is in the loop. (Each column is an
+independent per-cell median, so `total` is their sum.)
 
-### In-loop buffer_load stall — averaged stall cycles per buffer_load
+### In-loop buffer_load stall — averaged stall cycles per buffer_load (median of 5)
 
 Mean over the 32 `buffer_load` instructions in the loop body of each load's
 `stall / hit` (its ATT stall counter averaged across the loop's iterations) — the stall
@@ -385,28 +392,30 @@ charged to one K-loop iteration.)
 
 | K | v6 | v7 | v8 |
 |---|---|---|---|
-| 8192 | 15.5 | 4.3 | 7.5 |
-| 16384 | 45.1 | 10.0 | **6.9** |
-| 32768 | 114.6 | **25.7** | 31.6 |
+| 8192 | 15.9 | **4.3** | 4.8 |
+| 16384 | 39.5 | 9.6 | **6.8** |
+| 32768 | 118.1 | **23.6** | 30.4 |
 
 ### Reading the four tables together
 
-- **v6 collapses, monotonically.** TFLOPS 1267 → 1066 → 898, MFMA-eff 93 → 59 → 38 %,
-  loop/iter ballooning 4,421 → 6,977 → 10,720 cycles. The cause is direct: the average
-  per-load stall explodes **7.4×** (15.5 → 114.6 cyc); summed over all 32 in-loop loads
-  that is ~3,670 cyc/iter — about a third of the 10,720-cycle iteration at K=32768.
+- **v6 collapses, monotonically.** TFLOPS 1265 → 1068 → 896, MFMA-eff 85 → 59 → 38 %,
+  loop/iter ballooning 4,816 → 6,891 → 10,653 cycles. The cause is direct: the average
+  per-load stall explodes **7.4×** (15.9 → 118.1 cyc); summed over all 32 in-loop loads
+  that is ~3,780 cyc/iter — about a third of the 10,653-cycle iteration at K=32768.
   v6's flat (un-sliced) pipeline can't keep the global
   loads ahead of the MFMAs once the working set goes cold, so the loads stall and the
   MFMA units starve. *(The default 512 MB run hid this — it falsely showed K=16384
-  rising to 1300; with true rotation v6 already drops to 1066 / 59 % there.)*
-- **v7 stays fed.** per-load stall 4.3 → 10.0 → 25.7 cyc (3–4.5× lower than v6 at every K),
-  loop/iter near-flat (4,218 → 4,947, +17 % over a 4× K range), eff 97 → 90 → 83 %.
+  rising to 1300; with true rotation v6 already drops to 1068 / 59 % there.)*
+- **v7 stays fed.** per-load stall 4.3 → 9.6 → 23.6 cyc (3–4.5× lower than v6 at every K),
+  loop/iter near-flat (4,175 → 4,881, +17 % over a 4× K range), eff 98 → 93 → 84 %.
 - **v8 wins at K ≤ 16384, v7 overtakes at K=32768.** v8's smaller 128-row A tile gives
-  it the **lowest** per-load stall at K=16384 (6.9 cyc, even below v7's 10.0) → highest
-  eff (96.6 %) and TFLOPS (1459). But at K=32768 v8's stall (31.6 cyc) passes v7's (25.7), its
-  eff drops below v7 (77.6 vs 82.8 %), and v7 takes the TFLOPS lead (1316 vs 1301). The
+  it the **lowest** per-load stall at K=16384 (6.8 cyc, even below v7's 9.6) → highest
+  eff (95.1 %) and TFLOPS (1458). But at K=32768 v8's stall (30.4 cyc) passes v7's (23.6), its
+  eff drops below v7 (79.7 vs 83.9 %), and v7 takes the TFLOPS lead (1316 vs 1298). The
   buffer_load stall is the mechanism behind the v7/v8 crossover the tutorial points at —
   and it lands at K=32768, not K=16384.
-- The buffer_load stall tracks MFMA-eff one-for-one across all nine cells, confirming the
-  efficiency loss at large K is **global-load latency the pipeline fails to hide**, not
-  compute throughput or register pressure.
+- The buffer_load stall tracks MFMA-eff across the table — clearest at large K, where
+  v6's 118 cyc/load vs v7's 24 mirrors the 38 % vs 84 % eff gap. (At K=8192 the three are
+  near-tied at ≥98 % eff / ≤16 cyc, within run-to-run jitter.) The efficiency loss at
+  large K is **global-load latency the pipeline fails to hide**, not compute throughput
+  or register pressure.
