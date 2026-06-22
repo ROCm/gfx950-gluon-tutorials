@@ -185,6 +185,15 @@ def gemm_async_warp_pipeline_u3(
     main_loop_triples = (num_k_tiles - 3) // 3
 
     for triple_idx in tl.range(0, main_loop_triples):
+        # Step 0's GR drain is hoisted ABOVE the loop-index arithmetic below.
+        # WarpPipeliner rejects pipelining if it meets an async-wait (this
+        # wait_group) while a stage cluster is non-empty; the index arith
+        # (base_tile/pf*) would populate that cluster first and silently disable
+        # the warp-pipeline (no s_setprio, half the s_barriers). Hoisted here it
+        # lands at an empty cluster boundary so pipelining is preserved. Steps
+        # 1-2 keep wait_group inline (each follows a mem-stage border = empty
+        # cluster, so no rejection there).
+        cdna4_async.wait_group(2)
         base_tile = triple_idx * 3
         pf0 = base_tile + 3
         pf1 = base_tile + 4
@@ -202,7 +211,6 @@ def gemm_async_warp_pipeline_u3(
         # form would insert here (~6% slower).
 
         # Step 0: process tile base_tile (buffer 0)
-        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
