@@ -419,3 +419,91 @@ charged to one K-loop iteration.)
   near-tied at ≥98 % eff / ≤16 cyc, within run-to-run jitter.) The efficiency loss at
   large K is **global-load latency the pipeline fails to hide**, not compute throughput
   or register pressure.
+
+---
+
+## Where the cache locality comes from: M-slicing vs N-slicing (no XCD remapping)
+
+v8 (slice M+N) edges v7 (slice N) at moderate K mainly via **better cache locality** — but
+which slicing axis is responsible? To isolate it we built **`v7m_sliceM`**: a symmetric
+mirror of v7 that slices **A along M** (a_top/a_bot, 128 rows) and keeps **B full** — same
+pipeline structure (2 buffers, factor-2 unroll, identical wait_group depths) as v7, so the
+only change vs v7 is the slicing *axis*. Three-way comparison, cold `--rocprof` regime,
+`--rotating-buffer-size 2048`, `llir+agpr+amdgcnas`, 5-run median TFLOPS / 3-run median
+counters. **All kernels here use the plain `pid_m = pid // num_pid_n; pid_n = pid %
+num_pid_n` mapping — NO XCD-aware PID remapping (that arrives in v9).**
+
+| K | kernel | TFLOPS (median, range) | VmemLat | L2 hit % | DRAM reads |
+|---|---|---|---|---|---|
+| 8192 | sliceN (v7) | 1432 (1429–1434) | 1073 | 71.1 | 4.8M |
+| 8192 | sliceM (v7m) | 1410 (1407–1413) | 1082 | 71.2 | 4.9M |
+| 8192 | sliceMN (v8) | 1447 (1446–1455) | 1040 | 70.7 | 4.8M |
+| 16384 | sliceN (v7) | 1410 (1409–1412) | 1757 | 60.1 | 13.4M |
+| 16384 | **sliceM (v7m)** | **1491 (1488–1493)** | **1333** | **69.0** | **10.5M** |
+| 16384 | sliceMN (v8) | 1425 (1401–1436) | 1659 | 60.5 | 13.2M |
+| 32768 | sliceN (v7) | 1322 (1309–1364) | 2082 | 58.5 | 27.8M |
+| 32768 | **sliceM (v7m)** | **1420 (1414–1429)** | **1656** | **68.5** | **21.2M** |
+| 32768 | sliceMN (v8) | 1301 (1294–1315) | 2123 | 61.9 | 25.5M |
+
+**The cache advantage comes from slicing A (M), not B (N).** At K ≥ 16384, sliceM has the
+best L2 hit (≈69 % vs ≈60 %), **~22–24 % fewer DRAM reads**, the lowest VmemLatency, and
+wins on TFLOPS by **+5–7 % over v7 and +5–9 % over v8** (tight, non-overlapping medians).
+The pattern is monotone: **slice A → best cache (sliceM), slice B → worst (sliceN), slice
+both → middle (v8)** — slicing B actively *hurts* locality and only adds barrier overhead.
+(K=8192 is a tie: the working set is L2-resident, ≈71 % hit for all.)
+
+Every DRAM read is 128 B (request-size counters: rd32=rd64=0), so this is **pure L2
+temporal reuse**, not request granularity or cache-line alignment.
+
+**Mechanism — the workgroup launch order.** With `pid = pid_m·num_pid_n + pid_n` (pid_n
+fastest), the 16 co-launched workgroups of one M-band **share the same A rows** but stream
+**different B columns**. That makes **A the reuse-critical operand** (its sharers run
+concurrently → high L2 reuse) and **B loosely shared** (its sharers are 16 apart in launch).
+Slicing the reuse-critical tensor (A) into smaller per-access tiles improves its L2
+residency → fewer A DRAM misses → lower VmemLatency → higher throughput; slicing B
+fragments a barely-reused tensor and just piles on barriers. This also resolves the
+"better cache yet longer latency" puzzle seen for v8: pure A-slicing (sliceM) gets the
+cache win **and** the lower latency together — v8's higher VmemLatency was the N-slicing
+barrier tax on top of a watered-down A benefit.
+
+**Takeaway:** at these sizes, slicing *both* M and N (v8) is suboptimal; slicing only A (M)
+is the right call because the launch order makes A the cache-critical operand.
+(`v7m_sliceM` is an experimental kernel — it uses the mfma-layout store rather than v7/v8's
+tuned BlockedLayout, so its epilogue differs slightly; the loop/cache behavior measured
+here is unaffected.)
+
+### …but XCD-aware PID remapping erases the difference
+
+The above assumes the naive `pid_m = pid // num_pid_n` mapping. v9 introduces **XCD-aware
+PID remapping + GROUP_SIZE_M swizzling** (`get_pids`, here added to all three kernels and
+enabled with `NUM_XCDS=8 GROUP_SIZE_M=4`, v9's settings). Re-running the same sweep with it:
+
+| K | kernel | TFLOPS (median, range) | L2 hit % | DRAM reads | VmemLat |
+|---|---|---|---|---|---|
+| 8192 | sliceN | 1467 (1467–1471) | 80.3 | 3.1M | 908 |
+| 8192 | sliceM | 1450 (1447–1454) | 80.9 | 3.1M | 926 |
+| 8192 | sliceMN | 1475 (1473–1478) | 80.3 | 3.2M | 787 |
+| 16384 | sliceN | 1515 (1514–1521) | 78.8 | 7.0M | 1054 |
+| 16384 | sliceM | 1513 (1507–1515) | 78.9 | 7.0M | 1029 |
+| 16384 | sliceMN | 1521 (1518–1531) | 78.1 | 7.2M | 929 |
+| 32768 | sliceN | 1306 (1302–1361) | 81.0 | 12.6M | 2033 |
+| 32768 | sliceM | 1339 (1297–1349) | 81.1 | 12.6M | 2224 |
+| 32768 | sliceMN | 1309 (1306–1317) | 81.0 | 12.6M | 2115 |
+
+**With XCD remapping the three slicing variants are tied** — identical L2 hit (~78–81 %),
+identical DRAM reads, TFLOPS within ~1 % at K=16384 and within noise elsewhere. sliceM's
+standout (69 % L2 hit, +5–9 % TFLOPS without remapping) **vanishes**: the remapping lifts
+*every* kernel to ~80 % L2 hit, well above what M-slicing alone achieved (69 %), and ~halves
+DRAM reads at large K (e.g. K=32768: 21–28M → 12.6M for all).
+
+**This confirms the mechanism.** sliceM's advantage was a *workaround* for the naive launch
+order's poor L2 locality; v9's remapping fixes locality directly and better, so the slicing
+axis no longer matters for cache. Practically: **once you use XCD-aware PID remapping,
+slicing both M and N (v8) is fine** — the M-slicing edge was a launch-order artifact, not a
+fundamental property. (At K=32768 the remapping even costs sliceM throughput, 1420 → 1339:
+its cache was already good, and the remapping adds L2-slice contention — VmemLat 1656 → 2224
+— without a locality payoff there.)
+
+*(Kernel additions for this study — `v7m_sliceM`, `bench.py` version-10 hook, and the
+env-toggleable `get_pids` (`NUM_XCDS`/`GROUP_SIZE_M`, default off) added to v7/v8 — are
+experimental and uncommitted.)*
