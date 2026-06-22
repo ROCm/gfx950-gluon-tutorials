@@ -26,8 +26,8 @@
 Collect VMEM-latency hardware counters for the 8-wave warp-pipeline GEMM.
 
 Reuses the tutorial's existing counter mechanism (scripts/run_counter_collection.py
-helpers) but targets this kernel (gemm_async_warp_pipeline[_u3], selected by
---unroll) instead of the a16w16 VERSION_MAP.
+helpers) but targets the version selected by --version (v0_BK32_nS3 /
+v1_sliceMN_BK64_nS2).
 
 Default counters answer "how long are the buffer_load / VMEM stalls":
   VmemLatency                  avg VMEM instruction latency (cycles), derived
@@ -37,7 +37,7 @@ Default counters answer "how long are the buffer_load / VMEM stalls":
   TCP_TA_TCP_STATE_READ_sum    TCP reads             (avg wave lat = LATENCY/READ)
 
 Run with the no-AGPR config to match the current best kernel:
-  TRITON_HIP_AGPR_ALLOC="0,0" python collect_counters.py --unroll 3 --K 8192 --dtype fp16
+  TRITON_HIP_AGPR_ALLOC="0,0" python collect_counters.py --version 0 --K 8192 --dtype fp16
 """
 
 import argparse
@@ -70,7 +70,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Collect VMEM-latency counters for the 8-wave kernel")
     p.add_argument("--K", type=int, default=8192)
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
-    p.add_argument("--unroll", type=int, default=3, choices=[2, 3])
+    p.add_argument("--version", type=int, default=0, choices=[0, 1])
     p.add_argument("--rotating-buffer-size", type=int, default=512)
     p.add_argument("--counters", default=DEFAULT_COUNTERS, help="comma-separated counter list")
     return p.parse_args()
@@ -79,10 +79,10 @@ def parse_args():
 def main():
     args = parse_args()
     counters = [c.strip() for c in args.counters.split(",")]
-    kernel_name = "gemm_async_warp_pipeline_u3" if args.unroll == 3 else "gemm_async_warp_pipeline"
+    kernel_name = {0: "v0_BK32_nS3", 1: "v1_sliceMN_BK64_nS2"}[args.version]
 
     print("=" * 70)
-    print(f"VMEM-latency counters — {kernel_name}  K={args.K} {args.dtype}  unroll={args.unroll}")
+    print(f"VMEM-latency counters — {kernel_name}  K={args.K} {args.dtype}  version={args.version}")
     print(f"AGPR alloc override: {os.environ.get('TRITON_HIP_AGPR_ALLOC', '(default)')}")
     print("=" * 70)
 
@@ -100,7 +100,7 @@ def main():
         "--kernel-include-regex", kernel_name,
         "-d", trace_dir, "--output-format", "csv", "--",
         "python", "bench.py", "--rocprof",
-        "--K", str(args.K), "--dtype", args.dtype, "--unroll", str(args.unroll),
+        "--K", str(args.K), "--dtype", args.dtype, "--version", str(args.version),
         "--rotating-buffer-size", str(args.rotating_buffer_size),
     ]
     print(f"  rocprofv3 counters: {', '.join(counters)} ...")

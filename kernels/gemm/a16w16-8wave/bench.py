@@ -30,23 +30,27 @@ Mirrors kernels/gemm/a16w16/bench.py: same --K / --dtype / --rocprof /
 mechanisms, so the tutorial's rocprof kernel-trace and ATT tooling can be
 pointed at this kernel (see collect_perf.py).
 
-There is a single kernel here (no --version), so the only differences from the
-a16w16 driver are:
-  * the kernel name is fixed (gemm_async_warp_pipeline),
-  * B is pre-transposed to (N, K) outside the timed region (kernel-only timing),
-    because this kernel needs K contiguous.
+Like a16w16/bench.py, --version selects the kernel (v0_BK32_nS3 /
+v1_sliceMN_BK64_nS2 subdirs). The only 8-wave-specific quirk: B is pre-transposed
+to (N, K) outside the timed region (kernel-only timing) since these kernels need
+K contiguous.
 """
 
 import argparse
+import importlib
 
 import torch
 import triton
 
-from matmul_kernel import MIN_K, matmul_kernel_only
-
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
-KERNEL_NAME = "gemm_async_warp_pipeline"
+# Versioned kernels live in subdirs, mirroring a16w16's v0_naive .. v9_beyond_hotloop.
+VERSION_MAP = {0: "v0_BK32_nS3", 1: "v1_sliceMN_BK64_nS2"}
+
+# Rebound in main() once the selected version module is imported.
+matmul_kernel_only = None
+MIN_K = None
+KERNEL_NAME = None
 
 name_to_torch_type = {"fp16": torch.float16, "bf16": torch.bfloat16}
 
@@ -122,11 +126,11 @@ def parse_args():
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
     )
     parser.add_argument(
-        "--unroll",
+        "--version",
         type=int,
-        default=2,
-        choices=[2, 3],
-        help="Unroll factor: 2 (matmul_kernel) or 3 (matmul_kernel_unroll3). Default: 2",
+        default=0,
+        choices=sorted(VERSION_MAP),
+        help="Kernel version: 0=v0_BK32_nS3, 1=v1_sliceMN_BK64_nS2. Default: 0",
     )
     return parser.parse_args()
 
@@ -216,17 +220,15 @@ def run_rocprof_iterations(
 def main():
     args = parse_args()
 
-    # Select the kernel variant (2x or 3x unroll) and rebind the globals the
+    # Select the kernel version (subdir) and rebind the globals the
     # correctness/rotating/benchmark helpers use.
     global matmul_kernel_only, MIN_K, KERNEL_NAME
-    if args.unroll == 3:
-        import matmul_kernel_unroll3 as km
-    else:
-        import matmul_kernel as km
+    version_dir = VERSION_MAP[args.version]
+    km = importlib.import_module(f"{version_dir}.matmul_kernel")
     matmul_kernel_only = km.matmul_kernel_only
     MIN_K = km.MIN_K
     KERNEL_NAME = km.KERNEL_NAME
-    print(f"[8wave] unroll={args.unroll}  kernel={KERNEL_NAME}")
+    print(f"[8wave] version={args.version} ({version_dir})  kernel={KERNEL_NAME}")
 
     gemm_sizes = get_gemm_sizes(args.K)
     dtypes = get_dtypes(args.dtype)
@@ -272,7 +274,7 @@ def main():
 
         return perf(ms), perf(max_ms), perf(min_ms)
 
-    print("\na16w16-8wave (gemm_async_warp_pipeline):")
+    print(f"\na16w16-8wave ({KERNEL_NAME}):")
     benchmark.run(show_plots=False, print_data=True)
 
 

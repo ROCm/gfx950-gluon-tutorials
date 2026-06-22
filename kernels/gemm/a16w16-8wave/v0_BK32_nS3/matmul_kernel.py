@@ -25,7 +25,7 @@
 """
 8-wave warp-pipeline FP16/BF16 GEMM — **3x-unrolled** variant.
 
-Same kernel as matmul_kernel.py, but the main loop is unrolled by 3 instead of 2.
+8-wave warp-pipeline GEMM, main loop unrolled by 3.
 Because the LDS ring has 3 buffers, unrolling by 3 makes every buffer index a
 COMPILE-TIME CONSTANT (0, 1, 2) within the loop body. That removes the runtime
 `tile % 3` buffer-rotation arithmetic the 2x loop carries (the divide-by-3
@@ -68,11 +68,11 @@ GROUP_SIZE_M = 4
 MIN_K = 5 * BLOCK_K
 
 # kernel function name — used as the rocprof/ATT include-regex (distinct from 2x)
-KERNEL_NAME = "gemm_async_warp_pipeline_u3"
+KERNEL_NAME = "v0_BK32_nS3"
 
 
 @gluon.jit
-def gemm_async_warp_pipeline_u3(
+def v0_BK32_nS3(
     a_ptr, b_ptr, c_ptr,  #
     M, N, K,  #
     stride_am, stride_ak,  #
@@ -198,8 +198,8 @@ def gemm_async_warp_pipeline_u3(
 
     # Wait for tile 0 (6 issued, wait_group(4) => 2 done = tile 0)
     cdna4_async.wait_group(4)
-    a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
-    b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
+    a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
+    b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
 
     # Main loop: 3x unrolled. Buffer indices are the literal constants 0,1,2 in
     # every step, so no `tile % 3` arithmetic survives in the loop body.
@@ -219,15 +219,17 @@ def gemm_async_warp_pipeline_u3(
         # (GR). The per-iteration s_barrier syncs only wave EXECUTION, not the
         # async GR memory, so draining the GR vmcnt ahead of the mfma guarantees
         # an LDS tile's filling copy has landed before any wave consumes it.
-        # Loads use the non-relaxed smem.index().load() form (matching v9).
+        # Loads use load_shared_relaxed: its async-wait token lets the AMD membar
+        # filter skip the redundant lgkmcnt(0)+s_barrier between LR and GR (the
+        # membar can't disambiguate smemA.index() sub-buffers; non-relaxed pays it).
 
         # Step 0: process the triple's tile 0 (buffer 0); prefetch buffer 0.
         cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
-            a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
-            b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
             cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
             cdna4_async.commit_group()
             cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
@@ -238,8 +240,8 @@ def gemm_async_warp_pipeline_u3(
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
-            a_regs = smemA.index(2).load(OPERAND_LAYOUT_A)
-            b_regs = smemB.index(2).load(OPERAND_LAYOUT_B)
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
             cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
             cdna4_async.commit_group()
             cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
@@ -252,8 +254,8 @@ def gemm_async_warp_pipeline_u3(
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
             # Next iteration's first tile lands in buffer 0.
-            a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
-            b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
             cdna4_async.buffer_load_to_shared(smemA.index(2), a_base, a_offs2)
             cdna4_async.commit_group()
             cdna4_async.buffer_load_to_shared(smemB.index(2), b_base, b_offs2)
@@ -271,13 +273,13 @@ def gemm_async_warp_pipeline_u3(
     cdna4_async.wait_group(0)
 
     # Tail tile 1 (buffer 1)
-    a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
-    b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
+    a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
+    b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
     acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Tail tile 2 (buffer 2)
-    a_regs = smemA.index(2).load(OPERAND_LAYOUT_A)
-    b_regs = smemB.index(2).load(OPERAND_LAYOUT_B)
+    a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
+    b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
     acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Extra tile tiles_processed+3 (buffer 0) when num_k_tiles % 3 != 0
@@ -287,8 +289,8 @@ def gemm_async_warp_pipeline_u3(
         cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
-        a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
-        b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
+        a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
+        b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
         acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Extra tile tiles_processed+4 (buffer 1) when num_k_tiles % 3 == 2
@@ -298,8 +300,8 @@ def gemm_async_warp_pipeline_u3(
         cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
-        a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
-        b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
+        a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
+        b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
         acc = mfma_cdna4(a_regs, b_regs, acc)
 
     store_result(acc, c_ptr, c_dtype, pid_m, pid_n, M, N,
@@ -316,7 +318,7 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
     GRID_MN = grid_m * grid_n
     grid = (GRID_MN,)
 
-    gemm_async_warp_pipeline_u3[grid](
+    v0_BK32_nS3[grid](
         a, b_t, c,
         M, N, K,
         a.stride(0), a.stride(1),

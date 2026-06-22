@@ -35,7 +35,7 @@ This wires the tutorial's *existing* measurement mechanism to this kernel:
   * VGPRs/spills — parsed from the kernel's .amdgcn in the triton cache.
 
 The only kernel-specific input is the kernel function name, used as the
-rocprof / ATT include-regex:  gemm_async_warp_pipeline.
+rocprof / ATT include-regex:  the selected version dir (e.g. v0_BK32_nS3).
 
 Unlike the 4-wave a16w16 kernels, this kernel does NOT take the
 llir+amdgcnas env vars (TRITON_ENABLE_LLIR_SCHED / TRITON_ENABLE_AMDGCN_AS):
@@ -70,7 +70,8 @@ from run_perf_table import (  # noqa: E402
 )
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-KERNEL_NAME = "gemm_async_warp_pipeline"
+VERSION_MAP = {0: "v0_BK32_nS3", 1: "v1_sliceMN_BK64_nS2"}
+KERNEL_NAME = None  # set in main() from --version
 RUN_ATT = os.path.join(SCRIPTS_DIR, "run_att.py")
 
 # This kernel runs 8 waves across a CU's 4 SIMDs => 2 waves/SIMD. process_json.py
@@ -96,8 +97,8 @@ def parse_args():
     p.add_argument("--N", type=int, default=4096, help="N dimension (default: 4096)")
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"], help="default: fp16")
     p.add_argument("--rotating-buffer-size", type=int, default=512, help="MB (default: 512)")
-    p.add_argument("--unroll", type=int, default=2, choices=[2, 3],
-                   help="Unroll factor 2 or 3 (default: 2)")
+    p.add_argument("--version", type=int, default=0, choices=sorted(VERSION_MAP),
+                   help="Kernel version 0=v0_BK32_nS3, 1=v1_sliceMN_BK64_nS2 (default: 0)")
     p.add_argument("--skip-trace", action="store_true", help="Skip rocprof kernel-trace (TFLOPS)")
     p.add_argument("--skip-att", action="store_true", help="Skip ATT (MFMA efficiency)")
     return p.parse_args()
@@ -117,7 +118,7 @@ def run_kernel_trace(args):
         "python", "bench.py", "--rocprof",
         "--K", str(args.K), "--dtype", args.dtype,
         "--rotating-buffer-size", str(args.rotating_buffer_size),
-        "--unroll", str(args.unroll),
+        "--version", str(args.version),
     ]
     print(f"  rocprofv3 --kernel-trace: {KERNEL_NAME} K={args.K} {args.dtype} ...")
     proc = subprocess.run(cmd, cwd=WORK_DIR, capture_output=True, text=True)
@@ -154,7 +155,7 @@ def run_att(args):
         "--att-output", "tmp",
         "python", "bench.py",
         "--K", str(args.K), "--dtype", args.dtype,
-        "--unroll", str(args.unroll),
+        "--version", str(args.version),
     ]
     print(f"  rocprofv3 --att (MFMA eff): {KERNEL_NAME} K={args.K} {args.dtype} ...")
     env = os.environ.copy()
@@ -178,9 +179,9 @@ def run_att(args):
 def main():
     args = parse_args()
     global KERNEL_NAME
-    KERNEL_NAME = "gemm_async_warp_pipeline_u3" if args.unroll == 3 else "gemm_async_warp_pipeline"
+    KERNEL_NAME = VERSION_MAP[args.version]
     print("=" * 64)
-    print(f"8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} {args.dtype}  (unroll={args.unroll}, {KERNEL_NAME})")
+    print(f"8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} {args.dtype}  (version={args.version}, {KERNEL_NAME})")
     print("=" * 64)
 
     clean_caches(WORK_DIR)
