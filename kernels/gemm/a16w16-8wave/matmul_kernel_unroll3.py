@@ -190,42 +190,53 @@ def gemm_async_warp_pipeline_u3(
         pf1 = base_tile + 4
         pf2 = base_tile + 5
 
+        # Correctness-critical ordering (per step): wait_group(2) precedes the
+        # mfma region, and each shared load (LR) precedes its global prefetch
+        # (GR). The per-iteration s_barrier synchronizes only wave EXECUTION,
+        # not the async GR memory, so draining the GR vmcnt ahead of the mfma is
+        # what guarantees an LDS tile's filling copy has landed before any wave
+        # (including the other 4-wave group) consumes it. The reverse layout
+        # (wait_group after mfma + GR-first) races on the 3-buffer LDS ring and
+        # passes the allclose check only by timing luck. Loads stay relaxed: the
+        # no-alias hint elides a redundant LDS barrier the non-relaxed smem.load
+        # form would insert here (~6% slower).
+
         # Step 0: process tile base_tile (buffer 0)
+        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
-        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mem", priority=1):
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
             issue_async_load_a(smemA.index(0), a_base, pf0, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
             cdna4_async.commit_group()
             issue_async_load_b(smemB.index(0), b_base, pf0, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
             cdna4_async.commit_group()
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
 
         # Step 1: process tile base_tile+1 (buffer 1)
+        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
-        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mem", priority=1):
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
             issue_async_load_a(smemA.index(1), a_base, pf1, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
             cdna4_async.commit_group()
             issue_async_load_b(smemB.index(1), b_base, pf1, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
             cdna4_async.commit_group()
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
 
         # Step 2: process tile base_tile+2 (buffer 2)
+        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
-        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mem", priority=1):
+            # Next iteration's first tile (base+3) lands in buffer 0.
+            a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
+            b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
             issue_async_load_a(smemA.index(2), a_base, pf2, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
             cdna4_async.commit_group()
             issue_async_load_b(smemB.index(2), b_base, pf2, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
             cdna4_async.commit_group()
-            # Next iteration's first tile (base+3) lands in buffer 0.
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
 
     # Tail: tiles_processed is a multiple of 3, so tiles_processed,{+1,+2} are
     # resident in buffers 0,1,2; a_regs/b_regs already hold tile tiles_processed.
