@@ -154,15 +154,23 @@ def gemm_async_warp_pipeline_u3(
     a_base = a_ptr + (pid_m * BLOCK_M) * stride_am
     b_base = b_ptr + (pid_n * BLOCK_N) * stride_bn
 
-    # Async-load offsets computed once for a tile-relative K=0; the absolute K
-    # index is carried in the base pointer at each buffer_load_to_shared call
-    # (base + k*BLOCK_K*stride_k), matching the a16w16/v9 kernel style.
+    # Async-load offsets for the 3 tiles of a triple, precomputed once (K = 0,1,2
+    # relative to the running base). The 3 mem regions of an unrolled iteration
+    # all use the SAME a_base/b_base with these distinct offsets; the base is then
+    # advanced by one triple (a_kstep/b_kstep) at the end of the iteration. This
+    # is the a16w16/v9 pointer-walk style (no per-call base arithmetic).
     offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, A_ASYNC_LAYOUT))
     offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, A_ASYNC_LAYOUT))
     offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, B_ASYNC_LAYOUT))
     offs_bn = gl.arange(0, BLOCK_N, gl.SliceLayout(0, B_ASYNC_LAYOUT))
-    a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
-    b_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+    a_offs0 = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    a_offs1 = a_offs0 + BLOCK_K * stride_ak
+    a_offs2 = a_offs0 + 2 * BLOCK_K * stride_ak
+    b_offs0 = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+    b_offs1 = b_offs0 + BLOCK_K * stride_bk
+    b_offs2 = b_offs0 + 2 * BLOCK_K * stride_bk
+    a_kstep = 3 * BLOCK_K * stride_ak
+    b_kstep = 3 * BLOCK_K * stride_bk
 
     smemA = gl.allocate_shared_memory(a_dtype, [3, BLOCK_M, BLOCK_K], SHARED_LAYOUT_A)
     smemB = gl.allocate_shared_memory(b_dtype, [3, BLOCK_K, BLOCK_N], SHARED_LAYOUT_B)
@@ -172,18 +180,21 @@ def gemm_async_warp_pipeline_u3(
     num_k_tiles = gl.cdiv(K, BLOCK_K)
 
     # Prologue: load tiles 0,1,2 into buffers 0,1,2 (6 commit groups).
-    cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (0) * BLOCK_K * stride_ak, a_offsets)
+    cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (0) * BLOCK_K * stride_bk, b_offsets)
+    cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (1) * BLOCK_K * stride_ak, a_offsets)
+    cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (1) * BLOCK_K * stride_bk, b_offsets)
+    cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemA.index(2), a_base + (2) * BLOCK_K * stride_ak, a_offsets)
+    cdna4_async.buffer_load_to_shared(smemA.index(2), a_base, a_offs2)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(2), b_base + (2) * BLOCK_K * stride_bk, b_offsets)
+    cdna4_async.buffer_load_to_shared(smemB.index(2), b_base, b_offs2)
     cdna4_async.commit_group()
+    # Advance the base past the 3 prologue tiles so the loop reuses a/b_offs{0,1,2}.
+    a_base += a_kstep
+    b_base += b_kstep
 
     # Wait for tile 0 (6 issued, wait_group(4) => 2 done = tile 0)
     cdna4_async.wait_group(4)
@@ -195,65 +206,60 @@ def gemm_async_warp_pipeline_u3(
     main_loop_triples = (num_k_tiles - 3) // 3
 
     for triple_idx in tl.range(0, main_loop_triples):
-        # Step 0's GR drain is hoisted ABOVE the loop-index arithmetic below.
-        # WarpPipeliner rejects pipelining if it meets an async-wait (this
-        # wait_group) while a stage cluster is non-empty; the index arith
-        # (base_tile/pf*) would populate that cluster first and silently disable
-        # the warp-pipeline (no s_setprio, half the s_barriers). Hoisted here it
-        # lands at an empty cluster boundary so pipelining is preserved. Steps
-        # 1-2 keep wait_group inline (each follows a mem-stage border = empty
-        # cluster, so no rejection there).
-        cdna4_async.wait_group(2)
-        base_tile = triple_idx * 3
-        pf0 = base_tile + 3
-        pf1 = base_tile + 4
-        pf2 = base_tile + 5
-
+        # wait_group(2) is the FIRST op in the loop body (no loop-index arith
+        # precedes it now), so it lands at an empty pipeline-cluster boundary and
+        # WarpPipeliner does not reject (an async-wait met mid-cluster would
+        # silently disable the warp-pipeline). The 3 mem regions all prefetch off
+        # the SAME a_base/b_base with the distinct precomputed offsets
+        # a/b_offs{0,1,2}; the base advances by one triple (a_kstep/b_kstep) in
+        # step 2 -- the a16w16/v9 pointer-walk style.
+        #
         # Correctness-critical ordering (per step): wait_group(2) precedes the
         # mfma region, and each shared load (LR) precedes its global prefetch
-        # (GR). The per-iteration s_barrier synchronizes only wave EXECUTION,
-        # not the async GR memory, so draining the GR vmcnt ahead of the mfma is
-        # what guarantees an LDS tile's filling copy has landed before any wave
-        # (including the other 4-wave group) consumes it. The reverse layout
-        # (wait_group after mfma + GR-first) races on the 3-buffer LDS ring and
-        # passes the allclose check only by timing luck. Loads use the non-relaxed
-        # smem.index().load() form (matching the a16w16/v9 kernels).
+        # (GR). The per-iteration s_barrier syncs only wave EXECUTION, not the
+        # async GR memory, so draining the GR vmcnt ahead of the mfma guarantees
+        # an LDS tile's filling copy has landed before any wave consumes it.
+        # Loads use the non-relaxed smem.index().load() form (matching v9).
 
-        # Step 0: process tile base_tile (buffer 0)
+        # Step 0: process the triple's tile 0 (buffer 0); prefetch buffer 0.
+        cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
             a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
             b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (pf0) * BLOCK_K * stride_ak, a_offsets)
+            cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
             cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (pf0) * BLOCK_K * stride_bk, b_offsets)
+            cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
             cdna4_async.commit_group()
 
-        # Step 1: process tile base_tile+1 (buffer 1)
+        # Step 1: process the triple's tile 1 (buffer 1); prefetch buffer 1.
         cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
             a_regs = smemA.index(2).load(OPERAND_LAYOUT_A)
             b_regs = smemB.index(2).load(OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (pf1) * BLOCK_K * stride_ak, a_offsets)
+            cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
             cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (pf1) * BLOCK_K * stride_bk, b_offsets)
+            cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
             cdna4_async.commit_group()
 
-        # Step 2: process tile base_tile+2 (buffer 2)
+        # Step 2: process the triple's tile 2 (buffer 2); prefetch buffer 2, then
+        # advance the base by one triple so the next iteration reuses the offsets.
         cdna4_async.wait_group(2)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
-            # Next iteration's first tile (base+3) lands in buffer 0.
+            # Next iteration's first tile lands in buffer 0.
             a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
             b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(2), a_base + (pf2) * BLOCK_K * stride_ak, a_offsets)
+            cdna4_async.buffer_load_to_shared(smemA.index(2), a_base, a_offs2)
             cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(2), b_base + (pf2) * BLOCK_K * stride_bk, b_offsets)
+            cdna4_async.buffer_load_to_shared(smemB.index(2), b_base, b_offs2)
             cdna4_async.commit_group()
+            a_base += a_kstep
+            b_base += b_kstep
 
     # Tail: tiles_processed is a multiple of 3, so tiles_processed,{+1,+2} are
     # resident in buffers 0,1,2; a_regs/b_regs already hold tile tiles_processed.
@@ -276,9 +282,9 @@ def gemm_async_warp_pipeline_u3(
 
     # Extra tile tiles_processed+3 (buffer 0) when num_k_tiles % 3 != 0
     if tiles_remaining > 3:
-        cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (tiles_processed + 3) * BLOCK_K * stride_ak, a_offsets)
+        cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
         cdna4_async.commit_group()
-        cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (tiles_processed + 3) * BLOCK_K * stride_bk, b_offsets)
+        cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
         a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
@@ -287,9 +293,9 @@ def gemm_async_warp_pipeline_u3(
 
     # Extra tile tiles_processed+4 (buffer 1) when num_k_tiles % 3 == 2
     if tiles_remaining > 4:
-        cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (tiles_processed + 4) * BLOCK_K * stride_ak, a_offsets)
+        cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
         cdna4_async.commit_group()
-        cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (tiles_processed + 4) * BLOCK_K * stride_bk, b_offsets)
+        cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
         a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
