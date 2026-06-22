@@ -50,7 +50,7 @@ from triton.experimental.gluon.language.amd import warp_pipeline_stage
 from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
 
-from common import get_pids, store_result, issue_async_load_a, issue_async_load_b
+from common import get_pids, store_result
 
 BLOCK_M = 256
 BLOCK_N = 256
@@ -154,6 +154,16 @@ def gemm_async_warp_pipeline_u3(
     a_base = a_ptr + (pid_m * BLOCK_M) * stride_am
     b_base = b_ptr + (pid_n * BLOCK_N) * stride_bn
 
+    # Async-load offsets computed once for a tile-relative K=0; the absolute K
+    # index is carried in the base pointer at each buffer_load_to_shared call
+    # (base + k*BLOCK_K*stride_k), matching the a16w16/v9 kernel style.
+    offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, A_ASYNC_LAYOUT))
+    offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, A_ASYNC_LAYOUT))
+    offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, B_ASYNC_LAYOUT))
+    offs_bn = gl.arange(0, BLOCK_N, gl.SliceLayout(0, B_ASYNC_LAYOUT))
+    a_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    b_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+
     smemA = gl.allocate_shared_memory(a_dtype, [3, BLOCK_M, BLOCK_K], SHARED_LAYOUT_A)
     smemB = gl.allocate_shared_memory(b_dtype, [3, BLOCK_K, BLOCK_N], SHARED_LAYOUT_B)
 
@@ -162,23 +172,23 @@ def gemm_async_warp_pipeline_u3(
     num_k_tiles = gl.cdiv(K, BLOCK_K)
 
     # Prologue: load tiles 0,1,2 into buffers 0,1,2 (6 commit groups).
-    issue_async_load_a(smemA.index(0), a_base, 0, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (0) * BLOCK_K * stride_ak, a_offsets)
     cdna4_async.commit_group()
-    issue_async_load_b(smemB.index(0), b_base, 0, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (0) * BLOCK_K * stride_bk, b_offsets)
     cdna4_async.commit_group()
-    issue_async_load_a(smemA.index(1), a_base, 1, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (1) * BLOCK_K * stride_ak, a_offsets)
     cdna4_async.commit_group()
-    issue_async_load_b(smemB.index(1), b_base, 1, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (1) * BLOCK_K * stride_bk, b_offsets)
     cdna4_async.commit_group()
-    issue_async_load_a(smemA.index(2), a_base, 2, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemA.index(2), a_base + (2) * BLOCK_K * stride_ak, a_offsets)
     cdna4_async.commit_group()
-    issue_async_load_b(smemB.index(2), b_base, 2, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+    cdna4_async.buffer_load_to_shared(smemB.index(2), b_base + (2) * BLOCK_K * stride_bk, b_offsets)
     cdna4_async.commit_group()
 
     # Wait for tile 0 (6 issued, wait_group(4) => 2 done = tile 0)
     cdna4_async.wait_group(4)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
+    a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
+    b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
 
     # Main loop: 3x unrolled. Buffer indices are the literal constants 0,1,2 in
     # every step, so no `tile % 3` arithmetic survives in the loop body.
@@ -206,19 +216,18 @@ def gemm_async_warp_pipeline_u3(
         # what guarantees an LDS tile's filling copy has landed before any wave
         # (including the other 4-wave group) consumes it. The reverse layout
         # (wait_group after mfma + GR-first) races on the 3-buffer LDS ring and
-        # passes the allclose check only by timing luck. Loads stay relaxed: the
-        # no-alias hint elides a redundant LDS barrier the non-relaxed smem.load
-        # form would insert here (~6% slower).
+        # passes the allclose check only by timing luck. Loads use the non-relaxed
+        # smem.index().load() form (matching the a16w16/v9 kernels).
 
         # Step 0: process tile base_tile (buffer 0)
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
-            issue_async_load_a(smemA.index(0), a_base, pf0, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+            a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
+            b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
+            cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (pf0) * BLOCK_K * stride_ak, a_offsets)
             cdna4_async.commit_group()
-            issue_async_load_b(smemB.index(0), b_base, pf0, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+            cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (pf0) * BLOCK_K * stride_bk, b_offsets)
             cdna4_async.commit_group()
 
         # Step 1: process tile base_tile+1 (buffer 1)
@@ -226,11 +235,11 @@ def gemm_async_warp_pipeline_u3(
         with warp_pipeline_stage("mfma", priority=0):
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
-            issue_async_load_a(smemA.index(1), a_base, pf1, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+            a_regs = smemA.index(2).load(OPERAND_LAYOUT_A)
+            b_regs = smemB.index(2).load(OPERAND_LAYOUT_B)
+            cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (pf1) * BLOCK_K * stride_ak, a_offsets)
             cdna4_async.commit_group()
-            issue_async_load_b(smemB.index(1), b_base, pf1, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+            cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (pf1) * BLOCK_K * stride_bk, b_offsets)
             cdna4_async.commit_group()
 
         # Step 2: process tile base_tile+2 (buffer 2)
@@ -239,11 +248,11 @@ def gemm_async_warp_pipeline_u3(
             acc = mfma_cdna4(a_regs, b_regs, acc)
         with warp_pipeline_stage("mem", priority=1):
             # Next iteration's first tile (base+3) lands in buffer 0.
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
-            issue_async_load_a(smemA.index(2), a_base, pf2, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+            a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
+            b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
+            cdna4_async.buffer_load_to_shared(smemA.index(2), a_base + (pf2) * BLOCK_K * stride_ak, a_offsets)
             cdna4_async.commit_group()
-            issue_async_load_b(smemB.index(2), b_base, pf2, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+            cdna4_async.buffer_load_to_shared(smemB.index(2), b_base + (pf2) * BLOCK_K * stride_bk, b_offsets)
             cdna4_async.commit_group()
 
     # Tail: tiles_processed is a multiple of 3, so tiles_processed,{+1,+2} are
@@ -256,35 +265,35 @@ def gemm_async_warp_pipeline_u3(
     cdna4_async.wait_group(0)
 
     # Tail tile 1 (buffer 1)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
+    a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
+    b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
     acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Tail tile 2 (buffer 2)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
+    a_regs = smemA.index(2).load(OPERAND_LAYOUT_A)
+    b_regs = smemB.index(2).load(OPERAND_LAYOUT_B)
     acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Extra tile tiles_processed+3 (buffer 0) when num_k_tiles % 3 != 0
     if tiles_remaining > 3:
-        issue_async_load_a(smemA.index(0), a_base, tiles_processed + 3, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+        cdna4_async.buffer_load_to_shared(smemA.index(0), a_base + (tiles_processed + 3) * BLOCK_K * stride_ak, a_offsets)
         cdna4_async.commit_group()
-        issue_async_load_b(smemB.index(0), b_base, tiles_processed + 3, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+        cdna4_async.buffer_load_to_shared(smemB.index(0), b_base + (tiles_processed + 3) * BLOCK_K * stride_bk, b_offsets)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
-        a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-        b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
+        a_regs = smemA.index(0).load(OPERAND_LAYOUT_A)
+        b_regs = smemB.index(0).load(OPERAND_LAYOUT_B)
         acc = mfma_cdna4(a_regs, b_regs, acc)
 
     # Extra tile tiles_processed+4 (buffer 1) when num_k_tiles % 3 == 2
     if tiles_remaining > 4:
-        issue_async_load_a(smemA.index(1), a_base, tiles_processed + 4, stride_am, stride_ak, BLOCK_M, BLOCK_K, A_ASYNC_LAYOUT)
+        cdna4_async.buffer_load_to_shared(smemA.index(1), a_base + (tiles_processed + 4) * BLOCK_K * stride_ak, a_offsets)
         cdna4_async.commit_group()
-        issue_async_load_b(smemB.index(1), b_base, tiles_processed + 4, stride_bk, stride_bn, BLOCK_K, BLOCK_N, B_ASYNC_LAYOUT)
+        cdna4_async.buffer_load_to_shared(smemB.index(1), b_base + (tiles_processed + 4) * BLOCK_K * stride_bk, b_offsets)
         cdna4_async.commit_group()
         cdna4_async.wait_group(0)
-        a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-        b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
+        a_regs = smemA.index(1).load(OPERAND_LAYOUT_A)
+        b_regs = smemB.index(1).load(OPERAND_LAYOUT_B)
         acc = mfma_cdna4(a_regs, b_regs, acc)
 
     store_result(acc, c_ptr, c_dtype, pid_m, pid_n, M, N,
