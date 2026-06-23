@@ -41,6 +41,10 @@ into the tutorial layout, so the tutorial's `bench.py` / `collect_perf.py` rocpr
 ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
 ~72% per-SIMD). The fix progression (rocprof cold-rotating, 4096²×8192 fp16):
 
+> [!NOTE]
+> The TFLOPS / MFMA numbers in this section (and the MI350X table in §4) were collected
+> on **MI350X**, not MI355X. §4 has a separate MI355X table.
+
 | Step | TFLOPS | MFMA (per-SIMD) | Optimization |
 |---|---|---|---|
 | as-ported | 760 | ~72% | baseline: 2×-unroll, default backend (f32 accumulator allocated in AGPRs), original PID map |
@@ -92,6 +96,23 @@ cold-rotating tensors:
 
 v1 beats v0 by **+13% / +24% / +22%** at the three K values. v0 dips at large K (the
 buffer-load stall); v1 climbs as the fixed prologue/epilogue cost amortizes.
+
+### MI355X
+
+MI355X, gfx950, 4096×4096, fp16, rocprof cold-rotating (`--rotating-buffer-size 2048`).
+v0/v1 are **no-AGPR** (`TRITON_HIP_AGPR_ALLOC="0,0"`); the 4-wave `a16w16/v9` reference
+uses `schedule_hint="gemm-4waves, force-agpr"` + amdgcnas (`TRITON_ENABLE_AMDGCN_AS=1`):
+
+| K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff | v9 TFLOPS | v9 MFMA eff |
+|---|---|---|---|---|---|---|
+| 8192  | 1195.3 | 83.40% | 1442.0 | 99.84% | **1474.3** | 97.37% |
+| 16384 | 1112.2 | 65.74% | 1478.8 | 99.26% | **1522.5** | 97.13% |
+| 32768 | 1127.9 | 60.82% | 1289.0 | 97.72% | **1303.5** | 80.91% |
+
+On MI355X the 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges 8-wave
+v1 on TFLOPS at all three K (**+2% / +3% / +1%**); v1 keeps the highest loop MFMA-eff
+(~99%). Both clear v0 by a wide margin — v0's full-tile triple-ring hits the buffer-load
+stall, so its loop MFMA-eff falls to ~61–66% at K ≥ 16384.
 
 > [!NOTE]
 > **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's
