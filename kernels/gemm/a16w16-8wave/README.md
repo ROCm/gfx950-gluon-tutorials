@@ -105,14 +105,16 @@ uses `schedule_hint="gemm-4waves, force-agpr"` + amdgcnas (`TRITON_ENABLE_AMDGCN
 
 | K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff | v9 TFLOPS | v9 MFMA eff |
 |---|---|---|---|---|---|---|
-| 8192  | 1195.3 | 83.40% | 1442.0 | 99.84% | **1474.3** | 97.37% |
-| 16384 | 1112.2 | 65.74% | 1478.8 | 99.26% | **1522.5** | 97.13% |
-| 32768 | 1127.9 | 60.82% | 1289.0 | 97.72% | **1303.5** | 80.91% |
+| 8192  | 1194.4 | 83.30% | 1442.0 | 99.84% | **1474.3** | 97.37% |
+| 16384 | 1109.6 | 64.82% | 1478.8 | 99.26% | **1522.5** | 97.13% |
+| 32768 | 1120.5 | 60.38% | 1289.0 | 97.72% | **1303.5** | 80.91% |
 
 On MI355X the 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges 8-wave
 v1 on TFLOPS at all three K (**+2% / +3% / +1%**); v1 keeps the highest loop MFMA-eff
 (~99%). Both clear v0 by a wide margin — v0's full-tile triple-ring hits the buffer-load
-stall, so its loop MFMA-eff falls to ~61–66% at K ≥ 16384.
+stall, so its loop MFMA-eff falls to ~60–65% at K ≥ 16384 (v0 row is a 5-run median;
+its absolute TFLOPS *rises* vs MI350X while eff *drops* — MI355X's faster MFMA outpaces
+the unchanged memory latency, idling the units a larger fraction of the loop).
 
 > [!NOTE]
 > **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's
