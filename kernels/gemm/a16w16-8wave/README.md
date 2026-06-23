@@ -36,7 +36,7 @@ accumulator from a triple-buffered ring; v1 borrows v9's four-quadrant slicing.
 ## 2. v0_BK32_nS3 — a tuned port
 
 `v0` is a port of
-[`f16_gemm_warp_pipeline_gfx950.py`](https://github.com/AMD-Triton/gluon-kernels/blob/main/kernels/cdna4/gemm/f16_gemm_warp_pipeline_gfx950.py)
+[`AMD-Triton/gluon-kernels`'s `f16_gemm_warp_pipeline_gfx950.py`](https://github.com/AMD-Triton/gluon-kernels/blob/main/kernels/cdna4/gemm/f16_gemm_warp_pipeline_gfx950.py)
 into the tutorial layout, so the tutorial's `bench.py` / `collect_perf.py` rocprof +
 ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
 ~72% per-SIMD). The fix progression (rocprof cold-rotating, 4096²×8192 fp16):
