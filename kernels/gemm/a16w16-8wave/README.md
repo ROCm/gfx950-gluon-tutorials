@@ -9,10 +9,10 @@ v9_beyond_hotloop` layout. Both schedule the hot loop at the **wave level** with
 > The 4-wave `llir+amdgcnas` toolchain (`TRITON_ENABLE_LLIR_SCHED` /
 > `TRITON_ENABLE_AMDGCN_AS`) is built around the 4-wave register/schedule model and
 > **fails register allocation** at 8 waves. These kernels schedule themselves via
-> `warp_pipeline_stage` and run in plain "base" mode with
-> `TRITON_HIP_AGPR_ALLOC="0,0"` (no AGPRs) — the f32 accumulators write VGPRs
-> directly, which packs tighter than the default AGPR allocation. See
-> [parent compiler note](#running).
+> `warp_pipeline_stage` and run with **no AGPRs** — each kernel sets
+> `amdgpu-agpr-alloc=0,0` at launch via Triton's built-in `llvm_fn_attrs` option, so the
+> f32 accumulators write VGPRs directly, which packs tighter than the default AGPR
+> allocation.
 
 ## 1. Design comparison
 
@@ -48,7 +48,7 @@ ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
 | Step | TFLOPS | MFMA (per-SIMD) | Optimization |
 |---|---|---|---|
 | as-ported | 760 | ~72% | baseline: 2×-unroll, default backend (f32 accumulator allocated in AGPRs), original PID map |
-| + no-AGPR | 820 | 83.0% | `TRITON_HIP_AGPR_ALLOC="0,0"` forbids AGPRs so the gfx950 MFMAs write VGPRs directly; the unified register file packs tighter (256 VGPR + 16 spills → 212 VGPR / 0 spills) |
+| + no-AGPR | 820 | 83.0% | `llvm_fn_attrs=(("amdgpu-agpr-alloc","0,0"),)` forbids AGPRs so the gfx950 MFMAs write VGPRs directly; the unified register file packs tighter (256 VGPR + 16 spills → 212 VGPR / 0 spills) |
 | + 3× unroll | 839 | 83.7% | unroll = ring size (3) makes the LDS buffer indices compile-time constants `0,1,2`, removing the runtime `tile % 3` and wrap-around address math |
 | + v9 XCD remap | 909 | 85.2% | XCD-aware PID remap + `GROUP_SIZE_M` swizzle (from `common.py`) for L2 locality — cut measured VMEM latency substantially |
 | + relaxed `local_load` | ~915 | ~85% | each mem region reads `smem.index(k+1)` (LR) then writes `smem.index(k)` (AC) — same allocation, different ring index. The membar can't disambiguate `MemDescIndexOp` sub-buffers, so it inserts a redundant `lgkmcnt(0)`+`s_barrier`; `load_shared_relaxed` carries an async-wait token the AMD `membarFilter` skips |
@@ -85,7 +85,7 @@ Result @4096²×8192: **~1039 TFLOPS, ~99.8% loop MFMA, 242 VGPR / 0 spills** �
 
 ## 4. Performance
 
-MI350X, gfx950, 4096×4096, fp16, **no-AGPR** (`TRITON_HIP_AGPR_ALLOC="0,0"`), rocprof
+MI350X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), rocprof
 cold-rotating tensors:
 
 | K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff |
@@ -100,7 +100,7 @@ buffer-load stall); v1 climbs as the fixed prologue/epilogue cost amortizes.
 ### MI355X
 
 MI355X, gfx950, 4096×4096, fp16, rocprof cold-rotating (`--rotating-buffer-size 2048`).
-v0/v1 are **no-AGPR** (`TRITON_HIP_AGPR_ALLOC="0,0"`); the 4-wave `a16w16/v9` reference
+v0/v1 are **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`); the 4-wave `a16w16/v9` reference
 uses `schedule_hint="gemm-4waves, force-agpr"` + amdgcnas (`TRITON_ENABLE_AMDGCN_AS=1`):
 
 | K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff | v9 TFLOPS | v9 MFMA eff |
@@ -137,22 +137,22 @@ time, so the MFMA units stall waiting on memory (the gaps in the v0 lane).
 
 ```bash
 # correctness + do_bench TFLOPS
-TRITON_HIP_AGPR_ALLOC="0,0" python bench.py --version 1 --K 8192 --dtype fp16
+python bench.py --version 1 --K 8192 --dtype fp16
 
 # rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill
-TRITON_HIP_AGPR_ALLOC="0,0" python collect_perf.py --version 1 --K 8192 --dtype fp16
+python collect_perf.py --version 1 --K 8192 --dtype fp16
 
 # large K needs a bigger rotating buffer to stay cold (≥3 copies)
-TRITON_HIP_AGPR_ALLOC="0,0" python collect_perf.py --version 1 --K 32768 --dtype fp16 --rotating-buffer-size 2048
+python collect_perf.py --version 1 --K 32768 --dtype fp16 --rotating-buffer-size 2048
 ```
 
 `--version 0` selects `v0_BK32_nS3`, `--version 1` selects `v1_sliceMN_BK64_nS2`. Drop
 `--K` to sweep all sizes, `--dtype` to run fp16 + bf16. Clear `~/.triton/cache` after
 editing a kernel.
 
-The `TRITON_HIP_AGPR_ALLOC` env var is read by a small local hook in the AMD backend
-(`backends/amd/compiler.py`, `make_llir`); it is inert unless set and does **not**
-survive a Triton rebuild, so re-apply it after rebuilding Triton from source.
+The **no-AGPR** setting is baked into each kernel's launch via Triton's built-in
+`llvm_fn_attrs=(("amdgpu-agpr-alloc","0,0"),)` compile option — no env var or compiler
+patch needed, and it survives a Triton rebuild.
 
 ## 6. Files
 

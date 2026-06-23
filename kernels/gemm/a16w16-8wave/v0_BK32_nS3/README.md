@@ -13,7 +13,8 @@ v0_BK32_nS3/
 The tuned 8-wave baseline. Unlike the 4-wave `a16w16` tutorial kernels — which
 schedule the hot loop with the `llir+amdgcnas` toolchain — the 8-wave kernels
 schedule themselves at the **wave level** with `warp_pipeline_stage`, and run in
-plain "base" mode with **no AGPRs** (`TRITON_HIP_AGPR_ALLOC="0,0"`). See the
+plain "base" mode with **no AGPRs** (the kernel sets `amdgpu-agpr-alloc=0,0` via the
+`llvm_fn_attrs` launch option). See the
 [parent README](../README.md) for why the `llir+amdgcnas` path can't be used here
 (it is built around the 4-wave register/schedule model and fails register
 allocation at 8 waves).
@@ -91,10 +92,10 @@ MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR:
 
 ```bash
 # correctness + do_bench TFLOPS
-TRITON_HIP_AGPR_ALLOC="0,0" python ../bench.py --version 0 --K 8192 --dtype fp16
+python ../bench.py --version 0 --K 8192 --dtype fp16
 
 # rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill
-TRITON_HIP_AGPR_ALLOC="0,0" python ../collect_perf.py --version 0 --K 8192 --dtype fp16
+python ../collect_perf.py --version 0 --K 8192 --dtype fp16
 ```
 
 ## 5. What comes next

@@ -123,8 +123,8 @@ MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR:
 
 ```bash
 # correctness + do_bench TFLOPS
-TRITON_HIP_AGPR_ALLOC="0,0" python ../bench.py --version 1 --K 8192 --dtype fp16
+python ../bench.py --version 1 --K 8192 --dtype fp16
 
 # rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill
-TRITON_HIP_AGPR_ALLOC="0,0" python ../collect_perf.py --version 1 --K 8192 --dtype fp16
+python ../collect_perf.py --version 1 --K 8192 --dtype fp16
 ```

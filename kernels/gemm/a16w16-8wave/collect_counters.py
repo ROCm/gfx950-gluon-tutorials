@@ -36,8 +36,9 @@ Default counters answer "how long are the buffer_load / VMEM stalls":
   TCP_TCP_LATENCY_sum          total TCP wave latency
   TCP_TA_TCP_STATE_READ_sum    TCP reads             (avg wave lat = LATENCY/READ)
 
-Run with the no-AGPR config to match the current best kernel:
-  TRITON_HIP_AGPR_ALLOC="0,0" python collect_counters.py --version 0 --K 8192 --dtype fp16
+The kernels bake in the no-AGPR config (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
+so no env var is needed:
+  python collect_counters.py --version 0 --K 8192 --dtype fp16
 """
 
 import argparse
@@ -83,7 +84,7 @@ def main():
 
     print("=" * 70)
     print(f"VMEM-latency counters — {kernel_name}  K={args.K} {args.dtype}  version={args.version}")
-    print(f"AGPR alloc override: {os.environ.get('TRITON_HIP_AGPR_ALLOC', '(default)')}")
+    print("AGPR alloc: 0,0 (baked into kernel via llvm_fn_attrs)")
     print("=" * 70)
 
     clean_triton_cache()

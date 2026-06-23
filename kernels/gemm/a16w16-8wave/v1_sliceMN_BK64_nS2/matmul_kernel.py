@@ -299,6 +299,8 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
         WARPS_M=WARPS_M, WARPS_N=WARPS_N,
         GRID_MN=GRID_MN, NUM_XCDS=NUM_XCDS, GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=NUM_WARPS,
+        # Forbid AGPRs: f32 accumulators write VGPRs directly (packs tighter, no spills).
+        llvm_fn_attrs=(("amdgpu-agpr-alloc", "0,0"),),
     )
     return c
 
