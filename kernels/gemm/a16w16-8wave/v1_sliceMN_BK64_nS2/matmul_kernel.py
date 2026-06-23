@@ -226,11 +226,16 @@ def v1_sliceMN_BK64_nS2(
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([4, 8], [4, 16], [WARPS_M, WARPS_N], [1, 0])
     offs_cm = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
-    c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
-    c_tl_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
-    c_tr_offsets = c_tl_offsets + (BLOCK_N // 2) * stride_cn
-    c_bl_offsets = c_tl_offsets + (BLOCK_M // 2) * stride_cm
-    c_br_offsets = c_bl_offsets + (BLOCK_N // 2) * stride_cn
+    # Store-side pointer-walk: ONE shared within-quadrant offset tensor (all four
+    # [128x128] quadrants have identical internal structure) + four SCALAR base
+    # pointers. This keeps a single offset tensor (~32 VGPR) live in the epilogue
+    # instead of four (~128 VGPR), which is what was evicting the live f32
+    # accumulators to scratch.
+    c_quad_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_tl_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
+    c_bl_base = c_tl_base + (BLOCK_M // 2) * stride_cm
+    c_tr_base = c_tl_base + (BLOCK_N // 2) * stride_cn
+    c_br_base = c_bl_base + (BLOCK_N // 2) * stride_cn
 
     # iter iterMax-2
     acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
@@ -251,7 +256,11 @@ def v1_sliceMN_BK64_nS2(
     cdna4_async.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
-    # iter iterMax-1 + interleaved stores
+    # iter iterMax-1: complete ALL four accumulators FIRST, then convert + store.
+    # Finishing every mfma before the store phase lets the dot operands
+    # (a_top/a_bot/b_left/b_right, ~96 VGPR) die, so the store phase holds only the
+    # four f32 accumulators (+ one in-flight convert) -> the accumulators no longer
+    # get evicted to scratch.
     acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
     cdna4_async.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
@@ -260,19 +269,17 @@ def v1_sliceMN_BK64_nS2(
     cdna4_async.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
-    c_tl = gl.convert_layout(acc_tl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
-    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
-
     acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
-    c_bl = gl.convert_layout(acc_bl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
-    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
-
     acc_br = mfma_cdna4(a_bot, b_right, acc_br)
-    c_tr = gl.convert_layout(acc_tr.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
-    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
+    c_tl = gl.convert_layout(acc_tl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_tl_base, offsets=c_quad_offsets, stored_value=c_tl)
+    c_bl = gl.convert_layout(acc_bl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_bl_base, offsets=c_quad_offsets, stored_value=c_bl)
+    c_tr = gl.convert_layout(acc_tr.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_tr_base, offsets=c_quad_offsets, stored_value=c_tr)
     c_br = gl.convert_layout(acc_br.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
-    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
+    gl.amd.cdna4.buffer_store(ptr=c_br_base, offsets=c_quad_offsets, stored_value=c_br)
 
 
 def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
