@@ -10,8 +10,10 @@ subdirs and are selected with `--version`, mirroring `a16w16/v0_naive … v9_bey
 
 | `--version` | dir | summary |
 |---|---|---|
-| `0` (default) | `v0_BK32_nS3/` | Tuned baseline: BLOCK_K=32, **3-buffer** ring (3×-unrolled), relaxed local_load + v9-style pointer-walk base/offset, v9 XCD PID remap, no-AGPR. |
-| `1` | `v1_sliceMN_BK64_nS2/` | **Development scaffold** (currently a verbatim copy of v0). Target: M/N quadrant slicing (à la `a16w16/v8_sliceMN`), BLOCK_K=64, **2-buffer** ring. See its module docstring for the TODO. |
+| `0` (default) | [`v0_BK32_nS3/`](v0_BK32_nS3/README.md) | Tuned baseline: BLOCK_K=32, **3-buffer** ring (3×-unrolled), relaxed local_load + v9-style pointer-walk base/offset, v9 XCD PID remap, no-AGPR. ~912 TFLOPS. |
+| `1` | [`v1_sliceMN_BK64_nS2/`](v1_sliceMN_BK64_nS2/README.md) | M/N quadrant slicing (à la `a16w16/v8_sliceMN`), BLOCK_K=64, **2-buffer**, four separate per-quadrant LDS allocs (non-relaxed loads, no membar barrier), 0 spills. **~1039 TFLOPS** (+14% over v0). |
+
+Each version subdir has its own README with the design rationale and perf.
 
 ## How it differs from the 4-wave tutorial kernels (`a16w16/`)
 
@@ -53,18 +55,22 @@ TRITON_HIP_AGPR_ALLOC="0,0" python bench.py --version 0 --K 8192 --dtype fp16
 TRITON_HIP_AGPR_ALLOC="0,0" python collect_perf.py --version 0 --K 8192 --dtype fp16
 ```
 
-## v0 perf (MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR)
+## Perf (MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR)
 
-| Metric | Value |
-|---|---|
-| Correctness vs torch | ✅ PASS |
-| rocprof TFLOPS (cold, rotating) | ~912 |
-| MFMA efficiency (per-SIMD, ATT) | ~85% warm / ~83% cold |
-| VGPRs / spills | 188 / 0 |
+| Version | rocprof TFLOPS (cold, rotating) | MFMA eff (per-SIMD) | VGPRs / spills | Correct |
+|---|---|---|---|---|
+| `v0_BK32_nS3` | ~912 | ~85% warm / ~83% cold | 188 / 0 | ✅ |
+| `v1_sliceMN_BK64_nS2` | **~1039** | ~99.8% loop / ~94% whole-kernel | 242 / 0 | ✅ |
+
+Correctness verified for K 512…16384, fp16 and bf16. See each version's README for
+the design rationale and a full breakdown.
 
 > [!NOTE]
 > **MFMA efficiency for an 8-wave kernel.** `process_json.py` reports a **single
 > wave's** MFMA-cycle fraction. The tutorial metric is *per SIMD*; the 4-wave
 > kernels run 1 wave/SIMD so the two coincide (v9 ≈ 98%). These kernels run
 > **2 waves/SIMD**, so per-SIMD utilization ≈ 2× the per-wave number reported by
-> `process_json` (the two co-resident waves interleave MFMA issue).
+> `process_json` (the two co-resident waves interleave MFMA issue). The reported
+> figure is **loop-only**; v1's prologue/epilogue carry no MFMA, so its
+> whole-kernel efficiency (~94% at K=8192) is lower than the ~99.8% loop number
+> and improves as K grows and the epilogue amortizes.
