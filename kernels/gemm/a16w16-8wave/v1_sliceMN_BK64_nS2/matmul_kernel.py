@@ -2,41 +2,18 @@
 # MIT License
 #
 # Copyright (c) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
 ##############################################################################
 
 """
-v1_sliceMN_BK64_nS2 -- 8-wave warp-pipeline GEMM (DEVELOPMENT SCAFFOLD).
+v1_sliceMN_BK64_nS2 -- 8-wave warp-pipeline GEMM, M/N-sliced.
 
->>> Currently a verbatim copy of v0_BK32_nS3 (relaxed loads, BLOCK_K=32, 3-buffer
->>> ring). It RUNS and is correct as-is -- the starting point for the v1 variant.
->>> TODO to reach the target config encoded in the name:
-
-  sliceMN : split the 256x256 C tile into 4x [128x128] quadrants + 4 separate
-            MFMAs (a la a16w16 v8_sliceMN / v9_beyond_hotloop), each quadrant in
-            its OWN LDS allocation (smemA_top/bot, smemB_left/right). Side benefit:
-            the membar can then disambiguate the LR/GR buffers, so the relaxed
-            hint is no longer needed to drop the lgkmcnt(0)+s_barrier.
-  BK64    : BLOCK_K = 64 (from 32) -- re-tune the A/B async + operand layouts.
-  nS2     : 2-buffer LDS ring (from 3) -- 2x-unroll the K loop (from 3x); rework
-            the prologue / steady-state / tail to match.
+BLOCK 256x256x64. The C tile is sliced into 4x [128x128] quadrants
+(C_tl/C_bl/C_tr/C_br = A_t/A_b x B_l/B_r), each its OWN double-buffered LDS
+allocation (smemA_top/bot, smemB_left/right) -- so the membar disambiguates the
+LR/GR buffers and non-relaxed smem.load() carries no extra barrier. K loop is
+unrolled 2x. This file is STEP 1: the sliceMN structure + 8-wave layouts copied
+from a16w16/v9 (with the warp dim extended 4->8), validated for correctness
+before the warp_pipeline_stage wrapping is added.
 """
 
 import torch
@@ -44,28 +21,24 @@ import triton
 import triton.language as tl
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
-from triton.experimental.gluon.language.amd import warp_pipeline_stage
 from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
+from triton.experimental.gluon.language.amd import warp_pipeline_stage
 
-from common import get_pids, store_result
+from common import get_pids
 
 BLOCK_M = 256
 BLOCK_N = 256
-BLOCK_K = 32
+BLOCK_K = 64
 
 NUM_WARPS = 8
 WARPS_M = 2
 WARPS_N = 4
 
-# L2-locality PID mapping — copied from v9 (get_pids): XCD-aware remap +
-# GROUP_SIZE_M swizzle. v9's optimal GROUP_SIZE_M for P=32 tiles/XCD is 4.
 NUM_XCDS = 8
 GROUP_SIZE_M = 4
 
-MIN_K = 5 * BLOCK_K
-
-# kernel function name — used as the rocprof/ATT include-regex (distinct from 2x)
+MIN_K = 4 * BLOCK_K
 KERNEL_NAME = "v1_sliceMN_BK64_nS2"
 
 
@@ -80,256 +53,244 @@ def v1_sliceMN_BK64_nS2(
     WARPS_M: gl.constexpr, WARPS_N: gl.constexpr,  #
     GRID_MN: gl.constexpr, NUM_XCDS: gl.constexpr, GROUP_SIZE_M: gl.constexpr,
 ):
-    """3-buffer pipelined GEMM, 3x-unrolled (constant buffer indices)."""
-    a_dtype: gl.constexpr = a_ptr.type.element_ty
-    b_dtype: gl.constexpr = b_ptr.type.element_ty
-    c_dtype: gl.constexpr = c_ptr.type.element_ty
-    gl.static_assert(a_dtype.is_fp16() or a_dtype.is_bf16(), "Only fp16/bf16 supported for A")
-    gl.static_assert(b_dtype.is_fp16() or b_dtype.is_bf16(), "Only fp16/bf16 supported for B")
-    gl.static_assert(c_dtype.is_fp16() or c_dtype.is_bf16(), "Only fp16/bf16 supported for C")
-
-    gl.assume(stride_am >= 0)
-    gl.assume(stride_ak >= 0)
-    gl.assume(stride_bk >= 0)
-    gl.assume(stride_bn >= 0)
-    gl.assume(stride_cm >= 0)
-    gl.assume(stride_cn >= 0)
-
-    # XCD-aware PID remapping + GROUP_SIZE_M swizzle (v9 scheme, active at all sizes).
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
-    MMA_LAYOUT: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 32], transposed=True,
-        warps_per_cta=[WARPS_M, WARPS_N],
-    )
-    OPERAND_LAYOUT_A: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=MMA_LAYOUT, k_width=8)
-    OPERAND_LAYOUT_B: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=MMA_LAYOUT, k_width=8)
-
-    A_ASYNC_LAYOUT: gl.constexpr = gl.DistributedLinearLayout(
+    # ---- 8-wave global-load layouts (v9 4-wave + 1 extra warp dim) ----
+    # A half-M tile [BLOCK_M//2, BLOCK_K] = [128, 64]; warps tile M (3 bits = 8 warps).
+    gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
         reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
-        lane_bases=[[0, 8], [0, 16], [16, 0], [32, 0], [64, 0], [128, 0]],
+        lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [64, 0]],
         warp_bases=[[1, 0], [2, 0], [4, 0]],
         block_bases=[],
-        shape=[BLOCK_M, BLOCK_K],
+        shape=[BLOCK_M // 2, BLOCK_K],
     )
-
-    B_ASYNC_LAYOUT: gl.constexpr = gl.DistributedLinearLayout(
+    # B half-N tile [BLOCK_K, BLOCK_N//2] = [64, 128]; warps tile N (3 bits = 8 warps).
+    gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
         reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
-        lane_bases=[[8, 0], [16, 0], [0, 16], [0, 32], [0, 64], [0, 128]],
+        lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 64]],
         warp_bases=[[0, 1], [0, 2], [0, 4]],
         block_bases=[],
-        shape=[BLOCK_K, BLOCK_N],
+        shape=[BLOCK_K, BLOCK_N // 2],
     )
 
-    SHARED_LAYOUT_A: gl.constexpr = gl.PaddedSharedLayout(
+    # ---- padded shared layouts (storage pattern; warp-independent, reused from v9) ----
+    sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
         [[512, 16]],
-        [
-            [0, 1], [0, 2], [0, 4], [0, 8], [0, 16],
-            [16, 0], [32, 0], [64, 0], [128, 0],
-            [1, 0], [2, 0], [4, 0],
-            [8, 0],
-        ],
-        [],
-        [BLOCK_M, BLOCK_K],
+        [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32],
+         [16, 0], [32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0]],
+        [], [BLOCK_M // 2, BLOCK_K],
     )
-
-    SHARED_LAYOUT_B: gl.constexpr = gl.PaddedSharedLayout(
+    sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
         [[512, 16]],
-        [
-            [1, 0], [2, 0], [4, 0], [8, 0], [16, 0],
-            [0, 16], [0, 32], [0, 64], [0, 128],
-            [0, 1], [0, 2], [0, 4],
-            [0, 8],
-        ],
-        [],
-        [BLOCK_K, BLOCK_N],
+        [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0],
+         [0, 16], [0, 32], [0, 64], [0, 1], [0, 2], [0, 4], [0, 8]],
+        [], [BLOCK_K, BLOCK_N // 2],
     )
 
-    STORE_LAYOUT_C: gl.constexpr = gl.BlockedLayout(
-        [16, 8], [8, 8], [WARPS_M, WARPS_N], [1, 0]
+    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[WARPS_M, WARPS_N],
     )
+    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
+    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
-    a_base = a_ptr + (pid_m * BLOCK_M) * stride_am
-    b_base = b_ptr + (pid_n * BLOCK_N) * stride_bn
+    nBuffers: gl.constexpr = 2
+    smemA_top = gl.allocate_shared_memory(a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA)
+    smemA_bot = gl.allocate_shared_memory(a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA)
+    smemB_left = gl.allocate_shared_memory(b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB)
+    smemB_right = gl.allocate_shared_memory(b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB)
 
-    # Async-load offsets for the 3 tiles of a triple, precomputed once (K = 0,1,2
-    # relative to the running base). The 3 mem regions of an unrolled iteration
-    # all use the SAME a_base/b_base with these distinct offsets; the base is then
-    # advanced by one triple (a_kstep/b_kstep) at the end of the iteration. This
-    # is the a16w16/v9 pointer-walk style (no per-call base arithmetic).
-    offs_am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, A_ASYNC_LAYOUT))
-    offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, A_ASYNC_LAYOUT))
-    offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, B_ASYNC_LAYOUT))
-    offs_bn = gl.arange(0, BLOCK_N, gl.SliceLayout(0, B_ASYNC_LAYOUT))
-    a_offs0 = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
-    a_offs1 = a_offs0 + BLOCK_K * stride_ak
-    a_offs2 = a_offs0 + 2 * BLOCK_K * stride_ak
-    b_offs0 = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
-    b_offs1 = b_offs0 + BLOCK_K * stride_bk
-    b_offs2 = b_offs0 + 2 * BLOCK_K * stride_bk
-    a_kstep = 3 * BLOCK_K * stride_ak
-    b_kstep = 3 * BLOCK_K * stride_bk
+    offs_am = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gLoadLayoutA))
+    offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, gLoadLayoutA))
+    offs_bn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gLoadLayoutB))
+    offs_bk = gl.arange(0, BLOCK_K, gl.SliceLayout(1, gLoadLayoutB))
 
-    smemA = gl.allocate_shared_memory(a_dtype, [3, BLOCK_M, BLOCK_K], SHARED_LAYOUT_A)
-    smemB = gl.allocate_shared_memory(b_dtype, [3, BLOCK_K, BLOCK_N], SHARED_LAYOUT_B)
+    a_base = a_ptr + pid_m * BLOCK_M * stride_am
+    b_base = b_ptr + pid_n * BLOCK_N * stride_bn
 
-    acc = gl.zeros((BLOCK_M, BLOCK_N), gl.float32, MMA_LAYOUT)
+    a_top_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    a_bot_offsets = a_top_offsets + (BLOCK_M // 2) * stride_am
+    b_left_offsets = offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+    b_right_offsets = b_left_offsets + (BLOCK_N // 2) * stride_bn
 
-    num_k_tiles = gl.cdiv(K, BLOCK_K)
+    a_top_offsets_next = a_top_offsets + BLOCK_K * stride_ak
+    a_bot_offsets_next = a_bot_offsets + BLOCK_K * stride_ak
+    b_left_offsets_next = b_left_offsets + BLOCK_K * stride_bk
+    b_right_offsets_next = b_right_offsets + BLOCK_K * stride_bk
 
-    # Prologue: load tiles 0,1,2 into buffers 0,1,2 (6 commit groups).
-    cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
+    acc_tl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
+    acc_bl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
+    acc_tr = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
+    acc_br = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
+
+    iterMax = gl.cdiv(K, BLOCK_K)
+
+    # ---- Prologue: prefetch K-steps 0,1 into buffers 0,1 (8 commits) ----
+    cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
+    cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_top_offsets)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
+    cdna4_async.buffer_load_to_shared(smemA_bot.index(0), a_base, a_bot_offsets)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
+    cdna4_async.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
     cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemA.index(2), a_base, a_offs2)
-    cdna4_async.commit_group()
-    cdna4_async.buffer_load_to_shared(smemB.index(2), b_base, b_offs2)
-    cdna4_async.commit_group()
-    # Advance the base past the 3 prologue tiles so the loop reuses a/b_offs{0,1,2}.
-    a_base += a_kstep
-    b_base += b_kstep
 
-    # Wait for tile 0 (6 issued, wait_group(4) => 2 done = tile 0)
+    cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
+    cdna4_async.commit_group()
+    cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base, a_top_offsets_next)
+    cdna4_async.commit_group()
+    cdna4_async.buffer_load_to_shared(smemA_bot.index(1), a_base, a_bot_offsets_next)
+    cdna4_async.commit_group()
+    cdna4_async.buffer_load_to_shared(smemB_right.index(1), b_base, b_right_offsets_next)
+    cdna4_async.commit_group()
+
+    a_base += BLOCK_K * stride_ak * 2
+    b_base += BLOCK_K * stride_bk * 2
+
+    cdna4_async.wait_group(6)
+    b_left = smemB_left.index(0).load(dotOpLayoutB)
+    a_top = smemA_top.index(0).load(dotOpLayoutA)
+
+    gl.assume(iterMax > 3)
+
+    # ---- Main loop (2x unrolled): 8 (mfma + LR + AC) regions ----
+    for k in tl.range(0, iterMax - 2, 2):
+        # --- sub-iter 0 (buffer 0) ---
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
+        with warp_pipeline_stage("mem", priority=1):
+            a_bot = smemA_bot.index(0).load(dotOpLayoutA)
+            cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
+        with warp_pipeline_stage("mem", priority=1):
+            b_right = smemB_right.index(0).load(dotOpLayoutB)
+            cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_top_offsets)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
+        with warp_pipeline_stage("mem", priority=1):
+            b_left = smemB_left.index(1).load(dotOpLayoutB)
+            cdna4_async.buffer_load_to_shared(smemA_bot.index(0), a_base, a_bot_offsets)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_br = mfma_cdna4(a_bot, b_right, acc_br)
+        with warp_pipeline_stage("mem", priority=1):
+            a_top = smemA_top.index(1).load(dotOpLayoutA)
+            cdna4_async.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
+            cdna4_async.commit_group()
+
+        # --- sub-iter 1 (buffer 1, _next offsets) ---
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
+        with warp_pipeline_stage("mem", priority=1):
+            a_bot = smemA_bot.index(1).load(dotOpLayoutA)
+            cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
+        with warp_pipeline_stage("mem", priority=1):
+            b_right = smemB_right.index(1).load(dotOpLayoutB)
+            cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base, a_top_offsets_next)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
+        with warp_pipeline_stage("mem", priority=1):
+            b_left = smemB_left.index(0).load(dotOpLayoutB)
+            cdna4_async.buffer_load_to_shared(smemA_bot.index(1), a_base, a_bot_offsets_next)
+            cdna4_async.commit_group()
+
+        cdna4_async.wait_group(5)
+        with warp_pipeline_stage("mfma", priority=0):
+            acc_br = mfma_cdna4(a_bot, b_right, acc_br)
+        with warp_pipeline_stage("mem", priority=1):
+            a_top = smemA_top.index(0).load(dotOpLayoutA)
+            cdna4_async.buffer_load_to_shared(smemB_right.index(1), b_base, b_right_offsets_next)
+            cdna4_async.commit_group()
+            a_base += BLOCK_K * stride_ak * 2
+            b_base += BLOCK_K * stride_bk * 2
+
+    # ---- Epilogue: last 2 K-steps, drain, 4-quadrant store ----
+    gStoreLayoutC: gl.constexpr = gl.BlockedLayout([4, 8], [4, 16], [WARPS_M, WARPS_N], [1, 0])
+    offs_cm = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gStoreLayoutC))
+    offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
+    c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
+    c_tl_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_tr_offsets = c_tl_offsets + (BLOCK_N // 2) * stride_cn
+    c_bl_offsets = c_tl_offsets + (BLOCK_M // 2) * stride_cm
+    c_br_offsets = c_bl_offsets + (BLOCK_N // 2) * stride_cn
+
+    # iter iterMax-2
+    acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
+    cdna4_async.wait_group(5)
+    l_idx = (iterMax - 2) % 2
+    a_bot = smemA_bot.index(l_idx).load(dotOpLayoutA)
+
+    acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
     cdna4_async.wait_group(4)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
+    b_right = smemB_right.index(l_idx).load(dotOpLayoutB)
 
-    # Main loop: 3x unrolled. Buffer indices are the literal constants 0,1,2 in
-    # every step, so no `tile % 3` arithmetic survives in the loop body.
-    main_loop_triples = (num_k_tiles - 3) // 3
+    acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
+    cdna4_async.wait_group(3)
+    g_idx = 1 - l_idx
+    b_left = smemB_left.index(g_idx).load(dotOpLayoutB)
 
-    for triple_idx in tl.range(0, main_loop_triples):
-        # wait_group(2) is the FIRST op in the loop body (no loop-index arith
-        # precedes it now), so it lands at an empty pipeline-cluster boundary and
-        # WarpPipeliner does not reject (an async-wait met mid-cluster would
-        # silently disable the warp-pipeline). The 3 mem regions all prefetch off
-        # the SAME a_base/b_base with the distinct precomputed offsets
-        # a/b_offs{0,1,2}; the base advances by one triple (a_kstep/b_kstep) in
-        # step 2 -- the a16w16/v9 pointer-walk style.
-        #
-        # Correctness-critical ordering (per step): wait_group(2) precedes the
-        # mfma region, and each shared load (LR) precedes its global prefetch
-        # (GR). The per-iteration s_barrier syncs only wave EXECUTION, not the
-        # async GR memory, so draining the GR vmcnt ahead of the mfma guarantees
-        # an LDS tile's filling copy has landed before any wave consumes it.
-        # Loads use load_shared_relaxed: its async-wait token lets the AMD membar
-        # filter skip the redundant lgkmcnt(0)+s_barrier between LR and GR (the
-        # membar can't disambiguate smemA.index() sub-buffers; non-relaxed pays it).
+    acc_br = mfma_cdna4(a_bot, b_right, acc_br)
+    cdna4_async.wait_group(2)
+    a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
-        # Step 0: process the triple's tile 0 (buffer 0); prefetch buffer 0.
-        cdna4_async.wait_group(2)
-        with warp_pipeline_stage("mfma", priority=0):
-            acc = mfma_cdna4(a_regs, b_regs, acc)
-        with warp_pipeline_stage("mem", priority=1):
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
-            cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
-            cdna4_async.commit_group()
+    # iter iterMax-1 + interleaved stores
+    acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
+    cdna4_async.wait_group(1)
+    a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
-        # Step 1: process the triple's tile 1 (buffer 1); prefetch buffer 1.
-        cdna4_async.wait_group(2)
-        with warp_pipeline_stage("mfma", priority=0):
-            acc = mfma_cdna4(a_regs, b_regs, acc)
-        with warp_pipeline_stage("mem", priority=1):
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
-            cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
-            cdna4_async.commit_group()
-
-        # Step 2: process the triple's tile 2 (buffer 2); prefetch buffer 2, then
-        # advance the base by one triple so the next iteration reuses the offsets.
-        cdna4_async.wait_group(2)
-        with warp_pipeline_stage("mfma", priority=0):
-            acc = mfma_cdna4(a_regs, b_regs, acc)
-        with warp_pipeline_stage("mem", priority=1):
-            # Next iteration's first tile lands in buffer 0.
-            a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-            b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
-            cdna4_async.buffer_load_to_shared(smemA.index(2), a_base, a_offs2)
-            cdna4_async.commit_group()
-            cdna4_async.buffer_load_to_shared(smemB.index(2), b_base, b_offs2)
-            cdna4_async.commit_group()
-            a_base += a_kstep
-            b_base += b_kstep
-
-    # Tail: tiles_processed is a multiple of 3, so tiles_processed,{+1,+2} are
-    # resident in buffers 0,1,2; a_regs/b_regs already hold tile tiles_processed.
-    tiles_processed = main_loop_triples * 3
-    tiles_remaining = num_k_tiles - tiles_processed  # 3, 4, or 5
-
-    # Tail tile 0 (buffer 0, already in regs)
-    acc = mfma_cdna4(a_regs, b_regs, acc)
+    acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
     cdna4_async.wait_group(0)
+    b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
-    # Tail tile 1 (buffer 1)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
-    acc = mfma_cdna4(a_regs, b_regs, acc)
+    c_tl = gl.convert_layout(acc_tl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
-    # Tail tile 2 (buffer 2)
-    a_regs = cdna4_async.load_shared_relaxed(smemA.index(2), OPERAND_LAYOUT_A)
-    b_regs = cdna4_async.load_shared_relaxed(smemB.index(2), OPERAND_LAYOUT_B)
-    acc = mfma_cdna4(a_regs, b_regs, acc)
+    acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
+    c_bl = gl.convert_layout(acc_bl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
 
-    # Extra tile tiles_processed+3 (buffer 0) when num_k_tiles % 3 != 0
-    if tiles_remaining > 3:
-        cdna4_async.buffer_load_to_shared(smemA.index(0), a_base, a_offs0)
-        cdna4_async.commit_group()
-        cdna4_async.buffer_load_to_shared(smemB.index(0), b_base, b_offs0)
-        cdna4_async.commit_group()
-        cdna4_async.wait_group(0)
-        a_regs = cdna4_async.load_shared_relaxed(smemA.index(0), OPERAND_LAYOUT_A)
-        b_regs = cdna4_async.load_shared_relaxed(smemB.index(0), OPERAND_LAYOUT_B)
-        acc = mfma_cdna4(a_regs, b_regs, acc)
+    acc_br = mfma_cdna4(a_bot, b_right, acc_br)
+    c_tr = gl.convert_layout(acc_tr.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_tr_offsets, stored_value=c_tr)
 
-    # Extra tile tiles_processed+4 (buffer 1) when num_k_tiles % 3 == 2
-    if tiles_remaining > 4:
-        cdna4_async.buffer_load_to_shared(smemA.index(1), a_base, a_offs1)
-        cdna4_async.commit_group()
-        cdna4_async.buffer_load_to_shared(smemB.index(1), b_base, b_offs1)
-        cdna4_async.commit_group()
-        cdna4_async.wait_group(0)
-        a_regs = cdna4_async.load_shared_relaxed(smemA.index(1), OPERAND_LAYOUT_A)
-        b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
-        acc = mfma_cdna4(a_regs, b_regs, acc)
-
-    store_result(acc, c_ptr, c_dtype, pid_m, pid_n, M, N,
-                 stride_cm, stride_cn, BLOCK_M, BLOCK_N, STORE_LAYOUT_C)
+    c_br = gl.convert_layout(acc_br.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
+    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
 
 
 def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-    """Kernel-only entry (b_t pre-transposed (N,K) contiguous, c pre-allocated)."""
+    """Kernel-only entry (b_t pre-transposed (N,K) contiguous, c pre-allocated).
+    The kernel sees B as logical (K,N) with K contiguous via the strides below."""
     M, K = a.shape
     N = b_t.shape[0]
-
     grid_m = triton.cdiv(M, BLOCK_M)
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
-    grid = (GRID_MN,)
-
-    v1_sliceMN_BK64_nS2[grid](
-        a, b_t, c,
-        M, N, K,
+    v1_sliceMN_BK64_nS2[(GRID_MN,)](
+        a, b_t, c, M, N, K,
         a.stride(0), a.stride(1),
-        b_t.stride(1), b_t.stride(0),
+        b_t.stride(1), b_t.stride(0),   # stride_bk=1 (K contiguous), stride_bn=K
         c.stride(0), c.stride(1),
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        BLOCK_K=BLOCK_K,
-        WARPS_M=WARPS_M,
-        WARPS_N=WARPS_N,
-        GRID_MN=GRID_MN,
-        NUM_XCDS=NUM_XCDS,
-        GROUP_SIZE_M=GROUP_SIZE_M,
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
+        WARPS_M=WARPS_M, WARPS_N=WARPS_N,
+        GRID_MN=GRID_MN, NUM_XCDS=NUM_XCDS, GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=NUM_WARPS,
     )
     return c
@@ -337,19 +298,10 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
 
 def matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor = None) -> torch.Tensor:
     """C = A @ B. `b` is (K, N); transposed to (N, K) contiguous for the kernel."""
-    assert a.ndim == 2 and b.ndim == 2
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
-    assert a.dtype in (torch.float16, torch.bfloat16) and b.dtype == a.dtype
-    assert a.is_cuda and b.is_cuda
-
     M, K = a.shape
     N = b.shape[1]
-
-    num_k_tiles = triton.cdiv(K, BLOCK_K)
-    assert num_k_tiles >= 5, f"K={K} too small (need K >= {MIN_K})"
-
     b_t = b.t().contiguous()
     if c is None:
         c = torch.empty((M, N), device=a.device, dtype=a.dtype)
-
     return matmul_kernel_only(a, b_t, c)
