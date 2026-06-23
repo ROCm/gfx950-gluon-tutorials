@@ -69,7 +69,7 @@ the async copy.
 
 <table>
 <tr>
-<td><img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="300"></td>
+<td><img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="480"></td>
 <td>
 
 The 8 mfma regions and 8 mem regions are interleaved across the two co-resident wave
