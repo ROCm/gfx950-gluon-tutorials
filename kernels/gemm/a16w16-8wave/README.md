@@ -38,24 +38,16 @@ accumulator from a triple-buffered ring; v1 borrows v9's four-quadrant slicing.
 `v0` is a port of
 [`f16_gemm_warp_pipeline_gfx950.py`](https://github.com/AMD-Triton/gluon-kernels/blob/main/kernels/cdna4/gemm/f16_gemm_warp_pipeline_gfx950.py)
 into the tutorial layout, so the tutorial's `bench.py` / `collect_perf.py` rocprof +
-ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave). Four
-fixes brought it to a tuned baseline:
+ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
+~72% per-SIMD). The fix progression (rocprof cold-rotating, 4096²×8192 fp16):
 
-1. **No AGPRs** (`TRITON_HIP_AGPR_ALLOC="0,0"`). The default backend placed the f32
-   accumulator in AGPRs (128 AGPR + 256 VGPR + spills). Forbidding AGPRs lets the
-   gfx950 MFMAs write VGPRs directly and packs the unified file tighter (→ 0 spills).
-   *MFMA 72% → 83%.*
-2. **3× unroll** (= ring size). Coprime `2×`-unroll over a 3-buffer ring left a
-   runtime `tile % 3` and wrap-around address math in the loop; unrolling by 3 makes
-   the buffer indices compile-time constants `0,1,2` and removes it. *MFMA → 83.7%.*
-3. **Relaxed `local_load`.** In each mem region the kernel reads `smem.index(k+1)`
-   (LR) then writes `smem.index(k)` (AC) — the **same allocation**, different ring
-   index. Triton's membar analysis can't disambiguate `MemDescIndexOp` sub-buffers,
-   so it inserts a redundant `lgkmcnt(0)` + `s_barrier` between them.
-   `cdna4_async.load_shared_relaxed` carries an async-wait token the AMD
-   `membarFilter` recognizes and skips the barrier for. *MFMA → 85%.*
-4. **XCD-aware PID remap + `GROUP_SIZE_M` swizzle** (v9-style, from `common.py`) for
-   L2 locality — cut measured VMEM latency substantially.
+| Step | TFLOPS | MFMA (per-SIMD) | Optimization |
+|---|---|---|---|
+| as-ported | 760 | ~72% | baseline: 2×-unroll, default backend (f32 accumulator allocated in AGPRs), original PID map |
+| + no-AGPR | 820 | 83.0% | `TRITON_HIP_AGPR_ALLOC="0,0"` forbids AGPRs so the gfx950 MFMAs write VGPRs directly; the unified register file packs tighter (256 VGPR + 16 spills → 212 VGPR / 0 spills) |
+| + 3× unroll | 839 | 83.7% | unroll = ring size (3) makes the LDS buffer indices compile-time constants `0,1,2`, removing the runtime `tile % 3` and wrap-around address math |
+| + v9 XCD remap | 909 | 85.2% | XCD-aware PID remap + `GROUP_SIZE_M` swizzle (from `common.py`) for L2 locality — cut measured VMEM latency substantially |
+| + relaxed `local_load` | ~915 | ~85% | each mem region reads `smem.index(k+1)` (LR) then writes `smem.index(k)` (AC) — same allocation, different ring index. The membar can't disambiguate `MemDescIndexOp` sub-buffers, so it inserts a redundant `lgkmcnt(0)`+`s_barrier`; `load_shared_relaxed` carries an async-wait token the AMD `membarFilter` skips |
 
 Result @4096²×8192: **~915 TFLOPS, ~85% loop MFMA, 188 VGPR / 0 spills**. Because the
 single triple-buffered ring covers the full 256×256 tile, its `buffer_load`s cluster
