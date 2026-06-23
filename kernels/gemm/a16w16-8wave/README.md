@@ -124,6 +124,15 @@ the unchanged memory latency, idling the units a larger fraction of the loop).
 > *whole-kernel* efficiency is lower (~94% at K=8192) and converges toward the loop
 > number as K grows.
 
+### Trace (MI355X, K=8192)
+
+![v0 / v1 / v9 ATT trace on MI355X](images/v0_v1_v9_trace_mi355.png)
+
+ATT timelines for v0, v1, and v9 at 4096²×8192 on MI355X. **v1 and v9 both reach very
+high MFMA utilization** — near-solid MFMA issue, with the loads hidden behind compute.
+**v0 is bound by HBM latency**: its full-tile triple-ring clusters the `buffer_load`s in
+time, so the MFMA units stall waiting on memory (the gaps in the v0 lane).
+
 ## 5. Running
 
 ```bash
