@@ -67,6 +67,22 @@ shared / dot-operand / MFMA layouts are reused unchanged. B is pre-transposed to
 `(N, K)` and fed as a logical `(K, N)` operand via strides, so K is contiguous for
 the async copy.
 
+<table>
+<tr>
+<td><img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="300"></td>
+<td>
+
+The 8 mfma regions and 8 mem regions are interleaved across the two co-resident wave
+groups (**ping-pong**) via `warp_pipeline_stage`: one wave group's MFMAs issue while the
+other group's loads are in flight, then they swap. Each region's `wait_group(5)` drains
+the async copy whose data the upcoming load needs, so the load → MFMA dependency is
+satisfied without stalling the issue pipe. The figure (left) shows the full unrolled
+schedule — 8 mfma / 8 mem regions over the four quadrants × 2 buffers.
+
+</td>
+</tr>
+</table>
+
 ## 4. Epilogue: register pressure and the spill fix
 
 At 8 waves there are **2 waves/SIMD**, so the per-wave budget is 256 VGPR. The
