@@ -5,6 +5,10 @@ Two versions are selected with `--version`, mirroring the `a16w16/v0_naive …
 v9_beyond_hotloop` layout. Both schedule the hot loop at the **wave level** with
 `warp_pipeline_stage`, and run with **no AGPRs**.
 
+> For the theory behind `warp_pipeline_stage` — the phase-shifted, two-group
+> schedule, why it raises MFMA utilization, and the barrier/membar rules these
+> kernels follow — see [`docs/warp_pipelining.md`](../../../docs/warp_pipelining.md).
+
 > [!IMPORTANT]
 > The 4-wave `llir+amdgcnas` toolchain (`TRITON_ENABLE_LLIR_SCHED` /
 > `TRITON_ENABLE_AMDGCN_AS`) is built around the 4-wave register/schedule model and
