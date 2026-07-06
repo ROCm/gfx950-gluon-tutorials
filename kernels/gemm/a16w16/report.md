@@ -7,11 +7,11 @@ its benefit depends on forcing MFMA accumulators into AGPRs? We sweep
 `v8_sliceMN` kernels, comparing three configs:
 
 - **`base`** — stock compile, scheduler off.
-- **`llir`** — `schedule_hint="gemm-4waves"`: the LLIR scheduler runs and LLVM's
+- **`llir`** — `schedule_hint="mfma-mem-interleave"`: the LLIR scheduler runs and LLVM's
   machine schedulers are disabled (so the schedule survives codegen), but
   **register allocation is left at the backend default** (no AGPR forcing). This
-  is the default behavior after the `gemm-4waves`/`force-agpr` split.
-- **`+agpr`** — `schedule_hint="gemm-4waves, force-agpr"`: same scheduler, plus
+  is the default behavior after the `mfma-mem-interleave`/`force-agpr` split.
+- **`+agpr`** — `schedule_hint="mfma-mem-interleave, force-agpr"`: same scheduler, plus
   forcing MFMA accumulators into AGPR form (`amdgpu-agpr-alloc=256` +
   `amdgpu-mfma-vgpr-form=0`). This is what the `llir` column meant in the
   earlier version of this report.
@@ -244,7 +244,7 @@ v7 pulls clearly ahead at 128×256 (`+agpr` v7 1156 vs v8 1038, +11%) and 128×1
 ## Conclusions
 
 1. **The scheduler applies successfully at every tile in every config**
-   (`sched? = YES`): the `gemm-4waves`/`force-agpr` split changes only register
+   (`sched? = YES`): the `mfma-mem-interleave`/`force-agpr` split changes only register
    allocation, never whether the schedule is emitted.
 
 2. **AGPR forcing only matters at the full 256×256 tile — and there it is
@@ -270,9 +270,9 @@ v7 pulls clearly ahead at 128×256 (`+agpr` v7 1156 vs v8 1038, +11%) and 128×1
    accumulators small, so the scheduler's MFMA-interleaving gains (e.g. v7 256×256
    65→88%, v8 65→85% vs base) come **for free**, without touching register
    allocation. This is the strongest argument for the new default: on the kernels
-   that are tile-robust to begin with, plain `gemm-4waves` already captures the win.
+   that are tile-robust to begin with, plain `mfma-mem-interleave` already captures the win.
 
-5. **Net: decoupling makes the default safe.** Plain `gemm-4waves` improves or ties
+5. **Net: decoupling makes the default safe.** Plain `mfma-mem-interleave` improves or ties
    base everywhere except v6's full-tile case, and it removes v5's AGPR-induced
    spill. The only kernel that regresses without AGPRs (v6 @ 256×256) can request
    `force-agpr` explicitly. AGPR forcing is now an opt-in for the specific

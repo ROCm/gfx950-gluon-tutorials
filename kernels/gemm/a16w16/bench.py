@@ -31,23 +31,23 @@ import triton
 
 # Scheduler / post-assembly configs, mirroring run_perf_table.py's --configs so
 # `bench.py --config <name>` reproduces a table row standalone. The LLIR
-# scheduler is a Triton compile option (schedule_hint="gemm-4waves") injected
+# scheduler is a Triton compile option (schedule_hint="mfma-mem-interleave") injected
 # into every kernel launch, which keeps the tutorial kernels themselves agnostic
 # to scheduling; amdgcnas is a post-assembly pass gated by env vars read by the
 # compiler. Both turn on together once the LLIR schedule takes effect.
 CONFIG = {
     "base": {"schedule_hint": "none", "env": {}},
-    "llir": {"schedule_hint": "gemm-4waves", "env": {}},
+    "llir": {"schedule_hint": "mfma-mem-interleave", "env": {}},
     # Scheduler + forced AGPR accumulators (amdgpu-agpr-alloc=256 +
-    # amdgpu-mfma-vgpr-form=0). After the gemm-4waves/force-agpr split this is an
+    # amdgpu-mfma-vgpr-form=0). After the mfma-mem-interleave/force-agpr split this is an
     # explicit opt-in; "llir" alone no longer forces AGPRs.
-    "llir+agpr": {"schedule_hint": "gemm-4waves, force-agpr", "env": {}},
+    "llir+agpr": {"schedule_hint": "mfma-mem-interleave, force-agpr", "env": {}},
     "llir+agpr+amdgcnas": {
-        "schedule_hint": "gemm-4waves, force-agpr",
+        "schedule_hint": "mfma-mem-interleave, force-agpr",
         "env": {"TRITON_ENABLE_AMDGCN_AS": "1"},
     },
     "llir+agpr+amdgcnas+nobar": {
-        "schedule_hint": "gemm-4waves, force-agpr",
+        "schedule_hint": "mfma-mem-interleave, force-agpr",
         "env": {
             "TRITON_ENABLE_AMDGCN_AS": "1",
             "TRITON_ENABLE_AMDGCN_AS_REMOVE_BARRIER": "1",
@@ -59,7 +59,7 @@ CONFIG = {
 def apply_config(config):
     """Enable the knobs for a perf-table config before the first kernel launch:
     amdgcnas via env vars, and the LLIR scheduler by injecting
-    schedule_hint="gemm-4waves" into every Gluon kernel launch."""
+    schedule_hint="mfma-mem-interleave" into every Gluon kernel launch."""
     cfg = CONFIG[config]
     for key, val in cfg["env"].items():
         os.environ[key] = val

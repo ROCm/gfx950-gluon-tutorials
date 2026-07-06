@@ -70,7 +70,7 @@ VERSION_MAP = {
 
 # Config names, mirrored from bench.py's CONFIG. bench.py owns the actual
 # config -> knob mapping; the driver just forwards --config to it. The LLIR
-# scheduler is enabled via the schedule_hint="gemm-4waves" compile option (which
+# scheduler is enabled via the schedule_hint="mfma-mem-interleave" compile option (which
 # runs the scheduler + disables misched only; AGPR forcing is now a separate
 # opt-in via the "force-agpr" token), and amdgcnas via env vars that bench.py
 # sets. "base" runs nothing; "+nobar" adds the risky barrier-removal pass, valid
