@@ -47,9 +47,31 @@ tiles the overwrite-vs-read window is tight enough to lose, corrupting warp-colu
   `compute_gload_layout(..., 8, 4)` and is correct on all 9 tiles).
 - **Not** the hardcoded `gStoreLayoutC = BlockedLayout([1,8],[2,32],[4,1],[1,0])` —
   swapping it to `mfmaLayout` does not help; the data is already wrong before the store.
-- **Not** the LLIR scheduler — every test ran `schedule_hint` off (stock Triton, `config=base`).
+- **Not *caused* by** the LLIR scheduler — `base` (`schedule_hint` off) fails on the same
+  4 narrow tiles. But the scheduler is *not* neutral to the race — see "Scheduler
+  interaction" below.
 - **Not** a single missing barrier — adding one explicit `gl.barrier()` only reduces
   the hit-rate, it does not eliminate it.
+
+### Scheduler interaction (2026-07-06)
+The root cause is stock-Triton membar under-sync (above), but the LLIR scheduler is not
+neutral to it: interleaving MFMA with the LDS loads/stores — and pinning that order with
+`sched.barrier` intrinsics — **tightens the WAR/RAW window**, so the race loses more often
+and on more shapes. Measured under `schedule_hint="mfma-mem-interleave"` (4096²×8192,
+fp16, 3 runs/cell):
+
+| tile | base | llir | +agpr |
+|---|---|---|---|
+| 256×256 / 256×128 / 128×256 | ok | ok | ok |
+| **128×128** | ok | flaky (~1/3 fail) | ✗ |
+| **64×256** | ok | ✗ | ok |
+| 256×64 / 128×64 / 64×128 / 64×64 | ✗ | ✗ (larger %) | ✗ |
+
+So the scheduler exposes the race on **128×128 and 64×256** — correct under `base` — and
+enlarges the corrupted fraction on the already-failing narrow tiles. It is config-dependent
+(llir vs `+agpr` flip on both 128×128 and 64×256): `force-agpr` shifts register allocation
+and thus the instruction timing, which is further proof this is a race, not miscodegen. The
+fix is unchanged (below); the scheduler only changes how easily the bug is hit.
 
 ### Reproduce
 ```bash
