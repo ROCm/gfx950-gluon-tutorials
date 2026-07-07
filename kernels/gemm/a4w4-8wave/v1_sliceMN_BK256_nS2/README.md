@@ -81,21 +81,21 @@ register-bound.
 
 ## 5. Performance
 
-MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, rocprof cold-rotating:
+MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, current build (Triton 3.8.0), rocprof cold-rotating:
 
 | Metric | Value |
 |---|---|
 | Correctness vs torch | ✅ PASS (K 1024…65536) |
-| rocprof TFLOPS (cold) | 3652 @ K=8192, **4142** @ K=32768 |
+| rocprof TFLOPS (cold) | 3525 @ K=8192, **4064** @ K=32768 |
+| MFMA efficiency (per-SIMD), loop-only | ~57% |
 | VGPRs / spills | 256 / 23 (loop: **0**) |
-| vs 4-wave a4w4 base | matches at large K (4142 vs 4137 @ K=8192) |
+| vs 4-wave a4w4 base | matches at large K (8-wave 4064 @ K=32768 ≈ 4-wave base 4101 @ K=8192) |
 
-The loop is spill-free and reaches ~61% MFMA efficiency at K=32768 — the same as the
-4-wave base. Unlike a8w8/a16w16, the 8-wave does **not** beat the tuned 4-wave for MXFP4:
+The loop is spill-free and reaches ~57% loop MFMA efficiency — comparable to the 4-wave
+base's ~61%. Unlike a16w16/a8w8, the 8-wave does **not** beat the tuned 4-wave for MXFP4:
 the loop is LDS/scale-throughput-bound rather than latency-bound, so the 8-wave's
 ping-pong latency-hiding has little to hide, while its halved VGPR budget is a real cost.
-See the [family README](../README.md#2-performance) for the full comparison and why the
-ATT MFMA-eff column reads `N/A`.
+See the [family README](../README.md#2-performance) for the full comparison.
 
 ```bash
 # correctness + do_bench TFLOPS

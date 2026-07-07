@@ -64,15 +64,15 @@ The loop runs at ~99.7% MFMA; the 13 residual spills are all in the epilogue.
 
 ## 5. Performance
 
-MI355X, gfx950, 4096×4096, BF8, no-AGPR, rocprof cold-rotating:
+MI355X, gfx950, 4096×4096, BF8, no-AGPR, current build (Triton 3.8.0), rocprof cold-rotating:
 
 | Metric | Value |
 |---|---|
 | Correctness vs torch | ✅ PASS (K 512…32768) |
-| rocprof TFLOPS (cold) | **2841** @ K=8192, **3097** @ K=32768 |
+| rocprof TFLOPS (cold) | **2894** @ K=8192, **3147** @ K=16384, **3129** @ K=32768 |
 | MFMA efficiency (per-SIMD), loop-only | **~99.7%** |
 | VGPRs / spills | 256 / 13 (loop: **0**) |
-| vs 4-wave a8w8 | +9% over base, +3.5% over best (llir+amdgcnas) |
+| vs 4-wave a8w8 | +16% over base; behind the tuned `llir+amdgcnas` (2894 vs 3216 @ K=8192) on the current build |
 
 ```bash
 # correctness + do_bench TFLOPS

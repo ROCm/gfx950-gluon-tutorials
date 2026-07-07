@@ -40,21 +40,24 @@ contiguous for the async copy (no `permute` on the LDS load — the same as fp16
 
 ## 2. Performance
 
-MI355X, gfx950, 4096×4096, BF8, **no-AGPR**, rocprof cold-rotating tensors (last-100
-average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). The 4-wave
-reference is `kernels/gemm/a8w8` measured on the same machine:
+MI355X, gfx950, 4096×4096, BF8, **no-AGPR**, current build (Triton 3.8.0), rocprof
+cold-rotating tensors (last-100 average of 1000 dispatches; `--rotating-buffer-size 2048`
+for K ≥ 16384). The 4-wave reference is `kernels/gemm/a8w8` measured on the same machine:
 
 | K | **8-wave v1 TFLOPS** | 8-wave MFMA eff (per-SIMD, loop) | 4-wave base | 4-wave llir+amdgcnas |
 |---|---|---|---|---|
-| 8192  | **2841** | **99.70%** | 2604 | 2746 |
-| 16384 | **3082** | ~99% | — | — |
-| 32768 | **3097** | ~99% | — | — |
+| 8192  | **2894** | 99.7% | 2497 | 3216 |
+| 16384 | **3147** | 99.9% | 2777 | 3455 |
+| 32768 | **3129** | 99.1% | — | — |
 
-The 8-wave v1 **beats every 4-wave config**: +9% over 4-wave base and +3.5% over the best
-4-wave `llir+amdgcnas` at K=8192, and it *gains* with K as the fixed prologue/epilogue
-amortizes. The loop is genuinely MFMA-bound at **~99.7%** (per-SIMD, loop-only). VGPRs:
-256, spills: 13 — and the **hot loop is spill-free** (all 13 spills are in the
-`convert_layout` + store epilogue, which carries no MFMA).
+On the current build the 8-wave v1 **beats the 4-wave base** (2894 vs 2497, +16% at K=8192)
+but the tuned 4-wave `llir+amdgcnas` now **edges ahead** (3216 vs 2894, ~+11%). This is a
+change from the original pinned-compiler numbers, where the 8-wave led every 4-wave config
+(8-wave 2841 vs 4-wave base 2604 / llir+amdgcnas 2746): on newer LLVM the 4-wave BF8
+`llir+amdgcnas` path improved more (~2746 → 3216) than the 8-wave (~2841 → 2894). The 8-wave
+loop is still genuinely MFMA-bound at **~99.7%** (per-SIMD, loop-only). VGPRs: 256,
+spills: 13 — and the **hot loop is spill-free** (all 13 spills are in the `convert_layout` +
+store epilogue, which carries no MFMA).
 
 > [!NOTE]
 > **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's

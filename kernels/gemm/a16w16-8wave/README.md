@@ -46,8 +46,9 @@ ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
 ~72% per-SIMD). The fix progression (rocprof cold-rotating, 4096²×8192 fp16):
 
 > [!NOTE]
-> The TFLOPS / MFMA numbers in this section (and the MI350X table in §4) were collected
-> on **MI350X**, not MI355X. §4 has a separate MI355X table.
+> The step-by-step TFLOPS / MFMA numbers in this fix-progression table are from the
+> original **MI350X** tuning run — keep them for the *relative* gains each change bought.
+> The current-build **MI355X** absolute figures are in [§4](#4-performance).
 
 | Step | TFLOPS | MFMA (per-SIMD) | Optimization |
 |---|---|---|---|
@@ -57,7 +58,7 @@ ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
 | + v9 XCD remap | 909 | 85.2% | XCD-aware PID remap + `GROUP_SIZE_M` swizzle (from `common.py`) for L2 locality — cut measured VMEM latency substantially |
 | + relaxed `local_load` | ~915 | ~85% | each mem region reads `smem.index(k+1)` (LR) then writes `smem.index(k)` (AC) — same allocation, different ring index. The membar can't disambiguate `MemDescIndexOp` sub-buffers, so it inserts a redundant `lgkmcnt(0)`+`s_barrier`; `load_shared_relaxed` carries an async-wait token the AMD `membarFilter` skips |
 
-Result @4096²×8192: **~915 TFLOPS, ~85% loop MFMA, 188 VGPR / 0 spills**. Because the
+Result @4096²×8192 (current build, MI355X): **~1190 TFLOPS, ~85% loop MFMA, 196 VGPR / 0 spills**. Because the
 single triple-buffered ring covers the full 256×256 tile, its `buffer_load`s cluster
 in time and hit the TCP/HBM buffer-load stall at large K — MFMA drops to ~78–80% at
 K ≥ 16384 (see the [v8_sliceMN TCP analysis](../a16w16/v8_sliceMN/README.md#4-buffer-load-throughput-and-tcp-limitations)).
@@ -84,41 +85,31 @@ The loop is unrolled 2× → **8 mfma regions + 8 mem regions**, each wrapped in
 region. A store-side pointer-walk + a de-interleaved epilogue eliminate the
 epilogue's accumulator spills (see [v1 README](v1_sliceMN_BK64_nS2/README.md#4-epilogue-register-pressure-and-the-spill-fix)).
 
-Result @4096²×8192: **~1039 TFLOPS, ~99.8% loop MFMA, 242 VGPR / 0 spills** — and it
-*gains* with K, reaching ~1083 at K=32768.
+Result @4096²×8192 (current build, MI355X): **~1446 TFLOPS, ~99.8% loop MFMA, 242 VGPR / 0
+spills** — it peaks ~1495 at K=16384, then eases to ~1287 (still ~92% loop MFMA) at K=32768,
+staying far above v0 at every K.
 
 ## 4. Performance
 
-MI350X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), rocprof
-cold-rotating tensors:
-
-| K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff |
-|---|---|---|---|---|
-| 8192  | 915.5 | 84.96% | **1038.6** | 99.84% |
-| 16384 | 860.3 | 78.18% | **1069.4** | 99.92% |
-| 32768 | 889.3 | 79.70% | **1082.6** | 99.90% |
-
-v1 beats v0 by **+13% / +24% / +22%** at the three K values. v0 dips at large K (the
-buffer-load stall); v1 climbs as the fixed prologue/epilogue cost amortizes.
-
-### MI355X
-
-MI355X, gfx950, 4096×4096, fp16, rocprof cold-rotating (`--rotating-buffer-size 2048`).
-v0/v1 are **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`); the 4-wave `a16w16/v9` reference
-uses `schedule_hint="gemm-4waves, force-agpr"` + amdgcnas (`TRITON_ENABLE_AMDGCN_AS=1`):
+MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
+current build (Triton 3.8.0), rocprof cold-rotating (`--rotating-buffer-size 2048`). v0/v1
+are 8-wave; the 4-wave `a16w16/v9` reference uses the LLIR scheduler + force-agpr + amdgcnas
+(`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`):
 
 | K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff | v9 TFLOPS | v9 MFMA eff |
 |---|---|---|---|---|---|---|
-| 8192  | 1194.4 | 83.30% | 1442.0 | 99.84% | **1474.3** | 97.37% |
-| 16384 | 1109.6 | 64.82% | 1478.8 | 99.26% | **1522.5** | 97.13% |
-| 32768 | 1120.5 | 60.38% | 1289.0 | 97.72% | **1303.5** | 80.91% |
+| 8192  | 1190 | ~85% | 1446 | 99.8% | **1485** | 97.0% |
+| 16384 | 1100 | ~64% | 1495 | 99.3% | **1532** | 97.4% |
+| 32768 | 1122 | ~58% | 1287 | 92.3% | **1310** | ~81% |
 
-On MI355X the 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges 8-wave
-v1 on TFLOPS at all three K (**+2% / +3% / +1%**); v1 keeps the highest loop MFMA-eff
-(~99%). Both clear v0 by a wide margin — v0's full-tile triple-ring hits the buffer-load
-stall, so its loop MFMA-eff falls to ~60–65% at K ≥ 16384 (v0 row is a 5-run median;
-its absolute TFLOPS *rises* vs MI350X while eff *drops* — MI355X's faster MFMA outpaces
-the unchanged memory latency, idling the units a larger fraction of the loop).
+VGPRs / spills: **v0 196 / 0**, **v1 242 / 0** (both loop-spill-free).
+
+The 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges 8-wave v1 on TFLOPS
+at all three K (**~+3% / +2% / +2%**); v1 keeps the highest loop MFMA-eff (~99% at
+K ≤ 16384, dipping to ~92% at K=32768 as the buffer-load stall sets in). Both clear v0 by a
+wide margin — v0's full-tile triple-ring hits the buffer-load stall, so its loop MFMA-eff
+falls to ~58–64% at K ≥ 16384. (MFMA-eff is a single-dispatch ATT reading — treat the last
+digit as noise.)
 
 > [!NOTE]
 > **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's

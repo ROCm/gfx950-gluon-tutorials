@@ -157,3 +157,38 @@ The [a8w8/](a8w8/) directory provides the final optimized BF8 kernel. If you und
 
 The [a4w4/](a4w4/) directory implements the MXFP4 kernel, whose genuinely new element is the per-group scale pipeline: every 32 e2m1 elements share an 8-bit e8m0 scale that must be loaded and laid out for `mfma_scaled`. It ships in two versions — `v0_sliceN` stages scales through LDS with a `local_store` → `local_load` round-trip, while the final `v1_sliceMN` loads them straight into LDS via `buffer_load_to_lds` alongside the input tiles (no `local_store`) and uses M+N slicing for a more balanced design. See the [a4w4 README](a4w4/README.md) for full details.
 
+## 5. 8-Wave Warp-Pipeline Variants
+
+Alongside the 4-wave `llir+amdgcnas` kernels above, the repo carries an **8-wave warp-pipeline** version of each GEMM — [`a16w16-8wave/`](a16w16-8wave/), [`a8w8-8wave/`](a8w8-8wave/), and [`a4w4-8wave/`](a4w4-8wave/). These reach high MFMA utilization on the *same* problems by a different route.
+
+Instead of the LLIR scheduler + amdgcnas, they launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD are kept out of phase so one issues MFMAs while the other issues loads, then they swap (a "ping-pong"). They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), so the f32 accumulators live in VGPRs and **no environment variables are needed**. The theory is in [`docs/warp_pipelining.md`](../../docs/warp_pipelining.md).
+
+> [!IMPORTANT]
+> The 4-wave `llir+amdgcnas` toolchain is built around the 4-wave register/schedule model and **fails register allocation at 8 waves**, so it is not used here.
+
+| | a16w16-8wave | a8w8-8wave | a4w4-8wave |
+|---|---|---|---|
+| Data type | FP16 / BF16 | BF8 (e5m2) | MXFP4 (e2m1) |
+| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v1_sliceMN_BK256_nS2` |
+| Tile M×N×K | 256×256×32 (v0) / 64 (v1) | 256×256×128 | 256×256×256 |
+| MFMA | `mfma` `[16,16,32]` | `mfma_scaled` e5m2 `[16,16,128]` | `mfma_scaled` e2m1 `[16,16,128]` |
+| Scheduling | `warp_pipeline_stage`, no-AGPR | same | same |
+
+**Performance** (MI355X, gfx950, 4096×4096, current build, rocprof cold-rotating; per-SIMD loop MFMA eff):
+
+| Kernel (final version) | K=8192 | K=16384 | K=32768 | VGPR / spills |
+|---|---|---|---|---|
+| a16w16-8wave `v1` (fp16) | 1446 / 99.8% | 1495 / 99.3% | 1287 / 92.3% | 242 / 0 |
+| a8w8-8wave `v1` (BF8)    | 2894 / 99.7% | 3147 / 99.9% | 3129 / 99.1% | 256 / 13 (loop 0) |
+| a4w4-8wave `v1` (MXFP4)  | 3525 / 57.0% | 4031 / 57.1% | 4064 / 57.4% | 256 / 23 (loop 0) |
+
+Run them with each kernel's `collect_perf.py` (no env vars):
+
+```bash
+cd kernels/gemm/a16w16-8wave && python collect_perf.py --version 1 --K 8192 --dtype fp16
+cd kernels/gemm/a8w8-8wave   && python collect_perf.py --version 1 --K 8192
+cd kernels/gemm/a4w4-8wave   && python collect_perf.py --version 1 --K 8192
+```
+
+**Where the 8-wave lands vs the 4-wave** (current build): for **FP16**, the 4-wave `v9` edges 8-wave `v1` by ~3% (1485 vs 1446 @ K=8192). For **BF8**, 8-wave beats the 4-wave *base* (2894 vs 2497, +16%) but the tuned 4-wave `llir+amdgcnas` now leads (3216 vs 2894); on newer LLVM the 4-wave BF8 path improved enough to overtake the 8-wave. For **MXFP4**, the 8-wave matches the 4-wave *base* at large K (4064 vs 4137) but not the tuned 4-wave (~5.5 PFLOP/s) — its loop is LDS/scale-throughput bound, so ping-pong latency-hiding buys little. See each `-8wave/README.md` for the full breakdown.
+

@@ -104,12 +104,12 @@ Two kernel-side changes bring spills to **0**:
 
 ## 5. Performance
 
-MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR:
+MI355X, gfx950, 4096×4096×8192, fp16, no-AGPR, current build (Triton 3.8.0):
 
 | Metric | Value |
 |---|---|
 | Correctness vs torch | ✅ PASS (K 512…16384, fp16 + bf16) |
-| rocprof TFLOPS (cold, rotating) | **~1039** (v0: ~912) |
+| rocprof TFLOPS (cold, rotating) | **~1446** (v0: ~1190) |
 | MFMA efficiency (per-SIMD), loop-only | **~99.8%** |
 | MFMA efficiency (per-SIMD), whole-kernel | ~94% |
 | VGPRs / spills | 242 / **0** |

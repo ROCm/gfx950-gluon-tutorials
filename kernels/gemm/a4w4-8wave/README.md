@@ -56,30 +56,32 @@ MI355X, gfx950, 4096×4096, MXFP4, **no-AGPR**, rocprof cold-rotating tensors (l
 average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). The 4-wave
 reference is `kernels/gemm/a4w4` measured on the same machine:
 
-| K | **8-wave v1 TFLOPS** | 4-wave base | 4-wave llir+amdgcnas (published) |
-|---|---|---|---|
-| 8192  | 3652 | 4137 | — |
-| 16384 | 4006 | — | — |
-| 32768 | **4142** | — | 5387¹ |
+Current build (Triton 3.8.0):
 
-¹ The 4-wave `a4w4` reaches ~5387 TFLOPS with `llir+amdgcnas`; that toolchain targets the
-4-wave register model and cannot be applied at 8 waves.
+| K | **8-wave v1 TFLOPS** | 8-wave MFMA eff (per-SIMD, loop) | 4-wave base | 4-wave llir+amdgcnas |
+|---|---|---|---|---|
+| 8192  | 3525 | ~57% | 4101 | — |
+| 16384 | 4031 | ~57% | — | — |
+| 32768 | **4064** | ~57% | — | 5556¹ |
 
-**The 8-wave a4w4 matches the 4-wave *base* at large K** (4142 vs 4137) — but, unlike
-a8w8/a16w16 where the 8-wave clearly wins, it does **not** beat the tuned 4-wave. The
-reason is structural: the MXFP4 hot loop is **throughput-bound on LDS/scale traffic, not
-latency-bound**, so the 8-wave's headline advantage (2 waves/SIMD hiding memory latency by
-ping-pong) buys little, while its cost — a **256-VGPR per-wave budget vs the 4-wave's
-512** — is real. The load-side pointer-walk claws the loop back to spill-free and to
-~61% loop MFMA efficiency (the same as the 4-wave base), but there is no latency headroom
-left to convert into a win.
+¹ The 4-wave `a4w4` reaches ~5556 TFLOPS with `llir+amdgcnas` at K=32768; that toolchain
+targets the 4-wave register model and cannot be applied at 8 waves.
+
+**The 8-wave a4w4 matches the 4-wave *base* at large K** (4064 vs 4101) — but, unlike
+a16w16/a8w8 where the 8-wave at least beats the 4-wave *base*, MXFP4 does **not** beat even
+that here, and comes nowhere near the tuned 4-wave. The reason is structural: the MXFP4 hot
+loop is **throughput-bound on LDS/scale traffic, not latency-bound**, so the 8-wave's
+advantage (2 waves/SIMD hiding memory latency by ping-pong) buys little, while its cost — a
+**256-VGPR per-wave budget vs the 4-wave's 512** — is real. The load-side pointer-walk keeps
+the loop spill-free at **~57% loop MFMA** (the 4-wave base measures ~61% at similar TFLOPS;
+the 8-wave's per-SIMD figure runs a touch lower), but there is no latency headroom left to
+convert into a win.
 
 > [!NOTE]
-> `collect_perf.py` reports TFLOPS via rocprof kernel-trace. The **ATT MFMA-efficiency
-> decoder currently errors on the FP4 scaled-MFMA disassembly** at 8 waves (it decodes the
-> BF8 a8w8 kernel fine), so the MFMA-eff column reads `N/A`. Loop efficiency is instead
-> inferred from TFLOPS ÷ FP4 peak (≈6.75 PFLOP/s, derived from the 4-wave base's
-> ATT-measured 61.3% at 4137 TFLOPS): the 8-wave loop lands at ~61% at K=32768.
+> On the current build (ROCm 7.2.4) the ATT decoder **does** decode the FP4 scaled-MFMA
+> disassembly, so `collect_perf.py` now reports a real per-SIMD loop MFMA eff (~57%) — earlier
+> decoder versions errored on it and the column read `N/A`. As a cross-check, TFLOPS ÷ FP4
+> peak (≈6.75 PFLOP/s, from the 4-wave base's ~61% at 4101 TFLOPS) puts the loop near ~60%.
 
 ## 3. Running
 

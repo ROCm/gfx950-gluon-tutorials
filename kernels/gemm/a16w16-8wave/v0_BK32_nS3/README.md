@@ -81,14 +81,14 @@ remapping + `GROUP_SIZE_M=4` swizzle for L2 locality. This is active at the 256-
 
 ## 4. Performance
 
-MI350X, gfx950, 4096×4096×8192, fp16, no-AGPR:
+MI355X, gfx950, 4096×4096×8192, fp16, no-AGPR, current build (Triton 3.8.0):
 
 | Metric | Value |
 |---|---|
 | Correctness vs torch | ✅ PASS (K 512…16384, fp16 + bf16) |
-| rocprof TFLOPS (cold, rotating) | ~912 |
-| MFMA efficiency (per-SIMD) | ~85% warm / ~83% cold |
-| VGPRs / spills | 188 / 0 |
+| rocprof TFLOPS (cold, rotating) | ~1190 |
+| MFMA efficiency (per-SIMD) | ~85% |
+| VGPRs / spills | 196 / 0 |
 
 ```bash
 # correctness + do_bench TFLOPS
@@ -103,4 +103,4 @@ python ../collect_perf.py --version 0 --K 8192 --dtype fp16
 [`v1_sliceMN_BK64_nS2`](../v1_sliceMN_BK64_nS2/README.md) restructures the tile into
 four M/N quadrants with separate per-quadrant LDS allocations (so the loads stay
 non-relaxed with no membar barrier) at BLOCK_K=64 / 2-buffer, raising cold-rotating
-throughput to ~1039 TFLOPS.
+throughput to ~1446 TFLOPS.
