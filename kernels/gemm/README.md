@@ -6,18 +6,33 @@ The goal is not just to provide fast kernels, but to **teach how to design, anal
 
 ## 1. Performance Summary
 
-Measured on MI355:
+Measured on a single MI355X (gfx950), current build (Triton 3.8.0), rocprof cold-rotating
+(1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR scheduler +
+amdgcnas (`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`); the **8-wave** kernels run
+`warp_pipeline_stage` with no AGPRs (no env vars — see [§5](#5-8-wave-warp-pipeline-variants)).
 
-| Data Type | Shape           | TFLOPS | MFMA Eff. |
-|-----------|-----------------|--------|-----------|
-| FP16      | 4096x4096x8192  |   1421 |    98.66% |
-| BF8       | 4096x4096x16384 |   3232 |    99.52% |
-| MXFP4     | 4096x4096x32768 |   5189 |    93.86% |
+| Data Type | Shape           | Solution                    | TFLOPS | MFMA Eff. |
+|-----------|-----------------|-----------------------------|--------|-----------|
+| FP16      | 4096×4096×8192  | 4-wave (`a16w16` v9)        |   1421 |    98.66% |
+| FP16      | 4096×4096×8192  | 8-wave (`a16w16-8wave` v1)  |   1446 |    99.8%  |
+| BF16      | 4096×4096×8192  | 4-wave (`a16w16` v9)        |   1574 |    98.3%  |
+| BF16      | 4096×4096×8192  | 8-wave (`a16w16-8wave` v1)  |   1506 |    99.8%  |
+| BF8       | 4096×4096×16384 | 4-wave (`a8w8`)             |   3232 |    99.52% |
+| BF8       | 4096×4096×16384 | 8-wave (`a8w8-8wave` v1)    |   3147 |    99.9%  |
+| MXFP4     | 4096×4096×32768 | 4-wave (`a4w4` v1)          |   5189 |    93.86% |
+| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v1)    |   4064 |    57.4%  |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+> The **4-wave** rows are the `gfx950-tutorial-v1.0`-build numbers from
+> `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** rows
+> come from `collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
+> (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~5–6% above FP16** here despite the
+> nominally identical MFMA rate (a clock/power effect on this build, reproducible across runs).
+> Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
+> FP16 optimization journey's near-optimal headline (1421 TFLOPS on `gfx950-tutorial-v1.0`) is
+> documented in [`a16w16/`](a16w16/).
 
-All kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) for optimal performance.
+The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) for optimal performance; the 8-wave kernels schedule themselves with `warp_pipeline_stage`.
 
 ## 2. Prerequisites
 
