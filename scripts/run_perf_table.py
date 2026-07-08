@@ -76,7 +76,7 @@ CONFIG_ENV = {
     # register-allocation hint vs. the post-assembly peephole / LICM.
     # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var (in
     # third_party/amd/backend/compiler.py and python/src/llvm.cc) and
-    # supported natively by the `gfx950-tutorial-v0.2` pin.
+    # supported natively by the `gfx950-tutorial-v0.3` pin.
     "llir+ra": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",

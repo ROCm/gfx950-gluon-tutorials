@@ -6,7 +6,7 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx950-tutorial-v0.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.2) annotated tag in `triton-lang/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
+All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) annotated tag in `triton-lang/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
 
 Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
 
