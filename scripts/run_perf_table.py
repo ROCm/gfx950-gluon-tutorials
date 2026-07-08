@@ -80,15 +80,24 @@ _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
     "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
+# amdgcnas is delivered in three pieces now (all out of the compiler except the
+# one LLVM flag): the amdgpu-agpr-alloc RA hint as a kernel option (llvm_fn_attrs,
+# read from TRITON_LLVM_FN_ATTRS by the kernels), the amdgpu-mfma-vgpr-form flag
+# via TRITON_ENABLE_AMDGPU_RA_HINTS (still in llvm.cc), and the post-assembly
+# peephole as an out-of-tree hook (TRITON_AMDGCNAS_PLUGIN, installed by bench.py).
+# See plugins/amdgcnas/README.md.
+_RA_HINT_ENV = {
+    "TRITON_LLVM_FN_ATTRS": "amdgpu-agpr-alloc=256",
+    "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
+}
 
 CONFIG_ENV = {
     "base": {},
     "llir": {**_LLIR_SCHED_ENV},
-    # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
-    # Used to measure how much of the amdgcnas improvement comes from the
-    # register-allocation hint vs. the post-assembly peephole / LICM.
-    "llir+ra": {**_LLIR_SCHED_ENV, "TRITON_ENABLE_AMDGPU_RA_HINTS": "1"},
-    "llir+amdgcnas": {**_LLIR_SCHED_ENV, "TRITON_ENABLE_AMDGCN_AS": "1"},
+    # RA hints only (agpr-alloc kernel option + mfma-vgpr-form flag), no peephole.
+    "llir+ra": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV},
+    # RA hints + the out-of-tree post-assembly peephole.
+    "llir+amdgcnas": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV, "TRITON_AMDGCNAS_PLUGIN": "1"},
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff

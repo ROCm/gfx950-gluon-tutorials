@@ -22,6 +22,8 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import os
+
 import torch
 import triton
 from triton.experimental import gluon
@@ -642,5 +644,8 @@ def matmul(a, b, a_scales, b_scales):
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=num_warps,
+        # amdgpu-agpr-alloc RA hint is now a kernel option (set by run_perf_table
+        # for the ra / amdgcnas configs) instead of a compiler env-var.
+        llvm_fn_attrs=os.environ.get("TRITON_LLVM_FN_ATTRS", ""),
     )
     return c
