@@ -20,7 +20,7 @@ amdgcnas (`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`); the **8-wave*
 | BF8       | 4096×4096×16384 | 4-wave (`a8w8`)             |   3232 |    99.52% |
 | BF8       | 4096×4096×16384 | 8-wave (`a8w8-8wave` v1)    |   3147 |    99.9%  |
 | MXFP4     | 4096×4096×32768 | 4-wave (`a4w4` v1)          |   5189 |    93.86% |
-| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v1)    |   4064 |    57.4%  |
+| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v1)    |   4840 |    73.6%  |
 
 > [!NOTE]
 > The **4-wave** rows are the `gfx950-tutorial-v1.0`-build numbers from
@@ -184,7 +184,7 @@ Instead of the LLIR scheduler + amdgcnas, they launch **8 warps/CTA (2 waves/SIM
 | | a16w16-8wave | a8w8-8wave | a4w4-8wave |
 |---|---|---|---|
 | Data type | FP16 / BF16 | BF8 (e5m2) | MXFP4 (e2m1) |
-| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v1_sliceMN_BK256_nS2` |
+| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2` |
 | Tile M×N×K | 256×256×32 (v0) / 64 (v1) | 256×256×128 | 256×256×256 |
 | MFMA | `mfma` `[16,16,32]` | `mfma_scaled` e5m2 `[16,16,128]` | `mfma_scaled` e2m1 `[16,16,128]` |
 | Scheduling | `warp_pipeline_stage`, no-AGPR | same | same |
@@ -195,7 +195,7 @@ Instead of the LLIR scheduler + amdgcnas, they launch **8 warps/CTA (2 waves/SIM
 |---|---|---|---|---|
 | a16w16-8wave `v1` (fp16) | 1446 / 99.8% | 1495 / 99.3% | 1287 / 92.3% | 242 / 0 |
 | a8w8-8wave `v1` (BF8)    | 2894 / 99.7% | 3147 / 99.9% | 3129 / 99.1% | 256 / 13 (loop 0) |
-| a4w4-8wave `v1` (MXFP4)  | 3525 / 57.0% | 4031 / 57.1% | 4064 / 57.4% | 256 / 23 (loop 0) |
+| a4w4-8wave `v1` (MXFP4)  | 4071 / 73.2% | 4492 / 73.5% | 4840 / 73.6% | 256 / 12 (loop 0) |
 
 Run them with each kernel's `collect_perf.py` (no env vars):
 
@@ -205,5 +205,5 @@ cd kernels/gemm/a8w8-8wave   && python collect_perf.py --version 1 --K 8192
 cd kernels/gemm/a4w4-8wave   && python collect_perf.py --version 1 --K 8192
 ```
 
-**Where the 8-wave lands vs the 4-wave** (current build): for **FP16**, the 4-wave `v9` edges 8-wave `v1` by ~3% (1485 vs 1446 @ K=8192). For **BF8**, 8-wave beats the 4-wave *base* (2894 vs 2497, +16%) but the tuned 4-wave `llir+amdgcnas` now leads (3216 vs 2894); on newer LLVM the 4-wave BF8 path improved enough to overtake the 8-wave. For **MXFP4**, the 8-wave matches the 4-wave *base* at large K (4064 vs 4137) but not the tuned 4-wave (~5.5 PFLOP/s) — its loop is LDS/scale-throughput bound, so ping-pong latency-hiding buys little. See each `-8wave/README.md` for the full breakdown.
+**Where the 8-wave lands vs the 4-wave** (current build): for **FP16**, the 4-wave `v9` edges 8-wave `v1` by ~3% (1485 vs 1446 @ K=8192). For **BF8**, 8-wave beats the 4-wave *base* (2894 vs 2497, +16%) but the tuned 4-wave `llir+amdgcnas` now leads (3216 vs 2894); on newer LLVM the 4-wave BF8 path improved enough to overtake the 8-wave. For **MXFP4**, `v1` (combined B-scale, the default) now **beats the 4-wave *base*** at large K (4840 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, lifting loop MFMA from ~57% (`v0`) to ~73% and TFLOPS +15–19%. The tuned 4-wave `llir+amdgcnas` (~5.5 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each `-8wave/README.md` for the full breakdown.
 

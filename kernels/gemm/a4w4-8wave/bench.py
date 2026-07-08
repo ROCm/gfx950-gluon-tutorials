@@ -28,7 +28,7 @@ Benchmark + correctness driver for the 8-wave warp-pipeline MXFP4 (a4w4) GEMM.
 Mirrors kernels/gemm/a16w16-8wave/bench.py (same --K / --rocprof /
 --rotating-buffer-size args + rocprof-rotating-tensor mode) with the MXFP4
 input generation and dequantized reference from the 4-wave kernels/gemm/a4w4/
-bench.py. --version selects the kernel subdir (only v1_sliceMN_BK256_nS2 here).
+bench.py. --version selects the kernel subdir (v0=sliceMN(byte-scale), v1=combineBsc(transpose-scale)).
 """
 
 import argparse
@@ -39,7 +39,7 @@ import triton
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
-VERSION_MAP = {1: "v1_sliceMN_BK256_nS2"}
+VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2"}
 
 # HW-defined; cannot be changed.
 SCALE_GROUP_SIZE = 32

@@ -62,7 +62,7 @@ from run_perf_table import (  # noqa: E402
 )
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-VERSION_MAP = {1: "v1_sliceMN_BK256_nS2"}
+VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2"}
 KERNEL_NAME = None  # set in main() from --version
 RUN_ATT = os.path.join(SCRIPTS_DIR, "run_att.py")
 
@@ -86,8 +86,8 @@ def parse_args():
     p.add_argument("--M", type=int, default=4096, help="M dimension (default: 4096)")
     p.add_argument("--N", type=int, default=4096, help="N dimension (default: 4096)")
     p.add_argument("--rotating-buffer-size", type=int, default=512, help="MB (default: 512)")
-    p.add_argument("--version", type=int, default=1, choices=sorted(VERSION_MAP),
-                   help="Kernel version 1=v1_sliceMN_BK256_nS2 (default: 1)")
+    p.add_argument("--version", type=int, default=0, choices=sorted(VERSION_MAP),
+                   help="Kernel version 0=v0_sliceMN_BK256_nS2 (default: 0)")
     p.add_argument("--skip-trace", action="store_true", help="Skip rocprof kernel-trace (TFLOPS)")
     p.add_argument("--skip-att", action="store_true", help="Skip ATT (MFMA efficiency)")
     return p.parse_args()

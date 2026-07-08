@@ -1,9 +1,16 @@
-# v1_sliceMN_BK256_nS2 — 8-wave warp-pipeline MXFP4, M/N-sliced (BLOCK_K=256, 2-buffer)
+# v0_sliceMN_BK256_nS2 — 8-wave warp-pipeline MXFP4, M/N-sliced (BLOCK_K=256, 2-buffer)
+
+> [!NOTE]
+> This is the **baseline**. It N-slices the B scale into `[128,8]` halves, which at 8 warps
+> forces the B-scale MFMA operand through per-byte `ds_read_u8` + `v_perm` reassembly (118
+> `v_perm` in the loop). [`v1_combineBsc_BK256_nS2`](../v1_combineBsc_BK256_nS2/README.md)
+> loads the B scale as one combined `[256,8]` so it transpose-reads with no `v_perm`, for
+> **+15–19% TFLOPS**. See the [family README §2](../README.md#2-the-b-scale-bottleneck-and-how-v1-fixes-it).
 
 ## 1. Directory Structure
 
 ```
-v1_sliceMN_BK256_nS2/
+v0_sliceMN_BK256_nS2/
 ├── matmul_kernel.py    # The kernel implementation
 └── README.md           # This file
 ```
@@ -99,8 +106,8 @@ See the [family README](../README.md#2-performance) for the full comparison.
 
 ```bash
 # correctness + do_bench TFLOPS
-python ../bench.py --version 1 --K 8192
+python ../bench.py --version 0 --K 8192
 
 # rocprof cold-rotating TFLOPS + VGPR/spill
-python ../collect_perf.py --version 1 --K 8192
+python ../collect_perf.py --version 0 --K 8192
 ```
