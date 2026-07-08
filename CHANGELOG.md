@@ -5,6 +5,23 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-08 — Re-pin to `gfx950-tutorial-v0.3` (rebase onto upstream main)
+
+The pinned Triton commit moved from `gfx950-tutorial-v0.2` to
+`gfx950-tutorial-v0.3`. `v0.3` carries the **identical** tutorial commit — the
+LLIR scheduler, `amdgcnas`, and the RA-hints split — and rebases it onto a newer
+`triton-lang/triton` `main` (base `63a5e1f0e`, "[AMD][gfx1250] Enable local
+prefetch schedule in pipeliner"). The `gfx950-tutorial` development branch was
+force-moved to the rebased commit; `v0.1` and `v0.2` remain immutable and still
+reproduce their original numbers.
+
+This is a maintenance re-pin to keep the toolchain building against current
+upstream — there is **no kernel change and no perf change**. All TFLOPS and MFMA
+efficiency numbers, the v0–v9 progression chart, and the IR/assembly dumps are
+unchanged from `v0.2` (within run-to-run noise); only the pinned tag referenced
+in the docs (`SUPPORT.md`, `docs/regenerating_ir_dumps.md`, the `kernels/gemm`
+READMEs, and the collection scripts) advances to `v0.3`.
+
 ## 2026-06-15 — MXFP4 (a4w4): add `v1_sliceMN`, version the directory
 
 The `a4w4/` directory is now versioned like `a16w16/`: the original kernel
