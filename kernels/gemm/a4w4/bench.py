@@ -71,7 +71,9 @@ def mxfp4_to_f32(x):
 
 def e8m0_to_f32(x):
     """Convert e8m0 scale values to float32."""
-    return 2 ** ((x - 127).to(torch.float32))
+    x_fp32 = 2 ** (x.to(torch.float32) - 127)
+    x_fp32[x == 255] = float("nan")  # 255 in E8M0 is reserved for NaNs
+    return x_fp32
 
 
 def generate_mxfp4_inputs(M, N, K):
@@ -115,12 +117,8 @@ def torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16):
     b_f32 = mxfp4_to_f32(b_fp4)
 
     # Expand scales: (M, K//32) -> (M, K) via repeat_interleave
-    a_scales_f32 = e8m0_to_f32(
-        a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
-    )
-    b_scales_f32 = e8m0_to_f32(
-        b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
-    )
+    a_scales_f32 = e8m0_to_f32(a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1))
+    b_scales_f32 = e8m0_to_f32(b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1))
 
     # Scale the dequantized values
     a_f32 = a_f32 * a_scales_f32
