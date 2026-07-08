@@ -38,7 +38,7 @@ Usage:
     python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 
     # a4w4 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a4w4 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+amdgcnas --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
     python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
@@ -76,7 +76,7 @@ CONFIG_ENV = {
     # register-allocation hint vs. the post-assembly peephole / LICM.
     # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var (in
     # third_party/amd/backend/compiler.py and python/src/llvm.cc) and
-    # supported natively by the `gfx950-tutorial-v0.2` pin.
+    # supported natively by the `gfx950-tutorial-v0.3` pin.
     "llir+ra": {
         "TRITON_ENABLE_LLIR_SCHED": "1",
         "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
@@ -93,8 +93,9 @@ CONFIG_ENV = {
 # that aren't part of the documented optimization story (e.g. v6 + llir+amdgcnas
 # FAILs, v5 + amdgcnas spills 246 VGPRs).
 #
-# Single-kernel benchmarks (a8w8, a4w4) use `None` as the version sentinel,
-# matching how main() already represents them.
+# Single-kernel benchmarks (a8w8) use `None` as the version sentinel.
+# Multi-version kernels (a16w16, a4w4) use the numeric versions from VERSION_MAP
+# (a16w16) or A4W4_VERSION_MAP (a4w4).
 #
 # Pass --allow-unreported to bypass the gate (e.g. for development).
 REPORTED_COMBINATIONS = {
@@ -110,10 +111,19 @@ REPORTED_COMBINATIONS = {
         "llir+amdgcnas": {None},
     },
     "a4w4": {
-        "base": {None},
-        "llir": {None},
-        "llir+amdgcnas": {None},
+        "base": {0, 1},
+        "llir": {0, 1},
+        "llir+amdgcnas": {0, 1},
     },
+}
+
+# a4w4 has its own version → directory map. Each directory's matmul_kernel.py
+# defines a kernel function whose name matches the directory (e.g. v0_sliceN
+# function in v0_sliceN/matmul_kernel.py), so the same `version_dir` value
+# serves both rocprof's kernel_include_regex and the bench.py --version arg.
+A4W4_VERSION_MAP = {
+    0: "v0_sliceN",
+    1: "v1_sliceMN",
 }
 
 
@@ -289,8 +299,10 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
         "--K",
         str(K),
     ]
-    if kernel_type not in ("a8w8", "a4w4"):
+    if kernel_type == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
+    elif kernel_type == "a4w4":
+        cmd.extend(["--version", str(version)])
 
     rocprof_env = env.copy()
     rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
@@ -341,7 +353,7 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         version_dir = "a8w8_kernel"
         work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
     elif kernel == "a4w4":
-        version_dir = "a4w4_kernel"
+        version_dir = A4W4_VERSION_MAP[version]
         work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
@@ -381,10 +393,12 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
         "--K",
         str(K),
     ]
-    if kernel not in ("a8w8", "a4w4"):
+    if kernel == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
+    elif kernel == "a4w4":
+        cmd.extend(["--version", str(version)])
 
-    if kernel in ("a8w8", "a4w4"):
+    if kernel == "a8w8":
         print(f"  Running: {kernel} config={config}")
     else:
         print(f"  Running: v{version} ({version_dir}) config={config}")
@@ -473,7 +487,8 @@ def parse_args():
         type=int,
         nargs="+",
         default=[5, 6, 7, 8],
-        help="Kernel versions to benchmark (default: 5 6 7 8). Ignored for a8w8.",
+        help="Kernel versions to benchmark (default: 5 6 7 8 for a16w16, "
+        "valid 0 1 for a4w4). Ignored for a8w8.",
     )
     parser.add_argument(
         "--configs",
@@ -513,9 +528,18 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.kernel in ("a8w8", "a4w4"):
-        # a8w8/a4w4 have a single kernel, --versions is ignored
+    if args.kernel == "a8w8":
+        # a8w8 has a single kernel, --versions is ignored
         versions = [None]
+    elif args.kernel == "a4w4":
+        # Validate versions for a4w4
+        for v in args.versions:
+            if v not in A4W4_VERSION_MAP:
+                print(
+                    f"Error: version {v} not in A4W4_VERSION_MAP. Valid: {list(A4W4_VERSION_MAP.keys())}"
+                )
+                sys.exit(1)
+        versions = args.versions
     else:
         # Validate versions for a16w16
         for v in args.versions:
@@ -533,12 +557,18 @@ def main():
             if not args.allow_unreported and not is_reported(args.kernel, config, version):
                 skipped.append((config, version))
 
+    def _version_label(kernel, version):
+        if version is None:
+            return kernel
+        if kernel == "a4w4":
+            return A4W4_VERSION_MAP[version]
+        return VERSION_MAP[version]
+
     if skipped:
         print(f"\n{'='*60}")
         print("Skipped (not reported in tutorial; pass --allow-unreported to run):")
         for config, version in skipped:
-            label = VERSION_MAP[version] if version is not None else args.kernel
-            print(f"  {label} + {config}")
+            print(f"  {_version_label(args.kernel, version)} + {config}")
         print(f"{'='*60}")
 
     # Collect results grouped by config

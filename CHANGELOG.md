@@ -5,6 +5,45 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-08 — Re-pin to `gfx950-tutorial-v0.3` (rebase onto upstream main)
+
+The pinned Triton commit moved from `gfx950-tutorial-v0.2` to
+`gfx950-tutorial-v0.3`. `v0.3` carries the **identical** tutorial commit — the
+LLIR scheduler, `amdgcnas`, and the RA-hints split — and rebases it onto a newer
+`triton-lang/triton` `main` (base `63a5e1f0e`, "[AMD][gfx1250] Enable local
+prefetch schedule in pipeliner"). The `gfx950-tutorial` development branch was
+force-moved to the rebased commit; `v0.1` and `v0.2` remain immutable and still
+reproduce their original numbers.
+
+This is a maintenance re-pin to keep the toolchain building against current
+upstream — there is **no kernel change and no perf change**. All TFLOPS and MFMA
+efficiency numbers, the v0–v9 progression chart, and the IR/assembly dumps are
+unchanged from `v0.2` (within run-to-run noise); only the pinned tag referenced
+in the docs (`SUPPORT.md`, `docs/regenerating_ir_dumps.md`, the `kernels/gemm`
+READMEs, and the collection scripts) advances to `v0.3`.
+
+## 2026-06-15 — MXFP4 (a4w4): add `v1_sliceMN`, version the directory
+
+The `a4w4/` directory is now versioned like `a16w16/`: the original kernel
+becomes `v0_sliceN`, and a new `v1_sliceMN` is added (both kept as a
+progression; `bench.py --version` and `run_perf_table.py --versions` select
+between them).
+
+`v1_sliceMN` makes two changes over `v0_sliceN`:
+- **Async scale pipeline.** Scales stream straight into LDS via
+  `buffer_load_to_lds` alongside the input tiles, replacing v0's
+  `buffer_load → local_store → local_load` round-trip — no `ds_write`, so the
+  LLIR scheduler no longer has to reason about it in the hot loop.
+- **M+N slicing.** A is sliced along M and B along N into a 2×2 grid of
+  128×128 accumulator quadrants (the `a16w16/v8_sliceMN` pattern), for a more
+  balanced buffer-load distribution at large K.
+
+Measured on MI355 at 4096×4096×32768 with `llirSched + amdgcnas`, `v1_sliceMN`
+reaches **5387 TFLOPS / 94.5% MFMA efficiency**, up from `v0_sliceN`'s
+5265 / 91.6%. The MXFP4 headline in `kernels/gemm/README.md` now reports the
+v1 number. No Triton pin change — both kernels use the existing
+`gfx950-tutorial-v0.2` toolchain.
+
 ## 2026-06-01 — Re-pin to `gfx950-tutorial-v0.2` (rebase onto upstream main)
 
 The pinned Triton commit moved from `gfx950-tutorial-v0.1` to
