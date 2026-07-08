@@ -26,6 +26,18 @@ import argparse
 import importlib
 
 import torch
+
+# The out-of-tree LLIR scheduler ships as an LLVM pass plugin (see ../../../plugins/).
+# Loaded via LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at
+# dlopen time, which requires libtriton in the *global* symbol scope. CPython
+# loads C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the
+# first `import triton`. Only takes effect when the plugin is in use.
+import os
+import sys
+
+if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+
 import triton
 
 VERSION_MAP = {

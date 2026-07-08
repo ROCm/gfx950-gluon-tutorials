@@ -68,23 +68,27 @@ VERSION_MAP = {
     9: "v9_beyond_hotloop",
 }
 
+# The LLIR scheduler now ships as an out-of-tree LLVM pass plugin
+# (plugins/llir_scheduler/). Enable it by pointing LLVM_PASS_PLUGIN_PATH at the
+# built .so and keeping the target machine for the O3 pipeline via
+# LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1. bench.py opts libtriton into the global
+# dlopen scope when LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with
+# TRITON_EXT_ENABLED=1. See plugins/llir_scheduler/README.md.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
+_LLIR_SCHED_ENV = {
+    "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
+    "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
+}
+
 CONFIG_ENV = {
     "base": {},
-    "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
+    "llir": {**_LLIR_SCHED_ENV},
     # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
     # Used to measure how much of the amdgcnas improvement comes from the
     # register-allocation hint vs. the post-assembly peephole / LICM.
-    # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var (in
-    # third_party/amd/backend/compiler.py and python/src/llvm.cc) and
-    # supported natively by the `gfx950-tutorial-v0.3` pin.
-    "llir+ra": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
-    },
-    "llir+amdgcnas": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGCN_AS": "1",
-    },
+    "llir+ra": {**_LLIR_SCHED_ENV, "TRITON_ENABLE_AMDGPU_RA_HINTS": "1"},
+    "llir+amdgcnas": {**_LLIR_SCHED_ENV, "TRITON_ENABLE_AMDGCN_AS": "1"},
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
