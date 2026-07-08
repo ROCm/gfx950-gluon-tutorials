@@ -110,12 +110,8 @@ def torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16):
     b_f32 = mxfp4_to_f32(b_fp4)
 
     # Expand scales: (M, K//32) -> (M, K) via repeat_interleave
-    a_scales_f32 = e8m0_to_f32(
-        a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1)
-    )
-    b_scales_f32 = e8m0_to_f32(
-        b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1)
-    )
+    a_scales_f32 = e8m0_to_f32(a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1))
+    b_scales_f32 = e8m0_to_f32(b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1))
 
     # Scale the dequantized values
     a_f32 = a_f32 * a_scales_f32
