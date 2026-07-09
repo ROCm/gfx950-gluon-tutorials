@@ -99,7 +99,7 @@ the *next* scaled MFMA's `ld_scale` slides into the **last 4 cyc** of this one's
 and because MFMA outranks `ds`, the SIMD spends that half on `ld_scale`, not `ds`. Only
 the **first** compute cell is free:
 
-<p align="center"><img src="images/fig1_mfma_anatomy.png" alt="scaled vs non-scale MFMA ds slots" width="880"></p>
+<p align="center"><img src="images/fig1_mfma_anatomy.png" alt="scaled vs non-scale MFMA ds slots" width="100%"></p>
 
 **→ one ds slot per scaled MFMA**, versus two for an unscaled MFMA.
 
@@ -111,7 +111,7 @@ the two SIMDs run in phase their slots collide every time: the bus admits one, t
 waits a whole MFMA. They **take turns — 1 ds per 2 MFMAs each** — and the reads fall
 behind. That is the long stall.
 
-<p align="center"><img src="images/fig2_8wave_scaled.png" alt="8-wave scaled: SP-bus serialization vs 4-cycle skew" width="880"></p>
+<p align="center"><img src="images/fig2_8wave_scaled.png" alt="8-wave scaled: SP-bus serialization vs 4-cycle skew" width="100%"></p>
 
 A 4-cycle skew between the SIMDs would separate the slots (Case 2), but nothing in the
 8-wave ping-pong schedule guarantees one.
@@ -122,12 +122,12 @@ The **4-wave** LLIR schedule happens to place a `ds` at the loop head; both SIMD
 for it, the bus delays SIMD2 by 4 cyc, and that skew persists — landing 4-wave in the good
 Case-2 for free:
 
-<p align="center"><img src="images/fig3_4wave_autoshift.png" alt="4-wave front-loaded ds creates the skew" width="820"></p>
+<p align="center"><img src="images/fig3_4wave_autoshift.png" alt="4-wave front-loaded ds creates the skew" width="100%"></p>
 
 An **unscaled** MFMA has no `ld_scale`, so every MFMA exposes **two** ds slots; the two
 SIMDs take different slots and never clash — 1 ds/MFMA regardless of phase:
 
-<p align="center"><img src="images/fig4_nonscale_bothfit.png" alt="non-scaled MFMA: two ds slots absorb both SIMDs" width="820"></p>
+<p align="center"><img src="images/fig4_nonscale_bothfit.png" alt="non-scaled MFMA: two ds slots absorb both SIMDs" width="100%"></p>
 
 This is exactly what the **scaled→unscaled asm swap** measured (same kernel, only the MFMA
 opcode changed): `ds_read` stall **21.2 → 11.7 cyc**, ping-pong balance preserved
@@ -137,11 +137,11 @@ opcode changed): `ds_read` stall **21.2 → 11.7 cyc**, ping-pong balance preser
 
 Scaled — note the periodic idle (pale) after each `ds` burst; the reads keep stalling:
 
-<p align="center"><img src="images/att_trace_scaled_mfma.png" alt="ATT: scaled MFMA, long ds stalls" width="820"></p>
+<p align="center"><img src="images/att_trace_scaled_mfma.png" alt="ATT: scaled MFMA, long ds stalls" width="100%"></p>
 
 Unscaled — denser, `ds` keeps pace with compute:
 
-<p align="center"><img src="images/att_trace_nonscale_mfma.png" alt="ATT: non-scaled MFMA, no ds stall" width="560"></p>
+<p align="center"><img src="images/att_trace_nonscale_mfma.png" alt="ATT: non-scaled MFMA, no ds stall" width="66%"></p>
 
 **Takeaway.** The stall is an inherent interaction between the **scaled** MFMA
 (1 ds slot / MFMA) and the **SP bus** (1 ds / pair / cycle) when the 8-wave schedule keeps
