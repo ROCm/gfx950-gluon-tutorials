@@ -57,20 +57,33 @@ VERSION_MAP = {
     9: "v9_beyond_hotloop",
 }
 
+# As of gfx950-tutorial-v1.0 the LLIR scheduler and amdgcnas peephole are
+# out-of-tree plugins (see plugins/). The scheduler is an LLVM pass plugin loaded
+# via LLVM_PASS_PLUGIN_PATH (+ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 to keep the
+# O3 TargetMachine); bench.py opts libtriton into the global dlopen scope when
+# LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with TRITON_EXT_ENABLED=1.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
+_LLIR_SCHED_ENV = {
+    "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
+    "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
+}
+# amdgcnas RA hints: amdgpu-agpr-alloc as a kernel option (TRITON_LLVM_FN_ATTRS,
+# read by the kernels) + amdgpu-mfma-vgpr-form via TRITON_ENABLE_AMDGPU_RA_HINTS
+# (still in llvm.cc). The post-assembly peephole is the TRITON_AMDGCNAS_PLUGIN hook
+# installed by bench.py. See plugins/amdgcnas/README.md.
+_RA_HINT_ENV = {
+    "TRITON_LLVM_FN_ATTRS": "amdgpu-agpr-alloc=256",
+    "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
+}
+
 CONFIG_ENV = {
     "base": {},
-    "llir": {"TRITON_ENABLE_LLIR_SCHED": "1"},
-    # RA hints (LLVM flag) only, without the amdgcnas post-assembly pass.
-    # Gated by the `TRITON_ENABLE_AMDGPU_RA_HINTS` env var, supported
-    # natively by the `gfx950-tutorial-v0.3` pin.
-    "llir+ra": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
-    },
-    "llir+amdgcnas": {
-        "TRITON_ENABLE_LLIR_SCHED": "1",
-        "TRITON_ENABLE_AMDGCN_AS": "1",
-    },
+    "llir": {**_LLIR_SCHED_ENV},
+    # RA hints only (agpr-alloc kernel option + mfma-vgpr-form flag), no peephole.
+    "llir+ra": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV},
+    # RA hints + the out-of-tree post-assembly peephole.
+    "llir+amdgcnas": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV, "TRITON_AMDGCNAS_PLUGIN": "1"},
 }
 
 TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
@@ -175,10 +188,16 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
 
     # Build env
     env = os.environ.copy()
+    # Clear any scheduler/peephole config vars (old in-tree names and the current
+    # plugin names) so each config starts from a clean slate.
     for key in (
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
+        "LLVM_PASS_PLUGIN_PATH",
+        "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
+        "TRITON_LLVM_FN_ATTRS",
         "TRITON_ENABLE_AMDGPU_RA_HINTS",
+        "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)
     env.update(CONFIG_ENV[config])

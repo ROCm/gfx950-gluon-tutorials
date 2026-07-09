@@ -6,16 +6,21 @@ Two kernel versions in this tutorial bundle compiler dump artifacts so the READM
 - `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16/`
 - `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16_llirSched/`
 
-Each directory contains four files: `.ttgir` (Triton GPU IR), `.llir` (LLVM IR), `.amdgcn` (final assembly as Triton emits it, with debug labels), and `.s` (the same assembly with `.loc` directives and `.Ltmp` labels stripped, which is what the READMEs link to so the cited line numbers stay stable). All artifacts in this repository were produced against the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) tag in `triton-lang/triton`. To verify them, or regenerate after a Triton bump, follow the steps below.
+Each directory contains four files: `.ttgir` (Triton GPU IR), `.llir` (LLVM IR), `.amdgcn` (final assembly as Triton emits it, with debug labels), and `.s` (the same assembly with `.loc` directives and `.Ltmp` labels stripped, which is what the READMEs link to so the cited line numbers stay stable). All artifacts in this repository were produced against the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag in `triton-lang/triton`. To verify them, or regenerate after a Triton bump, follow the steps below.
 
 ## Prerequisites
 
-Triton is built from the `gfx950-tutorial-v0.3` tag (or any commit reachable from it):
+Triton is built from the `gfx950-tutorial-v1.0` tag (or any commit reachable from it).
+As of `v1.0` the LLIR scheduler and the `amdgcnas` peephole ship as out-of-tree plugins
+in this repo (`plugins/`), so build Triton with plugin symbols exposed:
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v0.3 /tmp/triton
-cd /tmp/triton && pip install -e .
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v1.0 /tmp/triton
+cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
+
+The scheduler `.so` is prebuilt at `plugins/llir_scheduler/libLlirSched.so`; see
+`plugins/llir_scheduler/README.md` if you need to rebuild it against the pinned LLVM.
 
 ## How Triton emits dump artifacts
 
@@ -89,6 +94,11 @@ cd kernels/gemm/a16w16
 
 # (uses the emit() helper defined above)
 
+# As of gfx950-tutorial-v1.0 the scheduler and amdgcnas peephole are out-of-tree
+# plugins: bench.py loads the scheduler .so when LLVM_PASS_PLUGIN_PATH is set and
+# installs the amdgcnas hook when TRITON_AMDGCNAS_PLUGIN=1.
+LLIR_PLUGIN="$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so"
+
 # --- base variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_base
 rm -rf "$TRITON_CACHE_DIR"
@@ -99,15 +109,17 @@ emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16 v5_local_prefetch
 # --- llirSched variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_llir
 rm -rf "$TRITON_CACHE_DIR"
-TRITON_ENABLE_LLIR_SCHED=1 python bench.py --version 5 --K 4096 --dtype fp16
+LLVM_PASS_PLUGIN_PATH="$LLIR_PLUGIN" LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+    python bench.py --version 5 --K 4096 --dtype fp16
 SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
 emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched v5_local_prefetch
 
 # --- llirSched + amdgcnas variant ---
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_amdgcnas
 rm -rf "$TRITON_CACHE_DIR"
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-    python bench.py --version 5 --K 4096 --dtype fp16
+LLVM_PASS_PLUGIN_PATH="$LLIR_PLUGIN" LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 5 --K 4096 --dtype fp16
 SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
 emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched_amdgcnas v5_local_prefetch
 ```

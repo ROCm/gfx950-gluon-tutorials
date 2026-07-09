@@ -5,6 +5,31 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-09 — Re-pin to `gfx950-tutorial-v1.0` (out-of-tree scheduler + amdgcnas plugins)
+
+The pinned Triton commit moves from `gfx950-tutorial-v0.3` to
+`gfx950-tutorial-v1.0`. Unlike the earlier maintenance re-pins, this one changes
+*where* the tutorial's compiler passes live: `v1.0` **removes** the in-tree LLIR
+scheduler and the `amdgcnas` post-assembly tool from Triton, and the tutorial now
+ships them as out-of-tree plugins in `plugins/`:
+
+- **LLIR scheduler** → `plugins/llir_scheduler/libLlirSched.so`, an LLVM pass
+  plugin loaded via `LLVM_PASS_PLUGIN_PATH` (+ `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`).
+  Replaces the old `TRITON_ENABLE_LLIR_SCHED=1` env var.
+- **amdgcnas** → split three ways: the `amdgpu-agpr-alloc` RA hint is a kernel
+  compile option (`TRITON_LLVM_FN_ATTRS`), `amdgpu-mfma-vgpr-form` stays gated in
+  `llvm.cc` (`TRITON_ENABLE_AMDGPU_RA_HINTS`), and the post-assembly peephole is a
+  pure-Python `amdgcn`-stage hook (`TRITON_AMDGCNAS_PLUGIN=1`), reduced to the
+  LICM / save-restore / loop-scheduling passes. Replaces `TRITON_ENABLE_AMDGCN_AS=1`.
+
+Triton must be built with `TRITON_EXT_ENABLED=1` for the scheduler plugin to
+resolve LLVM symbols. `v1.0` shares `v0.3`'s upstream base (`63a5e1f0e`) and LLVM
+pin (`62b7cf96`), so the prebuilt `.so` and all numbers carry over: the plugin
+path reproduces the in-tree scheduler's assembly, and the TFLOPS / MFMA-efficiency
+numbers and IR/assembly dumps are unchanged within run-to-run noise. Both
+`run_perf_table.py` and `run_counter_collection.py` now drive the plugins;
+`v0.1`–`v0.3` remain immutable and still reproduce their original numbers.
+
 ## 2026-07-08 — Re-pin to `gfx950-tutorial-v0.3` (rebase onto upstream main)
 
 The pinned Triton commit moved from `gfx950-tutorial-v0.2` to

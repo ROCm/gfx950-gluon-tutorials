@@ -15,7 +15,7 @@ Measured on MI355:
 | MXFP4     | 4096x4096x32768 |   5387 |    94.50% |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
+> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
 
 All kernels require the [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) for optimal performance.
 
@@ -37,7 +37,7 @@ and different CLI defaults, and are not supported by these scripts.
 
 The LLIR Scheduler and amdgcnas are available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**Pinned commit.** Build Triton from the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) annotated tag on `triton-lang/triton` (which points at a specific commit on the `gfx950-tutorial` branch). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `gfx950-tutorial` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+**Pinned commit.** Build Triton from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag on `triton-lang/triton` (which points at a specific commit on the `gfx950-tutorial` branch). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `gfx950-tutorial` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
 
 **Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 

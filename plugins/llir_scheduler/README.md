@@ -24,7 +24,7 @@ scheduler preserves the interleave (no misched-disable needed).
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
 Triton is built with**. This tutorial pins Triton to
-[`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3),
+[`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0),
 whose LLVM is commit **`62b7cf96`** (see `cmake/llvm-info.json`). If the Triton /
 LLVM pin changes, **rebuild the `.so`**.
 
@@ -41,19 +41,17 @@ The plugin does **not** link LLVM; it resolves LLVM symbols from `libtriton` at
 load time (see prerequisites).
 
 ## Triton prerequisites
-This plugin needs a Triton built to expose symbols to plugins, plus two small
-source commits on top of `gfx950-tutorial-v0.3`:
+The `gfx950-tutorial-v1.0` pin already carries the two source changes this plugin
+needs: it *removed the in-tree LLIR scheduler* (it now lives here) and *keeps the
+TargetMachine for LLVM plugins* via `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`,
+without which `optimize_module` runs all of O3 with no target machine and codegen
+regresses. The one thing left to the builder is symbol visibility:
 
-1. **Build with default visibility:** `TRITON_EXT_ENABLED=1 pip install -e .`
-   (the default `-fvisibility=hidden` build exports no LLVM symbols, and
-   `PassPlugin::Load` fails with `undefined symbol`).
-2. **Two commits** on the Triton `gfx950-tutorial` branch:
-   - *remove the in-tree LLIR scheduler* (it now lives here), and
-   - *keep the TargetMachine for LLVM plugins* — adds
-     `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`, without which `optimize_module`
-     runs all of O3 with no target machine and codegen regresses.
+- **Build with default visibility:** `TRITON_EXT_ENABLED=1 pip install -e .`
+  (the default `-fvisibility=hidden` build exports no LLVM symbols, and
+  `PassPlugin::Load` fails with `undefined symbol`).
 
-`bench.py` handles the third requirement automatically: when `LLVM_PASS_PLUGIN_PATH`
+`bench.py` handles the runtime requirement automatically: when `LLVM_PASS_PLUGIN_PATH`
 is set it loads `libtriton` with `RTLD_GLOBAL` so the plugin can resolve symbols.
 
 ## Use
