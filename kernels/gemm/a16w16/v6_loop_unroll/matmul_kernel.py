@@ -242,6 +242,7 @@ def v6_loop_unroll(
     ## iterMax - 2
     l_idx = 1
     acc = gl.amd.cdna3.mfma(a, b, acc)
+    gl.amd.cdna4.async_copy.wait_group(0)
     a_next = smemA.index(l_idx).load(dotOpLayoutA)
     b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
