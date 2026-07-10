@@ -1,15 +1,10 @@
 # amdgcnas — out-of-tree post-assembly peephole
 
-`amdgcnas` is the post-assembly peephole (LICM + MFMA/scalar interleave), shipped
-out-of-tree here. The register-allocation hints are a **separate** component,
-**force-agpr** — a single env var `TRITON_FORCE_MFMA_AGPR`. Both are shown here for
-reference:
-
-| Piece | Component | What it does | How to enable |
-|-------|-----------|--------------|---------------|
-| `amdgpu-agpr-alloc=256` | force-agpr | reserve 256 AGPRs for MFMA accumulators | `TRITON_FORCE_MFMA_AGPR=1` → kernels set `llvm_fn_attrs="amdgpu-agpr-alloc=256"` |
-| `amdgpu-mfma-vgpr-form=0` | force-agpr | keep accumulators in AGPR form | `TRITON_FORCE_MFMA_AGPR=1` → `llvm.cc` sets the flag |
-| post-assembly **peephole** (LICM + MFMA/scalar interleave) | amdgcnas | rewrite the final assembly text | `TRITON_AMDGCNAS_PLUGIN=1` (out-of-tree hook here) |
+`amdgcnas` is a pure-Python peephole over the final `amdgcn` assembly text: it
+applies LICM and interleaves MFMA with scalar instructions to compress the
+remaining non-MFMA gaps in the GEMM hot loop. It attaches at the `amdgcn` compile
+stage through a stages-inspection hook, so it needs no `.so`, no LLVM symbols, and
+no Triton rebuild — it works on stock Triton.
 
 ## Files
 - `amdgcnas_ext.py` — the peephole itself: the LICM / save-restore /
@@ -21,13 +16,13 @@ reference:
 
 ## Use
 `bench.py` installs the hook when `TRITON_AMDGCNAS_PLUGIN=1` (set it to `2` for
-verbose peephole logging). To reproduce the full `llir+force-agpr+amdgcnas` stack out of tree:
+verbose peephole logging):
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=.../plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_FORCE_MFMA_AGPR=1 \
-TRITON_AMDGCNAS_PLUGIN=1 \
-    python bench.py --version 8 --K 8192 --dtype fp16
+TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 8 --K 8192 --dtype fp16
 ```
-`scripts/run_perf_table.py` sets these for the `llir+force-agpr` and `llir+force-agpr+amdgcnas` configs.
+
+The peephole runs on top of the LLIR scheduler; `scripts/run_perf_table.py` wires
+it into the tutorial's configs. See
+[gemm/README §2.1](../../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins)
+for the full component stack.
