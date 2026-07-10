@@ -99,18 +99,12 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler  |   1264 |   510 |      0 |    73.59% |
-| v6 + LLIR scheduler  |    344 |   512 |    104 |    19.23% |
+| v5 + LLIR scheduler  |   1212 |   512 |      0 |    80.00% |
+| v6 + LLIR scheduler  |   1177 |   508 |      4 |    87.73% |
 
-The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. What it does not eliminate is the register pressure those copies were quietly absorbing. v6 and v5 share exactly the same hot-loop structure under the LLIR scheduler — same MFMA + `ds_read` + `buffer_load` interleaving, same operand layouts, same prefetch pipeline. The difference is in what the LLVM backend can do with the live ranges:
+The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. Removing them tightens the hot loop, and MFMA efficiency rises from 80% to **88%**: the scheduler no longer has to place a copy between the MFMA streams, so more of each iteration is MFMA.
 
-- In **v5**, each iteration ends with a copy `a ← a_next; b ← b_next`. The LLIR scheduler can place that copy in a slot where the backend can reuse VGPRs across iterations. The footprint fits cleanly inside the 512-VGPR budget.
-- In **v6**, the unroll removes the copy by alternating buffer roles. In the first sub-iteration, `mfma` reads from `(a, b)` while `ds_read` simultaneously writes into `(a_next, b_next)`; the two operations are concurrent by construction, so their VGPR sets must be disjoint — there is no opportunity for reuse. The footprint blows past 512 and the allocator has to spill 104 VGPRs to scratch.
-
-Two lessons fall out of this:
-
-1. **A solution for one bottleneck can introduce a new one.** v6 cleanly eliminates v5's copy overhead; the cost re-emerges one layer down, in register allocation — exactly where the original copies were silently helping.
-2. **A regression is not a reason to revert.** The unrolling design is correct; what it surfaces is a real problem that v5 was hiding. The right response is to look deeper, find what actually changed (here, the live-range overlap that the copies had been masking), and fix that — not to throw the unroll away. v7 takes that path.
+The cost lands in register pressure. v6 alternates buffer roles instead of copying — in the first sub-iteration `mfma` reads from `(a, b)` while `ds_read` writes into `(a_next, b_next)`, so the two operand sets are live concurrently by construction and cannot share VGPRs. The footprint sits right at the 512-VGPR ceiling: **508 VGPRs with only a handful (4) of spills.** Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles.
 
 Performance is collected using:
 ```bash
@@ -119,13 +113,11 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir -
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### 4.1. Diagnosing the spills
+### 4.1. Register pressure at the ceiling
 
-The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) gives the total spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count.** Spills outside the hot loop are paid once per kernel launch and amortize away; in-loop spills are paid every iteration. v5 has zero spills end-to-end; v6's 104 split across both regions, and only the in-loop subset drives the regression.
+The `.vgpr_spill_count` field in the generated `.amdgcn` (`~/.triton/cache/<hash>/<kernel>.amdgcn`) reports the spill count; grep `scratch_load` / `scratch_store` for locations. **Location matters more than count** — spills outside the hot loop are paid once per kernel launch and amortize away, while in-loop spills are paid every iteration. Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way — and that fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving it with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot. v6 keeps spilling to a handful (4), so the hot loop is not stalled — but the kernel is at the edge of the budget with nothing to spare.
 
-Each spilled VGPR costs a `scratch_load` followed by `s_waitcnt vmcnt(0)` — L1 on a hit, HBM on a miss, hundreds of cycles either way. The fence stalls every downstream MFMA. The LLIR scheduler can hide ordinary `ds_read` / `buffer_load` latency by interleaving with MFMAs, but a `scratch_load` / `vmcnt(0)` pair on the MFMA critical path it cannot hide. A handful per iteration drags MFMA efficiency from 76% down to 19%.
-
-The closed-form register accounting that quantifies the spill — and the design change that resolves it — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 fixes the problem by construction.
+The closed-form register accounting that quantifies the footprint — and the design change that opens headroom — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 lowers the footprint by construction.
 
 ## 5. What Comes Next
 

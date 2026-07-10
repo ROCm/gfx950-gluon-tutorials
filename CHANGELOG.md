@@ -5,6 +5,23 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-10 — LLIR scheduler is now the `sched.barrier` variant
+
+The v1.0 out-of-tree LLIR-scheduler plugin is the **`sched.barrier` variant**: it
+pins the MFMA↔memory interleave with `llvm.amdgcn.sched.barrier(0)` after each
+memory anchor, instead of the earlier in-tree scheduler that disabled LLVM's
+`misched` / `post-misched`. It schedules the hot loop differently, so some measured
+numbers on the pinned build differ from the earlier in-tree results:
+
+- **Higher in-loop MFMA efficiency** at a slightly lower clock. E.g. a16w16
+  `v5 + llirSched`: ~74% → ~80% MFMA efficiency, TFLOPS roughly flat.
+- **v6 (loop-unroll) no longer hits the 512-VGPR spill cliff.** The old in-tree
+  scheduler spilled ~104 VGPRs on v6 (~19% MFMA efficiency, ~344 TFLOPS); the
+  `sched.barrier` variant keeps v6 at 508 VGPRs / ~4 spills / ~88% MFMA efficiency
+  / ~1177 TFLOPS. The v6 README §4 is rewritten to this current behavior.
+
+Per-kernel performance tables are being refreshed against the pinned v1.0 build.
+
 ## 2026-07-09 — Re-pin to `gfx950-tutorial-v1.0` (out-of-tree scheduler + amdgcnas plugins)
 
 The pinned Triton commit moves from `gfx950-tutorial-v0.3` to
