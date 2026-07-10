@@ -10,9 +10,9 @@ Measured on MI355:
 
 | Data Type | Shape           | TFLOPS | MFMA Eff. |
 |-----------|-----------------|--------|-----------|
-| FP16      | 4096x4096x8192  |   1489 |    98.25% |
-| BF8       | 4096x4096x16384 |   3277 |    99.98% |
-| MXFP4     | 4096x4096x32768 |   5387 |    94.50% |
+| FP16      | 4096x4096x8192  |   1421 |    98.66% |
+| BF8       | 4096x4096x16384 |   3232 |    99.52% |
+| MXFP4     | 4096x4096x32768 |   5189 |    93.86% |
 
 > [!NOTE]
 > Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
