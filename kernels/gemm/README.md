@@ -15,7 +15,7 @@ Measured on MI355:
 | MXFP4     | 4096x4096x32768 |   5387 |    94.50% |
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
+> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
 
 All kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) for optimal performance.
 
