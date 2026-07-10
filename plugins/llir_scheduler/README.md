@@ -63,7 +63,7 @@ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 
 ## The plugin source
 `LlirSchedPlugin.cpp` is the maintained plugin source — a self-contained
-new-PassManager LLVM pass plugin: it carries no Triton headers (its one helper,
-`isMFMAorWMMA`, is inlined) and registers itself via `llvmGetPassPluginInfo`,
+new-PassManager LLVM pass plugin: it carries no Triton headers and registers
+itself via `llvmGetPassPluginInfo`,
 auto-inserted at the `OptimizerLast` extension point. Edit it and rebuild the
 `.so` with the `g++` command in **Build** above.
