@@ -45,10 +45,10 @@ Automates running benchmarks across kernel versions and scheduler configs, colle
 
 ```bash
 # a16w16 kernels (run from anywhere):
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+force-agpr+amdgcnas --K 4096 --dtype fp16
 
 # a8w8 kernel (run from anywhere):
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
 ```
 
 ### Options
@@ -57,7 +57,7 @@ python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 |------|---------|-------------|
 | `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16` or `a8w8`) |
 | `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
-| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
+| `--configs` | `base llir llir+force-agpr+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 
@@ -67,8 +67,8 @@ Each config sets different environment variables before running the benchmark (s
 
 - **base** — no extra env vars (default Triton scheduling)
 - **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so` + `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`
-- **llir+ra** — `llir` + `TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1` (RA hints only, without the amdgcnas post-assembly pass)
-- **llir+amdgcnas** — `llir+ra` + `TRITON_AMDGCNAS_PLUGIN=1` (RA hints + post-assembly peephole)
+- **llir+force-agpr** — `llir` + `TRITON_FORCE_MFMA_AGPR=1` (force MFMA accumulators into AGPRs; no peephole)
+- **llir+force-agpr+amdgcnas** — `llir+force-agpr` + `TRITON_AMDGCNAS_PLUGIN=1` (adds the post-assembly peephole)
 
 ### Examples
 
@@ -93,7 +93,7 @@ python scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf
 Run a8w8 kernel benchmark:
 
 ```bash
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
 ```
 
 ### Output
@@ -131,7 +131,7 @@ python scripts/run_counter_collection.py --counters TCC_EA0_RDREQ_DRAM_sum,TCP_T
 |------|---------|-------------|
 | `--kernel` | `a16w16` | Kernel type (`a16w16` or `a8w8`) |
 | `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
-| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
+| `--configs` | `base llir llir+force-agpr+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 | `--counters` | (required) | Comma-separated list of hardware counters to collect |

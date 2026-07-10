@@ -32,16 +32,16 @@ a markdown performance table.
 
 Usage:
     # a16w16 kernels (run from anywhere):
-    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+force-agpr+amdgcnas --K 4096 --dtype fp16
 
     # a8w8 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
 
     # a4w4 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+force-agpr+amdgcnas --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+force-agpr+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
 """
 
 import argparse
@@ -80,30 +80,32 @@ _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
     "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
-# amdgcnas is delivered in three pieces now (all out of the compiler except the
-# one LLVM flag): the amdgpu-agpr-alloc RA hint as a kernel option (llvm_fn_attrs,
-# read from TRITON_LLVM_FN_ATTRS by the kernels), the amdgpu-mfma-vgpr-form flag
-# via TRITON_ENABLE_AMDGPU_RA_HINTS (still in llvm.cc), and the post-assembly
-# peephole as an out-of-tree hook (TRITON_AMDGCNAS_PLUGIN, installed by bench.py).
-# See plugins/amdgcnas/README.md.
-_RA_HINT_ENV = {
-    "TRITON_LLVM_FN_ATTRS": "amdgpu-agpr-alloc=256",
-    "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
+# force-agpr (the RA piece): a single env var TRITON_FORCE_MFMA_AGPR=1 forces MFMA
+# accumulators into AGPRs. The kernels read it to set llvm_fn_attrs=
+# "amdgpu-agpr-alloc=256" (reserve the AGPRs), and llvm.cc reads it to set
+# amdgpu-mfma-vgpr-form=0 (use the AGPR MFMA form). See plugins/amdgcnas/README.md.
+_FORCE_AGPR_ENV = {
+    "TRITON_FORCE_MFMA_AGPR": "1",
 }
 
+# Cumulative configs: each adds one component on top of the previous, so a perf
+# table row's number reflects that stack (llirSched, then + force-agpr, then
+# + the out-of-tree amdgcnas post-assembly peephole).
 CONFIG_ENV = {
     "base": {},
     "llir": {**_LLIR_SCHED_ENV},
-    # RA hints only (agpr-alloc kernel option + mfma-vgpr-form flag), no peephole.
-    "llir+ra": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV},
-    # RA hints + the out-of-tree post-assembly peephole.
-    "llir+amdgcnas": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV, "TRITON_AMDGCNAS_PLUGIN": "1"},
+    "llir+force-agpr": {**_LLIR_SCHED_ENV, **_FORCE_AGPR_ENV},
+    "llir+force-agpr+amdgcnas": {
+        **_LLIR_SCHED_ENV,
+        **_FORCE_AGPR_ENV,
+        "TRITON_AMDGCNAS_PLUGIN": "1",
+    },
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
 # number in the tutorial. Pairs not in this set are skipped by default — they
 # either crash at compile time (e.g. v0..v4 + llir segfault) or produce results
-# that aren't part of the documented optimization story (e.g. v6 + llir+amdgcnas
+# that aren't part of the documented optimization story (e.g. v6 + llir+force-agpr+amdgcnas
 # FAILs, v5 + amdgcnas spills 246 VGPRs).
 #
 # Single-kernel benchmarks (a8w8) use `None` as the version sentinel.
@@ -115,18 +117,18 @@ REPORTED_COMBINATIONS = {
     "a16w16": {
         "base": {0, 2, 3, 4, 5},
         "llir": {5, 6, 7},
-        "llir+ra": {7},
-        "llir+amdgcnas": {7, 8, 9},
+        "llir+force-agpr": {7},
+        "llir+force-agpr+amdgcnas": {7, 8, 9},
     },
     "a8w8": {
         "base": {None},
         "llir": {None},
-        "llir+amdgcnas": {None},
+        "llir+force-agpr+amdgcnas": {None},
     },
     "a4w4": {
         "base": {0, 1},
         "llir": {0, 1},
-        "llir+amdgcnas": {0, 1},
+        "llir+force-agpr+amdgcnas": {0, 1},
     },
 }
 
@@ -390,7 +392,7 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     for key in (
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+        "TRITON_FORCE_MFMA_AGPR",
     ):
         env.pop(key, None)
     # Set config-specific env vars

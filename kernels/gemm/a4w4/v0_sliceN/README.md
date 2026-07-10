@@ -242,7 +242,7 @@ LLVM_PASS_PLUGIN_PATH=$LLIR LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 
 # With both LLIR scheduler and amdgcnas
 LLVM_PASS_PLUGIN_PATH=$LLIR LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_FORCE_MFMA_AGPR=1 \
     TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
 ```
 
@@ -251,7 +251,7 @@ For accurate performance measurement with rocprof:
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
     LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_FORCE_MFMA_AGPR=1 \
     TRITON_AMDGCNAS_PLUGIN=1 \
     rocprofv3 --kernel-trace -d out -- python bench.py --K 32768 --rocprof
 ```

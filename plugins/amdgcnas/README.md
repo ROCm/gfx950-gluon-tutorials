@@ -1,13 +1,15 @@
 # amdgcnas — out-of-tree post-assembly peephole
 
-`amdgcnas` originally did two separable things inside the Triton fork. This
-directory moves the algorithmic half out of tree; the pieces are now:
+`amdgcnas` originally bundled register-allocation hints and a post-assembly
+peephole inside the Triton fork. Those are now **two separate components**: the RA
+hints became the **force-agpr** component (a single env var, `TRITON_FORCE_MFMA_AGPR`),
+and `amdgcnas` is *only* the peephole, shipped out-of-tree here.
 
-| Piece | What it does | Where it lives now |
-|-------|--------------|--------------------|
-| `amdgpu-agpr-alloc=256` | reserve 256 AGPRs for MFMA accumulators | **kernel option** `llvm_fn_attrs="amdgpu-agpr-alloc=256"` (kernels read it from `TRITON_LLVM_FN_ATTRS`) |
-| `amdgpu-mfma-vgpr-form=0` | keep accumulators in AGPR form | **in-tree** LLVM flag, gated by `TRITON_ENABLE_AMDGPU_RA_HINTS` in `llvm.cc` |
-| post-assembly **peephole** (LICM + MFMA/scalar interleave) | rewrite the final assembly text | **out-of-tree here**, via the stages hook |
+| Piece | Component | What it does | How to enable |
+|-------|-----------|--------------|---------------|
+| `amdgpu-agpr-alloc=256` | force-agpr | reserve 256 AGPRs for MFMA accumulators | `TRITON_FORCE_MFMA_AGPR=1` → kernels set `llvm_fn_attrs="amdgpu-agpr-alloc=256"` |
+| `amdgpu-mfma-vgpr-form=0` | force-agpr | keep accumulators in AGPR form | `TRITON_FORCE_MFMA_AGPR=1` → `llvm.cc` sets the flag |
+| post-assembly **peephole** (LICM + MFMA/scalar interleave) | amdgcnas | rewrite the final assembly text | `TRITON_AMDGCNAS_PLUGIN=1` (out-of-tree hook here) |
 
 ## Files
 - `amdgcnas_ext.py` — reduced from Triton's `python/triton/tools/amdgcnas.py`
@@ -25,14 +27,13 @@ no LLVM ABI lock, no Triton rebuild** — it works on stock Triton.
 
 ## Use
 `bench.py` installs the hook when `TRITON_AMDGCNAS_PLUGIN=1` (set it to `2` for
-verbose peephole logging). To reproduce the full `llir+amdgcnas` stack out of tree:
+verbose peephole logging). To reproduce the full `llir+force-agpr+amdgcnas` stack out of tree:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=.../plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_LLVM_FN_ATTRS="amdgpu-agpr-alloc=256" \
-TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+TRITON_FORCE_MFMA_AGPR=1 \
 TRITON_AMDGCNAS_PLUGIN=1 \
     python bench.py --version 8 --K 8192 --dtype fp16
 ```
-`scripts/run_perf_table.py` sets these for the `llir+ra` and `llir+amdgcnas` configs.
+`scripts/run_perf_table.py` sets these for the `llir+force-agpr` and `llir+force-agpr+amdgcnas` configs.

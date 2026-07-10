@@ -13,14 +13,20 @@ The pinned Triton commit moves from `gfx950-tutorial-v0.3` to
 scheduler and the `amdgcnas` post-assembly tool from Triton, and the tutorial now
 ships them as out-of-tree plugins in `plugins/`:
 
-- **LLIR scheduler** → `plugins/llir_scheduler/libLlirSched.so`, an LLVM pass
-  plugin loaded via `LLVM_PASS_PLUGIN_PATH` (+ `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`).
+The three components each have their own enable knob and their own cumulative
+`run_perf_table.py` config (`base` / `llir` / `llir+force-agpr` /
+`llir+force-agpr+amdgcnas`):
+
+- **llirSched** → `plugins/llir_scheduler/libLlirSched.so`, an LLVM pass plugin
+  loaded via `LLVM_PASS_PLUGIN_PATH` (+ `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`).
   Replaces the old `TRITON_ENABLE_LLIR_SCHED=1` env var.
-- **amdgcnas** → split three ways: the `amdgpu-agpr-alloc` RA hint is a kernel
-  compile option (`TRITON_LLVM_FN_ATTRS`), `amdgpu-mfma-vgpr-form` stays gated in
-  `llvm.cc` (`TRITON_ENABLE_AMDGPU_RA_HINTS`), and the post-assembly peephole is a
-  pure-Python `amdgcn`-stage hook (`TRITON_AMDGCNAS_PLUGIN=1`), reduced to the
-  LICM / save-restore / loop-scheduling passes. Replaces `TRITON_ENABLE_AMDGCN_AS=1`.
+- **force-agpr** → the RA hints, now a single env var `TRITON_FORCE_MFMA_AGPR=1`:
+  the kernels set `llvm_fn_attrs="amdgpu-agpr-alloc=256"` (reserve AGPRs) and
+  `llvm.cc` sets `amdgpu-mfma-vgpr-form=0` (AGPR-form MFMA). Replaces the earlier
+  split `TRITON_LLVM_FN_ATTRS` / `TRITON_ENABLE_AMDGPU_RA_HINTS`.
+- **amdgcnas** → now *only* the post-assembly peephole, a pure-Python
+  `amdgcn`-stage hook (`TRITON_AMDGCNAS_PLUGIN=1`), reduced to the LICM /
+  save-restore / loop-scheduling passes. Replaces `TRITON_ENABLE_AMDGCN_AS=1`.
 
 Triton must be built with `TRITON_EXT_ENABLED=1` for the scheduler plugin to
 resolve LLVM symbols. `v1.0` shares `v0.3`'s upstream base (`63a5e1f0e`) and LLVM

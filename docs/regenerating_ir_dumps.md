@@ -118,7 +118,7 @@ emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched v5_local_prefetch
 export TRITON_CACHE_DIR=/tmp/triton_cache_v5_amdgcnas
 rm -rf "$TRITON_CACHE_DIR"
 LLVM_PASS_PLUGIN_PATH="$LLIR_PLUGIN" LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_FORCE_MFMA_AGPR=1 \
     TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 5 --K 4096 --dtype fp16
 SRC=$(dirname "$(ls "$TRITON_CACHE_DIR"/*/v5_local_prefetch.amdgcn | head -1)")
 emit "$SRC" v5_local_prefetch/ir_dump_K4096_fp16_llirSched_amdgcnas v5_local_prefetch

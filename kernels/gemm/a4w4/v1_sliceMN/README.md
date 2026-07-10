@@ -83,11 +83,11 @@ From the `a4w4` directory:
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+TRITON_FORCE_MFMA_AGPR=1 \
 TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+amdgcnas --K 32768 --rocprof
+  --configs base llir llir+force-agpr+amdgcnas --K 32768 --rocprof
 ```

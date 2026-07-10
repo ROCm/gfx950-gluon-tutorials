@@ -125,7 +125,7 @@ The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model
 
 ### 3.5 Validation
 
-The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v8 (no XCD remapping) or v9 with GM = 1. Hardware counter measurements on MI355 at M=N=4096, K=8192, fp16, llir+amdgcnas confirm this:
+The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v8 (no XCD remapping) or v9 with GM = 1. Hardware counter measurements on MI355 at M=N=4096, K=8192, fp16, llir+force-agpr+amdgcnas confirm this:
 
 | Configuration                  | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
 |--------------------------------|------------------------|----------------------|
@@ -147,10 +147,10 @@ The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality t
 Counters are collected using:
 ```bash
 # v8 (no XCD remapping)
-python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 
 # v9 with GM=1, 4, 6, 8 — vary GROUP_SIZE_M in v9_beyond_hotloop/matmul_kernel.py's matmul() launcher
-python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).

@@ -173,7 +173,7 @@ Storing `acc_left` overlaps with the final MFMA computing `acc_right`.
 
 Performance data is collected with:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+amdgcnas --K 8192 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
@@ -218,7 +218,7 @@ The trace above shows that removing `v_accvgpr` copies also eliminates VALU stal
 Enable it (on top of the LLIR scheduler) by setting the environment variables:
 
 ```bash
-TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 TRITON_AMDGCNAS_PLUGIN=1
+TRITON_FORCE_MFMA_AGPR=1 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
 The amdgcnas pass incorporates the RA flags above plus additional optimizations. With full scheduling (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.

@@ -76,22 +76,25 @@ _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
     "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
-# amdgcnas RA hints: amdgpu-agpr-alloc as a kernel option (TRITON_LLVM_FN_ATTRS,
-# read by the kernels) + amdgpu-mfma-vgpr-form via TRITON_ENABLE_AMDGPU_RA_HINTS
-# (still in llvm.cc). The post-assembly peephole is the TRITON_AMDGCNAS_PLUGIN hook
-# installed by bench.py. See plugins/amdgcnas/README.md.
-_RA_HINT_ENV = {
-    "TRITON_LLVM_FN_ATTRS": "amdgpu-agpr-alloc=256",
-    "TRITON_ENABLE_AMDGPU_RA_HINTS": "1",
+# force-agpr (the RA piece): TRITON_FORCE_MFMA_AGPR=1 forces MFMA accumulators
+# into AGPRs. The kernels read it to set llvm_fn_attrs="amdgpu-agpr-alloc=256"
+# (reserve the AGPRs), and llvm.cc reads it to set amdgpu-mfma-vgpr-form=0. The
+# post-assembly peephole is the TRITON_AMDGCNAS_PLUGIN hook installed by bench.py.
+# See plugins/amdgcnas/README.md.
+_FORCE_AGPR_ENV = {
+    "TRITON_FORCE_MFMA_AGPR": "1",
 }
 
+# Cumulative configs: each adds one component on top of the previous.
 CONFIG_ENV = {
     "base": {},
     "llir": {**_LLIR_SCHED_ENV},
-    # RA hints only (agpr-alloc kernel option + mfma-vgpr-form flag), no peephole.
-    "llir+ra": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV},
-    # RA hints + the out-of-tree post-assembly peephole.
-    "llir+amdgcnas": {**_LLIR_SCHED_ENV, **_RA_HINT_ENV, "TRITON_AMDGCNAS_PLUGIN": "1"},
+    "llir+force-agpr": {**_LLIR_SCHED_ENV, **_FORCE_AGPR_ENV},
+    "llir+force-agpr+amdgcnas": {
+        **_LLIR_SCHED_ENV,
+        **_FORCE_AGPR_ENV,
+        "TRITON_AMDGCNAS_PLUGIN": "1",
+    },
 }
 
 TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
@@ -203,8 +206,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "TRITON_ENABLE_AMDGCN_AS",
         "LLVM_PASS_PLUGIN_PATH",
         "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
-        "TRITON_LLVM_FN_ATTRS",
-        "TRITON_ENABLE_AMDGPU_RA_HINTS",
+        "TRITON_FORCE_MFMA_AGPR",
         "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)
