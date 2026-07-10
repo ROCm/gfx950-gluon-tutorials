@@ -177,12 +177,12 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir l
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-| Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1166 |   508 |      0 |    87.07% |
-| v7 + LLIR scheduler            |   1332 |   512 |      0 |    84.77% |
-| v7 + LLIR scheduler + RA       |   1392 |   468 |      0 |    97.01% |
-| v7 + LLIR scheduler + amdgcnas |   1386 |   468 |      0 |    98.43% |
+| Version                          | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------------------|--------|-------|--------|-----------|
+| v6 + LLIR scheduler              |   1166 |   508 |      0 |    87.07% |
+| v7 + LLIR scheduler              |   1332 |   512 |      0 |    84.77% |
+| v7 + LLIR scheduler + force-agpr |   1392 |   468 |      0 |    97.01% |
+| v7 + LLIR scheduler + amdgcnas   |   1386 |   468 |      0 |    98.43% |
 
 ### 4.2. The AGPR↔VGPR copy bottleneck
 
