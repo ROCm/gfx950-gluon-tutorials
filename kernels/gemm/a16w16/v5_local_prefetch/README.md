@@ -218,7 +218,7 @@ Or when using `run_perf_table.py`, use the `llir` config:
 python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
-The implementation is at `third_party/amd/lib/TritonAMDGPUToLLVM/LLIRSchedule.cpp`.
+The implementation is at [`plugins/llir_scheduler/LlirSchedPlugin.cpp`](../../../../plugins/llir_scheduler/LlirSchedPlugin.cpp).
 
 ### 5.3. What Changed (v5 → v5 + llirSched)
 
