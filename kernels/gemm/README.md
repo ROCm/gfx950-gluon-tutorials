@@ -35,7 +35,7 @@ and different CLI defaults, and are not supported by these scripts.
 
 ### 2.1 Triton Build and the Out-of-tree Plugins
 
-The LLIR Scheduler and amdgcnas ship as **out-of-tree plugins in this repo** — [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md) (an LLVM pass plugin, `libLlirSched.so`) and [`plugins/amdgcnas/`](../../plugins/amdgcnas/README.md) (RA hints plus a pure-Python post-assembly hook). Triton itself only carries the hooks that let these plugins load. Both are essential for all three kernels (a16w16, a8w8, a4w4).
+The LLIR Scheduler and amdgcnas ship as **out-of-tree plugins in this repo** — [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md) (an LLVM pass plugin, `libLlirSched.so`) and [`plugins/amdgcnas/`](../../plugins/amdgcnas/README.md) (a pure-Python post-assembly hook). The third component, **force-agpr**, is an env-var RA hint (not a plugin). All three are essential for the kernels (a16w16, a8w8, a4w4); see the component table below.
 
 **Build.** Build Triton from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag on `triton-lang/triton`, **with default symbol visibility** (`TRITON_EXT_ENABLED=1`) so the LLVM plugin can resolve LLVM symbols from `libtriton` at load time:
 
