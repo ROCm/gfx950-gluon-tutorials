@@ -138,11 +138,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1123 |   434 |    57.80% |
-| v5             |   1133 |   452 |    58.31% |
-| v5 + llirSched |   1264 |   510 |    73.59% |
+| v4             |   1124 |   434 |    57.73% |
+| v5             |   1131 |   452 |    58.41% |
+| v5 + llirSched |   1217 |   512 |    79.92% |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (1123 → 1133 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1264 TFLOPS — a **12% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
+The 3-stage pipeline provides a modest improvement in the baseline case (1124 → 1131 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1217 TFLOPS — an **8% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md).
@@ -199,6 +199,8 @@ The scheduler:
    - `ds_read_b128` requires a 16-cycle interval between issues
    - `buffer_load` requires a 64-cycle interval between issues
    - Based on the cycles per MFMA (e.g., 16 or 32 cycles), the scheduler calculates and inserts the appropriate number of MFMA instructions between memory operations
+
+For a full walkthrough of the algorithm — region formation, the MFMA↔memory interleaving budget and its cost model, and how the schedule is pinned with `sched.barrier` — see the illustrated design reference [`plugins/llir_scheduler/llir_scheduler.html`](../../../../plugins/llir_scheduler/llir_scheduler.html).
 
 ### 5.2. How to Use It
 
