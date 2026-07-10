@@ -16,13 +16,17 @@ no Triton rebuild — it works on stock Triton.
 
 ## Use
 `bench.py` installs the hook when `TRITON_AMDGCNAS_PLUGIN=1` (set it to `2` for
-verbose peephole logging):
+verbose peephole logging). The peephole runs on top of the LLIR scheduler; to
+reproduce the full `llir+force-agpr+amdgcnas` stack:
 
 ```bash
-TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 8 --K 8192 --dtype fp16
+LLVM_PASS_PLUGIN_PATH=.../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+TRITON_FORCE_MFMA_AGPR=1 \
+TRITON_AMDGCNAS_PLUGIN=1 \
+    python bench.py --version 8 --K 8192 --dtype fp16
 ```
 
-The peephole runs on top of the LLIR scheduler; `scripts/run_perf_table.py` wires
-it into the tutorial's configs. See
+`scripts/run_perf_table.py` wires these into the tutorial's configs; see
 [gemm/README §2.1](../../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins)
-for the full component stack.
+for the component stack.
