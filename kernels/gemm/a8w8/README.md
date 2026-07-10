@@ -129,15 +129,16 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
-| Configuration                   | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|---------------------------------|--------|-------|--------|-----------|
-| base                            |   2741 |   512 |      0 |    62.16% |
-| llirSched                       |   3162 |   498 |      0 |    92.64% |
-| llirSched + amdgcnas            |   3277 |   512 |      0 |    99.98% |
+| Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|--------------------------|--------|-------|--------|-----------|
+| base                     |   2723 |   512 |      0 |    61.11% |
+| llir                     |   3177 |   510 |      0 |    93.75% |
+| llir+force-agpr          |   3231 |   488 |      0 |    98.06% |
+| llir+force-agpr+amdgcnas |   3232 |   488 |      0 |    99.52% |
 
-**M+N slicing eliminates the `llirSched`-alone spill cliff.** The old N-slicing-only a8w8 kernel hit 111 register spills under `llirSched` alone, dropping it to 747 TFLOPS. The new M+N slicing splits A across two `smemA_top` / `smemA_bot` allocations and gives four 128×128 accumulator quadrants, reducing peak register pressure enough that `llirSched` now runs spill-free at **3162 TFLOPS** without needing `amdgcnas` to clean up.
+**M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget: `llir` alone runs spill-free at **3177 TFLOPS / 93.75% MFMA efficiency**.
 
-**`amdgcnas` adds the last few percent to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.98% — the hot loop is fully saturated.
+**force-agpr and amdgcnas reach near-saturation.** `force-agpr` pins the MFMA accumulators into AGPRs, freeing VGPRs (510 → 488) and removing the in-loop `v_accvgpr_*` copies, for 98.06%. `amdgcnas` packs the remaining SALU gaps to reach **99.52% MFMA efficiency** — the hot loop is fully saturated.
 
 The [LLIR Scheduler](../../../plugins/llir_scheduler/README.md) and [amdgcnas](../../../plugins/amdgcnas/README.md) ship as out-of-tree plugins in this repo; see [gemm/README §2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for how to build Triton and enable them.
 
