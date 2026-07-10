@@ -100,11 +100,11 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 | Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|--------|-------|--------|-----------|
 | v5 + LLIR scheduler  |   1212 |   512 |      0 |    80.00% |
-| v6 + LLIR scheduler  |   1177 |   508 |      4 |    87.73% |
+| v6 + LLIR scheduler  |   1177 |   508 |      0 |    87.73% |
 
 The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. Removing them tightens the hot loop, and MFMA efficiency rises from 80% to **88%**: the scheduler no longer has to place a copy between the MFMA streams, so more of each iteration is MFMA.
 
-The cost lands in register pressure. v6 alternates buffer roles instead of copying — in the first sub-iteration `mfma` reads from `(a, b)` while `ds_read` writes into `(a_next, b_next)`, so the two operand sets are live concurrently by construction and cannot share VGPRs. The footprint nearly fills the register file — **508 of 512 registers** (all 256 architectural VGPRs plus 252 AGPRs). Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles.
+The cost lands in register pressure. v6 alternates buffer roles instead of copying — the two operand sets are live concurrently by construction and cannot share registers. The footprint sits right at the ceiling: **508 VGPRs, spill-free.** Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles. The closed-form register accounting, and the design change that opens headroom, is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis).
 
 Performance is collected using:
 ```bash
@@ -113,12 +113,6 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 --configs llir -
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-### 4.1. Register pressure at the ceiling
-
-gfx950's 512-register file is split into 256 architectural VGPRs (`v0`–`v255`) and 256 AGPRs (`a0`–`a255`); `.vgpr_count: 508` is the sum (LLVM's `TotalNumVgprs`). v6 fills the VGPR file — all 256 — and uses 252 AGPRs, where the MFMA accumulators live. With the VGPR file full, the register allocator spills 4 values: `.vgpr_spill_count: 4` counts allocator-forced VGPR spills (not ordinary AGPR↔VGPR copies, which are normal codegen). But `ScratchSize` is 0 and the assembly has **zero `scratch_load` / `scratch_store` instructions** — those 4 spills are backed by free AGPRs (`amdgpu-spill-vgpr-to-agpr`), not scratch memory, so they cost no memory round-trips. That is why the hot loop is not stalled and MFMA efficiency holds at ~88%.
-
-The signal here is a lack of headroom, not a stall. A *memory* spill — a `scratch_load` followed by `s_waitcnt vmcnt(0)` on the MFMA critical path — is exactly the latency the LLIR scheduler cannot hide, and with the VGPR file full, v6 is one design change away from hitting it. The closed-form register accounting that quantifies the footprint — and the design change that opens headroom — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 lowers the footprint by construction.
-
 ## 5. What Comes Next
 
-v6 has hit the register-budget ceiling. The remedy is not to coax the allocator into a tighter packing — that strategy plateaus quickly — but to design the kernel so the register footprint fits comfortably under 512 VGPRs *by construction*. v7 introduces slicing along N to halve the B tile's register cost, opening enough headroom to absorb the prefetch buffers and cleanly eliminate the spills.
+v6 sits right at the register-budget ceiling — 508 of 512 VGPRs, with no room to spare. The remedy is not to coax the allocator into a tighter packing — that strategy plateaus quickly — but to design the kernel so the register footprint fits comfortably under 512 VGPRs *by construction*. v7 introduces slicing along N to halve the B tile's register cost, opening enough headroom to absorb the prefetch buffers and leave room for scales and larger tiles.
