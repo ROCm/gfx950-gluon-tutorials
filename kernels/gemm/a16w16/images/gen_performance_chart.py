@@ -35,19 +35,21 @@ collected with:
 
 Run:  python gen_performance_chart.py   (writes performance_chart.png next to it)
 """
+
 import os
-import matplotlib
-matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 # Config styling, in cumulative order.
 CONFIGS = {
-    "base":                     dict(color="#4E95D9", label="Base kernel",                 tag=""),
-    "llir":                     dict(color="#E8973A", label="+ llir",                      tag="+llir"),
-    "llir+force-agpr":          dict(color="#9467BD", label="+ llir + force-agpr",         tag="+fa"),
-    "llir+force-agpr+amdgcnas": dict(color="#5BA85B", label="+ llir + force-agpr + amdgcnas", tag="+fa+asm"),
+    "base": dict(color="#4E95D9", label="Base kernel", tag=""),
+    "llir": dict(color="#E8973A", label="+ llir", tag="+llir"),
+    "llir+force-agpr": dict(color="#9467BD", label="+ llir + force-agpr", tag="+fa"),
+    "llir+force-agpr+amdgcnas": dict(
+        color="#5BA85B", label="+ llir + force-agpr + amdgcnas", tag="+fa+asm"
+    ),
 }
 
 # (version, config, TFLOPS, MFMA%) in plotting order.
