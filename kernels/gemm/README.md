@@ -148,7 +148,7 @@ The optimization principles from the FP16 journey apply directly to BF8 and MXFP
 | Aspect | FP16 (a16w16) | BF8 (a8w8) | MXFP4 (a4w4) |
 |--------|---------------|------------|--------------|
 | Tile size | 256x256x64 | 256x256x128 | 256x256x256 |
-| MFMA instruction | `v_mfma_f32_16x16x32_f16` | `v_mfma_scale_f32_16x16x128_f8f6f4` | same |
+| MFMA instruction | `v_mfma_f32_16x16x32_f16` | `v_mfma_scale_f32_16x16x128_f8f6f4` | `v_mfma_scale_f32_16x16x128_f8f6f4` |
 | cbsz / blgp | N/A | 1 / 1 (E5M2) | 4 / 4 (E2M1) |
 | MFMA cycles | 16 | 32 (cbsz/blgp <= 1) | 16 (cbsz/blgp > 1) |
 | Scaling | None | None | Per-group e8m0 |
