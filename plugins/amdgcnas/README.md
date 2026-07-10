@@ -19,11 +19,6 @@ reference:
 - `amdgcnas_plugin.py` — a `knobs.runtime.add_stages_inspection_hook` that wraps
   the `amdgcn` compile stage: run in-tree codegen, then `amdgcn_as` on the result.
 
-## Why this one is trivial (vs the LLIR scheduler)
-The peephole is post-codegen text, so it attaches at the `amdgcn` stage with the
-pure-Python stages hook. **No `.so`, no `TRITON_EXT_ENABLED`, no `RTLD_GLOBAL`,
-no LLVM ABI lock, no Triton rebuild** — it works on stock Triton.
-
 ## Use
 `bench.py` installs the hook when `TRITON_AMDGCNAS_PLUGIN=1` (set it to `2` for
 verbose peephole logging). To reproduce the full `llir+force-agpr+amdgcnas` stack out of tree:
