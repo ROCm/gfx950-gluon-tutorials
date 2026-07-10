@@ -236,7 +236,7 @@ This improvement directly reflects the throughput model of memory operations —
 
 ### 5.4. Bottleneck Analysis
 
-Even with the LLIR scheduler, MFMA efficiency is 76% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
+Even with the LLIR scheduler, MFMA efficiency is 80% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
 
 Examining the generated assembly in [`ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s`](./ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s) (lines 828–921), we see a block of copy instructions at the end of each iteration:
 
