@@ -15,7 +15,7 @@ Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/t
 The three components the tutorial depends on are on a planned upstreaming path:
 
 - **llirSched** — the LLIR scheduler (out-of-tree LLVM pass plugin, enabled via `LLVM_PASS_PLUGIN_PATH`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
-- **force-agpr** — the AGPR register-allocation hint (enabled via `TRITON_FORCE_MFMA_AGPR`) — targeted for upstream LLVM around June 2026 as an AGPR allocator policy.
+- **force-agpr** — the AGPR register-allocation hint (enabled via `TRITON_FORCE_MFMA_AGPR`) — targeted for upstream LLVM around June 2026 as an AGPR allocator policy. Its `amdgpu-mfma-vgpr-form=0` half is a stopgap that forces *all* MFMA C/D into AGPRs; LLVM's upcoming `RewriteMFMAFormStage` pass will instead pick AGPR vs. VGPR form per MFMA by register pressure, and once it defaults on that flag can be dropped from `llvm.cc`.
 - **`amdgcnas`** — the post-assembly peephole (out-of-tree plugin, enabled via `TRITON_AMDGCNAS_PLUGIN`) — a longer-term target for an LLVM MachineInstr-level pass.
 
 Once these land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
