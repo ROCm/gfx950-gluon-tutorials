@@ -214,17 +214,20 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
-| Configuration         | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|-----------------------|--------|-------|--------|-----------|
-| base                  |   4274 |   512 |      0 |    50.65% |
-| llirSched             |   4785 |   512 |     23 |    68.67% |
-| llirSched + amdgcnas  |   5253 |   512 |      0 |    90.06% |
+| Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|--------------------------|--------|-------|--------|-----------|
+| base                     |   4357 |   510 |      0 |    51.45% |
+| llir                     |   1454 |   512 |     40 |    21.52% |
+| llir+force-agpr          |   4927 |   492 |      0 |    79.70% |
+| llir+force-agpr+amdgcnas |   4921 |   496 |      0 |    81.00% |
 
 See the [gemm README section 2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of LLIR scheduler**: Improves the kernel from 4274 to 4785 TFLOPS (1.12x), with MFMA efficiency rising from 50.65% to 68.67%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
+**Effect of the LLIR scheduler**: v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and the scheduler alone spills 40 VGPRs, collapsing the kernel to 1454 TFLOPS / 21.52% MFMA efficiency. The interleaving itself is correct, but with a full register file every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip the scheduler cannot hide.
 
-**Effect of amdgcnas**: Further improves from 4785 to 5253 TFLOPS, raising MFMA efficiency to 90.06%. The LLVM register hints (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) force MFMA accumulators (OpC and Dst) into AGPRs, freeing VGPRs and simplifying register allocation; the hint also clears the 23-spill regression that `llirSched` alone leaves behind. LICM further reduces instruction count by hoisting loop-invariant LDS address calculations to the prologue.
+**Effect of force-agpr**: The RA hints (`amdgpu-agpr-alloc=256` and `amdgpu-mfma-vgpr-form=0`, both set by `TRITON_FORCE_MFMA_AGPR=1`) force the MFMA accumulators into AGPRs, freeing VGPRs and clearing all 40 spills. The kernel recovers to 4927 TFLOPS / 79.70% MFMA efficiency.
+
+**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.00%.
 
 ## 5. How to Run
 
