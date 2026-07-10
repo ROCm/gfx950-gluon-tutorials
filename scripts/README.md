@@ -63,12 +63,12 @@ python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 
 ### Configs
 
-Each config sets different environment variables before running the benchmark:
+Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
 
 - **base** — no extra env vars (default Triton scheduling)
-- **llir** — `TRITON_ENABLE_LLIR_SCHED=1`
-- **llir+ra** — `TRITON_ENABLE_LLIR_SCHED=1` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1` (RA hints only, without the amdgcnas post-assembly pass; see [gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for the two-part split)
-- **llir+amdgcnas** — `TRITON_ENABLE_LLIR_SCHED=1` + `TRITON_ENABLE_AMDGCN_AS=1` (RA hints + post-assembly)
+- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so` + `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`
+- **llir+ra** — `llir` + `TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1` (RA hints only, without the amdgcnas post-assembly pass)
+- **llir+amdgcnas** — `llir+ra` + `TRITON_AMDGCNAS_PLUGIN=1` (RA hints + post-assembly peephole)
 
 ### Examples
 
@@ -166,7 +166,7 @@ Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then auto
 
 > [!IMPORTANT]
 > The script sets `ROCPROF_ATT_LIBRARY_PATH` to an example path that may not match your system.
-> Update the path in `run_att.py` at line 31 (in `run_rocprof_att()`) to point to your ATT decoder library location.
+> Update the `ROCPROF_ATT_LIBRARY_PATH` default in `run_att.py` (in `run_rocprof_att()`) to point to your ATT decoder library location.
 
 ### Usage
 

@@ -75,6 +75,16 @@ SPILLs=$(sed -n '/vgpr_spill/p' output.mlir | tail -n 1 | awk '{print $2}')
 
 echo "VGPRS: $VGPRs (spill: $SPILLs)"
 
+# Bail out cleanly if the IR did not yield the expected integer fields (a compile
+# failure or an IR-format change) — otherwise the arithmetic below divides by an
+# empty value and aborts with an opaque bash error.
+for _v in LDS num_warps VGPRs; do
+    if ! [[ "${!_v}" =~ ^[0-9]+$ ]]; then
+        echo "error: could not parse '$_v' from output.mlir (got '${!_v}'); check output.mlir for the compile output" >&2
+        exit 1
+    fi
+done
+
 occLDSPerCU=$((LDS_SIZE/LDS))
 occVgprPerCU=$(get_occ_per_CU $VGPRs)
 occPerCU=$occVgprPerCU

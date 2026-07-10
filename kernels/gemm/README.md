@@ -17,7 +17,7 @@ Measured on MI355:
 > [!NOTE]
 > Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions. See [`CHANGELOG.md`](../../CHANGELOG.md) for the MXFP4 MFMA-efficiency change at v0.2.
 
-All kernels require the [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) for optimal performance.
+All kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) for optimal performance.
 
 ## 2. Prerequisites
 
@@ -33,34 +33,41 @@ where rocprofv3 7.0+ now defaults to a binary `.db` output, and
 6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
 and different CLI defaults, and are not supported by these scripts.
 
-### 2.1 Triton Branch — LLIR Scheduler and amdgcnas
+### 2.1 Triton Build and the Out-of-tree Plugins
 
-The LLIR Scheduler and amdgcnas are available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch. Build Triton from this branch to use these features. Both passes are essential for all three kernels (a16w16, a8w8, a4w4).
+The LLIR Scheduler and amdgcnas ship as **out-of-tree plugins in this repo** — [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md) (an LLVM pass plugin, `libLlirSched.so`) and [`plugins/amdgcnas/`](../../plugins/amdgcnas/README.md) (RA hints plus a pure-Python post-assembly hook). Triton itself only carries the hooks that let these plugins load. Both are essential for all three kernels (a16w16, a8w8, a4w4).
 
-**Pinned commit.** Build Triton from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag on `triton-lang/triton` (which points at a specific commit on the `gfx950-tutorial` branch). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against that pinned commit. Later commits on the `gfx950-tutorial` branch may shift absolute numbers; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable.
+**Build.** Build Triton from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag on `triton-lang/triton`, **with default symbol visibility** (`TRITON_EXT_ENABLED=1`) so the LLVM plugin can resolve LLVM symbols from `libtriton` at load time:
 
-**Upstream trajectory.** This dev-branch dependency is expected to be temporary. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
+```bash
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v1.0 /tmp/triton
+cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
+```
+
+Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`62b7cf96`); if the pin moves, rebuild it with `plugins/llir_scheduler/gen_plugin.py`. The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v1.0`; the relative structure (`llir` vs. `llir+ra` vs. `llir+amdgcnas`) is expected to remain stable across later pins.
+
+**Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap. The LLIR scheduler will migrate to Triton mainline as an opt-in pass; the RA hint flags will move to the AMD Triton backend and eventually into LLVM's AMDGPU register allocator; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
 **Why these tools exist.** Upstream LLVM's scheduling and register-allocation passes were designed for the discovery model: they receive thread-level IR, recover dependencies by analysis, and solve the resulting NP-hard problems with heuristics. Gluon's block-level programming model makes those problems smaller — dependencies are *engineered* at the block level (e.g., `DOT`, `local_load`, and `buffer_load` are designed to be independent within a 3-stage pipeline), so at the instruction level, MFMAs, `ds_read`s, and `buffer_load`s can be interleaved by a simple throughput-model pass. Likewise, register budgets have a closed-form expression at block level, so allocation becomes a matter of honoring that budget rather than solving graph coloring.
 
 `llirSched` and `amdgcnas` are the minimum tools that honor this block-level contract today. They are not general-purpose replacements for LLVM's `misched` or register allocator — on arbitrary C-like code they would not make sense. On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses, and their underlying ideas are being integrated into LLVM itself in collaboration with LLVM engineers, so that upstream LLVM will eventually produce the same output. See [`docs/performance_philosophy.md`](../../docs/performance_philosophy.md) for the full argument.
 
-**LLIR Scheduler** (`TRITON_ENABLE_LLIR_SCHED=1`) is a Triton LLIR-level pass that interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory operation completion rate. To preserve this scheduling, it disables the LLVM backend's pre-RA and post-RA machine schedulers. Without the LLIR scheduler, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
+**LLIR Scheduler** (out-of-tree LLVM pass plugin `plugins/llir_scheduler/libLlirSched.so`; enable with `LLVM_PASS_PLUGIN_PATH=…/libLlirSched.so` and `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`) is an LLVM-IR-level pass that interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory operation completion rate. To preserve this scheduling, it pins each region with `llvm.amdgcn.sched.barrier(0)` after every memory anchor, so LLVM's machine scheduler keeps the interleave instead of clustering the MFMAs (no misched-disable needed). Without the LLIR scheduler, the backend compiler clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation. The scheduler:
 - Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
 - Distributes MFMAs among anchors based on throughput (e.g., 4 MFMAs per global load for 16-cycle MFMA, 2 for 32-cycle)
 - For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads and allocates remaining MFMAs after ds_write to cover LDS port contention
 
-**amdgcnas** (`TRITON_ENABLE_AMDGCN_AS=1`) addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_sliceN/README.md#43-register-allocation-workaround). It does two things:
+**amdgcnas** ships in two independently-controlled pieces — RA hints (`TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1`) and a post-assembly peephole (`TRITON_AMDGCNAS_PLUGIN=1`). It addresses the register allocation challenges described in [a16w16 v7 sections 4.3–4.4](a16w16/v7_sliceN/README.md#43-register-allocation-workaround). It does two things:
 
-1. **LLVM register hints**: Sets `amdgpu-agpr-alloc=256` on the kernel function, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure. **Tradeoff**: forcing accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. Acceptable for compute-bound GEMM with large K (~95% time in the main loop), potentially harmful where the epilogue is a larger fraction of runtime. See [a16w16 v7 §4.3](a16w16/v7_sliceN/README.md#43-register-allocation-workaround).
+1. **LLVM register hints** (`TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256` + `TRITON_ENABLE_AMDGPU_RA_HINTS=1`): Sets `amdgpu-agpr-alloc=256` on the kernel function (passed through the kernel's `llvm_fn_attrs` option), directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators. Also sets `amdgpu-mfma-vgpr-form=false` (via `TRITON_ENABLE_AMDGPU_RA_HINTS`) to prevent LLVM from using the VGPR form of MFMA instructions, keeping accumulators in AGPRs and reducing VGPR pressure. **Tradeoff**: forcing accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. Acceptable for compute-bound GEMM with large K (~95% time in the main loop), potentially harmful where the epilogue is a larger fraction of runtime. See [a16w16 v7 §4.3](a16w16/v7_sliceN/README.md#43-register-allocation-workaround).
 
-2. **Post-assembly processing**: Optimizes the final generated assembly:
+2. **Post-assembly processing** (`TRITON_AMDGCNAS_PLUGIN=1`, a pure-Python `amdgcn`-stage hook installed by `bench.py` — no compiler rebuild): Optimizes the final generated assembly:
    - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue. When the hoisted instruction's output register is redefined inside the loop, it applies register renaming.
    - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
 **Relative contributions.** Parts 1 and 2 of amdgcnas are not equally important. On the FP16 and BF8 kernels, the register hints alone close 75–85% of the MFMA-efficiency improvement between `llir` and `llir+amdgcnas`, land within 1–2% TFLOPS of the full pass, and the post-assembly work adds only +2pp MFMA efficiency on top. MXFP4 leans more heavily on the post-assembly pass: on the `v1_sliceMN` kernel the register hints close only about half the efficiency gap (`llir` ~71% → `llir+ra` ~84%), and the post-assembly peephole adds the remaining ~+10pp to reach ~94% — the paired scale loads create denser SALU activity for the peephole to pack. The two parts therefore have different upstream stories: the hints map to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
 
-To measure each piece independently, set `TRITON_ENABLE_AMDGPU_RA_HINTS=1` to enable the hints alone (without the post-assembly pass). `TRITON_ENABLE_AMDGCN_AS=1` enables both. `scripts/run_perf_table.py` exposes these as the `llir+ra` and `llir+amdgcnas` configs.
+To measure each piece independently, enable the RA hints alone with `TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1` (without the post-assembly pass); adding `TRITON_AMDGCNAS_PLUGIN=1` turns on the peephole as well. `scripts/run_perf_table.py` exposes these as the `llir+ra` and `llir+amdgcnas` configs.
 
 ### 2.2 Running Benchmarks
 
@@ -84,17 +91,24 @@ This script automatically:
 
 ### 2.3 Manual Workflow
 
-To run benchmarks manually, set the environment variables directly. Run from the kernel directory:
+To run benchmarks manually, export the plugin environment variables, then run from the kernel directory. The env is the same for all three kernels — the plugin `.so` path is absolute, so it works from any kernel dir (this is the `llir+amdgcnas` config; drop `TRITON_AMDGCNAS_PLUGIN` for `llir+ra`, or all four vars for `base`):
 
 ```bash
+# Enable the llir scheduler + amdgcnas (once per shell)
+export LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so
+export LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1
+export TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256
+export TRITON_ENABLE_AMDGPU_RA_HINTS=1
+export TRITON_AMDGCNAS_PLUGIN=1
+
 # FP16 (from kernels/gemm/a16w16/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 8 --K 8192 --dtype fp16
+python bench.py --version 8 --K 8192 --dtype fp16
 
 # BF8 (from kernels/gemm/a8w8/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 16384
+python bench.py --K 16384
 
 # MXFP4 (from kernels/gemm/a4w4/)
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --version 1 --K 32768
+python bench.py --version 1 --K 32768
 ```
 
 For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
@@ -103,8 +117,8 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
    selects CSV output, which `calc_kernel_time.py` reads — rocprofv3 on
    ROCm 7.0+ defaults to a binary `.db` format):
    ```bash
-   TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
-       rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
+   # with the plugin env vars from §2.3 still exported
+   rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
    ```
 
 2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:

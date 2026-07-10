@@ -213,12 +213,12 @@ The trace above shows that removing `v_accvgpr` copies also eliminates VALU stal
 
 ### 4.4. amdgcnas Assembly Processor
 
-**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
+**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It ships as an out-of-tree plugin in this repo ([`plugins/amdgcnas/`](../../../../plugins/amdgcnas/README.md)) — RA hints plus a post-assembly peephole.
 
-Enable it by setting the environment variable:
+Enable it (on top of the LLIR scheduler) by setting the environment variables:
 
 ```bash
-TRITON_ENABLE_AMDGCN_AS=1
+TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
 The amdgcnas pass incorporates the RA flags above plus additional optimizations. With full scheduling (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.

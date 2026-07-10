@@ -72,7 +72,15 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
         # In-tree codegen first (with the RA hints already applied in make_llir /
         # translate_to_asm), then the out-of-tree peephole on the assembly text.
         asm = orig_make_amdgcn(src, metadata, options)
-        return amdgcnas_ext.amdgcn_as(asm, verbose)
+        # The peephole is a pure optimization: a parse/transform failure must never
+        # turn a correct kernel into a hard compile error. Fall back to the
+        # un-peepholed (correct) assembly on any failure.
+        try:
+            return amdgcnas_ext.amdgcn_as(asm, verbose)
+        except Exception as e:
+            import warnings
+            warnings.warn(f"amdgcnas peephole skipped, using un-optimized assembly: {e!r}")
+            return asm
 
     stages["amdgcn"] = make_amdgcn_wrapper
     return get_key(), get_hash()

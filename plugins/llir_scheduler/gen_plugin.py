@@ -33,12 +33,26 @@ new-PassManager LLVM pass plugin (libLlirSched.so).
 - appends a new-PM pass (transactional clone/verify/rollback preserved) and
   llvmGetPassPluginInfo() that auto-inserts at the OptimizerLast extension point
 """
+import argparse
 import os
-import sys
 
-SRC = "/tmp/claude-0/-/7b1a9476-1524-42d1-92c7-ffd856d0ba4c/scratchpad/pr73_LLIRSchedule.cpp"
-OUT_DIR = os.path.expanduser("~/llir-sched-plugin")
-OUT = os.path.join(OUT_DIR, "LlirSchedPlugin.cpp")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+parser = argparse.ArgumentParser(
+    description="Regenerate LlirSchedPlugin.cpp from the upstream in-tree "
+    "LLIRSchedule.cpp (AMD-Triton triton-mi450 PR #73, the sched.barrier variant).")
+parser.add_argument(
+    "--src", required=True,
+    help="Path to a checkout of the upstream in-tree LLIRSchedule.cpp to port.")
+parser.add_argument(
+    "--out", default=os.path.join(_HERE, "LlirSchedPlugin.cpp"),
+    help="Output path for the generated plugin source "
+    "(default: the checked-in LlirSchedPlugin.cpp next to this script).")
+args = parser.parse_args()
+
+SRC = args.src
+OUT = args.out
+OUT_DIR = os.path.dirname(OUT) or "."
 
 lines = open(SRC).read().splitlines()
 

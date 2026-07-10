@@ -37,8 +37,10 @@ NO_DEF_OPS = {
 }
 
 
-## TODO(lixun)
-## Only buffer_load lds should be included in ALL_USERS set
+## NOTE: this def/use classification is intentionally conservative. Strictly, only
+## `buffer_load ... lds` needs to be in ALL_USERS, but the broader set below
+## over-approximates users, which is always safe (it never drops a live def, it
+## only forgoes some hoists). Tightening it is a known future refinement.
 ALL_USERS = ('s_cmp', 'v_permlane', 'buffer_store', 'ds_write', 'ds_store')
 ALL_DEFS_USES = ('v_permlane', )
 COPY_DATA = ('v_accvgpr_read', 'v_accvgpr_write', 'v_accvgpr_mov', 'v_mov', 'scratch_load', 'scratch_store')
@@ -961,6 +963,9 @@ def optimize_buffer_load_m0(bb):
             ## pattern 1: s_mov_b32 m0 --> s_nop 0 --> buffer_load --> mfma
             ## pattern 2: s_mov_b32 m0 --> buffer_load --> mfma
             ## swap buffer_load and mfma
+            if idx + 1 >= len(bb.instructions):  # buffer_load is the last instr
+                i += 1
+                continue
             mfma = bb.instructions[idx + 1]
             if not mfma.is_mfma():
                 i += 1
@@ -1141,7 +1146,7 @@ def hoist_loop_invariants(bb: BasicBlock):
             hoistable.append(inst)
             if 'scratch_load' in inst.opcode:
                 next_inst = bb.next_instruction(inst)
-                if 'vmcnt(0)' in next_inst.operands[0]:
+                if next_inst is not None and next_inst.operands and 'vmcnt(0)' in next_inst.operands[0]:
                     logging.debug(f"    Also hoist {next_inst.emit()}")
                     hoistable.append(next_inst)
             logging.debug("  can hoist!!")
@@ -1265,11 +1270,16 @@ def rewrite_next_free_vgpr(text: str) -> str:
 def licm(program):
     logging.debug("========== LICM ==========")
     loop = program.get_loop()
+    prologue = program.get_prologue()
+    if loop is None or prologue is None:
+        # Without both a loop and a prologue there is nowhere to hoist to; skip
+        # (guard placed before any mutation so no hoisted instruction is dropped).
+        logging.debug("no loop/prologue found; skipping LICM")
+        return
     hoisted, new_loop = hoist_loop_invariants(loop)
     loop.instructions = new_loop
 
     logging.debug("Hoisting the following before the loop:")
-    prologue = program.get_prologue()
     for inst in hoisted:
         logging.debug(f"{inst.emit()}")
         prologue.add_inst(inst)
@@ -1491,6 +1501,11 @@ def amdgcn_as(text, verbose=False):
     program.process_blocks(indent)
 
     loop = program.get_loop()
+    if loop is None:
+        # No hot loop detected — every peephole below is loop-scoped, so there is
+        # nothing to optimize. Return the input assembly unchanged.
+        setup_logging(debug=False)
+        return text
     program.update_free_regs(indent)
 
     # Step 3: hoist loop-invariant address math out of the loop into the prologue.
@@ -1544,7 +1559,7 @@ def main():
     with open(args.input, "r") as f:
         text = f.read()
 
-    emitted_text = amdgcn_as(text)
+    emitted_text = amdgcn_as(text, verbose=args.debug)
 
     with open(args.output, "w") as f:
         f.write(emitted_text)

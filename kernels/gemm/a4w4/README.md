@@ -27,7 +27,10 @@ a4w4/
 From the `a4w4` directory:
 
 ```bash
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
+LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1 --K 32768
 ```
 

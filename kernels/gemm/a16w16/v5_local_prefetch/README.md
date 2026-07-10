@@ -203,12 +203,14 @@ The scheduler:
 
 ### 5.2. How to Use It
 
-The LLIR scheduler is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
+The LLIR scheduler ships as an out-of-tree LLVM pass plugin in this repo ([`plugins/llir_scheduler/`](../../../../plugins/llir_scheduler/README.md)).
 
-Enable the LLIR scheduler by setting the environment variable:
+Enable it by pointing `LLVM_PASS_PLUGIN_PATH` at the built `.so`:
 
 ```bash
-TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 8192 --dtype fp16 --version 5
+LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python bench.py --K 8192 --dtype fp16 --version 5
 ```
 
 Or when using `run_perf_table.py`, use the `llir` config:

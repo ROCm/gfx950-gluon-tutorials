@@ -220,7 +220,7 @@ Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 | llirSched             |   4785 |   512 |     23 |    68.67% |
 | llirSched + amdgcnas  |   5253 |   512 |      0 |    90.06% |
 
-See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for an overview of the LLIR scheduler and amdgcnas passes.
+See the [gemm README section 2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
 **Effect of LLIR scheduler**: Improves the kernel from 4274 to 4785 TFLOPS (1.12x), with MFMA efficiency rising from 50.65% to 68.67%. Without the scheduler, the backend compiler clusters MFMAs together, leaving memory operations at the end of each region; the scheduler interleaves MFMAs with memory operations based on the throughput model.
 
@@ -231,19 +231,27 @@ See the [gemm README section 2.1](../README.md#21-triton-branch--llir-scheduler-
 From the `a4w4` directory:
 
 ```bash
+LLIR=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so
+
 # Without optimizations (base)
 python bench.py --K 32768
 
 # With LLIR scheduler only
-TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 32768
+LLVM_PASS_PLUGIN_PATH=$LLIR LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+    python bench.py --K 32768
 
 # With both LLIR scheduler and amdgcnas
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 python bench.py --K 32768
+LLVM_PASS_PLUGIN_PATH=$LLIR LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
 ```
 
 For accurate performance measurement with rocprof:
 
 ```bash
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
+LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
+    LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+    TRITON_LLVM_FN_ATTRS=amdgpu-agpr-alloc=256 TRITON_ENABLE_AMDGPU_RA_HINTS=1 \
+    TRITON_AMDGCNAS_PLUGIN=1 \
     rocprofv3 --kernel-trace -d out -- python bench.py --K 32768 --rocprof
 ```

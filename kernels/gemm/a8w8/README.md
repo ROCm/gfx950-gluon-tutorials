@@ -139,7 +139,7 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 **`amdgcnas` adds the last few percent to reach near-saturation.** With both passes enabled, MFMA efficiency reaches 99.98% — the hot loop is fully saturated.
 
-The [LLIR Scheduler](https://github.com/triton-lang/triton/tree/gfx950-tutorial) and [amdgcnas](https://github.com/triton-lang/triton/tree/gfx950-tutorial) both come from the `gfx950-tutorial` development branch.
+The [LLIR Scheduler](../../../plugins/llir_scheduler/README.md) and [amdgcnas](../../../plugins/amdgcnas/README.md) ship as out-of-tree plugins in this repo; see [gemm/README §2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for how to build Triton and enable them.
 
 ## 5. How to Run
 
