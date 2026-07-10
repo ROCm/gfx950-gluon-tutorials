@@ -104,7 +104,7 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. Removing them tightens the hot loop, and MFMA efficiency rises from 80% to **88%**: the scheduler no longer has to place a copy between the MFMA streams, so more of each iteration is MFMA.
 
-The cost lands in register pressure. v6 alternates buffer roles instead of copying — in the first sub-iteration `mfma` reads from `(a, b)` while `ds_read` writes into `(a_next, b_next)`, so the two operand sets are live concurrently by construction and cannot share VGPRs. The footprint sits right at the 512-VGPR ceiling — **508 of 512 VGPRs**. Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles.
+The cost lands in register pressure. v6 alternates buffer roles instead of copying — in the first sub-iteration `mfma` reads from `(a, b)` while `ds_read` writes into `(a_next, b_next)`, so the two operand sets are live concurrently by construction and cannot share VGPRs. The footprint nearly fills the register file — **508 of 512 registers** (all 256 architectural VGPRs plus 252 AGPRs). Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles.
 
 Performance is collected using:
 ```bash
@@ -115,7 +115,7 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ### 4.1. Register pressure at the ceiling
 
-On gfx950 the MFMA accumulators live in a separate AGPR file, so v6's real footprint is **508 VGPRs plus 252 AGPRs** — the VGPR file is essentially full. The `.amdgcn` metadata reports `.vgpr_spill_count: 4`, but the generated code contains **zero `scratch_load` / `scratch_store` instructions**: the allocator resolved those four over-budget values inside the register file (VGPR↔AGPR moves), not by spilling to scratch memory. They cost no memory round-trips, so the hot loop is not stalled and MFMA efficiency holds at ~88%.
+gfx950's 512-register file is split into 256 architectural VGPRs (`v0`–`v255`) and 256 AGPRs (`a0`–`a255`); `.vgpr_count: 508` is the sum (LLVM's `TotalNumVgprs`). v6 fills the VGPR file — all 256 — and uses 252 AGPRs, where the MFMA accumulators live. With the VGPR file full, the register allocator spills 4 values: `.vgpr_spill_count: 4` counts allocator-forced VGPR spills (not ordinary AGPR↔VGPR copies, which are normal codegen). But `ScratchSize` is 0 and the assembly has **zero `scratch_load` / `scratch_store` instructions** — those 4 spills are backed by free AGPRs (`amdgpu-spill-vgpr-to-agpr`), not scratch memory, so they cost no memory round-trips. That is why the hot loop is not stalled and MFMA efficiency holds at ~88%.
 
 The signal here is a lack of headroom, not a stall. A *memory* spill — a `scratch_load` followed by `s_waitcnt vmcnt(0)` on the MFMA critical path — is exactly the latency the LLIR scheduler cannot hide, and with the VGPR file full, v6 is one design change away from hitting it. The closed-form register accounting that quantifies the footprint — and the design change that opens headroom — is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis). v7 lowers the footprint by construction.
 
