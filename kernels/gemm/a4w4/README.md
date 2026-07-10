@@ -61,11 +61,11 @@ faster.
 ## 4. Performance
 
 Measured on MI355, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
-average), `llirSched + amdgcnas`:
+average), `llir+force-agpr+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
-| v0_sliceN  | 5265 | 91.6% |
-| v1_sliceMN | 5387 | 94.5% |
+| v0_sliceN  | 4920 | 81.3% |
+| v1_sliceMN | 5189 | 93.9% |
 
 See each version's README for the full per-config table.
