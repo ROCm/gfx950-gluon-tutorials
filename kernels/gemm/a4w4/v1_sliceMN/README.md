@@ -70,21 +70,25 @@ average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4258 | 4589 | 60.4% |
-| llirSched | 4780 | 4892 | 70.6% |
-| llirSched + amdgcnas | 5265 | 5387 | 94.5% |
+| base | 4357 | 4599 | 61.1% |
+| llir | 1454 | 4883 | 75.2% |
+| llir+force-agpr | 4927 | 5157 | 89.8% |
+| llir+force-agpr+amdgcnas | 4921 | 5185 | 92.3% |
 
-At K=65536: llirSched + amdgcnas 5390 (v0) / 5541 (v1, 93.3% MFMA eff).
+Under `llir` alone, v0_sliceN spills (its LDS-round-trip scale pipeline is register-heavy) and collapses to 1454 TFLOPS, while v1_sliceMN never spills; `force-agpr` clears v0's spill. At K=65536: `llir+force-agpr+amdgcnas` 4985 (v0) / 5298 (v1, 92.2% MFMA eff).
 
 ## 4. How to Run
 
 From the `a4w4` directory:
 
 ```bash
-TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1 \
+LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+TRITON_FORCE_MFMA_AGPR=1 \
+TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+amdgcnas --K 32768 --rocprof
+  --configs base llir llir+force-agpr+amdgcnas --K 32768 --rocprof
 ```

@@ -25,8 +25,34 @@
 import argparse
 import importlib
 
+# The out-of-tree LLIR scheduler ships as an LLVM pass plugin (see ../../../plugins/).
+# Loaded via LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at
+# dlopen time, which requires libtriton in the *global* symbol scope. CPython
+# loads C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the
+# first `import triton`. Only takes effect when the plugin is in use.
+import os
+import sys
+
 import torch
+
+if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+
 import triton
+
+# Out-of-tree amdgcnas peephole (post-assembly): install the amdgcn-stage hook
+# when TRITON_AMDGCNAS_PLUGIN is set. Pure-Python text transform, no rebuild.
+if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
+    sys.path.insert(
+        0,
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "plugins", "amdgcnas"
+        ),
+    )
+    import amdgcnas_plugin
+    from triton import knobs
+
+    knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
 
 # Map --version flag to subdirectory name. Each version directory exports a
 # `matmul(a_fp4, b_fp4, a_scales, b_scales)` callable from `matmul_kernel`.

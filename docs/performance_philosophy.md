@@ -1,6 +1,6 @@
 # Performance Philosophy
 
-**High-performance Gluon kernels are a co-design between kernel author and compiler.** This page explains what that means, why it produces a different split of responsibilities from traditional GPU programming, and where `llirSched` and `amdgcnas` fit in.
+**High-performance Gluon kernels are a co-design between kernel author and compiler.** This page explains what that means, why it produces a different split of responsibilities from traditional GPU programming, and where `llirSched`, `force-agpr`, and `amdgcnas` fit in.
 
 ## 1. Traditional compilation: discovery and heuristics
 
@@ -34,30 +34,29 @@ The narrowed responsibilities are:
 
 The compiler is still essential. But the hardest parts of its traditional job — the NP-hard scheduling and graph-coloring allocation — are done before it runs.
 
-## 4. `llirSched` and `amdgcnas`: scaffolding for the new model
+## 4. `llirSched`, `force-agpr`, and `amdgcnas`: scaffolding for the new model
 
 Today's LLVM pipeline was designed for the discovery model. Its IR has no place to express "these operations are independent by kernel construction," so its passes cannot exploit that guarantee. On Gluon kernels, `misched` reorders conservatively because it assumes it needs to discover dependencies, and the register allocator treats MFMA accumulators as generic live ranges, inserting `v_accvgpr` copies that break MFMA continuity.
 
-`llirSched` and `amdgcnas` are the minimum tools that honor the block-level contract today. They do not solve hard scheduling or allocation problems — the contract has already made those problems small:
+`llirSched`, `force-agpr`, and `amdgcnas` are the minimum tools that honor the block-level contract today. They do not solve hard scheduling or allocation problems — the contract has already made those problems small:
 
-- **`llirSched`** applies the O(n) throughput-model interleaving that block-level independence makes safe, then disables LLVM's `misched` and `post-misched` so they do not re-cluster the result.
-- **`amdgcnas`** is actually two distinct pieces with different upstream stories:
-  - **LLVM register-allocation hints** (`amdgpu-agpr-alloc=256`, `amdgpu-mfma-vgpr-form=false`) that steer allocation to keep MFMA accumulators in AGPRs. Measured across FP16, BF8, and MXFP4 GEMM, these hints alone close 75–85% of the MFMA-efficiency gap between `llirSched` and the full `amdgcnas` pass, landing within 1–2% TFLOPS of the full pass. They map cleanly to an upstream change: teach LLVM's allocator to recognize the Gluon contract and apply this policy natively. These hints are not free — forcing MFMA accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. The tradeoff pays off only for compute-bound kernels with large K, where the epilogue is a small share of runtime; part of the long-term upstream story is teaching LLVM to apply this allocation policy selectively rather than as a blunt kernel-level attribute.
-  - **Post-assembly LICM and MFMA–SALU peephole** on the generated AMDGCN text. This pass hoists loop-invariant LDS address arithmetic and interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation) that `llirSched` cannot reach — those instructions are inserted during MIR-level codegen, after LLIR lowering. Its contribution is kernel-dependent: +2pp MFMA efficiency on FP16 and BF8 GEMM, but +6pp on MXFP4 where the scale pipeline creates denser SALU activity. The natural upstream home is a MachineInstr-level backend pass; that work is still ahead of us.
+- **`llirSched`** (scheduling) applies the O(n) throughput-model interleaving that block-level independence makes safe, and pins the result with `llvm.amdgcn.sched.barrier(0)` after each memory anchor so LLVM's `misched`/`post-misched` cannot re-cluster it.
+- **`force-agpr`** (register allocation) is a pair of LLVM flags — `amdgpu-agpr-alloc=256` and `amdgpu-mfma-vgpr-form=false`, both driven by the single `TRITON_FORCE_MFMA_AGPR` knob — that steer allocation to keep MFMA accumulators in AGPRs. Measured across FP16, BF8, and MXFP4 GEMM, this alone closes 75–85% of the MFMA-efficiency gap between `llir` and the full stack, landing within 1–2% TFLOPS. It maps cleanly to an upstream change: teach LLVM's allocator to recognize the Gluon contract and apply this policy natively. It is not free — forcing *all* MFMA accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs; the tradeoff pays off only for compute-bound kernels with large K, where the epilogue is a small share of runtime. This is why the `amdgpu-mfma-vgpr-form=0` half is a temporary blunt instrument: LLVM's upcoming `RewriteMFMAFormStage` pass will choose AGPR vs. VGPR form per MFMA by register pressure, after which that flag can be dropped.
+- **`amdgcnas`** (post-assembly peephole) does no scheduling or allocation. It is post-assembly LICM and an MFMA–SALU peephole on the generated AMDGCN text: it hoists loop-invariant LDS address arithmetic and interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation) that `llirSched` cannot reach — those instructions are inserted during MIR-level codegen, after LLIR lowering. Its contribution is kernel-dependent: +2pp MFMA efficiency on FP16 and BF8 GEMM, but +6pp on MXFP4 where the scale pipeline creates denser SALU activity. The natural upstream home is a MachineInstr-level backend pass; that work is still ahead of us.
 
-Neither is a general-purpose replacement for its LLVM counterpart. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses; on arbitrary C-like code they would not make sense.
+None of the three is a general-purpose replacement for an LLVM pass. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses; on arbitrary C-like code they would not make sense.
 
-See [kernels/gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-branch--llir-scheduler-and-amdgcnas) for the mechanical details of each pass.
+See [kernels/gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins) for the mechanical details of each pass.
 
 ## 5. Collaboration with LLVM
 
-The goal is not to maintain `llirSched` and `amdgcnas` as permanent forks of the Triton/LLVM flow. The goal is to fold their ideas upstream in three phases, smallest-lift first:
+The goal is not to keep `llirSched`, `force-agpr`, and `amdgcnas` outside the standard Triton/LLVM flow forever. The goal is to fold their ideas into the LLVM backend in three phases, smallest-lift first:
 
-1. **`llirSched` → Triton mainline** as an opt-in pass gated on backend and kernel shape. This retires most of the dev-branch friction: users on upstream Triton can reach the O(n)-interleaving regime without a custom build.
-2. **RA hint flags → AMD Triton backend, then LLVM's AMDGPU register allocator.** The flags are small, local changes; the challenge is making them *selective* (they must not default on for kernels where the epilogue is a larger share of runtime — see [a16w16 v7 §4.3](../kernels/gemm/a16w16/v7_sliceN/README.md#43-register-allocation-workaround)).
-3. **Post-assembly peephole → LLVM AMDGPU MachineInstr-level pass.** The biggest engineering lift and the smallest measured impact on FP16/BF8 (~2pp MFMA efficiency); may remain a prototype indefinitely.
+1. **`llirSched` → an LLVM backend scheduling pass**, gated on backend and kernel shape. This retires most of the friction: users on stock Triton + LLVM reach the O(n)-interleaving regime without loading a plugin.
+2. **`force-agpr` → LLVM's AMDGPU register allocator.** The flags are small, local changes; the challenge is making the policy *selective* — the `RewriteMFMAFormStage` pass, which chooses AGPR vs. VGPR form per MFMA by register pressure so it need not fall back to the blunt all-AGPR form for kernels where the epilogue is a larger share of runtime (see [a16w16 v7 §4.3](../kernels/gemm/a16w16/v7_sliceN/README.md#43-register-allocation-workaround)).
+3. **`amdgcnas` → an LLVM AMDGPU MachineInstr-level pass.** The biggest engineering lift and the smallest measured impact on FP16/BF8 (~2pp MFMA efficiency); may remain a prototype indefinitely.
 
-This work is in progress in collaboration with LLVM engineers. When phases 1 and 2 land, upstream Triton + stock LLVM will produce most of what `llirSched + amdgcnas` produces today on a pinned build, and the dev-branch dependency in this tutorial can retire.
+This work is in progress in collaboration with LLVM engineers. When phases 1 and 2 land, upstream Triton + stock LLVM will produce most of what the three components produce today on a pinned build, and this tutorial's out-of-tree plugin dependency can retire.
 
 The lasting contribution is not the tools. It is the **design split**:
 

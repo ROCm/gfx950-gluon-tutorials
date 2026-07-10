@@ -10,7 +10,7 @@ v5_local_prefetch/
 └── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
 ```
 
-The dump artifacts are reproduced against the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+The dump artifacts are reproduced against the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
 
 ## 2. Motivation
 
@@ -138,11 +138,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1123 |   434 |    57.80% |
-| v5             |   1133 |   452 |    58.31% |
-| v5 + llirSched |   1264 |   510 |    73.59% |
+| v4             |   1124 |   434 |    57.73% |
+| v5             |   1131 |   452 |    58.41% |
+| v5 + llirSched |   1217 |   512 |    79.92% |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (1123 → 1133 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1264 TFLOPS — a **12% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
+The 3-stage pipeline provides a modest improvement in the baseline case (1124 → 1131 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1217 TFLOPS — an **8% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md).
@@ -199,16 +199,19 @@ The scheduler:
    - `ds_read_b128` requires a 16-cycle interval between issues
    - `buffer_load` requires a 64-cycle interval between issues
    - Based on the cycles per MFMA (e.g., 16 or 32 cycles), the scheduler calculates and inserts the appropriate number of MFMA instructions between memory operations
-4. **Disables LLVM's default schedulers** (`misched` and `post-misched`) to prevent them from overriding the custom scheduling
+
+For a full walkthrough of the algorithm — region formation, the MFMA↔memory interleaving budget and its cost model, and how the schedule is pinned with `sched.barrier` — see the illustrated design reference [`plugins/llir_scheduler/llir_scheduler.html`](../../../../plugins/llir_scheduler/llir_scheduler.html).
 
 ### 5.2. How to Use It
 
-The LLIR scheduler is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
+The LLIR scheduler ships as an out-of-tree LLVM pass plugin in this repo ([`plugins/llir_scheduler/`](../../../../plugins/llir_scheduler/README.md)).
 
-Enable the LLIR scheduler by setting the environment variable:
+Enable it by pointing `LLVM_PASS_PLUGIN_PATH` at the built `.so`:
 
 ```bash
-TRITON_ENABLE_LLIR_SCHED=1 python bench.py --K 8192 --dtype fp16 --version 5
+LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python bench.py --K 8192 --dtype fp16 --version 5
 ```
 
 Or when using `run_perf_table.py`, use the `llir` config:
@@ -217,7 +220,7 @@ Or when using `run_perf_table.py`, use the `llir` config:
 python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K 8192 --dtype fp16 --rocprof
 ```
 
-The implementation is at `third_party/amd/lib/TritonAMDGPUToLLVM/LLIRSchedule.cpp`.
+The implementation is at [`plugins/llir_scheduler/LlirSchedPlugin.cpp`](../../../../plugins/llir_scheduler/LlirSchedPlugin.cpp).
 
 ### 5.3. What Changed (v5 → v5 + llirSched)
 
@@ -233,7 +236,7 @@ This improvement directly reflects the throughput model of memory operations —
 
 ### 5.4. Bottleneck Analysis
 
-Even with the LLIR scheduler, MFMA efficiency is 76% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
+Even with the LLIR scheduler, MFMA efficiency is 80% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
 
 Examining the generated assembly in [`ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s`](./ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s) (lines 828–921), we see a block of copy instructions at the end of each iteration:
 

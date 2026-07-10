@@ -173,55 +173,58 @@ Storing `acc_left` overlaps with the final MFMA computing `acc_right`.
 
 Performance data is collected with:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+amdgcnas --K 8192 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+force-agpr llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../docs/mfma_efficiency.md).
 
-| Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |    344 |   512 |    104 |    19.23% |
-| v7 + LLIR scheduler            |   1377 |   494 |      0 |    87.00% |
-| v7 + LLIR scheduler + RA       |   1426 |   464 |      0 |    95.64% |
-| v7 + LLIR scheduler + amdgcnas |   1433 |   512 |      0 |    98.25% |
+| Version                                     | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|---------------------------------------------|--------|-------|--------|-----------|
+| v6 + LLIR scheduler                         |   1166 |   508 |      0 |    87.07% |
+| v7 + LLIR scheduler                         |   1332 |   512 |      0 |    84.77% |
+| v7 + LLIR scheduler + force-agpr            |   1392 |   468 |      0 |    97.01% |
+| v7 + LLIR scheduler + force-agpr + amdgcnas |   1386 |   468 |      0 |    98.43% |
 
-### 4.2. v7 + LLIR Scheduler vs. v6 + LLIR Scheduler
+### 4.2. The AGPR↔VGPR copy bottleneck
 
-v6 is dominated by VGPR spills. The unroll-by-2 forces the prefetch staging registers (`a`/`b` and `a_next`/`b_next`) to live concurrently across each unrolled body, and the LLVM register allocator can no longer reuse them across iterations the way v5's per-iteration copy let it; the live-range overlap blows past the 512-VGPR budget and spills 104 VGPRs to scratch (see [v6 §4](../v6_loop_unroll/README.md#4-performance-analysis)). MFMA efficiency drops to 19.23% because every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip that the LLIR scheduler cannot hide.
+At 84.77% MFMA efficiency, v7 + LLIR scheduler is well short of the 98% ceiling. The gap is copy traffic inside the main loop. The MFMA accumulators are split between AGPRs and VGPRs, so the register allocator inserts `v_accvgpr_*` copies to move accumulator values into the register file each MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream.
 
-v7's N-slicing halves the B tile's register footprint by design, dissolving the live-range overlap that forced the spill. The kernel now compiles in 494 VGPRs with **zero spills** and recovers MFMA efficiency to 87.00%.
+The copy count tracks the efficiency directly. Counting `v_accvgpr_*` instructions in one main-loop body (256 MFMAs each):
 
-87.00% is still well below the 98% ceiling, though, and now that the spills are gone the residual gap surfaces a different bottleneck: the register allocator schedules many `v_accvgpr_*` / `v_mov` copy instructions inside the main loop to shuffle values between AGPRs and VGPRs. The slicing fixed v6's spill regression; sections 4.3 and 4.4 address the AGPR↔VGPR copy traffic with explicit allocator hints and the `amdgcnas` peephole pass.
+| Config              | in-loop `v_accvgpr_*` copies | MFMA Eff. |
+|---------------------|------------------------------|-----------|
+| v6 + LLIR scheduler |                           39 |    87.07% |
+| v7 + LLIR scheduler |                          100 |    84.77% |
 
-### 4.3. Register Allocation Workaround
+v7's N-slicing spreads the operands across more live ranges, so the allocator shuffles accumulators more often than in v6 — more copies, slightly lower MFMA efficiency. These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
 
-The RA configuration uses the following LLVM flags to force MFMA OpC (input accumulator) and Dst (output accumulator) into the same AGPRs:
+### 4.3. Register Allocation Workaround: force-agpr
+
+The `force-agpr` config (`TRITON_FORCE_MFMA_AGPR=1`) constrains every MFMA accumulator — both the input accumulator (OpC) and the output (Dst) — to AGPRs, via two LLVM settings:
 
 ```
--amdgpu-mfma-vgpr-form=False
--amdgpu-agpr-alloc=256
+amdgpu-agpr-alloc=256      # reserve 256 AGPRs for accumulators
+amdgpu-mfma-vgpr-form=0    # emit the AGPR form of MFMA
 ```
 
-Constraining all MFMA OpC and Dst to AGPRs frees VGPRs for other variables, simplifying allocation. The tradeoff: placing all MFMA Dst in AGPRs maximizes `v_accvgpr` copy instructions in the epilogue, since `v_cvt` requires VGPR inputs.
+With every accumulator already in an AGPR, each MFMA reads and writes it in place, so the allocator never needs an in-loop shuffle. The main loop drops to **0** `v_accvgpr_*` copies, which frees VGPRs (512 → 468) and raises MFMA efficiency to **97%**.
 
-For compute-bound GEMM with large K, approximately 95% of execution time is spent in the main loop, making epilogue overhead acceptable. This workaround enables exploration of other bottlenecks while the backend team develops proper solutions.
-
-Eliminating `v_accvgpr` copies inside the loop raises MFMA efficiency to 96%.
+The tradeoff: forcing all accumulators into AGPRs pushes the AGPR→VGPR reads into the epilogue, where the output `v_cvt` downcast requires VGPR inputs — paid once per kernel instead of every iteration. For compute-bound GEMM with large K (~95% of the time in the main loop), that is a good trade.
 
 ![v7 RA-only bottleneck](../images/v7_RAonly_bottleneck.png)
 
-The trace above shows that removing `v_accvgpr` copies also eliminates VALU stalls caused by DIDT protection. The remaining bottleneck consists of scattered non-MFMA regions — typically consecutive SALU instructions, particularly at iteration boundaries.
+The trace above shows that removing the in-loop copies also eliminates the VALU stalls that DIDT protection was inducing. The remaining bottleneck is scattered non-MFMA regions — typically consecutive SALU instructions at iteration boundaries.
 
 ### 4.4. amdgcnas Assembly Processor
 
-**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It is available on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch.
+**amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It ships as an out-of-tree plugin in this repo ([`plugins/amdgcnas/`](../../../../plugins/amdgcnas/README.md)).
 
-Enable it by setting the environment variable:
+Enable it on top of the LLIR scheduler and force-agpr by setting the environment variables:
 
 ```bash
-TRITON_ENABLE_AMDGCN_AS=1
+TRITON_FORCE_MFMA_AGPR=1 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
-The amdgcnas pass incorporates the RA flags above plus additional optimizations. With full scheduling (LLIR scheduler + amdgcnas), v7 achieves **98% MFMA efficiency** — near the theoretical maximum.
+Layered on force-agpr, the peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + force-agpr + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
 
 The trace below shows tightly packed MFMA instructions with minimal gaps between iterations:
 

@@ -6,18 +6,19 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) annotated tag in `triton-lang/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
+All performance numbers and IR/assembly dumps in this repository are reproduced against a single immutable Triton commit, identified by the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag in `triton-lang/triton`. The tag will not be moved or deleted. Building Triton from that tag (or any commit reachable from it) will reproduce the measurements within run-to-run noise.
 
 Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
 
 ## Upstream trajectory
 
-The two compiler features the tutorial depends on are on a planned upstreaming path:
+The three components the tutorial depends on are on a planned upstreaming path:
 
-- **LLIR scheduler** (`TRITON_ENABLE_LLIR_SCHED`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
-- **`amdgcnas`** (`TRITON_ENABLE_AMDGCN_AS`) — the LLVM register-hint portion is targeted for upstream LLVM around June 2026; the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass.
+- **llirSched** — the LLIR scheduler (out-of-tree LLVM pass plugin, enabled via `LLVM_PASS_PLUGIN_PATH`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
+- **force-agpr** — the AGPR register-allocation hint (enabled via `TRITON_FORCE_MFMA_AGPR`) — targeted for upstream LLVM around June 2026 as an AGPR allocator policy. Its `amdgpu-mfma-vgpr-form=0` half is a stopgap that forces *all* MFMA C/D into AGPRs; LLVM's upcoming `RewriteMFMAFormStage` pass will instead pick AGPR vs. VGPR form per MFMA by register pressure, and once it defaults on that flag can be dropped from `llvm.cc`.
+- **`amdgcnas`** — the post-assembly peephole (out-of-tree plugin, enabled via `TRITON_AMDGCNAS_PLUGIN`) — a longer-term target for an LLVM MachineInstr-level pass.
 
-Once these land upstream, the tutorial's environment-variable gates will continue to work for backwards compatibility, and a future revision of this repository will track the corresponding stable Triton/LLVM releases.
+Once these land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
 
 ## Issues and pull requests
 

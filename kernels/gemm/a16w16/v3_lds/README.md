@@ -16,7 +16,7 @@ v3_lds/
     └── padding_512-16/
 ```
 
-The dump artifacts are reproduced against the [`gfx950-tutorial-v0.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v0.3) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
+The dump artifacts are reproduced against the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../docs/regenerating_ir_dumps.md).
 
 ## 2. Motivation: How Do We Evaluate ds_read Performance?
 

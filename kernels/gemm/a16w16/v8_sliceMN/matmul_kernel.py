@@ -22,6 +22,8 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import os
+
 import torch
 import triton
 from triton.experimental import gluon
@@ -456,5 +458,8 @@ def matmul(a, b, c=None):
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
         num_warps=num_warps,
+        # force-agpr RA hint: reserve 256 AGPRs for MFMA accumulators, enabled by
+        # TRITON_FORCE_MFMA_AGPR (paired in llvm.cc with amdgpu-mfma-vgpr-form=0).
+        llvm_fn_attrs=("amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""),
     )
     return c
