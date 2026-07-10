@@ -81,6 +81,7 @@ With loop unrolling, the epilogue handles the remaining iterations. Since the ma
 ## iterMax - 2
 l_idx = 1
 acc = gl.amd.cdna3.mfma(a, b, acc)
+gl.amd.cdna4.async_copy.wait_group(0)
 a_next = smemA.index(l_idx).load(dotOpLayoutA)
 b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
@@ -89,6 +90,8 @@ acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
 ```
 
 Here we assume `iterMax` is even. With an unroll factor of 2 and the main loop ending at `iterMax - 2`, exactly two iterations remain. The epilogue alternates register sets like the main loop: iteration `iterMax - 2` uses `a/b`, iteration `iterMax - 1` uses `a_next/b_next`.
+
+The `gl.amd.cdna4.async_copy.wait_group(0)` before the LDS reads is required for correctness: the last main-loop iteration issued `buffer_load_to_shared` async copies into the `l_idx = 1` LDS buffers, so the epilogue must wait for them to complete before `load`-ing `a_next`/`b_next` — otherwise the reads race the in-flight copies and the result is non-deterministic (the bug fixed in [PR #43](https://github.com/ROCm/gfx950-gluon-tutorials/pull/43)).
 
 If `iterMax` is odd, only one iteration remains in the epilogue, containing just the final MFMA.
 
