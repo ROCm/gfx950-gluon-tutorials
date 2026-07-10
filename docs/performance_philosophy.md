@@ -1,6 +1,6 @@
 # Performance Philosophy
 
-**High-performance Gluon kernels are a co-design between kernel author and compiler.** This page explains what that means, why it produces a different split of responsibilities from traditional GPU programming, and where `llirSched` and `amdgcnas` fit in.
+**High-performance Gluon kernels are a co-design between kernel author and compiler.** This page explains what that means, why it produces a different split of responsibilities from traditional GPU programming, and where `llirSched`, `force-agpr`, and `amdgcnas` fit in.
 
 ## 1. Traditional compilation: discovery and heuristics
 
