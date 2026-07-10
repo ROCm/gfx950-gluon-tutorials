@@ -5,7 +5,7 @@
 ##############################################################################
 
 """
-v1_combineBsc_BK256_nS2 -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced
+v2_mfma32x32x64_BK256_nS2 -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced
 tiles + combined (un-N-sliced) B scale so the B scale is read with the hardware
 transpose (ds_read_b64_tr_b8) instead of byte-gather + v_perm.
 
@@ -61,7 +61,7 @@ GROUP_SIZE_M = 4
 SCALE_GROUP_SIZE = 32
 
 MIN_K = 4 * BLOCK_K
-KERNEL_NAME = "v1_combineBsc_BK256_nS2"
+KERNEL_NAME = "v2_mfma32x32x64_BK256_nS2"
 
 
 @gluon.jit
@@ -78,7 +78,7 @@ def _bsc_load_split(smem_bsc, COMB: gl.constexpr, HALF: gl.constexpr,
 
 
 @gluon.jit
-def v1_combineBsc_BK256_nS2(
+def v2_mfma32x32x64_BK256_nS2(
     a_ptr, b_ptr, c_ptr,  #
     a_scales_ptr, b_scales_ptr,  #
     M, N, K,  #
@@ -99,16 +99,16 @@ def v1_combineBsc_BK256_nS2(
 
     # ---- 8-wave global-load layouts (4-wave a4w4 + 1 extra warp dim) ----
     gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [8, 0]],
-        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
-        warp_bases=[[1, 0], [2, 0], [4, 0]],
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [16, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [1, 0], [32, 0], [64, 0]],
+        warp_bases=[[2, 0], [4, 0], [8, 0]],
         block_bases=[],
         shape=[BLOCK_M // 2, BLOCK_K // 2],
     )
     gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [8, 0]],
-        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
-        warp_bases=[[1, 0], [2, 0], [4, 0]],
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [16, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [1, 0], [32, 0], [64, 0]],
+        warp_bases=[[2, 0], [4, 0], [8, 0]],
         block_bases=[],
         shape=[BLOCK_N // 2, BLOCK_K // 2],
     )
@@ -124,21 +124,21 @@ def v1_combineBsc_BK256_nS2(
 
     # ---- padded shared tile layouts (warp-independent, reused from 4-wave a4w4) ----
     sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 32]],
+        [[1024, 16]],
         [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-         [16, 0], [32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0]],
+         [1, 0], [32, 0], [64, 0], [2, 0], [4, 0], [8, 0], [16, 0]],
         [], [BLOCK_M // 2, BLOCK_K // 2],
     )
     sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 32]],
+        [[1024, 16]],
         [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-         [16, 0], [32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0]],
+         [1, 0], [32, 0], [64, 0], [2, 0], [4, 0], [8, 0], [16, 0]],
         [], [BLOCK_N // 2, BLOCK_K // 2],
     )
     sharedScaleLayout: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, order=[0, 1])
 
     mfma_layout: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[WARPS_M, WARPS_N],
+        version=4, instr_shape=[32, 32, 64], transposed=True, warps_per_cta=[WARPS_M, WARPS_N],
     )
     dot_a_layout: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfma_layout, k_width=16)
     dot_b_layout: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfma_layout, k_width=16)
@@ -403,7 +403,7 @@ def matmul_kernel_only(a, b, a_scales, b_scales, c):
     grid_m = triton.cdiv(M, BLOCK_M)
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
-    v1_combineBsc_BK256_nS2[(GRID_MN,)](
+    v2_mfma32x32x64_BK256_nS2[(GRID_MN,)](
         a, b, c, a_scales, b_scales, M, N, K,
         a.stride(0), a.stride(1),
         b.stride(0), b.stride(1),

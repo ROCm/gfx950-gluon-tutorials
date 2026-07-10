@@ -39,7 +39,7 @@ import triton
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
-VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2"}
+VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2", 2: "v2_mfma32x32x64_BK256_nS2"}
 
 # HW-defined; cannot be changed.
 SCALE_GROUP_SIZE = 32

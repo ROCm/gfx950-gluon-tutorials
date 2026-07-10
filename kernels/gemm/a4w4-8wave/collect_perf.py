@@ -62,7 +62,7 @@ from run_perf_table import (  # noqa: E402
 )
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2"}
+VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2", 2: "v2_mfma32x32x64_BK256_nS2"}
 KERNEL_NAME = None  # set in main() from --version
 RUN_ATT = os.path.join(SCRIPTS_DIR, "run_att.py")
 
