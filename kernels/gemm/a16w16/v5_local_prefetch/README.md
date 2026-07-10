@@ -199,7 +199,6 @@ The scheduler:
    - `ds_read_b128` requires a 16-cycle interval between issues
    - `buffer_load` requires a 64-cycle interval between issues
    - Based on the cycles per MFMA (e.g., 16 or 32 cycles), the scheduler calculates and inserts the appropriate number of MFMA instructions between memory operations
-4. **Disables LLVM's default schedulers** (`misched` and `post-misched`) to prevent them from overriding the custom scheduling
 
 ### 5.2. How to Use It
 
