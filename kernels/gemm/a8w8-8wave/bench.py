@@ -126,7 +126,9 @@ def test_correctness(gemm_sizes):
             print(f"[a8w8-8wave] {M=} {N=} {K=} dtype=f8: ✅ Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[a8w8-8wave] {M=} {N=} {K=} dtype=f8: ❌ Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(
+                f"[a8w8-8wave] {M=} {N=} {K=} dtype=f8: ❌ Triton and Torch differ (max_diff={max_diff:.4f})"
+            )
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
@@ -163,9 +165,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
         if K < MIN_K:
             print(f"[a8w8-8wave] {M=} {N=} {K=}: SKIPPED (K < {MIN_K})")
             continue
-        a_list, b_list, c_list, block_count = gen_rotating_tensors(
-            M, N, K, rotating_buffer_size_mb
-        )
+        a_list, b_list, c_list, block_count = gen_rotating_tensors(M, N, K, rotating_buffer_size_mb)
         print(
             f"[a8w8-8wave] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, "

@@ -44,13 +44,12 @@ adopting.
 import torch
 import triton
 import triton.language as tl
+from common import get_pids, store_result
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
 from triton.experimental.gluon.language.amd import warp_pipeline_stage
 from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
-
-from common import get_pids, store_result
 
 BLOCK_M = 256
 BLOCK_N = 256
@@ -73,14 +72,26 @@ KERNEL_NAME = "v0_BK32_nS3"
 
 @gluon.jit
 def v0_BK32_nS3(
-    a_ptr, b_ptr, c_ptr,  #
-    M, N, K,  #
-    stride_am, stride_ak,  #
-    stride_bk, stride_bn,  #
-    stride_cm, stride_cn,  #
-    BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr, BLOCK_K: gl.constexpr,  #
-    WARPS_M: gl.constexpr, WARPS_N: gl.constexpr,  #
-    GRID_MN: gl.constexpr, NUM_XCDS: gl.constexpr, GROUP_SIZE_M: gl.constexpr,
+    a_ptr,
+    b_ptr,
+    c_ptr,  #
+    M,
+    N,
+    K,  #
+    stride_am,
+    stride_ak,  #
+    stride_bk,
+    stride_bn,  #
+    stride_cm,
+    stride_cn,  #
+    BLOCK_M: gl.constexpr,
+    BLOCK_N: gl.constexpr,
+    BLOCK_K: gl.constexpr,  #
+    WARPS_M: gl.constexpr,
+    WARPS_N: gl.constexpr,  #
+    GRID_MN: gl.constexpr,
+    NUM_XCDS: gl.constexpr,
+    GROUP_SIZE_M: gl.constexpr,
 ):
     """3-buffer pipelined GEMM, 3x-unrolled (constant buffer indices)."""
     a_dtype: gl.constexpr = a_ptr.type.element_ty
@@ -101,11 +112,17 @@ def v0_BK32_nS3(
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
     MMA_LAYOUT: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 32], transposed=True,
+        version=4,
+        instr_shape=[16, 16, 32],
+        transposed=True,
         warps_per_cta=[WARPS_M, WARPS_N],
     )
-    OPERAND_LAYOUT_A: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=MMA_LAYOUT, k_width=8)
-    OPERAND_LAYOUT_B: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=MMA_LAYOUT, k_width=8)
+    OPERAND_LAYOUT_A: gl.constexpr = gl.DotOperandLayout(
+        operand_index=0, parent=MMA_LAYOUT, k_width=8
+    )
+    OPERAND_LAYOUT_B: gl.constexpr = gl.DotOperandLayout(
+        operand_index=1, parent=MMA_LAYOUT, k_width=8
+    )
 
     A_ASYNC_LAYOUT: gl.constexpr = gl.DistributedLinearLayout(
         reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
@@ -126,9 +143,18 @@ def v0_BK32_nS3(
     SHARED_LAYOUT_A: gl.constexpr = gl.PaddedSharedLayout(
         [[512, 16]],
         [
-            [0, 1], [0, 2], [0, 4], [0, 8], [0, 16],
-            [16, 0], [32, 0], [64, 0], [128, 0],
-            [1, 0], [2, 0], [4, 0],
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+            [0, 16],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [128, 0],
+            [1, 0],
+            [2, 0],
+            [4, 0],
             [8, 0],
         ],
         [],
@@ -138,18 +164,25 @@ def v0_BK32_nS3(
     SHARED_LAYOUT_B: gl.constexpr = gl.PaddedSharedLayout(
         [[512, 16]],
         [
-            [1, 0], [2, 0], [4, 0], [8, 0], [16, 0],
-            [0, 16], [0, 32], [0, 64], [0, 128],
-            [0, 1], [0, 2], [0, 4],
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+            [16, 0],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [0, 128],
+            [0, 1],
+            [0, 2],
+            [0, 4],
             [0, 8],
         ],
         [],
         [BLOCK_K, BLOCK_N],
     )
 
-    STORE_LAYOUT_C: gl.constexpr = gl.BlockedLayout(
-        [16, 8], [8, 8], [WARPS_M, WARPS_N], [1, 0]
-    )
+    STORE_LAYOUT_C: gl.constexpr = gl.BlockedLayout([16, 8], [8, 8], [WARPS_M, WARPS_N], [1, 0])
 
     a_base = a_ptr + (pid_m * BLOCK_M) * stride_am
     b_base = b_ptr + (pid_n * BLOCK_N) * stride_bn
@@ -304,8 +337,20 @@ def v0_BK32_nS3(
         b_regs = cdna4_async.load_shared_relaxed(smemB.index(1), OPERAND_LAYOUT_B)
         acc = mfma_cdna4(a_regs, b_regs, acc)
 
-    store_result(acc, c_ptr, c_dtype, pid_m, pid_n, M, N,
-                 stride_cm, stride_cn, BLOCK_M, BLOCK_N, STORE_LAYOUT_C)
+    store_result(
+        acc,
+        c_ptr,
+        c_dtype,
+        pid_m,
+        pid_n,
+        M,
+        N,
+        stride_cm,
+        stride_cn,
+        BLOCK_M,
+        BLOCK_N,
+        STORE_LAYOUT_C,
+    )
 
 
 def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
@@ -319,11 +364,18 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
     grid = (GRID_MN,)
 
     v0_BK32_nS3[grid](
-        a, b_t, c,
-        M, N, K,
-        a.stride(0), a.stride(1),
-        b_t.stride(1), b_t.stride(0),
-        c.stride(0), c.stride(1),
+        a,
+        b_t,
+        c,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b_t.stride(1),
+        b_t.stride(0),
+        c.stride(0),
+        c.stride(1),
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,

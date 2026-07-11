@@ -34,9 +34,13 @@ from triton.experimental.gluon import language as gl
 
 @gluon.jit
 def get_pids(
-    M, N,  #
-    BM: gl.constexpr, BN: gl.constexpr,  #
-    GRID_MN: gl.constexpr, NUM_XCDS: gl.constexpr, GROUP_SIZE_M: gl.constexpr,
+    M,
+    N,  #
+    BM: gl.constexpr,
+    BN: gl.constexpr,  #
+    GRID_MN: gl.constexpr,
+    NUM_XCDS: gl.constexpr,
+    GROUP_SIZE_M: gl.constexpr,
 ):
     """XCD-aware PID remapping + GROUP_SIZE_M swizzle, copied verbatim from the
     a16w16 v9 tutorial kernel (v9_beyond_hotloop). Active at any grid_mn."""
@@ -72,10 +76,17 @@ def get_pids(
 
 @gluon.jit
 def store_result(
-    acc, c_ptr, c_dtype,  #
-    pid_m, pid_n, M, N,  #
-    stride_cm, stride_cn,  #
-    BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr,  #
+    acc,
+    c_ptr,
+    c_dtype,  #
+    pid_m,
+    pid_n,
+    M,
+    N,  #
+    stride_cm,
+    stride_cn,  #
+    BLOCK_M: gl.constexpr,
+    BLOCK_N: gl.constexpr,  #
     STORE_LAYOUT_C: gl.constexpr,
 ):
     """Convert accumulator and store to global memory with masking."""

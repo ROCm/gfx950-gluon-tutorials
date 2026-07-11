@@ -31,12 +31,11 @@ verbatim from the 4-wave a8w8 kernel.
 import torch
 import triton
 import triton.language as tl
+from common import get_pids
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
-from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 from triton.experimental.gluon.language.amd import warp_pipeline_stage
-
-from common import get_pids
+from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 
 BLOCK_M = 256
 BLOCK_N = 256
@@ -55,14 +54,26 @@ KERNEL_NAME = "v1_sliceMN_BK128_nS2"
 
 @gluon.jit
 def v1_sliceMN_BK128_nS2(
-    a_ptr, b_ptr, c_ptr,  #
-    M, N, K,  #
-    stride_am, stride_ak,  #
-    stride_bk, stride_bn,  #
-    stride_cm, stride_cn,  #
-    BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr, BLOCK_K: gl.constexpr,  #
-    WARPS_M: gl.constexpr, WARPS_N: gl.constexpr,  #
-    GRID_MN: gl.constexpr, NUM_XCDS: gl.constexpr, GROUP_SIZE_M: gl.constexpr,
+    a_ptr,
+    b_ptr,
+    c_ptr,  #
+    M,
+    N,
+    K,  #
+    stride_am,
+    stride_ak,  #
+    stride_bk,
+    stride_bn,  #
+    stride_cm,
+    stride_cn,  #
+    BLOCK_M: gl.constexpr,
+    BLOCK_N: gl.constexpr,
+    BLOCK_K: gl.constexpr,  #
+    WARPS_M: gl.constexpr,
+    WARPS_N: gl.constexpr,  #
+    GRID_MN: gl.constexpr,
+    NUM_XCDS: gl.constexpr,
+    GROUP_SIZE_M: gl.constexpr,
 ):
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
@@ -87,28 +98,69 @@ def v1_sliceMN_BK128_nS2(
     # ---- padded shared layouts (storage pattern; warp-independent, reused from 4-wave a8w8) ----
     sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
         [[1024, 16], [2048, 32]],
-        [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-         [16, 0], [32, 0], [64, 0], [1, 0], [2, 0], [4, 0], [8, 0]],
-        [], [BLOCK_M // 2, BLOCK_K],
+        [
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+        ],
+        [],
+        [BLOCK_M // 2, BLOCK_K],
     )
     sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
         [[1024, 16], [2048, 32]],
-        [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-         [0, 16], [0, 32], [0, 64], [0, 1], [0, 2], [0, 4], [0, 8]],
-        [], [BLOCK_K, BLOCK_N // 2],
+        [
+            [1, 0],
+            [2, 0],
+            [4, 0],
+            [8, 0],
+            [16, 0],
+            [32, 0],
+            [64, 0],
+            [0, 16],
+            [0, 32],
+            [0, 64],
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [0, 8],
+        ],
+        [],
+        [BLOCK_K, BLOCK_N // 2],
     )
 
     mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[WARPS_M, WARPS_N],
+        version=4,
+        instr_shape=[16, 16, 128],
+        transposed=True,
+        warps_per_cta=[WARPS_M, WARPS_N],
     )
     dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=32)
     dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=32)
 
     nBuffers: gl.constexpr = 2
-    smemA_top = gl.allocate_shared_memory(a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA)
-    smemA_bot = gl.allocate_shared_memory(a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA)
-    smemB_left = gl.allocate_shared_memory(b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB)
-    smemB_right = gl.allocate_shared_memory(b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB)
+    smemA_top = gl.allocate_shared_memory(
+        a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA
+    )
+    smemA_bot = gl.allocate_shared_memory(
+        a_ptr.dtype.element_ty, [nBuffers, BLOCK_M // 2, BLOCK_K], sharedLayoutA
+    )
+    smemB_left = gl.allocate_shared_memory(
+        b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB
+    )
+    smemB_right = gl.allocate_shared_memory(
+        b_ptr.dtype.element_ty, [nBuffers, BLOCK_K, BLOCK_N // 2], sharedLayoutB
+    )
 
     offs_am = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gLoadLayoutA))
     offs_ak = gl.arange(0, BLOCK_K, gl.SliceLayout(0, gLoadLayoutA))
@@ -297,13 +349,26 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
     v1_sliceMN_BK128_nS2[(GRID_MN,)](
-        a, b_t, c, M, N, K,
-        a.stride(0), a.stride(1),
-        b_t.stride(1), b_t.stride(0),   # stride_bk=1 (K contiguous), stride_bn=K
-        c.stride(0), c.stride(1),
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-        WARPS_M=WARPS_M, WARPS_N=WARPS_N,
-        GRID_MN=GRID_MN, NUM_XCDS=NUM_XCDS, GROUP_SIZE_M=GROUP_SIZE_M,
+        a,
+        b_t,
+        c,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b_t.stride(1),
+        b_t.stride(0),  # stride_bk=1 (K contiguous), stride_bn=K
+        c.stride(0),
+        c.stride(1),
+        BLOCK_M=BLOCK_M,
+        BLOCK_N=BLOCK_N,
+        BLOCK_K=BLOCK_K,
+        WARPS_M=WARPS_M,
+        WARPS_N=WARPS_N,
+        GRID_MN=GRID_MN,
+        NUM_XCDS=NUM_XCDS,
+        GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=NUM_WARPS,
         # Forbid AGPRs: f32 accumulators write VGPRs directly (packs tighter, no spills).
         llvm_fn_attrs=(("amdgpu-agpr-alloc", "0,0"),),

@@ -39,7 +39,11 @@ import triton
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
-VERSION_MAP = {0: "v0_sliceMN_BK256_nS2", 1: "v1_combineBsc_BK256_nS2", 2: "v2_mfma32x32x64_BK256_nS2"}
+VERSION_MAP = {
+    0: "v0_sliceMN_BK256_nS2",
+    1: "v1_combineBsc_BK256_nS2",
+    2: "v2_mfma32x32x64_BK256_nS2",
+}
 
 # HW-defined; cannot be changed.
 SCALE_GROUP_SIZE = 32
@@ -55,8 +59,22 @@ def mxfp4_to_f32(x):
     x[:, ::2] = x[:, ::2] & 0xF
     x[:, 1::2] = x[:, 1::2] >> 4
     mxfp4_list = [
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-        -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
     ]
     mxfp4_in_f32 = torch.tensor(mxfp4_list, dtype=torch.float32, device=x.device)
     return mxfp4_in_f32[x.long()]
@@ -97,8 +115,12 @@ def torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16):
     """Reference GEMM by dequantizing MXFP4 to float32."""
     a_f32 = mxfp4_to_f32(a_fp4)
     b_f32 = mxfp4_to_f32(b_fp4)
-    a_scales_f32 = e8m0_to_f32(a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32))
-    b_scales_f32 = e8m0_to_f32(b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32))
+    a_scales_f32 = e8m0_to_f32(
+        a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
+    )
+    b_scales_f32 = e8m0_to_f32(
+        b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
+    )
     a_f32 = a_f32 * a_scales_f32
     b_f32 = b_f32 * b_scales_f32
     return torch.mm(a_f32, b_f32.T).to(dtype)
@@ -175,7 +197,9 @@ def test_correctness(gemm_sizes):
             print(f"[a4w4-8wave] {M=} {N=} {K=}: ✅ Triton and Torch match")
         else:
             max_diff = (triton_output - torch_output).abs().max().item()
-            print(f"[a4w4-8wave] {M=} {N=} {K=}: ❌ Triton and Torch differ (max_diff={max_diff:.4f})")
+            print(
+                f"[a4w4-8wave] {M=} {N=} {K=}: ❌ Triton and Torch differ (max_diff={max_diff:.4f})"
+            )
 
 
 def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
@@ -210,7 +234,9 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
         a_list, b_list, as_list, bs_list, c_list, block_count = gen_rotating_tensors(
             M, N, K, rotating_buffer_size_mb
         )
-        total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32) + M * N * 2)
+        total_bytes = block_count * (
+            M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32) + M * N * 2
+        )
         print(
             f"[a4w4-8wave] {M=} {N=} {K=}: "
             f"rotating tensors: {block_count} copies, {total_bytes / 1024**2:.0f} MB"

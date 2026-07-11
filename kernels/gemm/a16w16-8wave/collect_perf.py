@@ -54,9 +54,7 @@ import subprocess
 import sys
 
 # Reuse the tutorial's existing rocprof/ATT helpers.
-GIT_ROOT = subprocess.check_output(
-    ["git", "rev-parse", "--show-toplevel"], text=True
-).strip()
+GIT_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 SCRIPTS_DIR = os.path.join(GIT_ROOT, "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 
@@ -97,8 +95,13 @@ def parse_args():
     p.add_argument("--N", type=int, default=4096, help="N dimension (default: 4096)")
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"], help="default: fp16")
     p.add_argument("--rotating-buffer-size", type=int, default=512, help="MB (default: 512)")
-    p.add_argument("--version", type=int, default=0, choices=sorted(VERSION_MAP),
-                   help="Kernel version 0=v0_BK32_nS3, 1=v1_sliceMN_BK64_nS2 (default: 0)")
+    p.add_argument(
+        "--version",
+        type=int,
+        default=0,
+        choices=sorted(VERSION_MAP),
+        help="Kernel version 0=v0_BK32_nS3, 1=v1_sliceMN_BK64_nS2 (default: 0)",
+    )
     p.add_argument("--skip-trace", action="store_true", help="Skip rocprof kernel-trace (TFLOPS)")
     p.add_argument("--skip-att", action="store_true", help="Skip ATT (MFMA efficiency)")
     return p.parse_args()
@@ -111,14 +114,26 @@ def run_kernel_trace(args):
         shutil.rmtree(trace_dir)
 
     cmd = [
-        "rocprofv3", "--kernel-trace", "-f", "csv",
-        "--kernel-include-regex", KERNEL_NAME,
-        "-d", trace_dir,
+        "rocprofv3",
+        "--kernel-trace",
+        "-f",
+        "csv",
+        "--kernel-include-regex",
+        KERNEL_NAME,
+        "-d",
+        trace_dir,
         "--",
-        "python", "bench.py", "--rocprof",
-        "--K", str(args.K), "--dtype", args.dtype,
-        "--rotating-buffer-size", str(args.rotating_buffer_size),
-        "--version", str(args.version),
+        "python",
+        "bench.py",
+        "--rocprof",
+        "--K",
+        str(args.K),
+        "--dtype",
+        args.dtype,
+        "--rotating-buffer-size",
+        str(args.rotating_buffer_size),
+        "--version",
+        str(args.version),
     ]
     print(f"  rocprofv3 --kernel-trace: {KERNEL_NAME} K={args.K} {args.dtype} ...")
     proc = subprocess.run(cmd, cwd=WORK_DIR, capture_output=True, text=True)
@@ -151,11 +166,18 @@ def run_att(args):
     # its own "--" before rocprofv3's app args. Do NOT pass an extra "--" here,
     # or rocprofv3 receives a doubled "-- --" and fails.
     cmd = [
-        sys.executable, RUN_ATT,
-        "--att-output", "tmp",
-        "python", "bench.py",
-        "--K", str(args.K), "--dtype", args.dtype,
-        "--version", str(args.version),
+        sys.executable,
+        RUN_ATT,
+        "--att-output",
+        "tmp",
+        "python",
+        "bench.py",
+        "--K",
+        str(args.K),
+        "--dtype",
+        args.dtype,
+        "--version",
+        str(args.version),
     ]
     print(f"  rocprofv3 --att (MFMA eff): {KERNEL_NAME} K={args.K} {args.dtype} ...")
     env = os.environ.copy()
@@ -181,7 +203,9 @@ def main():
     global KERNEL_NAME
     KERNEL_NAME = VERSION_MAP[args.version]
     print("=" * 64)
-    print(f"8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} {args.dtype}  (version={args.version}, {KERNEL_NAME})")
+    print(
+        f"8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} {args.dtype}  (version={args.version}, {KERNEL_NAME})"
+    )
     print("=" * 64)
 
     clean_caches(WORK_DIR)
@@ -199,12 +223,16 @@ def main():
     print("=" * 64)
     print("RESULTS (rocprof)")
     print("=" * 64)
-    print(f"| {'M':>5} | {'N':>5} | {'K':>6} | {'dtype':>5} | {'TFLOPS':>8} | "
-          f"{'MFMA Eff':>9} | {'VGPRs':>5} | {'Spills':>6} |")
+    print(
+        f"| {'M':>5} | {'N':>5} | {'K':>6} | {'dtype':>5} | {'TFLOPS':>8} | "
+        f"{'MFMA Eff':>9} | {'VGPRs':>5} | {'Spills':>6} |"
+    )
     print(f"| {'-'*5} | {'-'*5} | {'-'*6} | {'-'*5} | {'-'*8} | {'-'*9} | {'-'*5} | {'-'*6} |")
-    print(f"| {args.M:>5} | {args.N:>5} | {args.K:>6} | {args.dtype:>5} | "
-          f"{fmt(round(tflops, 1) if tflops else None):>8} | {fmt(mfma_eff):>9} | "
-          f"{fmt(vgprs):>5} | {fmt(spills):>6} |")
+    print(
+        f"| {args.M:>5} | {args.N:>5} | {args.K:>6} | {args.dtype:>5} | "
+        f"{fmt(round(tflops, 1) if tflops else None):>8} | {fmt(mfma_eff):>9} | "
+        f"{fmt(vgprs):>5} | {fmt(spills):>6} |"
+    )
     if mfma_eff is not None:
         print(f"\nMFMA Eff = {mfma_eff} (per-wave {mfma_eff_raw} x {WAVES_PER_SIMD} waves/SIMD)")
 

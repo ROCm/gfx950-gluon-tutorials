@@ -97,12 +97,27 @@ def main():
         shutil.rmtree(trace_dir)
 
     cmd = [
-        "rocprofv3", "-i", counters_yaml,
-        "--kernel-include-regex", kernel_name,
-        "-d", trace_dir, "--output-format", "csv", "--",
-        "python", "bench.py", "--rocprof",
-        "--K", str(args.K), "--dtype", args.dtype, "--version", str(args.version),
-        "--rotating-buffer-size", str(args.rotating_buffer_size),
+        "rocprofv3",
+        "-i",
+        counters_yaml,
+        "--kernel-include-regex",
+        kernel_name,
+        "-d",
+        trace_dir,
+        "--output-format",
+        "csv",
+        "--",
+        "python",
+        "bench.py",
+        "--rocprof",
+        "--K",
+        str(args.K),
+        "--dtype",
+        args.dtype,
+        "--version",
+        str(args.version),
+        "--rotating-buffer-size",
+        str(args.rotating_buffer_size),
     ]
     print(f"  rocprofv3 counters: {', '.join(counters)} ...")
     proc = subprocess.run(cmd, cwd=WORK_DIR, capture_output=True, text=True)  # inherits env
