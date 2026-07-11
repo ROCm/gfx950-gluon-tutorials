@@ -2,9 +2,9 @@
 
 Two kernel versions in this tutorial bundle compiler dump artifacts so the README narrative can link to specific lines:
 
-- `kernels/gemm/a16w16/v3_lds/ir_dump_K4096_fp16/` (three subdirectories: `no_swizzling/`, `swizzling_8-2-8/`, `padding_512-16/`)
-- `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16/`
-- `kernels/gemm/a16w16/v5_local_prefetch/ir_dump_K4096_fp16_llirSched/`
+- `kernels/gemm/intra_wave/a16w16/v3_lds/ir_dump_K4096_fp16/` (three subdirectories: `no_swizzling/`, `swizzling_8-2-8/`, `padding_512-16/`)
+- `kernels/gemm/intra_wave/a16w16/v5_local_prefetch/ir_dump_K4096_fp16/`
+- `kernels/gemm/intra_wave/a16w16/v5_local_prefetch/ir_dump_K4096_fp16_llirSched/`
 
 Each directory contains four files: `.ttgir` (Triton GPU IR), `.llir` (LLVM IR), `.amdgcn` (final assembly as Triton emits it, with debug labels), and `.s` (the same assembly with `.loc` directives and `.Ltmp` labels stripped, which is what the READMEs link to so the cited line numbers stay stable). All artifacts in this repository were produced against the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag in `triton-lang/triton`. To verify them, or regenerate after a Triton bump, follow the steps below.
 
@@ -75,7 +75,7 @@ For each variant:
 # Choose the variant by editing v3_lds/matmul_kernel.py's matmul() launcher
 # (see the comment near line 244)
 
-cd kernels/gemm/a16w16
+cd kernels/gemm/intra_wave/a16w16
 export TRITON_CACHE_DIR=/tmp/triton_cache_v3_<variant>
 rm -rf "$TRITON_CACHE_DIR"
 python bench.py --version 3 --K 4096 --dtype fp16
@@ -90,7 +90,7 @@ emit "$SRC" v3_lds/ir_dump_K4096_fp16/<variant> <kernel_name>
 ## v5_local_prefetch — base, llirSched, and llirSched+amdgcnas variants
 
 ```bash
-cd kernels/gemm/a16w16
+cd kernels/gemm/intra_wave/a16w16
 
 # (uses the emit() helper defined above)
 

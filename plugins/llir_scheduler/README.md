@@ -1,7 +1,7 @@
 # LLIR Scheduler — out-of-tree LLVM pass plugin
 
 The LLIR scheduler (MFMA ↔ memory interleave for GEMM hot loops, described in the
-[a16w16 v5 README](../../kernels/gemm/a16w16/v5_local_prefetch/README.md)) is
+[a16w16 v5 README](../../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md)) is
 shipped here as an **out-of-tree LLVM pass plugin**. It is the `sched.barrier`
 variant: it reorders the MFMA/`ds_read`/
 `buffer_load` instructions in the LLVM-IR hot loop and pins the order with

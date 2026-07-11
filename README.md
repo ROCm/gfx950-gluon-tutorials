@@ -10,10 +10,10 @@ The headline result: on `a16w16` (FP16, 4096×4096×8192), the naive Gluon basel
 
 ## Start Here
 
-If this is your first time in the repo, open **[`kernels/gemm/a16w16/README.md`](kernels/gemm/a16w16/README.md)** and follow the Acts I–IV narrative from `v0_naive` to `v9_beyond_hotloop`. Each version isolates one concept — a layout, a pipeline stage, a scheduling decision. Read it alongside the code, then run the kernel:
+If this is your first time in the repo, open **[`kernels/gemm/intra_wave/a16w16/README.md`](kernels/gemm/intra_wave/a16w16/README.md)** and follow the Acts I–IV narrative from `v0_naive` to `v9_beyond_hotloop`. Each version isolates one concept — a layout, a pipeline stage, a scheduling decision. Read it alongside the code, then run the kernel:
 
 ```bash
-cd kernels/gemm/a16w16
+cd kernels/gemm/intra_wave/a16w16
 python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
@@ -45,9 +45,9 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 
 | If you want to…                                          | Look in                     |
 |----------------------------------------------------------|-----------------------------|
-| Learn the full optimization workflow end to end          | `kernels/gemm/a16w16/`      |
-| Apply the same design to FP8                             | `kernels/gemm/a8w8/`        |
-| Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/a4w4/`        |
+| Learn the full optimization workflow end to end          | `kernels/gemm/intra_wave/a16w16/`      |
+| Apply the same design to FP8                             | `kernels/gemm/intra_wave/a8w8/`        |
+| Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/intra_wave/a4w4/`        |
 | Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |

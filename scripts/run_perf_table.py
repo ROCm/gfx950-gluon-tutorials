@@ -366,13 +366,13 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
 
     if kernel == "a8w8":
         version_dir = "a8w8_kernel"
-        work_dir = os.path.join(git_root, "kernels", "gemm", "a8w8")
+        work_dir = os.path.join(git_root, "kernels", "gemm", "intra_wave", "a8w8")
     elif kernel == "a4w4":
         version_dir = A4W4_VERSION_MAP[version]
-        work_dir = os.path.join(git_root, "kernels", "gemm", "a4w4")
+        work_dir = os.path.join(git_root, "kernels", "gemm", "intra_wave", "a4w4")
     else:
         version_dir = VERSION_MAP[version]
-        work_dir = os.path.join(git_root, "kernels", "gemm", "a16w16")
+        work_dir = os.path.join(git_root, "kernels", "gemm", "intra_wave", "a16w16")
 
     result = {
         "version_dir": version_dir,
