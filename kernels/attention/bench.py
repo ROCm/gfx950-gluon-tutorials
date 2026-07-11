@@ -71,27 +71,15 @@ DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
 name_to_torch_dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}
 
+
 # Sequence-length sweep (Q == K), the classic FA scaling axis.
 SEQLENS = [1024, 2048, 4096, 8192, 16384]
-# The causal reference materializes the full B*H*S*S fp32 scores matrix, so only
-# validate at the smaller shapes; the perf sweep runs the full range.
-CORRECTNESS_MAX_SEQLEN = 4096
-
-# The perf sweep runs one line per causal setting; --causal-mode picks which.
-CAUSAL_MODES = {"both": [False, True], "causal": [True], "noncausal": [False]}
-CAUSAL_NAME = {False: "non-causal", True: "causal"}
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="FAV3 rotated-4cluster attention benchmark (gfx950)")
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
-    p.add_argument(
-        "--causal-mode",
-        choices=["both", "causal", "noncausal"],
-        default="noncausal",
-        help="which causal setting(s) to run (default: noncausal)",
-    )
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64, help="number of query heads")
     p.add_argument(
@@ -109,72 +97,61 @@ def parse_args():
     return p.parse_args()
 
 
-def make_inputs(B, HQ, HK, N_CTX, D, dtype, layout, causal):
+def make_inputs(B, HQ, HK, N_CTX, D, dtype, layout):
     q, k, v, md = input_helper(B, HQ, HK, N_CTX, N_CTX, D, dtype, layout)
-    if causal:
-        md.need_causal()
     o = torch.empty_like(q)
     return q, k, v, o, md
 
 
-def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout, causal):
-    q, k, v, o, md = make_inputs(B, HQ, HK, N_CTX, D, dtype, layout, causal)
+def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
+    q, k, v, o, md = make_inputs(B, HQ, HK, N_CTX, D, dtype, layout)
     run_gluon_attention(q, k, v, o, md)
-    o_ref = sdpa_reference(q, k, v, causal=causal, sm_scale=md.sm_scale)
+    o_ref = sdpa_reference(q, k, v, causal=False, sm_scale=md.sm_scale)
     ok, max_diff, mean_diff = _check_output(o, o_ref)
     tag = "✅ match" if ok else "❌ MISMATCH"
     print(
-        f"[FAV3] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} causal={causal} {layout} "
+        f"[FAV3] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} non-causal {layout} "
         f"{q.dtype}: {tag}  (max={max_diff:.2e} mean={mean_diff:.2e})"
     )
     return ok
 
 
-def run_rocprof_iterations(args, torch_dtype, seqlens, causal_vals):
-    for causal in causal_vals:
-        for N_CTX in seqlens:
-            q, k, v, o, md = make_inputs(
-                args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout, causal
-            )
-            run_gluon_attention(q, k, v, o, md)  # warmup + autotune
-            torch.cuda.synchronize()
-            for _ in range(args.n_iters):
-                run_gluon_attention(q, k, v, o, md)
-            torch.cuda.synchronize()
-            print(f"[FAV3] N={N_CTX} causal={causal}: {args.n_iters} iterations done")
+def run_rocprof_iterations(args, torch_dtype, seqlens):
+    for N_CTX in seqlens:
+        q, k, v, o, md = make_inputs(
+            args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout
+        )
+        run_gluon_attention(q, k, v, o, md)  # warmup + autotune
+        torch.cuda.synchronize()
+        for _ in range(args.n_iters):
+            run_gluon_attention(q, k, v, o, md)
+        torch.cuda.synchronize()
+        print(f"[FAV3] N={N_CTX}: {args.n_iters} iterations done")
 
 
 def main():
     args = parse_args()
     torch_dtype = name_to_torch_dtype[args.dtype]
     seqlens = SEQLENS if args.sweep else [args.seqlen]
-    causal_vals = CAUSAL_MODES[args.causal_mode]
 
-    # 1) Correctness. The causal reference materializes the full B*H*S*S fp32 scores
-    #    matrix, so skip it past CORRECTNESS_MAX_SEQLEN; the non-causal reference uses
-    #    the memory-efficient F.sdpa and checks at every seqlen.
-    for causal in causal_vals:
-        for N_CTX in seqlens:
-            if causal and N_CTX > CORRECTNESS_MAX_SEQLEN:
-                continue
-            test_correctness(
-                args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout, causal
-            )
+    # 1) Correctness vs the memory-efficient torch SDPA reference (non-causal).
+    for N_CTX in seqlens:
+        test_correctness(args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout)
 
     # 2) Rocprof mode: cold, external timing.
     if args.rocprof:
-        run_rocprof_iterations(args, torch_dtype, seqlens, causal_vals)
+        run_rocprof_iterations(args, torch_dtype, seqlens)
         return
 
-    # 3) do_bench TFLOPS sweep — one line per causal setting.
+    # 3) do_bench TFLOPS sweep (non-causal).
     configs = [
         triton.testing.Benchmark(
             x_names=["N_CTX"],
             x_vals=seqlens,
-            line_arg="causal",
-            line_vals=causal_vals,
-            line_names=[CAUSAL_NAME[c] for c in causal_vals],
-            styles=[("blue", "-"), ("green", "-")],
+            line_arg="provider",
+            line_vals=["gluon"],
+            line_names=["non-causal"],
+            styles=[("blue", "-")],
             ylabel="TFLOPS",
             plot_name=(
                 f"fav3-attn-B{args.batch}-HQ{args.hq}-HK{args.hk}"
@@ -185,19 +162,19 @@ def main():
     ]
 
     @triton.testing.perf_report(configs)
-    def benchmark(N_CTX, causal):
+    def benchmark(N_CTX, provider):
         q, k, v, o, md = make_inputs(
-            args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout, causal
+            args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout
         )
         fn = lambda: run_gluon_attention(q, k, v, o, md)  # noqa: E731
         fn()  # trigger autotune + warm compile before timing
         torch.cuda.synchronize()
         ms = triton.testing.do_bench(fn, warmup=25, rep=100, return_mode="median")
-        return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, causal) / ms * 1e-9
+        return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, False) / ms * 1e-9
 
     print(
         f"\nFAV3 rotated-4cluster attention | B={args.batch} HQ={args.hq} HK={args.hk} "
-        f"D={args.d} layout={args.layout} dtype={args.dtype} causal_mode={args.causal_mode}"
+        f"D={args.d} layout={args.layout} dtype={args.dtype} non-causal"
     )
     benchmark.run(show_plots=False, print_data=True)
 

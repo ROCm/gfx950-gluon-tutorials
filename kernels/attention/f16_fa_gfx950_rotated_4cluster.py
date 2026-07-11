@@ -1,7 +1,10 @@
 """
 This file implements a CDNA4 (gfx950) Flash Attention forward kernel.
 
-It includes the Gluon kernel plus a standalone benchmark/check harness.
+It contains the Gluon kernel, its single autotune config, and the host launcher
+(``run_gluon_attention``); correctness and benchmarking live in ``bench.py``. This
+tutorial copy is simplified to the single most-performant path: non-causal, head
+dim 128, K length a multiple of ``BLOCK_N`` (64).
 
 This kernel matches the pipeline architecture of the kernel from the “FAV3 Unmatched” series, but translated to Gluon instead of Triton.
 
@@ -139,78 +142,6 @@ def sc_dot_pv(acc, p_dot, v_dot):
 def sc_lr(smem_slot, dot_layout: gl.constexpr):
     """LRK / LRV: local-read a tile from LDS into registers."""
     return cdna4_async.load_shared_relaxed(smem_slot, dot_layout)
-
-
-# ---------------------------------------------------------------------------
-# Preload-all fallback for short block counts (< NUM_STAGES)
-# ---------------------------------------------------------------------------
-
-@gluon.jit
-def attn_fwd_inner_short(
-    acc, l_i, m_i, q_dot, k_base, v_base, start_m,
-    stride_kn, stride_kk, stride_vk, stride_vn,
-    block_start, n_blocks,
-    kt_smem, v_smem,
-    qk_scale: gl.constexpr,
-    MAX_SEQLENS_Q: gl.constexpr, MAX_SEQLENS_K: gl.constexpr,
-    BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr,
-    BLOCK_DMODEL: gl.constexpr, ACTUAL_BLOCK_DMODEL: gl.constexpr,
-    IS_CAUSAL: gl.constexpr,
-    kt_async_layout: gl.constexpr, v_async_layout: gl.constexpr,
-    kt_dot_layout: gl.constexpr, p_dot_layout: gl.constexpr, v_dot_layout: gl.constexpr,
-    mma_layout: gl.constexpr, mma_offs_n_col: gl.constexpr, mma_offs_m_row: gl.constexpr,
-):
-    """Two-slot fallback when remaining blocks can't fill the pipeline.
-
-    The matched pipeline uses two LDS slots even though its pipeline depth is four,
-    so short tails are processed in chunks that fit the same K/V ring.
-
-    Always uses masking (safe for both full and partial blocks).
-    """
-    cdna4_async.wait_group(0)
-
-    num_fallback = n_blocks - block_start
-
-    for chunk_start in tl.range(0, num_fallback, 2):
-        for slot in gl.static_range(2):
-            i = chunk_start + slot
-            if i < num_fallback:
-                start_n = (block_start + i) * BLOCK_N
-                issue_async_load_k(
-                    kt_smem.index(slot), k_base, start_n,
-                    stride_kn, stride_kk,
-                    MAX_SEQLENS_K, True, MAX_SEQLENS_K, False,
-                    BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-                    kt_async_layout,
-                )
-                issue_async_load_v(
-                    v_smem.index(slot), v_base, start_n,
-                    stride_vk, stride_vn,
-                    MAX_SEQLENS_K, True, MAX_SEQLENS_K, False,
-                    BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-                    v_async_layout,
-                )
-
-        cdna4_async.wait_group(0)
-
-        for slot in gl.static_range(2):
-            i = chunk_start + slot
-            if i < num_fallback:
-                start_n = (block_start + i) * BLOCK_N
-
-                kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(slot), kt_dot_layout)
-                qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)
-                acc, l_i, m_i, p = compute_softmax(
-                    acc, l_i, m_i, qk, start_n, start_m,
-                    MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                    qk_scale,
-                    MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                    BLOCK_M, BLOCK_N, True, IS_CAUSAL, False,
-                    mma_layout, mma_offs_n_col, mma_offs_m_row,
-                )
-                acc = compute_dot2_pv(acc, p, v_smem.index(slot), p_dot_layout, v_dot_layout)
-
-    return acc, l_i, m_i
 
 
 # ---------------------------------------------------------------------------
@@ -475,95 +406,16 @@ class AttentionInnerContext:
             self.mma_layout, self.mma_offs_n_col, self.mma_offs_m_row,
         )
 
-    @gluon.jit
-    def short(self, acc, l_i, m_i, block_start, block_end):
-        return attn_fwd_inner_short(
-            acc, l_i, m_i, self.q_dot, self.k_base, self.v_base, self.start_m,
-            self.stride_kn, self.stride_kk, self.stride_vk, self.stride_vn,
-            block_start, block_end,
-            self.kt_smem, self.v_smem, self.qk_scale,
-            self.MAX_SEQLENS_Q, self.MAX_SEQLENS_K,
-            self.BLOCK_M, self.BLOCK_N, self.BLOCK_DMODEL, self.ACTUAL_BLOCK_DMODEL,
-            self.IS_CAUSAL,
-            self.kt_async_layout, self.v_async_layout,
-            self.kt_dot_layout, self.p_dot_layout, self.v_dot_layout,
-            self.mma_layout, self.mma_offs_n_col, self.mma_offs_m_row,
-        )
-
-    @gluon.jit
-    def non_pipelined_fallback(
-        self, acc, l_i, m_i, kt_ptrs, v_ptrs,
-        block_start, block_end,
-        MASK_STEPS: gl.constexpr, IS_CAUSAL: gl.constexpr,
-    ):
-        return attn_fwd_inner(
-            acc, l_i, m_i, self.q_dot, kt_ptrs, v_ptrs, self.offs_n, self.offs_d,
-            self.kt_offs_d, self.kt_offs_n, self.start_m,
-            self.stride_kn, self.stride_vk,
-            block_start, block_end,
-            self.kt_smem, self.v_smem,
-            self.seqlen_q, self.seqlen_k, self.qk_scale,
-            self.MAX_SEQLENS_Q, self.MAX_SEQLENS_K,
-            self.BLOCK_M, self.BLOCK_N, self.BLOCK_DMODEL, self.ACTUAL_BLOCK_DMODEL,
-            self.PRE_LOAD_V, MASK_STEPS, IS_CAUSAL, self.VARLEN,
-            self.MMA_TYPE, self.kt_blocked_layout, self.blocked_layout,
-            self.kt_dot_layout, self.p_dot_layout, self.v_dot_layout,
-            self.mma_layout, self.mma_offs_n_col, self.mma_offs_m_row,
-        )
-
 # ---------------------------------------------------------------------------
 # Autotune configs
 # ---------------------------------------------------------------------------
 
 def get_gluon_cdna_autotune_configs():
+    # Simplified tutorial baseline: the single most performant config for the
+    # focus shape (D=128, non-causal). Full autotune space is in git history.
     return [
-        # BLOCK_N=32 wins for causal on gfx950 (smaller K/V tiles -> less live state,
-        # lower register pressure): N=16384 causal 789 vs 748 for the BLOCK_N=64 pick.
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
         triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 0}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 3}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 0}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 3}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': True,  'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': True,  'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=8),
-        # TODO: BM=128 BN=64 NS=4 NW=8 triggers LLVM bug at D=128:
-        # Needs LLVM PR https://github.com/llvm/llvm-project/pull/193499 (commit 81d618b6bc1e71cda79fe7bf9cbab63933dd5975) to be included in Triton's LLVM pin.
-        # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 1}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 0}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 3}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 0}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 3}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 1}, num_warps=4),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 0}, num_warps=2),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=2),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=2),
-        # BLOCK_N=32 configs (narrower tiles for reduced MFMA work and register pressure)
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 0}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 0}, num_warps=4),
-        # D=256 pipelined configs: must use BLOCK_N=32 (BN=64 exceeds LDS capacity at D=256)
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 0}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 2, 'waves_per_eu': 0}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'PRE_LOAD_V': False, 'NUM_STAGES': 1, 'waves_per_eu': 2}, num_warps=4),
     ]
-
-
-def get_gluon_autotune_configs():
-    return get_gluon_cdna_autotune_configs()
 
 
 GLUON_AUTOTUNE_KEYS = ['IS_CAUSAL', 'MAX_SEQLENS_Q', 'MAX_SEQLENS_K', 'ACTUAL_BLOCK_DMODEL', 'HQ', 'HK']
@@ -574,7 +426,7 @@ GLUON_AUTOTUNE_KEYS = ['IS_CAUSAL', 'MAX_SEQLENS_Q', 'MAX_SEQLENS_K', 'ACTUAL_BL
 # ---------------------------------------------------------------------------
 
 @triton.autotune(
-    configs=get_gluon_autotune_configs(),
+    configs=get_gluon_cdna_autotune_configs(),
     key=GLUON_AUTOTUNE_KEYS,
 )
 @gluon.jit
@@ -653,8 +505,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
     q_ptrs = q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
     q_mask = offs_m[:, None] < MAX_SEQLENS_Q
-    if ACTUAL_BLOCK_DMODEL != BLOCK_DMODEL:
-        q_mask = q_mask & (offs_d[None, :] < ACTUAL_BLOCK_DMODEL)
     q = gl.load(q_ptrs, mask=q_mask, other=0.0)
     q_smem.store(q)
     q_dot = q_smem.load(q_dot_layout)
@@ -665,391 +515,80 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
     qk_scale: gl.constexpr = SM_SCALE * 1.44269504089
 
-    n_blocks_total:  gl.constexpr = (MAX_SEQLENS_K + BLOCK_N - 1) // BLOCK_N
-    n_extra_tokens:  gl.constexpr = MAX_SEQLENS_K % BLOCK_N
-    padded_block_k:  gl.constexpr = n_extra_tokens != 0
-    is_modulo_mn:    gl.constexpr = not padded_block_k and (MAX_SEQLENS_Q % BLOCK_M == 0)
-
-    if IS_CAUSAL:
-        causal_block_limit = (start_m + 1) * BLOCK_M + MAX_SEQLENS_K - MAX_SEQLENS_Q
-        n_blocks = gl.minimum(n_blocks_total, (causal_block_limit + BLOCK_N - 1) // BLOCK_N)
-        masked_blocks: gl.constexpr = BLOCK_M // BLOCK_N + (not is_modulo_mn)
-    else:
-        n_blocks = n_blocks_total
-        masked_blocks: gl.constexpr = 1 if padded_block_k else 0
-
-    masked_blocks_clamped = gl.minimum(masked_blocks, n_blocks)
-    n_full_blocks = n_blocks - masked_blocks_clamped
+    # Simplified tutorial kernel: non-causal, K length a multiple of BLOCK_N, so
+    # every K/V block is full and unmasked (no causal / no ragged-tail masking).
+    n_blocks = (MAX_SEQLENS_K + BLOCK_N - 1) // BLOCK_N
 
     kt_ptrs = k_base + kt_offs_d[:, None] * stride_kk + kt_offs_n[None, :] * stride_kn
     v_ptrs  = v_base + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
 
-    USE_PIPELINED: gl.constexpr = (NUM_STAGES > 1) and (BLOCK_DMODEL >= 64) and not (BLOCK_DMODEL >= 256 and BLOCK_N >= 64) and not (BLOCK_DMODEL < 128 and BLOCK_N < 64 and num_warps >= 8)
+    # Single supported config: D=128, BLOCK_N=64, 8 warps. The full per-
+    # (BLOCK_DMODEL, BLOCK_N, num_warps) layout dispatch was dropped for the tutorial.
+    kt_offset_bases: gl.constexpr = [
+        [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
+        [0, 16], [0, 32],
+        [0, 1], [0, 2], [0, 4], [0, 8]
+    ]
+    v_offset_bases: gl.constexpr = [
+        [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
+        [16, 0], [32, 0],
+        [1, 0], [2, 0], [4, 0], [8, 0]
+    ]
+    kt_async_layout: gl.constexpr = DistributedLinearLayout(
+        reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
+        lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 32]],
+        warp_bases=[[0, 1], [0, 2], [0, 4]],
+        block_bases=[],
+        shape=[BLOCK_DMODEL, BLOCK_N])
+    v_async_layout: gl.constexpr = DistributedLinearLayout(
+        reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
+        lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
+        warp_bases=[[1, 0], [2, 0], [4, 0]],
+        block_bases=[],
+        shape=[BLOCK_N, BLOCK_DMODEL])
 
-    if USE_PIPELINED:
-        if BLOCK_DMODEL >= 256 and BLOCK_N >= 32 and num_warps == 8:
-            # D=256, BN=32, 8 warps: [128,0] in lane (not reg) to satisfy DMA constraints.
-            # Layout matches the extend attention kernel's _kt_dll_bases_8w(D=256) pattern.
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0], [128, 0],
-                [0, 16],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [0, 128],
-                [16, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [128, 0], [0, 16]],
-                warp_bases=[[0, 1], [0, 2], [0, 4]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [0, 128], [16, 0]],
-                warp_bases=[[1, 0], [2, 0], [4, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 256 and BLOCK_N >= 32 and num_warps == 4:
-            # D=256, BN=32, 4 warps: 5 reg bases, [128,0] in lane.
-            # Matches _kt_dll_bases_4w(D=256) from extend attention.
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0], [128, 0],
-                [0, 16],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64], [0, 128],
-                [16, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 4], [0, 8]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [128, 0], [0, 16]],
-                warp_bases=[[0, 1], [0, 2]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [4, 0], [8, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [0, 128], [16, 0]],
-                warp_bases=[[1, 0], [2, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 128 and BLOCK_N >= 64 and num_warps == 8:
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 32]],
-                warp_bases=[[0, 1], [0, 2], [0, 4]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
-                warp_bases=[[1, 0], [2, 0], [4, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 128 and BLOCK_N >= 64 and num_warps == 4:
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8], [0, 4]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 32]],
-                warp_bases=[[0, 1], [0, 2]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0], [4, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
-                warp_bases=[[1, 0], [2, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 128 and BLOCK_N >= 32 and num_warps == 4:
-            # D=128, BN=32, 4 warps: D-fast layout for both KT and V
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-                [0, 16], [0, 8],
-                [0, 1], [0, 2], [0, 4]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-                [16, 0], [8, 0],
-                [1, 0], [2, 0], [4, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 4]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 8]],
-                warp_bases=[[0, 1], [0, 2]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [4, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [8, 0]],
-                warp_bases=[[1, 0], [2, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 128 and BLOCK_N >= 32 and num_warps == 8:
-            # D=128, BN=32, 8 warps: D-fast layout for both KT and V
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-                [0, 16], [0, 8],
-                [0, 1], [0, 2], [0, 4]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-                [16, 0], [8, 0],
-                [1, 0], [2, 0], [4, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 8]],
-                warp_bases=[[0, 1], [0, 2], [0, 4]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [8, 0]],
-                warp_bases=[[1, 0], [2, 0], [4, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 64 and BLOCK_N >= 64 and num_warps == 8:
-            # D=64, BN=64, 8 warps
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 1]],
-                warp_bases=[[0, 2], [0, 4], [0, 8]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [1, 0]],
-                warp_bases=[[2, 0], [4, 0], [8, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 128 and num_warps == 2:
-            # D=128, 2 warps (for BLOCK_M=64)
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0], [64, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8], [0, 4], [0, 2]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 16], [0, 32]],
-                warp_bases=[[0, 1]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0], [4, 0], [2, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
-                warp_bases=[[1, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 64 and BLOCK_N >= 64 and num_warps == 4:
-            # D=64, BN=64, 4 warps
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 1]],
-                warp_bases=[[0, 2], [0, 4]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [1, 0]],
-                warp_bases=[[2, 0], [4, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        elif BLOCK_DMODEL >= 64 and BLOCK_N >= 32 and num_warps == 4:
-            # D=64, BN=32, 4 warps: D-fast layout for both KT and V
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0],
-                [0, 16], [0, 8], [0, 4],
-                [0, 1], [0, 2]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32],
-                [16, 0], [8, 0], [4, 0],
-                [1, 0], [2, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 8], [0, 4]],
-                warp_bases=[[0, 1], [0, 2]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [8, 0], [4, 0]],
-                warp_bases=[[1, 0], [2, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
-        else:
-            # D=64, 2 warps (for BLOCK_M=64)
-            kt_offset_bases: gl.constexpr = [
-                [1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [32, 0],
-                [0, 16], [0, 32],
-                [0, 1], [0, 2], [0, 4], [0, 8]
-            ]
-            v_offset_bases: gl.constexpr = [
-                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32],
-                [16, 0], [32, 0],
-                [1, 0], [2, 0], [4, 0], [8, 0]
-            ]
-            kt_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8], [0, 4]],
-                lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 1]],
-                warp_bases=[[0, 2]],
-                block_bases=[],
-                shape=[BLOCK_DMODEL, BLOCK_N])
-            v_async_layout: gl.constexpr = DistributedLinearLayout(
-                reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0], [4, 0]],
-                lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [1, 0]],
-                warp_bases=[[2, 0]],
-                block_bases=[],
-                shape=[BLOCK_N, BLOCK_DMODEL])
+    kt_async_smem_layout: gl.constexpr = PaddedSharedLayout(
+        interval_padding_pairs=[[512, 8]],
+        offset_bases=kt_offset_bases,
+        cga_layout=[],
+        shape=[BLOCK_DMODEL, BLOCK_N])
+    v_async_smem_layout: gl.constexpr = PaddedSharedLayout(
+        interval_padding_pairs=[[512, 32]],
+        offset_bases=v_offset_bases,
+        cga_layout=[],
+        shape=[BLOCK_N, BLOCK_DMODEL])
 
-        kt_async_smem_layout: gl.constexpr = PaddedSharedLayout(
-            interval_padding_pairs=[[512, 8]],
-            offset_bases=kt_offset_bases,
-            cga_layout=[],
-            shape=[BLOCK_DMODEL, BLOCK_N])
-        v_async_smem_layout: gl.constexpr = PaddedSharedLayout(
-            interval_padding_pairs=[[512, 32]],
-            offset_bases=v_offset_bases,
-            cga_layout=[],
-            shape=[BLOCK_N, BLOCK_DMODEL])
-
-        BUF_DEPTH: gl.constexpr = 2
-        kt_smem = gl.allocate_shared_memory(
-            Q.dtype.element_ty, [BUF_DEPTH, BLOCK_DMODEL, BLOCK_N], layout=kt_async_smem_layout)
-        v_smem = gl.allocate_shared_memory(
-            Q.dtype.element_ty, [BUF_DEPTH, BLOCK_N, BLOCK_DMODEL], layout=v_async_smem_layout)
+    BUF_DEPTH: gl.constexpr = 2
+    kt_smem = gl.allocate_shared_memory(
+        Q.dtype.element_ty, [BUF_DEPTH, BLOCK_DMODEL, BLOCK_N], layout=kt_async_smem_layout)
+    v_smem = gl.allocate_shared_memory(
+        Q.dtype.element_ty, [BUF_DEPTH, BLOCK_N, BLOCK_DMODEL], layout=v_async_smem_layout)
 
 
-        inner_ctx: gl.constexpr = AttentionInnerContext(
-            q_dot, k_base, v_base,
-            offs_n, offs_d, kt_offs_d, kt_offs_n, start_m,
-            stride_kn, stride_kk, stride_vk, stride_vn,
-            kt_smem, v_smem,
-            MAX_SEQLENS_Q, MAX_SEQLENS_K, qk_scale,
-            MAX_SEQLENS_Q, MAX_SEQLENS_K,
-            BLOCK_M, BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-            NUM_STAGES, IS_CAUSAL, PRE_LOAD_V, False,
-            MMA_TYPE, kt_blocked_layout, blocked_layout,
-            kt_async_layout, v_async_layout,
-            kt_dot_layout, p_dot_layout, v_dot_layout,
-            mma_layout, mma_offs_n_col, mma_offs_m_row,
-        )
+    inner_ctx: gl.constexpr = AttentionInnerContext(
+        q_dot, k_base, v_base,
+        offs_n, offs_d, kt_offs_d, kt_offs_n, start_m,
+        stride_kn, stride_kk, stride_vk, stride_vn,
+        kt_smem, v_smem,
+        MAX_SEQLENS_Q, MAX_SEQLENS_K, qk_scale,
+        MAX_SEQLENS_Q, MAX_SEQLENS_K,
+        BLOCK_M, BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
+        NUM_STAGES, IS_CAUSAL, PRE_LOAD_V, False,
+        MMA_TYPE, kt_blocked_layout, blocked_layout,
+        kt_async_layout, v_async_layout,
+        kt_dot_layout, p_dot_layout, v_dot_layout,
+        mma_layout, mma_offs_n_col, mma_offs_m_row,
+    )
 
-        if n_blocks > NUM_STAGES and (n_blocks - n_full_blocks) < NUM_STAGES and n_full_blocks != n_blocks:
-            # Small masked region with some full blocks: run the whole range on the
-            # rotated loop with masking (the causal/bound mask is a no-op on
-            # the full blocks).
-            acc, l_i, m_i = inner_ctx.pipelined(acc, l_i, m_i, 0, n_blocks, True)
-        elif n_blocks > NUM_STAGES:
-            if n_full_blocks > NUM_STAGES:
-                # Fully-unmasked block region: matched rotated 4-cluster loop
-                # (MASK_STEPS=False). Shared by causal and non-causal: for causal
-                # these are the below-diagonal full blocks; the masked diagonal tail
-                # is handled by the same rotated loop with masking (or the short
-                # preload-all path when the tail is too small to fill the pipeline).
-                acc, l_i, m_i = inner_ctx.pipelined(acc, l_i, m_i, 0, n_full_blocks, False)
-
-            masked_start = n_full_blocks if n_full_blocks > NUM_STAGES else 0
-            remaining_blocks = n_blocks - masked_start
-            if remaining_blocks > NUM_STAGES:
-                # Masked diagonal / K-bound tail large enough to fill the pipeline:
-                # run it on the same rotated loop with masking.
-                acc, l_i, m_i = inner_ctx.pipelined(acc, l_i, m_i, masked_start, n_blocks, True)
-            elif remaining_blocks > 0:
-                acc, l_i, m_i = inner_ctx.short(acc, l_i, m_i, masked_start, n_blocks)
-        elif n_blocks > 0:
-            acc, l_i, m_i = inner_ctx.short(acc, l_i, m_i, 0, n_blocks)
-    else:
-        kt_smem_layout: gl.constexpr = gl.SwizzledSharedLayout(vec=8, per_phase=1, max_phase=16, order=[0, 1])
-        v_smem_layout:  gl.constexpr = gl.SwizzledSharedLayout(vec=8, per_phase=1, max_phase=16, order=[1, 0])
-        kt_smem = gl.allocate_shared_memory(Q.dtype.element_ty, [BLOCK_DMODEL, BLOCK_N], layout=kt_smem_layout)
-        v_smem  = gl.allocate_shared_memory(Q.dtype.element_ty, [BLOCK_N, BLOCK_DMODEL], layout=v_smem_layout)
-
-        inner_ctx: gl.constexpr = AttentionInnerContext(
-            q_dot, k_base, v_base,
-            offs_n, offs_d, kt_offs_d, kt_offs_n, start_m,
-            stride_kn, stride_kk, stride_vk, stride_vn,
-            kt_smem, v_smem,
-            MAX_SEQLENS_Q, MAX_SEQLENS_K, qk_scale,
-            MAX_SEQLENS_Q, MAX_SEQLENS_K,
-            BLOCK_M, BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-            NUM_STAGES, IS_CAUSAL, PRE_LOAD_V, False,
-            MMA_TYPE, kt_blocked_layout, blocked_layout,
-            kt_blocked_layout, blocked_layout,
-            kt_dot_layout, p_dot_layout, v_dot_layout,
-            mma_layout, mma_offs_n_col, mma_offs_m_row,
-        )
-
-        if n_full_blocks > 0:
-            acc, l_i, m_i, kt_ptrs, v_ptrs = inner_ctx.non_pipelined_fallback(
-                acc, l_i, m_i, kt_ptrs, v_ptrs,
-                0, n_full_blocks, False, False,
-            )
-
-        if masked_blocks > 0:
-            acc, l_i, m_i, kt_ptrs, v_ptrs = inner_ctx.non_pipelined_fallback(
-                acc, l_i, m_i, kt_ptrs, v_ptrs,
-                n_full_blocks, n_blocks, True, IS_CAUSAL,
-            )
-
+    # Every block is full and unmasked: run the rotated 4-cluster pipeline over
+    # the whole K/V range in one shot (MASK_STEPS=False).
+    acc, l_i, m_i = inner_ctx.pipelined(acc, l_i, m_i, 0, n_blocks, False)
     l_recip = 1.0 / l_i
     acc = acc * l_recip[:, None]
 
     o_base  = Out + off_z * stride_oz + off_h_q * stride_oh
     o_ptrs  = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
     o_mask  = offs_m[:, None] < MAX_SEQLENS_Q
-    if ACTUAL_BLOCK_DMODEL != BLOCK_DMODEL:
-        o_mask = o_mask & (offs_d[None, :] < ACTUAL_BLOCK_DMODEL)
     acc_blocked = gl.convert_layout(acc, blocked_layout)
     gl.store(o_ptrs, acc_blocked.to(Out.dtype.element_ty), mask=o_mask)
 
@@ -1065,7 +604,13 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 # ---------------------------------------------------------------------------
 
 def run_gluon_attention(q, k, v, o, metadata: MetaData):
-    """Run gluon_attn_fwd on the given inputs and write output into o."""
+    """Run gluon_attn_fwd on the given inputs and write output into o.
+
+    Simplified tutorial kernel: non-causal only, and the K sequence length must be
+    a multiple of BLOCK_N (64). Both hold for the tutorial's seqlen sweep.
+    """
+    assert not metadata.causal, "simplified FAV3 tutorial kernel supports non-causal only"
+    assert metadata.max_seqlens_k % 64 == 0, "K seqlen must be a multiple of BLOCK_N (64)"
     batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q, k, metadata)
     q_strides, k_strides, v_strides, o_strides = get_strides_from_layout(q, k, v, o, metadata)
 
@@ -1084,7 +629,7 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData):
         *q_strides, *k_strides, *v_strides, *o_strides,
         HQ=nheads_q, HK=nheads_k, ACTUAL_BLOCK_DMODEL=head_size,
         MAX_SEQLENS_Q=metadata.max_seqlens_q, MAX_SEQLENS_K=metadata.max_seqlens_k,
-        IS_CAUSAL=metadata.causal,
+        IS_CAUSAL=False,
         BLOCK_DMODEL=padded_d_model,
         MMA_TYPE=mma_type,
     )

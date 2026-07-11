@@ -40,7 +40,7 @@ extend-exclude = '''
     | dist
     | ir_dump.*
   )/
-  # vendored FA kernels ported from AMD-Triton/gluon-kernels (kept verbatim)
+  # vendored FA kernels from AMD-Triton/gluon-kernels (common verbatim, kernel simplified)
   | kernels/attention/f16_fa_gfx950_.*\.py
 )
 '''
@@ -55,7 +55,7 @@ extend-exclude = [
     "*.ttgir",
     "*.llir",
     "*.amdgcn",
-    # vendored FA kernels ported from AMD-Triton/gluon-kernels (kept verbatim)
+    # vendored FA kernels from AMD-Triton/gluon-kernels (common verbatim, kernel simplified)
     "kernels/attention/f16_fa_gfx950_*.py",
 ]
 
