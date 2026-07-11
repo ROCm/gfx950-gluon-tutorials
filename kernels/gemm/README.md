@@ -4,6 +4,42 @@ This directory contains **high-performance GEMM kernels written in Gluon**, targ
 
 The goal is not just to provide fast kernels, but to **teach how to design, analyze, and optimize GEMM kernels** on AMD hardware—from memory layout to instruction scheduling.
 
+## Directory Structure
+
+```
+gemm/
+├── a16w16/                        # FP16/BF16 — the v0→v9 optimization journey (start here)
+│   ├── v0_naive/                  #   baseline: explicit layouts, correctness-first
+│   ├── v1_buffer_load/            #   buffer_load for hardware OOB (branch elimination)
+│   ├── v2_async_copy/             #   direct-to-LDS async copy
+│   ├── v3_lds/                    #   LDS layout design: swizzle vs padding
+│   ├── v4_global_prefetch/        #   2-stage pipeline (double buffering)
+│   ├── v5_local_prefetch/         #   3-stage pipeline + LLIR scheduler
+│   ├── v6_loop_unroll/            #   loop unrolling
+│   ├── v7_sliceN/                 #   N-slicing (register pressure)
+│   ├── v8_sliceMN/                #   M+N slicing
+│   └── v9_beyond_hotloop/         #   XCD-aware PID remapping (L2 locality)
+├── a8w8/                          # BF8 (e5m2) — single kernel (no version subdirs)
+├── a4w4/                          # MXFP4 (e2m1) — adds the per-group scale pipeline
+│   ├── v0_sliceN/                 #   N-slicing + LDS round-trip scales
+│   └── v1_sliceMN/                #   M+N slicing + direct-to-LDS scales
+├── a16w16-8wave/                  # FP16/BF16 — 8-wave warp-pipeline
+│   ├── v0_BK32_nS3/               #   BLOCK_K=32, 3-stage
+│   └── v1_sliceMN_BK64_nS2/       #   M+N slicing, BLOCK_K=64, 2-buffer (recommended)
+├── a8w8-8wave/                    # BF8 — 8-wave warp-pipeline
+│   └── v1_sliceMN_BK128_nS2/      #   M+N slicing, BLOCK_K=128, 2-buffer
+└── a4w4-8wave/                    # MXFP4 — 8-wave warp-pipeline
+    ├── v0_sliceMN_BK256_nS2/      #   byte-shuffle B scale (baseline)
+    ├── v1_combineBsc_BK256_nS2/   #   combined transpose-read B scale (recommended)
+    └── v2_mfma32x32x64_BK256_nS2/ #   32×32×64 MFMA + conflict-free LDS layout
+```
+
+Two routes to peak MFMA utilization on the *same* problems. The **4-wave** kernels (`a16w16` /
+`a8w8` / `a4w4`) use the LLIR scheduler + force-agpr + amdgcnas ([§2.1](#21-triton-build-and-the-out-of-tree-plugins));
+the **8-wave** kernels (`*-8wave`) use wave-level `warp_pipeline_stage` scheduling with no AGPRs
+([§5](#5-8-wave-warp-pipeline-variants)). New here? Start with [`a16w16/`](a16w16/) for the full
+step-by-step walkthrough.
+
 ## 1. Performance Summary
 
 Measured on a single MI355X (gfx950), Triton built from the `gfx950-tutorial-v1.0` tag, rocprof
