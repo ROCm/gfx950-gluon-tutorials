@@ -10,12 +10,14 @@ Supports `bhsd` / `bshd` layouts, MHA/GQA/MQA, head dims up to 128, fp16/bf16,
 causal and non-causal.
 
 ## Provenance
-`f16_fa_gfx950_rotated_4cluster.py` and its `f16_fa_gfx950_common.py` helpers are
-**vendored verbatim** from
+Ported from
 [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
-(`kernels/cdna4/fa/`). They are kept byte-for-byte to stay easy to sync with
-upstream, so they are excluded from this repo's black/ruff (see `pyproject.toml`).
-Only `bench.py` is tutorial-native.
+(`kernels/cdna4/fa/`). `f16_fa_gfx950_common.py` is verbatim;
+`f16_fa_gfx950_rotated_4cluster.py` is the upstream kernel with its bundled
+standalone benchmark/check harness removed (our `bench.py` replaces it) — only the
+Gluon kernel, autotune configs, and the `run_gluon_attention` launcher remain. Both
+are excluded from this repo's black/ruff (see `pyproject.toml`) to stay easy to diff
+against upstream; `bench.py` is tutorial-native and linted.
 
 ## Files
 - `f16_fa_gfx950_rotated_4cluster.py` — the Gluon kernel + autotune configs + host launcher (`run_gluon_attention`).
