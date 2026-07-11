@@ -5,7 +5,7 @@
 > forces the B-scale MFMA operand through per-byte `ds_read_u8` + `v_perm` reassembly (118
 > `v_perm` in the loop). [`v1_combineBsc_BK256_nS2`](../v1_combineBsc_BK256_nS2/README.md)
 > loads the B scale as one combined `[256,8]` so it transpose-reads with no `v_perm`, for
-> **+15–19% TFLOPS**. See the [family README §2](../README.md#2-the-b-scale-bottleneck-and-how-v1-fixes-it).
+> **+16–22% TFLOPS**. See the [family README §2](../README.md#2-the-b-scale-bottleneck-and-how-v1-fixes-it).
 
 ## 1. Directory Structure
 
@@ -88,7 +88,7 @@ register-bound.
 
 ## 5. Performance
 
-MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, current build (Triton 3.8.0), rocprof cold-rotating:
+MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v1.0`, rocprof cold-rotating:
 
 | Metric | Value |
 |---|---|

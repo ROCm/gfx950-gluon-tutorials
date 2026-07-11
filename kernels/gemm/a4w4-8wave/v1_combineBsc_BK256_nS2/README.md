@@ -59,13 +59,13 @@ v0's `[4,1],[32,2],[2,4]` puts 2 K-groups per warp, which for `[256,8]` are 256 
 for a `[128,8]` half because there the 128-N span equals the tile's N. See the
 [family README §2.1](../README.md#21-why-the-combined-2568-fill-needs-a-special-blocked-layout).
 
-## 4. Performance (MI355X, current build, rocprof cold-rotating)
+## 4. Performance (MI355X, `gfx950-tutorial-v1.0` + `fence_loads` #10840, rocprof cold-rotating)
 
 | K | v0 TFLOPS | **v1 TFLOPS** | v0 MFMA | **v1 MFMA** | speedup |
 |---|---|---|---|---|---|
-| 8192  | 3525 | **4071** | ~57% | **73.2%** | +15.5% |
-| 16384 | 3986 | **4492** | 57.2% | **73.5%** | +12.7% |
-| 32768 | 4064 | **4840** | ~57% | **73.6%** | +19.1% |
+| 8192  | 3525 | **4116** | ~57% | **79.7%** | +16.8% |
+| 16384 | 3986 | **4630** | 57.2% | **79.9%** | +16.2% |
+| 32768 | 4064 | **4938** | ~57% | **80.0%** | +21.5% |
 
 Codegen (K=8192): B-scale `v_perm` **118 → 0**, `ds_read_u8` **32 → 0**; VGPR/spills
 **256 / 23 → 256 / 12**. Correctness ✅ vs dequantized torch, K = 1024…65536.

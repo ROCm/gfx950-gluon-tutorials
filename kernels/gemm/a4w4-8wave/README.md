@@ -11,16 +11,16 @@ kernel versions, and the measured performance.
 > [!IMPORTANT]
 > Like the fp16 8-wave kernels, this schedules the hot loop at the **wave level** with
 > `warp_pipeline_stage` and runs with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via
-> `llvm_fn_attrs`). The 4-wave `llir+amdgcnas` toolchain is **not** used here.
+> `llvm_fn_attrs`). The 4-wave `llir+force-agpr+amdgcnas` toolchain is **not** used here.
 
 ## Versions
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
 | **v0** | [`v0_sliceMN_BK256_nS2`](v0_sliceMN_BK256_nS2/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3525 | 4064 | ~57% |
-| **v1** | [`v1_combineBsc_BK256_nS2`](v1_combineBsc_BK256_nS2/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4071** | **4840** | **~73%** |
+| **v1** | [`v1_combineBsc_BK256_nS2`](v1_combineBsc_BK256_nS2/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4116** | **4938** | **~80%** |
 
-**v1 is the recommended version** (`--version 1`, the default): +15–19% TFLOPS over v0 at
+**v1 is the recommended version** (`--version 1`, the default): +16–22% TFLOPS over v0 at
 the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
 baseline that exposes the problem.
 
@@ -90,24 +90,25 @@ gfx950 rejects — the load must stay N-major to get a real dword.)
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, MXFP4, **no-AGPR**, rocprof cold-rotating tensors (last-100
-average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Current build
-(Triton 3.8.0):
+average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Triton
+`gfx950-tutorial-v1.0` + the `fence_loads` PR (#10840):
 
 | K | v0 TFLOPS | v0 MFMA eff | **v1 TFLOPS** | **v1 MFMA eff** | v1 speedup |
 |---|---|---|---|---|---|
-| 8192  | 3525 | ~57% | **4071** | **73.2%** | +15.5% |
-| 16384 | 3986 | 57.2% | **4492** | **73.5%** | +12.7% |
-| 32768 | 4064 | ~57% | **4840** | **73.6%** | +19.1% |
+| 8192  | 3525 | ~57% | **4116** | **79.7%** | +16.8% |
+| 16384 | 3986 | 57.2% | **4630** | **79.9%** | +16.2% |
+| 32768 | 4064 | ~57% | **4938** | **80.0%** | +21.5% |
 
 Codegen (K=8192): B-scale `v_perm` **118 → 0**, `ds_read_u8` **32 → 0**, `ds_read_b64_tr_b8`
 **8 → 12**. VGPRs/spills **256 / 23 → 256 / 12** — deleting the `v_perm` temporaries also
 halves the (epilogue) spills.
 
 The win comes entirely from the loop: removing 118 register-shuffle `v_perm` lifts per-SIMD
-loop MFMA efficiency from **~57% to ~73%** and TFLOPS by **+15–19%**, growing with K as the
-loop dominates. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
+loop MFMA efficiency from **~57% to ~73%**, and the intra-stage `fence_loads` (a `sched.barrier`
+after the stage's LDS reads, PR #10840) takes it to **~80%** — together **+16–22%** TFLOPS,
+growing with K as the loop dominates. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
 ~90%+ of a16w16/a8w8), but v1 recovers most of the headroom the B-scale byte-shuffle was
-wasting. The 4-wave `a4w4` reaches ~5556 TFLOPS with `llir+amdgcnas` (a toolchain that
+wasting. The 4-wave `a4w4` reaches ~5189 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
 targets the 4-wave register model and cannot be applied at 8 waves).
 
 ## 4. Running

@@ -67,16 +67,16 @@ MI355X, rocprof cold-rotating, fence-on:
 
 | K | kernel | TFLOPS | MFMA occ | GRBM active cyc |
 |---|---|---|---|---|
-| 8192  | v1 16×16×128 | **4135** | 79.5% | 1.25M |
-| 8192  | v2 32×32×64  | 4172 | **97.4%** | **0.99M** |
-| 32768 | v1 16×16×128 | **4899** | 79.6% | — |
-| 32768 | v2 32×32×64  | 4735 | **98.0%** | — |
+| 8192  | v1 16×16×128 | **4116** | 79.7% | 1.25M |
+| 8192  | v2 32×32×64  | 4114 | **97.4%** | **0.99M** |
+| 32768 | v1 16×16×128 | **4938** | 80.0% | — |
+| 32768 | v2 32×32×64  | 4799 | **98.0%** | — |
 
 The conflict-free layout removes the ds stall → **~98% MFMA occupancy** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in **~20% fewer cycles** than v1. **But the win is
 cycle-based, not wall-clock:** the bigger 32×32×64 MFMAs are power-hungrier, so the GPU
 **frequency-throttles ~21%** — the two effects cancel and wall-clock TFLOPS is essentially even with
-v1 (mid-K it edges ahead; at large, loop-dominated K v1's higher datapath peak still wins). This is
+v1 (neck-and-neck at K=8192; at large, loop-dominated K v1's higher datapath peak still wins). This is
 the [MFMA-efficiency caveat](../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is
 clock-independent, TFLOPS is not.
 
@@ -87,8 +87,8 @@ clock-independent, TFLOPS is not.
   the matrix ops, ≤4 SALU/mfma) saves **~74 cyc/iter (−1.75%)**. It can't be produced from Gluon (LLVM
   hoists loop-carried address math) nor by relaxing the `sched_barrier` mask to allow SALU (tested —
   the scheduler doesn't sink them and makes counterproductive moves instead); it needs a forceful hint.
-- **fence dependency:** the `fence_loads` warp-pipeline flag (on v1 and v2) needs a compiler prototype
-  **not in the pinned `gfx950-tutorial-v0.3`**; those numbers require a Triton built with it.
+- **fence dependency:** the `fence_loads` warp-pipeline flag (on v1 and v2) needs `fence_loads` support
+  (PR #10840) **not in the pinned `gfx950-tutorial-v1.0`**; those numbers require a Triton built with it.
 
 ## Conclusion
 

@@ -6,10 +6,10 @@ The goal is not just to provide fast kernels, but to **teach how to design, anal
 
 ## 1. Performance Summary
 
-Measured on a single MI355X (gfx950), current build (Triton 3.8.0), rocprof cold-rotating
-(1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR scheduler +
-amdgcnas (`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`); the **8-wave** kernels run
-`warp_pipeline_stage` with no AGPRs (no env vars — see [§5](#5-8-wave-warp-pipeline-variants)).
+Measured on a single MI355X (gfx950), Triton built from the `gfx950-tutorial-v1.0` tag, rocprof
+cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
+scheduler + force-agpr + amdgcnas (see [§2.1](#21-triton-build-and-the-out-of-tree-plugins)); the
+**8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [§5](#5-8-wave-warp-pipeline-variants)).
 
 | Data Type | Shape           | Solution                    | TFLOPS | MFMA Eff. |
 |-----------|-----------------|-----------------------------|--------|-----------|
@@ -20,14 +20,14 @@ amdgcnas (`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`); the **8-wave*
 | BF8       | 4096×4096×16384 | 4-wave (`a8w8`)             |   3232 |    99.52% |
 | BF8       | 4096×4096×16384 | 8-wave (`a8w8-8wave` v1)    |   3094 |    99.9%  |
 | MXFP4     | 4096×4096×32768 | 4-wave (`a4w4` v1)          |   5189 |    93.86% |
-| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v1)    |   4921 |    79.5%  |
-| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v2)    |   4750 |    98.0%  |
+| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v1)    |   4938 |    80.0%  |
+| MXFP4     | 4096×4096×32768 | 8-wave (`a4w4-8wave` v2)    |   4799 |    98.0%  |
 
 > [!NOTE]
 > The **4-wave** rows are the `gfx950-tutorial-v1.0`-build numbers from
 > `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** rows
 > come from `collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
-> (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~5–6% above FP16** here despite the
+> (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~6% above FP16** here despite the
 > nominally identical MFMA rate (a clock/power effect on this build, reproducible across runs).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
 > FP16 optimization journey's near-optimal headline (1421 TFLOPS on `gfx950-tutorial-v1.0`) is
@@ -175,28 +175,28 @@ The [a4w4/](a4w4/) directory implements the MXFP4 kernel, whose genuinely new el
 
 ## 5. 8-Wave Warp-Pipeline Variants
 
-Alongside the 4-wave `llir+amdgcnas` kernels above, the repo carries an **8-wave warp-pipeline** version of each GEMM — [`a16w16-8wave/`](a16w16-8wave/), [`a8w8-8wave/`](a8w8-8wave/), and [`a4w4-8wave/`](a4w4-8wave/). These reach high MFMA utilization on the *same* problems by a different route.
+Alongside the 4-wave `llir+force-agpr+amdgcnas` kernels above, the repo carries an **8-wave warp-pipeline** version of each GEMM — [`a16w16-8wave/`](a16w16-8wave/), [`a8w8-8wave/`](a8w8-8wave/), and [`a4w4-8wave/`](a4w4-8wave/). These reach high MFMA utilization on the *same* problems by a different route.
 
-Instead of the LLIR scheduler + amdgcnas, they launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD are kept out of phase so one issues MFMAs while the other issues loads, then they swap (a "ping-pong"). They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), so the f32 accumulators live in VGPRs and **no environment variables are needed**. The theory is in [`docs/warp_pipelining.md`](../../docs/warp_pipelining.md).
+Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD are kept out of phase so one issues MFMAs while the other issues loads, then they swap (a "ping-pong"). They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), so the f32 accumulators live in VGPRs and **no environment variables are needed**. The theory is in [`docs/warp_pipelining.md`](../../docs/warp_pipelining.md).
 
 > [!IMPORTANT]
-> The 4-wave `llir+amdgcnas` toolchain is built around the 4-wave register/schedule model and **fails register allocation at 8 waves**, so it is not used here.
+> The 4-wave `llir+force-agpr+amdgcnas` toolchain is built around the 4-wave register/schedule model and **fails register allocation at 8 waves**, so it is not used here.
 
 | | a16w16-8wave | a8w8-8wave | a4w4-8wave |
 |---|---|---|---|
 | Data type | FP16 / BF16 | BF8 (e5m2) | MXFP4 (e2m1) |
-| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2` |
+| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2`, `v2_mfma32x32x64_BK256_nS2` |
 | Tile M×N×K | 256×256×32 (v0) / 64 (v1) | 256×256×128 | 256×256×256 |
 | MFMA | `mfma` `[16,16,32]` | `mfma_scaled` e5m2 `[16,16,128]` | `mfma_scaled` e2m1 `[16,16,128]` |
 | Scheduling | `warp_pipeline_stage`, no-AGPR | same | same |
 
-**Performance** (MI355X, gfx950, 4096×4096, current build, rocprof cold-rotating; per-SIMD loop MFMA eff):
+**Performance** (MI355X, gfx950, 4096×4096, Triton `gfx950-tutorial-v1.0` — a4w4 rows also need `fence_loads` PR #10840 — rocprof cold-rotating; per-SIMD loop MFMA eff):
 
 | Kernel (final version) | K=8192 | K=16384 | K=32768 | VGPR / spills |
 |---|---|---|---|---|
-| a16w16-8wave `v1` (fp16) | 1446 / 99.8% | 1495 / 99.3% | 1287 / 92.3% | 242 / 0 |
-| a8w8-8wave `v1` (BF8)    | 2894 / 99.7% | 3147 / 99.9% | 3129 / 99.1% | 256 / 13 (loop 0) |
-| a4w4-8wave `v1` (MXFP4)  | 4071 / 73.2% | 4492 / 73.5% | 4840 / 73.6% | 256 / 12 (loop 0) |
+| a16w16-8wave `v1` (fp16) | 1442 / 99.8% | 1489 / 98.1% | 1287 / 81.6% | 242 / 0 |
+| a8w8-8wave `v1` (BF8)    | 2853 / 99.7% | 3094 / 99.9% | 2968 / 96.8% | 256 / 13 (loop 0) |
+| a4w4-8wave `v1` (MXFP4)  | 4116 / 79.7% | 4630 / 79.9% | 4938 / 80.0% | 256 / 12 (loop 0) |
 
 Run them with each kernel's `collect_perf.py` (no env vars):
 
@@ -206,5 +206,5 @@ cd kernels/gemm/a8w8-8wave   && python collect_perf.py --version 1 --K 8192
 cd kernels/gemm/a4w4-8wave   && python collect_perf.py --version 1 --K 8192
 ```
 
-**Where the 8-wave lands vs the 4-wave** (current build): for **FP16**, the 4-wave `v9` edges 8-wave `v1` by ~3% (1485 vs 1446 @ K=8192). For **BF8**, 8-wave beats the 4-wave *base* (2894 vs 2497, +16%) but the tuned 4-wave `llir+amdgcnas` now leads (3216 vs 2894); on newer LLVM the 4-wave BF8 path improved enough to overtake the 8-wave. For **MXFP4**, `v1` (combined B-scale, the default) now **beats the 4-wave *base*** at large K (4840 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, lifting loop MFMA from ~57% (`v0`) to ~73% and TFLOPS +15–19%. The tuned 4-wave `llir+amdgcnas` (~5.5 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each `-8wave/README.md` for the full breakdown.
+**Where the 8-wave lands vs the 4-wave** (v1.0 build): for **FP16**, 8-wave `v1` now edges the 4-wave `v9` by ~1.5% (1442 vs 1421 @ K=8192) — on the v1.0 build the 4-wave FP16 path sits at 1421. For **BF8**, the tuned 4-wave `llir+force-agpr+amdgcnas` leads (3232 vs 3094 @ K=16384). For **MXFP4**, `v1` (combined B-scale, the default) **beats the 4-wave *base*** at large K (4938 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, and the intra-stage `fence_loads` (PR #10840) lifts loop MFMA from ~57% (`v0`) to ~80%, TFLOPS +16–22%. The tuned 4-wave `llir+force-agpr+amdgcnas` (~5.2 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each `-8wave/README.md` for the full breakdown.
 
