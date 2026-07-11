@@ -19,10 +19,18 @@ kernel versions, and the measured performance.
 |---|---|---|---|---|---|
 | **v0** | [`v0_sliceMN_BK256_nS2`](v0_sliceMN_BK256_nS2/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3525 | 4064 | ~57% |
 | **v1** | [`v1_combineBsc_BK256_nS2`](v1_combineBsc_BK256_nS2/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4116** | **4938** | **~80%** |
+| **v2** | [`v2_mfma32x32x64_BK256_nS2`](v2_mfma32x32x64_BK256_nS2/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4114 | 4799 | **~98%** |
 
 **v1 is the recommended version** (`--version 1`, the default): +16–22% TFLOPS over v0 at
 the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
 baseline that exposes the problem.
+
+**v2** ([`v2_mfma32x32x64_BK256_nS2`](v2_mfma32x32x64_BK256_nS2/README.md)) widens the MFMA
+**16×16×128 → 32×32×64** with a width-matched, bank-conflict-free LDS layout, lifting loop MFMA
+efficiency to **~98%** (spill-free). It is a **cycle-efficiency** result — the wider MFMAs are
+power-hungrier, so the GPU clock-throttles and wall-clock TFLOPS ends up **even with v1** (v1's
+higher datapath peak still edges ahead at large K). v1 stays the recommended default; v2 is the
+near-saturated variant for studying the MFMA-occupancy / clock trade.
 
 ## 1. What changes from 16-bit to 4-bit (shared by v0 and v1)
 
@@ -111,6 +119,39 @@ growing with K as the loop dominates. The a4w4 loop is still LDS/scale-throughpu
 wasting. The 4-wave `a4w4` reaches ~5189 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
 targets the 4-wave register model and cannot be applied at 8 waves).
 
+### 3.1 v2 — 32×32×64 MFMA (cycle-efficient, clock-throttled)
+
+| K | v1 (16×16×128) | v2 (32×32×64) |
+|---|---|---|
+| 8192  | 4116 / 79.7% | 4114 / 97.4% |
+| 32768 | 4938 / 80.0% | 4799 / 98.0% |
+
+v2 widens the MFMA and pairs it with a bank-conflict-free `[[1024, 16]]` LDS layout, reaching
+**~98% loop MFMA efficiency** (spill-free, 246 VGPRs). But the wider MFMAs draw more power, so
+the GPU **frequency-throttles ~21%** — wall-clock TFLOPS is a **wash** with v1 (v1's higher
+datapath peak edges ahead at large, loop-dominated K). It is the [MFMA-efficiency
+caveat](../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is clock-independent,
+TFLOPS is not. Details in [`v2_mfma32x32x64_BK256_nS2/`](v2_mfma32x32x64_BK256_nS2/README.md).
+
+### 3.2 `fence_loads` A/B
+
+Each `warp_pipeline_stage("mem", …, fence_loads=True)` emits a full `sched.barrier` after the
+stage's LDS reads (PR #10840), so the backend cannot hoist the next tile's global→LDS prefetch
+ahead of the reads a following MFMA depends on. All a4w4-8wave numbers above are **fence-on**;
+turning it off (K=32768):
+
+| Version | fence | TFLOPS | MFMA eff | VGPR | Spills |
+|---|---|---|---|---|---|
+| v1 | off | 4842 | 73.6% | 256 | 12 |
+| v1 | **on** | 4908 | **80.0%** | 256 | 12 |
+| v2 | off | 4685 | 91.0% | 250 | 0 |
+| v2 | **on** | 4767 | **98.2%** | 246 | 0 |
+
+The fence lifts loop MFMA efficiency **+6.4 pp** (v1) and **+7.2 pp** (v2), for **+1.4–1.8%**
+TFLOPS — the largest `fence_loads` gain among the 8-wave kernels (the a16w16 / a8w8 loops are
+already MFMA-saturated at their operating points, so there the fence mainly helps via reduced
+register pressure rather than occupancy).
+
 ## 4. Running
 
 ```bash
@@ -124,6 +165,10 @@ python collect_perf.py --version 1 --K 32768 --rotating-buffer-size 2048
 # v0 baseline (the byte-shuffle B scale) for comparison
 python bench.py --version 0 --K 8192
 python collect_perf.py --version 0 --K 8192
+
+# v2 (32×32×64 MFMA + conflict-free layout variant)
+python bench.py --version 2 --K 8192
+python collect_perf.py --version 2 --K 32768 --rotating-buffer-size 2048
 ```
 
 Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
@@ -137,5 +182,6 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 - `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
   VGPR/spill.
 - `v0_sliceMN_BK256_nS2/` — baseline kernel (N-sliced B scale) + its README.
-- `v1_combineBsc_BK256_nS2/` — combined-B-scale kernel (recommended) + its README. Both
-  expose `matmul_kernel_only`, `matmul`, `MIN_K`, `KERNEL_NAME`.
+- `v1_combineBsc_BK256_nS2/` — combined-B-scale kernel (recommended) + its README.
+- `v2_mfma32x32x64_BK256_nS2/` — 32×32×64 MFMA + conflict-free LDS layout variant + its README.
+  All three expose `matmul_kernel_only`, `matmul`, `MIN_K`, `KERNEL_NAME`.
