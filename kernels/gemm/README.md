@@ -40,6 +40,35 @@ the **8-wave** kernels (`*-8wave`) use wave-level `warp_pipeline_stage` scheduli
 ([§5](#5-8-wave-warp-pipeline-variants)). New here? Start with [`a16w16/`](a16w16/) for the full
 step-by-step walkthrough.
 
+## Versions
+
+Every version isolates one idea, in the spirit of the a16w16 journey. The `a16w16` series is the
+full teaching arc (v0 → v9); the other solutions reuse that design and add only what their data
+type or wave count needs. See [`a16w16/README` §3](a16w16/README.md#3-the-optimization-journey)
+for the full a16w16 narrative.
+
+| Solution | Version | Focus | Key concept |
+|----------|---------|-------|-------------|
+| **`a16w16`** (FP16/BF16) | `v0_naive` | Baseline | Explicit layouts, correctness-first MFMA |
+| | `v1_buffer_load` | Codegen | Hardware OOB checking, branch elimination |
+| | `v2_async_copy` | Codegen | Direct-to-LDS, eliminates register staging |
+| | `v3_lds` | Codegen | LDS layout design: swizzling vs padding |
+| | `v4_global_prefetch` | Latency hiding | 2-stage pipeline, double buffering |
+| | `v5_local_prefetch` | Latency hiding | 3-stage pipeline, LLIR scheduler |
+| | `v6_loop_unroll` | Codegen | Unroll to eliminate copy overhead |
+| | `v7_sliceN` | Register pressure | N-slicing |
+| | `v8_sliceMN` | Register pressure, throughput | M+N slicing, buffer-load stall analysis |
+| | `v9_beyond_hotloop` | L2 locality | XCD-aware PID remapping |
+| **`a8w8`** (BF8) | *(single kernel)* | Data type | a16w16 design at BF8 parameters |
+| **`a4w4`** (MXFP4) | `v0_sliceN` | Scale pipeline | N-slicing + LDS round-trip scales |
+| | `v1_sliceMN` | Scale pipeline | M+N slicing + direct-to-LDS async scales |
+| **`a16w16-8wave`** (FP16/BF16) | `v0_BK32_nS3` | Warp pipeline | 8-wave ping-pong baseline, `BLOCK_K=32` |
+| | `v1_sliceMN_BK64_nS2` | Warp pipeline | M+N slicing, `BLOCK_K=64`, 2-buffer *(recommended)* |
+| **`a8w8-8wave`** (BF8) | `v1_sliceMN_BK128_nS2` | Warp pipeline | M+N slicing, `BLOCK_K=128`, 2-buffer |
+| **`a4w4-8wave`** (MXFP4) | `v0_sliceMN_BK256_nS2` | Scale + pipeline | Byte-shuffle B scale (baseline) |
+| | `v1_combineBsc_BK256_nS2` | Scale + pipeline | Combined transpose-read B scale *(recommended)* |
+| | `v2_mfma32x32x64_BK256_nS2` | MFMA shape | 32×32×64 MFMA + conflict-free LDS layout |
+
 ## 1. Performance Summary
 
 Measured on a single MI355X (gfx950), Triton built from the `gfx950-tutorial-v1.0` tag, rocprof
