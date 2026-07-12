@@ -60,49 +60,21 @@ from f16_fa_gfx950_common import (
 # ---------------------------------------------------------------------------
 
 @gluon.jit
-def sc_vec1(qk, m_run, start_n, start_m,
-            qk_scale: gl.constexpr,
-            MASK_STEPS: gl.constexpr, IS_CAUSAL: gl.constexpr,
-            N_CTX: gl.constexpr,
-            BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr,
-            mma_layout: gl.constexpr,
-            mma_offs_n_col: gl.constexpr, mma_offs_m_row: gl.constexpr):
-    """VEC1: softmax numerator -- (mask +) new row-max + exp2 burst (DOT2 cluster).
+def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
+    """VEC1: softmax numerator -- new row-max + exp2 burst (DOT2 cluster).
 
     From the qk scores produced by DOT1 this iteration, computes the new running
     max m_new = max(m_run, rowmax(qk)*scale), the unnormalized probabilities
     p = exp2(qk*scale - m_new), and the rescale factor alpha = exp2(m_run - m_new).
-    p and alpha are carried to the next iteration (consumed by VEC2 and DOT2).
-    This is the expensive transcendental group, paired with the P*V MFMA so the
-    exp throughput overlaps the matrix engine.
-
-    When MASK_STEPS the scores are scaled and masked (causal + K-bound) before
-    the max/exp2 (mirroring ``compute_softmax``). The unmasked branch keeps the
-    FMA-friendly form (scale folded into the max and exp2 inputs); MASK_STEPS is
-    constexpr so that branch is identical to the unmasked-only schedule after DCE.
+    p and alpha are carried to the next iteration (consumed by VEC2 and DOT2). This
+    is the expensive transcendental group, paired with the P*V MFMA so the exp
+    throughput overlaps the matrix engine. The kernel is non-causal over full
+    blocks, so no masking is needed; scale is folded into the max/exp2 inputs.
     """
-    if MASK_STEPS:
-        qk_sm = qk * qk_scale
-        if IS_CAUSAL:
-            causal_offs_n = start_n + gl.arange(0, BLOCK_N, layout=mma_offs_n_col)
-            causal_offs_m = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=mma_offs_m_row)
-            causal_boundary = causal_offs_n[None, :]
-            causal_mask = causal_offs_m[:, None] >= causal_boundary
-            qk_sm = gl.where(causal_mask, qk_sm, gl.full([BLOCK_M, BLOCK_N], float("-inf"),
-                                                         dtype=gl.float32, layout=mma_layout))
-        bound_offs = start_n + gl.arange(0, BLOCK_N, layout=mma_offs_n_col)
-        bound_mask = bound_offs[None, :] < N_CTX
-        qk_sm = gl.where(bound_mask, qk_sm, gl.full([BLOCK_M, BLOCK_N], float("-inf"),
-                                                    dtype=gl.float32, layout=mma_layout))
-        m_ij = nan_propagating_max(qk_sm, axis=1)
-        m_new = gl.maximum(m_run, m_ij, propagate_nan=tl.PropagateNan.ALL)
-        p = gl.exp2(qk_sm - m_new[:, None])
-        alpha = gl.exp2(m_run - m_new)
-    else:
-        m_ij = nan_propagating_max(qk, axis=1) * qk_scale
-        m_new = gl.maximum(m_run, m_ij, propagate_nan=tl.PropagateNan.ALL)
-        p = gl.exp2(qk * qk_scale - m_new[:, None])
-        alpha = gl.exp2(m_run - m_new)
+    m_ij = nan_propagating_max(qk, axis=1) * qk_scale
+    m_new = gl.maximum(m_run, m_ij, propagate_nan=tl.PropagateNan.ALL)
+    p = gl.exp2(qk * qk_scale - m_new[:, None])
+    alpha = gl.exp2(m_run - m_new)
     return m_new, p, alpha
 
 
@@ -189,8 +161,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
     offs_m_layout:    gl.constexpr = gl.SliceLayout(dim=1, parent=blocked_layout)
     offs_d_layout:    gl.constexpr = gl.SliceLayout(dim=0, parent=blocked_layout)
-    mma_offs_n_col:   gl.constexpr = gl.SliceLayout(dim=0, parent=mma_layout)
-    mma_offs_m_row:   gl.constexpr = gl.SliceLayout(dim=1, parent=mma_layout)
     mma_m_layout:     gl.constexpr = gl.SliceLayout(dim=1, parent=mma_layout)
 
     offs_m    = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=offs_m_layout)
@@ -313,13 +283,10 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base, kt_offs_d[:, None] * stride_kk + (((b0 + 1) * BLOCK_N) + kt_offs_n[None, :]) * stride_kn)
     cdna4_async.commit_group()  # ACK[1]
 
-    n0 = 0
     cdna4_async.wait_group(2)                                       # K[0] complete
     kt0 = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
     qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_i, n0, start_m, qk_scale,   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
-                                  False, IS_CAUSAL, N_CTX,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+    m_run, p_c, alpha_c = sc_vec1(qk, m_i, qk_scale)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
     cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base, kt_offs_d[:, None] * stride_kk + (((b0 + 2) * BLOCK_N) + kt_offs_n[None, :]) * stride_kn)
@@ -338,7 +305,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         nxt_slot = ((block_n + 1 - block_start) % BUF_DEPTH).to(tl.int32)
         ack_n = ((block_n + 3) * BLOCK_N).to(tl.int32)
         acv_n = ((block_n + 2) * BLOCK_N).to(tl.int32)
-        ahead_n = 0
 
         # cluster 0 DOT1: dot_qk[i+1] (s1) then VEC2[i] (s0). dot_qk leads so
         # iglp.opt prefixes the MFMA.
@@ -359,9 +325,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # burst).  The exp2 lands AFTER the P*V MFMA and feeds the next iteration's dot_pv.
         with warp_pipeline_stage("dot2", priority=0):
             acc = mfma_cdna4(p_dot, v_dot, acc)                                # dot_pv s0
-            m_run, p_c, alpha_c = sc_vec1(qk, m_run, ahead_n, start_m, qk_scale,  # VEC1 s1 -> m_new, p[i+1]
-                                          False, IS_CAUSAL, N_CTX,
-                                          BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1 s1 -> m_new, p[i+1]
 
         cdna4_async.wait_group(WAIT_LOOP - 1)  # K[i+2] complete (for LRK[i+2]); -1: backend vmcnt workaround
 
@@ -381,8 +345,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     s_nm3 = ((nm3 - block_start) % BUF_DEPTH).to(tl.int32)
     s_nm2 = ((nm2 - block_start) % BUF_DEPTH).to(tl.int32)
     s_nm1 = ((nm1 - block_start) % BUF_DEPTH).to(tl.int32)
-    nm2_n = 0
-    nm1_n = 0
 
     # output tile n-3 (also issues the final V prefetch, ACV[n-1])
     qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
@@ -390,9 +352,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
     acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-3]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm2_n, start_m, qk_scale,  # VEC1[n-2] -> m_new, p[n-2]
-                                  False, IS_CAUSAL, N_CTX,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+    m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-2] -> m_new, p[n-2]
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
     cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base, (((nm1 * BLOCK_N).to(tl.int32)) + v_offs_n[:, None]) * stride_vk + v_offs_d[None, :] * stride_vn)
     cdna4_async.commit_group()   # ACV[n-1]
@@ -405,9 +365,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
     acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-2]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm1_n, start_m, qk_scale,  # VEC1[n-1] -> m_new, p[n-1]
-                                  False, IS_CAUSAL, N_CTX,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+    m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-1] -> m_new, p[n-1]
 
     # output tile n-1 (final; no further dot_qk / prefetch)
     cdna4_async.wait_group(0)                                           # V[n-1] complete
