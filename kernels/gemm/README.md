@@ -102,7 +102,7 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > [!NOTE]
 > The **4-wave** bars are the `gfx950-tutorial-v1.0`-build numbers from
 > `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** bars
-> come from `collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
+> come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
 > (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~6% above FP16** here despite the
 > nominally identical MFMA rate (a clock/power effect on this build, reproducible across runs).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The

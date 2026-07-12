@@ -155,20 +155,20 @@ register pressure rather than occupancy).
 ## 4. Running
 
 ```bash
-# v1 (recommended, default): correctness + do_bench TFLOPS
+# v1 (recommended, default): correctness + do_bench TFLOPS (from this kernel dir)
 python bench.py --version 1 --K 8192
 
-# rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill
-python collect_perf.py --version 1 --K 8192
-python collect_perf.py --version 1 --K 32768 --rotating-buffer-size 2048
+# rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill (from the repo root)
+python scripts/collect_perf.py --kernel a4w4 --version 1 --K 8192
+python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 --rotating-buffer-size 2048
 
 # v0 baseline (the byte-shuffle B scale) for comparison
 python bench.py --version 0 --K 8192
-python collect_perf.py --version 0 --K 8192
+python scripts/collect_perf.py --kernel a4w4 --version 0 --K 8192
 
 # v2 (32×32×64 MFMA + conflict-free layout variant)
 python bench.py --version 2 --K 8192
-python collect_perf.py --version 2 --K 32768 --rotating-buffer-size 2048
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-buffer-size 2048
 ```
 
 Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
@@ -179,8 +179,8 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 - `get_pids` is imported from the shared [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.mm`) + do_bench TFLOPS + `--rocprof`
   rotating-tensor mode, with the MXFP4 input generation from the 4-wave `a4w4/bench.py`.
-- `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
-  VGPR/spill.
+- Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
+  (`--kernel a4w4 --version N`).
 - `v0_sliceMN/` — baseline kernel (N-sliced B scale) + its README.
 - `v1_combineBsc/` — combined-B-scale kernel (recommended) + its README.
 - `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout variant + its README.

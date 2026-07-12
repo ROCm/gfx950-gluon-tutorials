@@ -23,10 +23,10 @@
 ##############################################################################
 
 """
-Collect VMEM-latency hardware counters for the 8-wave warp-pipeline GEMM.
+Collect VMEM-latency hardware counters for the 8-wave warp-pipeline a16w16 GEMM.
 
 Reuses the tutorial's existing counter mechanism (scripts/run_counter_collection.py
-helpers), targeting the a16w16_kernel.
+helpers), targeting the a16w16_kernel in kernels/gemm/inter_wave/a16w16.
 
 Default counters answer "how long are the buffer_load / VMEM stalls":
   VmemLatency                  avg VMEM instruction latency (cycles), derived
@@ -37,7 +37,7 @@ Default counters answer "how long are the buffer_load / VMEM stalls":
 
 The kernels bake in the no-AGPR config (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
 so no env var is needed:
-  python collect_counters.py --K 8192 --dtype fp16
+  python scripts/collect_counters.py --K 8192 --dtype fp16
 """
 
 import argparse
@@ -57,7 +57,7 @@ from run_counter_collection import (  # noqa: E402
     write_counters_yaml,
 )
 
-WORK_DIR = os.path.dirname(os.path.abspath(__file__))
+WORK_DIR = os.path.join(GIT_ROOT, "kernels", "gemm", "inter_wave", "a16w16")
 
 DEFAULT_COUNTERS = (
     "VmemLatency,"

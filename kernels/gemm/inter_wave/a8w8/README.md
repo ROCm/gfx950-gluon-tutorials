@@ -75,21 +75,21 @@ epilogue).
 
 > [!NOTE]
 > **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's MFMA-cycle
-> fraction; with 2 waves/SIMD interleaving issue, `collect_perf.py` doubles it for the
+> fraction; with 2 waves/SIMD interleaving issue, `scripts/collect_perf.py` doubles it for the
 > per-SIMD figure. The whole-kernel efficiency is lower (the prologue/epilogue carry no
 > MFMA) and converges toward the loop number as K grows.
 
 ## 3. Running
 
 ```bash
-# correctness + do_bench TFLOPS
+# correctness + do_bench TFLOPS (from this kernel dir)
 python bench.py --K 8192
 
-# rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill
-python collect_perf.py --K 8192
+# rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill (from the repo root)
+python scripts/collect_perf.py --kernel a8w8 --K 8192
 
 # large K needs a bigger rotating buffer to stay cold
-python collect_perf.py --K 32768 --rotating-buffer-size 2048
+python scripts/collect_perf.py --kernel a8w8 --K 32768 --rotating-buffer-size 2048
 ```
 
 Inputs are BF8 (`float8_e5m2`); the output is fp16. Drop `--K` to sweep all sizes. Clear
@@ -103,5 +103,5 @@ Inputs are BF8 (`float8_e5m2`); the output is fp16. Drop `--K` to sweep all size
   [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.matmul`) + do_bench TFLOPS + `--rocprof`
   rotating-tensor mode.
-- `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
-  VGPR/spill.
+- Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
+  (`--kernel a8w8`).

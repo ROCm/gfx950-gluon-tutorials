@@ -32,12 +32,12 @@ Measured on MI355X, gfx950, 4096×4096, Triton `gfx950-tutorial-v1.0` — a4w4 r
 
 ## 3. Running
 
-Run them with each kernel's `collect_perf.py` (no env vars):
+Run them with the shared `scripts/collect_perf.py` (from the repo root, no env vars):
 
 ```bash
-cd kernels/gemm/inter_wave/a16w16 && python collect_perf.py --K 8192 --dtype fp16
-cd kernels/gemm/inter_wave/a8w8   && python collect_perf.py --K 8192
-cd kernels/gemm/inter_wave/a4w4   && python collect_perf.py --version 1 --K 8192
+python scripts/collect_perf.py --kernel a16w16 --K 8192 --dtype fp16
+python scripts/collect_perf.py --kernel a8w8   --K 8192
+python scripts/collect_perf.py --kernel a4w4   --version 1 --K 8192
 ```
 
 ## 4. Where the 8-wave lands vs the 4-wave
