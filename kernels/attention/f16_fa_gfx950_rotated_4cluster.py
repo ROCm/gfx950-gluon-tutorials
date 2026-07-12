@@ -37,7 +37,6 @@ from f16_fa_gfx950_common import (
     do_mma,
     get_shape_from_layout,
     get_strides_from_layout,
-    get_mma_type_for_arch,
     issue_async_load_k,
     issue_async_load_v,
     MetaData,
@@ -66,7 +65,7 @@ from f16_fa_gfx950_common import (
 def sc_vec1(qk, m_run, start_n, start_m,
             qk_scale: gl.constexpr,
             MASK_STEPS: gl.constexpr, IS_CAUSAL: gl.constexpr,
-            MAX_SEQLENS_Q: gl.constexpr, MAX_SEQLENS_K: gl.constexpr,
+            SEQLEN_Q: gl.constexpr, SEQLEN_K: gl.constexpr,
             BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr,
             mma_layout: gl.constexpr,
             mma_offs_n_col: gl.constexpr, mma_offs_m_row: gl.constexpr):
@@ -89,12 +88,12 @@ def sc_vec1(qk, m_run, start_n, start_m,
         if IS_CAUSAL:
             causal_offs_n = start_n + gl.arange(0, BLOCK_N, layout=mma_offs_n_col)
             causal_offs_m = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=mma_offs_m_row)
-            causal_boundary = causal_offs_n[None, :] + MAX_SEQLENS_Q - MAX_SEQLENS_K
+            causal_boundary = causal_offs_n[None, :] + SEQLEN_Q - SEQLEN_K
             causal_mask = causal_offs_m[:, None] >= causal_boundary
             qk_sm = gl.where(causal_mask, qk_sm, gl.full([BLOCK_M, BLOCK_N], float("-inf"),
                                                          dtype=gl.float32, layout=mma_layout))
         bound_offs = start_n + gl.arange(0, BLOCK_N, layout=mma_offs_n_col)
-        bound_mask = bound_offs[None, :] < MAX_SEQLENS_K
+        bound_mask = bound_offs[None, :] < SEQLEN_K
         qk_sm = gl.where(bound_mask, qk_sm, gl.full([BLOCK_M, BLOCK_N], float("-inf"),
                                                     dtype=gl.float32, layout=mma_layout))
         m_ij = nan_propagating_max(qk_sm, axis=1)
@@ -150,11 +149,11 @@ def get_gluon_cdna_autotune_configs():
     # Simplified tutorial baseline: the single most performant config for the
     # focus shape (D=128, non-causal). Full autotune space is in git history.
     return [
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2}, num_warps=8),
     ]
 
 
-GLUON_AUTOTUNE_KEYS = ['IS_CAUSAL', 'MAX_SEQLENS_Q', 'MAX_SEQLENS_K', 'ACTUAL_BLOCK_DMODEL', 'HQ', 'HK']
+GLUON_AUTOTUNE_KEYS = ['IS_CAUSAL', 'SEQLEN_Q', 'SEQLEN_K', 'HQ', 'HK']
 
 
 # ---------------------------------------------------------------------------
@@ -172,11 +171,9 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
                    stride_vz, stride_vh, stride_vk, stride_vn,
                    stride_oz, stride_oh, stride_om, stride_on,
                    HQ: gl.constexpr, HK: gl.constexpr,
-                   ACTUAL_BLOCK_DMODEL: gl.constexpr,
-                   MAX_SEQLENS_Q: gl.constexpr, MAX_SEQLENS_K: gl.constexpr,
+                   SEQLEN_Q: gl.constexpr, SEQLEN_K: gl.constexpr,
                    IS_CAUSAL: gl.constexpr,
-                   BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr,
-                   MMA_TYPE: gl.constexpr, NUM_STAGES: gl.constexpr):
+                   BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr):
     """
     Gluon Flash Attention Forward Kernel (AMD CDNA4 / gfx950).
     Grid: (num_heads_q, num_m_blocks, batch)
@@ -230,7 +227,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     q_smem = gl.allocate_shared_memory(Q.dtype.element_ty, [BLOCK_M, BLOCK_DMODEL], layout=q_smem_layout)
 
     q_ptrs = q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-    q_mask = offs_m[:, None] < MAX_SEQLENS_Q
+    q_mask = offs_m[:, None] < SEQLEN_Q
     q = gl.load(q_ptrs, mask=q_mask, other=0.0)
     q_smem.store(q)
     q_dot = q_smem.load(q_dot_layout)
@@ -243,7 +240,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
     # Simplified tutorial kernel: non-causal, K length a multiple of BLOCK_N, so
     # every K/V block is full and unmasked (no causal / no ragged-tail masking).
-    n_blocks = (MAX_SEQLENS_K + BLOCK_N - 1) // BLOCK_N
+    n_blocks = (SEQLEN_K + BLOCK_N - 1) // BLOCK_N
 
 
     # Single supported config: D=128, BLOCK_N=64, 8 warps. The full per-
@@ -322,32 +319,32 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # matching the loop's steady-state entry condition.
     b0 = block_start
     issue_async_load_k(kt_smem.index(0), k_base, (b0 + 0) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[0]
+                       stride_kn, stride_kk, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, kt_async_layout)  # ACK[0]
     issue_async_load_v(v_smem.index(0), v_base, (b0 + 0) * BLOCK_N,
-                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[0]
+                       stride_vk, stride_vn, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, v_async_layout)   # ACV[0]
     issue_async_load_k(kt_smem.index(1), k_base, (b0 + 1) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[1]
+                       stride_kn, stride_kk, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, kt_async_layout)  # ACK[1]
 
     n0 = 0
     cdna4_async.wait_group(2)                                       # K[0] complete
     kt0 = sc_lr(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
     qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
     m_run, p_c, alpha_c = sc_vec1(qk, m_i, n0, start_m, qk_scale,   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
-                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  False, IS_CAUSAL, SEQLEN_Q, SEQLEN_K,
                                   BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
     issue_async_load_k(kt_smem.index(0), k_base, (b0 + 2) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[2] (slot0 reuse)
+                       stride_kn, stride_kk, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, kt_async_layout)  # ACK[2] (slot0 reuse)
     cdna4_async.wait_group(1)                                       # K[1] complete
     kt_dot = sc_lr(kt_smem.index(1), kt_dot_layout)                 # LRK[1] -> K regs tile 1
     issue_async_load_v(v_smem.index(1), v_base, (b0 + 1) * BLOCK_N,
-                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[1]
+                       stride_vk, stride_vn, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, v_async_layout)   # ACV[1]
 
     # -- Main loop (full rotated body) -------------------------------------
     # Runs output tiles [block_start, block_end-3): the last full iteration
@@ -373,15 +370,15 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         with warp_pipeline_stage("mem1", priority=1):
             v_dot = sc_lr(v_smem.index(cur_slot), v_dot_layout)               # LRV   s0
             issue_async_load_k(kt_smem.index(nxt_slot), k_base, ack_n,
-                               stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK s3
+                               stride_kn, stride_kk, SEQLEN_K, False, SEQLEN_K, False,
+                               BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, kt_async_layout)  # ACK s3
 
         # cluster 2 DOT2: dot_pv[i] (s0) then VEC1[i+1] (s1: new max + exp2
         # burst).  The exp2 lands AFTER the P*V MFMA and feeds the next iteration's dot_pv.
         with warp_pipeline_stage("dot2", priority=0):
             acc = sc_dot_pv(acc, p_dot, v_dot)                                # dot_pv s0
             m_run, p_c, alpha_c = sc_vec1(qk, m_run, ahead_n, start_m, qk_scale,  # VEC1 s1 -> m_new, p[i+1]
-                                          False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                          False, IS_CAUSAL, SEQLEN_Q, SEQLEN_K,
                                           BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
 
         cdna4_async.wait_group(WAIT_LOOP - 1)  # K[i+2] complete (for LRK[i+2]); -1: backend vmcnt workaround
@@ -390,8 +387,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         with warp_pipeline_stage("mem2", priority=1):
             kt_dot = sc_lr(kt_smem.index(cur_slot), kt_dot_layout)            # LRK   s2 -> K regs tile i+2
             issue_async_load_v(v_smem.index(cur_slot), v_base, acv_n,
-                               stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV s2
+                               stride_vk, stride_vn, SEQLEN_K, False, SEQLEN_K, False,
+                               BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, v_async_layout)   # ACV s2
 
     # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
     # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
@@ -413,12 +410,12 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3]
     acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-3]
     m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm2_n, start_m, qk_scale,  # VEC1[n-2] -> m_new, p[n-2]
-                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  False, IS_CAUSAL, SEQLEN_Q, SEQLEN_K,
                                   BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
     issue_async_load_v(v_smem.index(s_nm1), v_base, (nm1 * BLOCK_N).to(tl.int32),
-                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[n-1]
+                       stride_vk, stride_vn, SEQLEN_K, False, SEQLEN_K, False,
+                       BLOCK_N, BLOCK_DMODEL, BLOCK_DMODEL, v_async_layout)   # ACV[n-1]
     cdna4_async.wait_group(2)                                           # K[n-1] complete
     kt_dot = sc_lr(kt_smem.index(s_nm1), kt_dot_layout)                 # LRK[n-1] -> K regs tile n-1
 
@@ -429,7 +426,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
     acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-2]
     m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm1_n, start_m, qk_scale,  # VEC1[n-1] -> m_new, p[n-1]
-                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  False, IS_CAUSAL, SEQLEN_Q, SEQLEN_K,
                                   BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
 
     # output tile n-1 (final; no further dot_qk / prefetch)
@@ -445,12 +442,12 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
     o_base  = Out + off_z * stride_oz + off_h_q * stride_oh
     o_ptrs  = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
-    o_mask  = offs_m[:, None] < MAX_SEQLENS_Q
+    o_mask  = offs_m[:, None] < SEQLEN_Q
     acc_blocked = gl.convert_layout(acc, blocked_layout)
     gl.store(o_ptrs, acc_blocked.to(Out.dtype.element_ty), mask=o_mask)
 
-    l_ptrs = L + off_z * HQ * MAX_SEQLENS_Q + off_h_q * MAX_SEQLENS_Q + offs_m
-    l_mask = offs_m < MAX_SEQLENS_Q
+    l_ptrs = L + off_z * HQ * SEQLEN_Q + off_h_q * SEQLEN_Q + offs_m
+    l_mask = offs_m < SEQLEN_Q
     lse = m_i / 1.44269504089 + gl.log2(l_i) / 1.44269504089
     lse_blocked = gl.convert_layout(lse, offs_m_layout)
     gl.store(l_ptrs, lse_blocked, mask=l_mask)
@@ -475,18 +472,14 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData):
 
     M = torch.empty((batch, nheads_q, metadata.max_seqlens_q), device=q.device, dtype=torch.float32)
 
-    arch = triton.runtime.driver.active.get_current_target().arch
-    mma_type = get_mma_type_for_arch(arch)
-
     def grid(META):
         return (nheads_q, triton.cdiv(metadata.max_seqlens_q, META['BLOCK_M']), batch)
 
     gluon_attn_fwd[grid](
         q, k, v, metadata.sm_scale, M, o,
         *q_strides, *k_strides, *v_strides, *o_strides,
-        HQ=nheads_q, HK=nheads_k, ACTUAL_BLOCK_DMODEL=head_size,
-        MAX_SEQLENS_Q=metadata.max_seqlens_q, MAX_SEQLENS_K=metadata.max_seqlens_k,
+        HQ=nheads_q, HK=nheads_k,
+        SEQLEN_Q=metadata.max_seqlens_q, SEQLEN_K=metadata.max_seqlens_k,
         IS_CAUSAL=False,
         BLOCK_DMODEL=padded_d_model,
-        MMA_TYPE=mma_type,
     )

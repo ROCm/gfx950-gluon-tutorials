@@ -18,10 +18,11 @@ Ported from
 (`kernels/cdna4/fa/`). `f16_fa_gfx950_common.py` is verbatim.
 `f16_fa_gfx950_rotated_4cluster.py` is the upstream kernel reduced to the single
 best config for the focus shape (D=128, non-causal, `BLOCK_M=256`, `BLOCK_N=64`,
-`NUM_STAGES=4`, 8 warps, `PRE_LOAD_V=False`): the per-`(D, BLOCK_N, warps)` layout
-dispatch, causal / masked-tail scheduling, preload-all + non-pipelined fallbacks,
-head-dim padding, and the multi-config autotune space were all dropped. The full
-version lives in git history and upstream. Both vendored files are excluded from
+8 warps): the per-`(D, BLOCK_N, warps)` layout dispatch, causal / masked-tail
+scheduling, preload-all + non-pipelined fallbacks, head-dim padding, and the
+multi-config autotune space were all dropped, the pipelined loop was inlined into
+one flat `gluon_attn_fwd`, and dead args (`PRE_LOAD_V`, `MMA_TYPE`, `NUM_STAGES`,
+`ACTUAL_BLOCK_DMODEL`) were removed. The full version lives in git history and upstream. Both vendored files are excluded from
 this repo's black/ruff (see `pyproject.toml`); `bench.py` is tutorial-native and
 linted.
 
