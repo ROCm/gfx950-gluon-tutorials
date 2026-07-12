@@ -28,7 +28,6 @@ from triton.experimental.gluon.language._layouts import (
     DistributedLinearLayout,
     PaddedSharedLayout,
 )
-from triton.language.core import _aggregate as aggregate
 
 
 from f16_fa_gfx950_common import (
@@ -144,267 +143,6 @@ def sc_lr(smem_slot, dot_layout: gl.constexpr):
 
 
 # ---------------------------------------------------------------------------
-# matched rotated 4-cluster pipelined inner loop
-# ---------------------------------------------------------------------------
-
-@gluon.jit
-def attn_fwd_inner_pipelined(
-    acc, l_i, m_i, q_dot, k_base, v_base, start_m,
-    stride_kn, stride_kk, stride_vk, stride_vn,
-    block_start, block_end,
-    kt_smem, v_smem,
-    qk_scale: gl.constexpr,
-    MAX_SEQLENS_Q: gl.constexpr, MAX_SEQLENS_K: gl.constexpr,
-    BLOCK_M: gl.constexpr, BLOCK_N: gl.constexpr, BLOCK_DMODEL: gl.constexpr,
-    ACTUAL_BLOCK_DMODEL: gl.constexpr,
-    MASK_STEPS: gl.constexpr, IS_CAUSAL: gl.constexpr,
-    kt_async_layout: gl.constexpr, v_async_layout: gl.constexpr,
-    kt_dot_layout: gl.constexpr, p_dot_layout: gl.constexpr, v_dot_layout: gl.constexpr,
-    mma_layout: gl.constexpr,
-    mma_offs_n_col: gl.constexpr, mma_offs_m_row: gl.constexpr,
-):
-    """
-    4-cluster pipelined inner attention loop.
-
-    ``MASK_STEPS`` (constexpr) selects masking: when False the loop is the exact
-    unmasked schedule (the FMA-friendly softmax via the unmasked branch of
-    sc_vec1, and unmasked global loads), so its LLIR is byte-identical to the
-    unmasked-only version after dead-code elimination. When True the per-tile
-    Q*K^T scores are
-    scaled and masked (causal + K-bound) before the softmax max/exp2, and the
-    global K/V loads are masked, exactly mirroring ``compute_softmax`` -- the
-    schedule (cluster shape, prefetch depth, iglp hints) is unchanged.
-
-    Pipeline (4 stages, 0..3; stage 0 = work producing THIS iteration's output).
-    The whole softmax numerator (new max + the big exp2 burst, VEC1) is rotated
-    one stage ahead so it is emitted AFTER the P*V MFMA and feeds the *next*
-    iteration's P*V across the loop back-edge (exactly like the reference), instead of
-    feeding the same iteration:
-
-      dot_pv  s0   VEC2 s0   LRV  s0       (this tile's output: sum/acc/cast + PV)
-      dot_qk  s1   VEC1 s1                 (next tile's QK, new max + exp burst)
-      LRK     s2   ACV  s2                 (K read + V prefetch, 2 ahead)
-      ACK     s3                           (K prefetch, 3 ahead)
-
-    Pipeline DEPTH is 4 but N-buffering is only 2 (double-buffered LDS for both
-    K and V): the other stages are carried in registers and in-flight global
-    loads (ACK).
-
-    Loop-carried state into iteration i:
-      kt_dot  = K regs for tile i+1   (from LRK[i+1] last iter)
-      m_run   = m_new[i]              (running max through tile i; from VEC1 last iter)
-      p_c     = p[i]                  (probs for this tile; from VEC1 last iter)
-      alpha_c = alpha[i]              (rescale for this tile; from VEC1 last iter)
-      acc, l_i = running accumulators
-    """
-    cdna4_async.wait_group(0)
-
-    BUF_DEPTH: gl.constexpr = 2
-    # Intended steady-state async depth: keep 2*BUF_DEPTH-2 == 2 commit groups in
-    # flight, so a wait_group(2) before each LDS read drains exactly the tile being
-    # read (the oldest of 3 outstanding). The two loop reads use WAIT_LOOP-1 though:
-    # the LLVM backend derives a too-loose s_waitcnt vmcnt from wait_group(2) under
-    # this kernel's register pressure, letting an LDS ds_read race ahead of its
-    # global->LDS async copy. Waiting for one fewer group forces a tight enough vmcnt
-    # (the extra-drained group is not yet needed) and costs no measured performance.
-    WAIT_LOOP: gl.constexpr = 2 * BUF_DEPTH - 2  # == 2
-
-    # -- Prologue ----------------------------------------------------------
-    # Prime the rotated pipeline for output tile 0: compute the FULL ahead-work
-    # for tile 0 (qk[0], m_new[0], and the exp2 burst p[0]/alpha[0]) and the K
-    # regs for tile 1, plus stage K[0..2] / V[0..1] into LDS. K is prefetched
-    # 3-ahead so three K tiles (0,1,2) must be staged into the 2 K slots -- slot
-    # 0 is reused for K[2] after LRK[0] reads K[0] (guarded by a barrier).
-    #
-    # Commit order: K0, V0, K1, (barrier) K2, V1  ->  end pending {K2, V1},
-    # matching the loop's steady-state entry condition.
-    b0 = block_start
-    issue_async_load_k(kt_smem.index(0), k_base, (b0 + 0) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[0]
-    issue_async_load_v(v_smem.index(0), v_base, (b0 + 0) * BLOCK_N,
-                       stride_vk, stride_vn, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[0]
-    issue_async_load_k(kt_smem.index(1), k_base, (b0 + 1) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[1]
-
-    if MASK_STEPS:
-        n0 = ((b0 + 0) * BLOCK_N).to(tl.int32)
-    else:
-        n0 = 0
-    cdna4_async.wait_group(2)                                       # K[0] complete
-    kt0 = sc_lr(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
-    qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_i, n0, start_m, qk_scale,   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
-                                  MASK_STEPS, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
-
-    gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
-    issue_async_load_k(kt_smem.index(0), k_base, (b0 + 2) * BLOCK_N,
-                       stride_kn, stride_kk, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[2] (slot0 reuse)
-    cdna4_async.wait_group(1)                                       # K[1] complete
-    kt_dot = sc_lr(kt_smem.index(1), kt_dot_layout)                 # LRK[1] -> K regs tile 1
-    issue_async_load_v(v_smem.index(1), v_base, (b0 + 1) * BLOCK_N,
-                       stride_vk, stride_vn, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[1]
-
-    # -- Main loop (full rotated body) -------------------------------------
-    # Runs output tiles [block_start, block_end-3): the last full iteration
-    # whose K prefetch (ACK[i+3]) is still in bounds. The final three tiles are
-    # drained below without out-of-bounds global prefetch.
-    for block_n in tl.range(block_start, block_end - 3):
-        cur_slot = ((block_n - block_start) % BUF_DEPTH).to(tl.int32)
-        nxt_slot = ((block_n + 1 - block_start) % BUF_DEPTH).to(tl.int32)
-        ack_n = ((block_n + 3) * BLOCK_N).to(tl.int32)
-        acv_n = ((block_n + 2) * BLOCK_N).to(tl.int32)
-        if MASK_STEPS:
-            ahead_n = ((block_n + 1) * BLOCK_N).to(tl.int32)
-        else:
-            ahead_n = 0
-
-        # cluster 0 DOT1: dot_qk[i+1] (s1) then VEC2[i] (s0). dot_qk leads so
-        # iglp.opt prefixes the MFMA.
-        with warp_pipeline_stage("dot1", priority=0):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk s1 -> qk[i+1]
-            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c,                 # VEC2 s0 (sum + acc rescale
-                                      p_dot_layout, q_dot.dtype)              #         + l_i + p->fp16 cast)
-
-        cdna4_async.wait_group(WAIT_LOOP - 1)  # V[i] complete (for LRV[i]); -1: backend vmcnt workaround
-
-        # cluster 1 MEM1: LRV[i] (stage 0) then ACK[i+3] (stage 3).
-        with warp_pipeline_stage("mem1", priority=1):
-            v_dot = sc_lr(v_smem.index(cur_slot), v_dot_layout)               # LRV   s0
-            issue_async_load_k(kt_smem.index(nxt_slot), k_base, ack_n,
-                               stride_kn, stride_kk, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK s3
-
-        # cluster 2 DOT2: dot_pv[i] (s0) then VEC1[i+1] (s1: new max + exp2
-        # burst).  The exp2 lands AFTER the P*V MFMA and feeds the next iteration's dot_pv.
-        with warp_pipeline_stage("dot2", priority=0):
-            acc = sc_dot_pv(acc, p_dot, v_dot)                                # dot_pv s0
-            m_run, p_c, alpha_c = sc_vec1(qk, m_run, ahead_n, start_m, qk_scale,  # VEC1 s1 -> m_new, p[i+1]
-                                          MASK_STEPS, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                                          BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
-
-        cdna4_async.wait_group(WAIT_LOOP - 1)  # K[i+2] complete (for LRK[i+2]); -1: backend vmcnt workaround
-
-        # cluster 3 MEM2: LRK[i+2] (stage 2) then ACV[i+2] (stage 2).
-        with warp_pipeline_stage("mem2", priority=1):
-            kt_dot = sc_lr(kt_smem.index(cur_slot), kt_dot_layout)            # LRK   s2 -> K regs tile i+2
-            issue_async_load_v(v_smem.index(cur_slot), v_base, acv_n,
-                               stride_vk, stride_vn, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV s2
-
-    # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
-    # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
-    # (V[n-1] still to load); carried kt_dot=K regs tile n-2, m_run=m_new[n-3],
-    # p_c=p[n-3], alpha_c=alpha[n-3]; pending async {V[n-3],K[n-1],V[n-2]}.
-    nm3 = block_end - 3
-    nm2 = block_end - 2
-    nm1 = block_end - 1
-    s_nm3 = ((nm3 - block_start) % BUF_DEPTH).to(tl.int32)
-    s_nm2 = ((nm2 - block_start) % BUF_DEPTH).to(tl.int32)
-    s_nm1 = ((nm1 - block_start) % BUF_DEPTH).to(tl.int32)
-    if MASK_STEPS:
-        nm2_n = (nm2 * BLOCK_N).to(tl.int32)
-        nm1_n = (nm1 * BLOCK_N).to(tl.int32)
-    else:
-        nm2_n = 0
-        nm1_n = 0
-
-    # output tile n-3 (also issues the final V prefetch, ACV[n-1])
-    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
-    cdna4_async.wait_group(2)                                           # V[n-3] complete
-    v_dot = sc_lr(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3]
-    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-3]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm2_n, start_m, qk_scale,  # VEC1[n-2] -> m_new, p[n-2]
-                                  MASK_STEPS, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
-    gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
-    issue_async_load_v(v_smem.index(s_nm1), v_base, (nm1 * BLOCK_N).to(tl.int32),
-                       stride_vk, stride_vn, MAX_SEQLENS_K, MASK_STEPS, MAX_SEQLENS_K, False,
-                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[n-1]
-    cdna4_async.wait_group(2)                                           # K[n-1] complete
-    kt_dot = sc_lr(kt_smem.index(s_nm1), kt_dot_layout)                 # LRK[n-1] -> K regs tile n-1
-
-    # output tile n-2
-    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-1]
-    cdna4_async.wait_group(1)                                           # V[n-2] complete
-    v_dot = sc_lr(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
-    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-2]
-    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm1_n, start_m, qk_scale,  # VEC1[n-1] -> m_new, p[n-1]
-                                  MASK_STEPS, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
-                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
-
-    # output tile n-1 (final; no further dot_qk / prefetch)
-    cdna4_async.wait_group(0)                                           # V[n-1] complete
-    v_dot = sc_lr(v_smem.index(s_nm1), v_dot_layout)                    # LRV[n-1]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-1]
-    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-1]
-
-    return acc, l_i, m_run
-
-
-@aggregate
-class AttentionInnerContext:
-    q_dot: gl.tensor
-    k_base: gl.tensor
-    v_base: gl.tensor
-    offs_n: gl.tensor
-    offs_d: gl.tensor
-    kt_offs_d: gl.tensor
-    kt_offs_n: gl.tensor
-    start_m: gl.tensor
-    stride_kn: gl.tensor | gl.constexpr
-    stride_kk: gl.tensor | gl.constexpr
-    stride_vk: gl.tensor | gl.constexpr
-    stride_vn: gl.tensor | gl.constexpr
-    kt_smem: gl.shared_memory_descriptor
-    v_smem: gl.shared_memory_descriptor
-    seqlen_q: gl.tensor | gl.constexpr
-    seqlen_k: gl.tensor | gl.constexpr
-    qk_scale: gl.constexpr
-    MAX_SEQLENS_Q: gl.constexpr
-    MAX_SEQLENS_K: gl.constexpr
-    BLOCK_M: gl.constexpr
-    BLOCK_N: gl.constexpr
-    BLOCK_DMODEL: gl.constexpr
-    ACTUAL_BLOCK_DMODEL: gl.constexpr
-    NUM_STAGES: gl.constexpr
-    IS_CAUSAL: gl.constexpr
-    VARLEN: gl.constexpr
-    MMA_TYPE: gl.constexpr
-    kt_blocked_layout: gl.constexpr
-    blocked_layout: gl.constexpr
-    kt_async_layout: gl.constexpr
-    v_async_layout: gl.constexpr
-    kt_dot_layout: gl.constexpr
-    p_dot_layout: gl.constexpr
-    v_dot_layout: gl.constexpr
-    mma_layout: gl.constexpr
-    mma_offs_n_col: gl.constexpr
-    mma_offs_m_row: gl.constexpr
-
-    @gluon.jit
-    def pipelined(self, acc, l_i, m_i, block_start, block_end, MASK_STEPS: gl.constexpr):
-        return attn_fwd_inner_pipelined(
-            acc, l_i, m_i, self.q_dot, self.k_base, self.v_base, self.start_m,
-            self.stride_kn, self.stride_kk, self.stride_vk, self.stride_vn,
-            block_start, block_end,
-            self.kt_smem, self.v_smem, self.qk_scale,
-            self.MAX_SEQLENS_Q, self.MAX_SEQLENS_K,
-            self.BLOCK_M, self.BLOCK_N, self.BLOCK_DMODEL, self.ACTUAL_BLOCK_DMODEL,
-            MASK_STEPS, self.IS_CAUSAL,
-            self.kt_async_layout, self.v_async_layout,
-            self.kt_dot_layout, self.p_dot_layout, self.v_dot_layout,
-            self.mma_layout, self.mma_offs_n_col, self.mma_offs_m_row,
-        )
-
-# ---------------------------------------------------------------------------
 # Autotune configs
 # ---------------------------------------------------------------------------
 
@@ -474,24 +212,15 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     blocked_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[threads_per_warp // 4, 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
-    kt_blocked_layout: gl.constexpr = gl.BlockedLayout(
-        size_per_thread=[1, 1], threads_per_warp=[1, threads_per_warp],
-        warps_per_cta=[1, num_warps], order=[0, 1])
 
     offs_m_layout:    gl.constexpr = gl.SliceLayout(dim=1, parent=blocked_layout)
     offs_d_layout:    gl.constexpr = gl.SliceLayout(dim=0, parent=blocked_layout)
-    offs_n_layout:    gl.constexpr = gl.SliceLayout(dim=1, parent=blocked_layout)
-    kt_offs_d_layout: gl.constexpr = gl.SliceLayout(dim=1, parent=kt_blocked_layout)
-    kt_offs_n_layout: gl.constexpr = gl.SliceLayout(dim=0, parent=kt_blocked_layout)
     mma_offs_n_col:   gl.constexpr = gl.SliceLayout(dim=0, parent=mma_layout)
     mma_offs_m_row:   gl.constexpr = gl.SliceLayout(dim=1, parent=mma_layout)
     mma_m_layout:     gl.constexpr = gl.SliceLayout(dim=1, parent=mma_layout)
 
     offs_m    = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=offs_m_layout)
     offs_d    = gl.arange(0, BLOCK_DMODEL, layout=offs_d_layout)
-    offs_n    = gl.arange(0, BLOCK_N,      layout=offs_n_layout)
-    kt_offs_d = gl.arange(0, BLOCK_DMODEL, layout=kt_offs_d_layout)
-    kt_offs_n = gl.arange(0, BLOCK_N,      layout=kt_offs_n_layout)
 
     q_base = Q + off_z * stride_qz + off_h_q * stride_qh
     k_base = K + off_z * stride_kz + off_h_k * stride_kh
@@ -516,8 +245,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # every K/V block is full and unmasked (no causal / no ragged-tail masking).
     n_blocks = (MAX_SEQLENS_K + BLOCK_N - 1) // BLOCK_N
 
-    kt_ptrs = k_base + kt_offs_d[:, None] * stride_kk + kt_offs_n[None, :] * stride_kn
-    v_ptrs  = v_base + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
 
     # Single supported config: D=128, BLOCK_N=64, 8 warps. The full per-
     # (BLOCK_DMODEL, BLOCK_N, num_warps) layout dispatch was dropped for the tutorial.
@@ -562,24 +289,157 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         Q.dtype.element_ty, [BUF_DEPTH, BLOCK_N, BLOCK_DMODEL], layout=v_async_smem_layout)
 
 
-    inner_ctx: gl.constexpr = AttentionInnerContext(
-        q_dot, k_base, v_base,
-        offs_n, offs_d, kt_offs_d, kt_offs_n, start_m,
-        stride_kn, stride_kk, stride_vk, stride_vn,
-        kt_smem, v_smem,
-        MAX_SEQLENS_Q, MAX_SEQLENS_K, qk_scale,
-        MAX_SEQLENS_Q, MAX_SEQLENS_K,
-        BLOCK_M, BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-        NUM_STAGES, IS_CAUSAL, False,
-        MMA_TYPE, kt_blocked_layout, blocked_layout,
-        kt_async_layout, v_async_layout,
-        kt_dot_layout, p_dot_layout, v_dot_layout,
-        mma_layout, mma_offs_n_col, mma_offs_m_row,
-    )
+    # === Rotated 4-cluster pipelined inner loop (inlined) ===
+    # Whole [0, n_blocks) K/V range; every block full and unmasked.
+    # 4 pipeline stages (s0 = this tile's output .. s3 = K prefetch 3-ahead). The
+    # softmax numerator (VEC1) is rotated one stage ahead so its exp2 burst lands
+    # after the P*V MFMA and feeds the NEXT iteration's dot_pv:
+    #   dot_pv s0  VEC2 s0  LRV s0 | dot_qk s1  VEC1 s1 | LRK s2  ACV s2 | ACK s3
+    # LDS is double-buffered (BUF_DEPTH=2) for K and V; deeper stages ride in regs
+    # and in-flight async copies.
+    block_start = 0
+    block_end = n_blocks
 
-    # Every block is full and unmasked: run the rotated 4-cluster pipeline over
-    # the whole K/V range in one shot (MASK_STEPS=False).
-    acc, l_i, m_i = inner_ctx.pipelined(acc, l_i, m_i, 0, n_blocks, False)
+    cdna4_async.wait_group(0)
+
+    # Intended steady-state async depth: keep 2*BUF_DEPTH-2 == 2 commit groups in
+    # flight, so a wait_group(2) before each LDS read drains exactly the tile being
+    # read (the oldest of 3 outstanding). The two loop reads use WAIT_LOOP-1 though:
+    # the LLVM backend derives a too-loose s_waitcnt vmcnt from wait_group(2) under
+    # this kernel's register pressure, letting an LDS ds_read race ahead of its
+    # global->LDS async copy. Waiting for one fewer group forces a tight enough vmcnt
+    # (the extra-drained group is not yet needed) and costs no measured performance.
+    WAIT_LOOP: gl.constexpr = 2 * BUF_DEPTH - 2  # == 2
+
+    # -- Prologue ----------------------------------------------------------
+    # Prime the rotated pipeline for output tile 0: compute the FULL ahead-work
+    # for tile 0 (qk[0], m_new[0], and the exp2 burst p[0]/alpha[0]) and the K
+    # regs for tile 1, plus stage K[0..2] / V[0..1] into LDS. K is prefetched
+    # 3-ahead so three K tiles (0,1,2) must be staged into the 2 K slots -- slot
+    # 0 is reused for K[2] after LRK[0] reads K[0] (guarded by a barrier).
+    #
+    # Commit order: K0, V0, K1, (barrier) K2, V1  ->  end pending {K2, V1},
+    # matching the loop's steady-state entry condition.
+    b0 = block_start
+    issue_async_load_k(kt_smem.index(0), k_base, (b0 + 0) * BLOCK_N,
+                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[0]
+    issue_async_load_v(v_smem.index(0), v_base, (b0 + 0) * BLOCK_N,
+                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[0]
+    issue_async_load_k(kt_smem.index(1), k_base, (b0 + 1) * BLOCK_N,
+                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[1]
+
+    n0 = 0
+    cdna4_async.wait_group(2)                                       # K[0] complete
+    kt0 = sc_lr(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
+    qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
+    m_run, p_c, alpha_c = sc_vec1(qk, m_i, n0, start_m, qk_scale,   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
+                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+
+    gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
+    issue_async_load_k(kt_smem.index(0), k_base, (b0 + 2) * BLOCK_N,
+                       stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK[2] (slot0 reuse)
+    cdna4_async.wait_group(1)                                       # K[1] complete
+    kt_dot = sc_lr(kt_smem.index(1), kt_dot_layout)                 # LRK[1] -> K regs tile 1
+    issue_async_load_v(v_smem.index(1), v_base, (b0 + 1) * BLOCK_N,
+                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[1]
+
+    # -- Main loop (full rotated body) -------------------------------------
+    # Runs output tiles [block_start, block_end-3): the last full iteration
+    # whose K prefetch (ACK[i+3]) is still in bounds. The final three tiles are
+    # drained below without out-of-bounds global prefetch.
+    for block_n in tl.range(block_start, block_end - 3):
+        cur_slot = ((block_n - block_start) % BUF_DEPTH).to(tl.int32)
+        nxt_slot = ((block_n + 1 - block_start) % BUF_DEPTH).to(tl.int32)
+        ack_n = ((block_n + 3) * BLOCK_N).to(tl.int32)
+        acv_n = ((block_n + 2) * BLOCK_N).to(tl.int32)
+        ahead_n = 0
+
+        # cluster 0 DOT1: dot_qk[i+1] (s1) then VEC2[i] (s0). dot_qk leads so
+        # iglp.opt prefixes the MFMA.
+        with warp_pipeline_stage("dot1", priority=0):
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk s1 -> qk[i+1]
+            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c,                 # VEC2 s0 (sum + acc rescale
+                                      p_dot_layout, q_dot.dtype)              #         + l_i + p->fp16 cast)
+
+        cdna4_async.wait_group(WAIT_LOOP - 1)  # V[i] complete (for LRV[i]); -1: backend vmcnt workaround
+
+        # cluster 1 MEM1: LRV[i] (stage 0) then ACK[i+3] (stage 3).
+        with warp_pipeline_stage("mem1", priority=1):
+            v_dot = sc_lr(v_smem.index(cur_slot), v_dot_layout)               # LRV   s0
+            issue_async_load_k(kt_smem.index(nxt_slot), k_base, ack_n,
+                               stride_kn, stride_kk, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, kt_async_layout)  # ACK s3
+
+        # cluster 2 DOT2: dot_pv[i] (s0) then VEC1[i+1] (s1: new max + exp2
+        # burst).  The exp2 lands AFTER the P*V MFMA and feeds the next iteration's dot_pv.
+        with warp_pipeline_stage("dot2", priority=0):
+            acc = sc_dot_pv(acc, p_dot, v_dot)                                # dot_pv s0
+            m_run, p_c, alpha_c = sc_vec1(qk, m_run, ahead_n, start_m, qk_scale,  # VEC1 s1 -> m_new, p[i+1]
+                                          False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                          BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+
+        cdna4_async.wait_group(WAIT_LOOP - 1)  # K[i+2] complete (for LRK[i+2]); -1: backend vmcnt workaround
+
+        # cluster 3 MEM2: LRK[i+2] (stage 2) then ACV[i+2] (stage 2).
+        with warp_pipeline_stage("mem2", priority=1):
+            kt_dot = sc_lr(kt_smem.index(cur_slot), kt_dot_layout)            # LRK   s2 -> K regs tile i+2
+            issue_async_load_v(v_smem.index(cur_slot), v_base, acv_n,
+                               stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                               BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV s2
+
+    # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
+    # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
+    # (V[n-1] still to load); carried kt_dot=K regs tile n-2, m_run=m_new[n-3],
+    # p_c=p[n-3], alpha_c=alpha[n-3]; pending async {V[n-3],K[n-1],V[n-2]}.
+    nm3 = block_end - 3
+    nm2 = block_end - 2
+    nm1 = block_end - 1
+    s_nm3 = ((nm3 - block_start) % BUF_DEPTH).to(tl.int32)
+    s_nm2 = ((nm2 - block_start) % BUF_DEPTH).to(tl.int32)
+    s_nm1 = ((nm1 - block_start) % BUF_DEPTH).to(tl.int32)
+    nm2_n = 0
+    nm1_n = 0
+
+    # output tile n-3 (also issues the final V prefetch, ACV[n-1])
+    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
+    cdna4_async.wait_group(2)                                           # V[n-3] complete
+    v_dot = sc_lr(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
+    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3]
+    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-3]
+    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm2_n, start_m, qk_scale,  # VEC1[n-2] -> m_new, p[n-2]
+                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+    gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
+    issue_async_load_v(v_smem.index(s_nm1), v_base, (nm1 * BLOCK_N).to(tl.int32),
+                       stride_vk, stride_vn, MAX_SEQLENS_K, False, MAX_SEQLENS_K, False,
+                       BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL, v_async_layout)   # ACV[n-1]
+    cdna4_async.wait_group(2)                                           # K[n-1] complete
+    kt_dot = sc_lr(kt_smem.index(s_nm1), kt_dot_layout)                 # LRK[n-1] -> K regs tile n-1
+
+    # output tile n-2
+    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-1]
+    cdna4_async.wait_group(1)                                           # V[n-2] complete
+    v_dot = sc_lr(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
+    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
+    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-2]
+    m_run, p_c, alpha_c = sc_vec1(qk, m_run, nm1_n, start_m, qk_scale,  # VEC1[n-1] -> m_new, p[n-1]
+                                  False, IS_CAUSAL, MAX_SEQLENS_Q, MAX_SEQLENS_K,
+                                  BLOCK_M, BLOCK_N, mma_layout, mma_offs_n_col, mma_offs_m_row)
+
+    # output tile n-1 (final; no further dot_qk / prefetch)
+    cdna4_async.wait_group(0)                                           # V[n-1] complete
+    v_dot = sc_lr(v_smem.index(s_nm1), v_dot_layout)                    # LRV[n-1]
+    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-1]
+    acc = sc_dot_pv(acc, p_dot, v_dot)                                  # dot_pv[n-1]
+
+
+    m_i = m_run
     l_recip = 1.0 / l_i
     acc = acc * l_recip[:, None]
 
