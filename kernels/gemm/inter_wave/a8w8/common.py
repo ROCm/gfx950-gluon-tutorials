@@ -99,5 +99,5 @@ def store_result(
     c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
     c_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
 
-    c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
+    c_mask = ((pid_m * BLOCK_M + offs_cm[:, None]) < M) & ((pid_n * BLOCK_N + offs_cn[None, :]) < N)
     gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_offsets, stored_value=c, mask=c_mask)

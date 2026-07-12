@@ -185,8 +185,8 @@ python scripts/run_att.py --att-output <output_dir> <python_command>
 Profile a16w16 kernel v8:
 
 ```bash
-cd kernels/gemm/a16w16
-python ../../../scripts/run_att.py --att-output tmp python bench.py --K 4096 --dtype fp16 --version 8
+cd kernels/gemm/intra_wave/a16w16
+python ../../../../scripts/run_att.py --att-output tmp python bench.py --K 4096 --dtype fp16 --version 8
 ```
 
 ### What It Does
