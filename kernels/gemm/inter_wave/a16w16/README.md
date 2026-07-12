@@ -1,162 +1,185 @@
 # inter_wave/a16w16 — 8-wave warp-pipeline FP16/BF16 GEMM (gfx950)
 
 An **8-wave** (8 warps/CTA → **2 waves/SIMD**) FP16/BF16 GEMM for gfx950 / MI350X.
-Two versions are selected with `--version`, mirroring the `a16w16/v0_naive …
-v9_beyond_hotloop` layout. Both schedule the hot loop at the **wave level** with
-`warp_pipeline_stage`, and run with **no AGPRs**.
+It schedules the hot loop at the **wave level** with `warp_pipeline_stage`, slices the
+256×256 output tile into a **2×2 grid of [128×128] quadrants**, and runs with **no
+AGPRs**.
 
 > For the theory behind `warp_pipeline_stage` — the phase-shifted, two-group
-> schedule, why it raises MFMA utilization, and the barrier/membar rules these
-> kernels follow — see [`docs/warp_pipelining.md`](../../../../docs/warp_pipelining.md).
+> schedule, why it raises MFMA utilization, and the barrier/membar rules this
+> kernel follows — see [`docs/warp_pipelining.md`](../../../../docs/warp_pipelining.md).
 
 > [!IMPORTANT]
 > The 4-wave `llir+amdgcnas` toolchain (`TRITON_ENABLE_LLIR_SCHED` /
 > `TRITON_ENABLE_AMDGCN_AS`) is built around the 4-wave register/schedule model and
-> **fails register allocation** at 8 waves. These kernels schedule themselves via
-> `warp_pipeline_stage` and run with **no AGPRs** — each kernel sets
-> `amdgpu-agpr-alloc=0,0` at launch via Triton's built-in `llvm_fn_attrs` option, so the
-> f32 accumulators write VGPRs directly, which packs tighter than the default AGPR
-> allocation.
+> **fails register allocation** at 8 waves. This kernel schedules itself via
+> `warp_pipeline_stage` and runs with **no AGPRs** — it sets `amdgpu-agpr-alloc=0,0`
+> at launch via Triton's built-in `llvm_fn_attrs` option, so the f32 accumulators write
+> VGPRs directly, which packs tighter than the default AGPR allocation.
 
-## 1. Design comparison
+## 1. Design
 
-| | `v0_BK32_nS3` (8-wave) | `v1_sliceMN_BK64_nS2` (8-wave) | `a16w16/v9` (4-wave ref) |
-|---|---|---|---|
-| Warps / CTA | 8 (`[2,4]`) | 8 (`[2,4]`) | 4 (`[2,2]`) |
-| Waves / SIMD | 2 | 2 | 1 |
-| Tile M×N×K | 256×256×**32** | 256×256×**64** | 256×256×64 |
-| M/N slicing | none (full 256×256) | **2×2 quadrants** | 2×2 quadrants |
-| LDS buffers | **3** (triple ring) | **2** (double) | 2 (double) |
-| K-unroll | 3× | 2× | 2× |
-| LDS allocation | one `smemA[3]`/`smemB[3]` ring | **4 separate** per-quadrant | 4 separate per-quadrant |
-| `local_load` | **relaxed** (dodge membar) | non-relaxed (separate allocs) | non-relaxed (separate allocs) |
-| Hot-loop scheduling | `warp_pipeline_stage` | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
-| XCD PID remap | yes (v9-style) | yes (v9-style) | yes |
+The kernel (`a16w16_kernel` — sliceMN, `BLOCK_K=64`, 2-buffer) combines the hot-loop
+structure of the 4-wave [`a16w16/v8_sliceMN`](../../intra_wave/a16w16/v8_sliceMN/README.md)
+— the slicing `v9` uses — with 8-wave `warp_pipeline_stage` wave-level scheduling. The
+256×256 tile is split into a **2×2 grid of [128×128] quadrants**, each operand half-tile
+in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/right`).
 
-The two 8-wave kernels share the `warp_pipeline_stage` wave-level scheduling and the
-v9 XCD remap; they differ in the loop body. v0 drives a single full 256×256
-accumulator from a triple-buffered ring; v1 borrows v9's four-quadrant slicing.
+| | **this kernel** (8-wave) | `a16w16/v9` (4-wave ref) |
+|---|---|---|
+| Warps / CTA | 8 (`[2,4]`) | 4 (`[2,2]`) |
+| Waves / SIMD | 2 | 1 |
+| Tile M×N×K | 256×256×64 | 256×256×64 |
+| M/N slicing | 2×2 quadrants | 2×2 quadrants |
+| LDS buffers | 2 (double) | 2 (double) |
+| LDS allocation | 4 separate per-quadrant | 4 separate per-quadrant |
+| K-unroll | 2× | 2× |
+| `local_load` | non-relaxed (separate allocs) | non-relaxed (separate allocs) |
+| Hot-loop scheduling | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
+| XCD PID remap | yes (v9-style) | yes |
 
-## 2. v0_BK32_nS3 — a tuned port
+Two consequences of the four separate allocations:
 
-`v0` is a port of
-[`AMD-Triton/gluon-kernels`'s `f16_gemm_warp_pipeline_gfx950.py`](https://github.com/AMD-Triton/gluon-kernels/blob/main/kernels/cdna4/gemm/f16_gemm_warp_pipeline_gfx950.py)
-into the tutorial layout, so the tutorial's `bench.py` / `collect_perf.py` rocprof +
-ATT tooling can drive it. As ported, the loop was MFMA-starved (~36% per-wave /
-~72% per-SIMD). The fix progression (rocprof cold-rotating, 4096²×8192 fp16):
+- **Non-relaxed loads, no membar barrier.** Because `smemA_top`, `smemA_bot`,
+  `smemB_left`, `smemB_right` are four *separate* allocations with distinct buffer IDs,
+  the membar disambiguates the load-read (LR) from the async-copy write (AC) by
+  allocation — so the loads stay plain (non-relaxed) `smem.index().load()` and carry no
+  extra `s_barrier`.
+- **`BLOCK_K=64` with only 2 buffers.** A larger K-step means more compute per async copy
+  to hide its latency, and the four-region structure spreads the buffer loads across the
+  K-step — so the TCP/HBM buffer-load stall that hits a full-tile ring at K≥16384 (the
+  [v8_sliceMN TCP analysis](../../intra_wave/a16w16/v8_sliceMN/README.md#4-buffer-load-throughput-and-tcp-limitations))
+  does not appear here.
+
+## 2. Loop structure
+
+The output is split into four quadrants, each its own f32 accumulator:
+
+```
+acc_tl += DOT(A_top, B_left)     acc_tr += DOT(A_top, B_right)
+acc_bl += DOT(A_bot, B_left)     acc_br += DOT(A_bot, B_right)
+```
+
+The loop is unrolled 2× → **8 mfma regions + 8 mem regions**. Each region is wrapped in
+`warp_pipeline_stage`, with `cdna4_async.wait_group(5)` placed **before** the mfma region
+(so the async copy whose data the upcoming load needs is drained ahead of use, and the
+wait sits at an empty stage-cluster boundary so `WarpPipeliner` accepts it):
+
+```
+cdna4_async.wait_group(5)
+with warp_pipeline_stage("mfma", priority=0):
+    acc_X = mfma(operand_a, operand_b, acc_X)
+with warp_pipeline_stage("mem", priority=1):
+    operand = smem.index(buf).load(dotOp)      # LR for the next region
+    cdna4_async.buffer_load_to_shared(...)     # AC refills this buffer
+    cdna4_async.commit_group()
+```
+
+The 8-wave global-load layouts are the 4-wave `v9` layouts with **one extra warp
+dimension** (tiling M for A, N for B, since `warpsPerCTA=[2,4]` = 8 warps); the shared /
+dot-operand / MFMA layouts are reused unchanged. B is pre-transposed to `(N, K)` and fed
+as a logical `(K, N)` operand via strides, so K is contiguous for the async copy.
+
+The 8 mfma regions and 8 mem regions are interleaved across the two co-resident wave
+groups (**ping-pong**) via `warp_pipeline_stage`: one wave group's MFMAs issue while the
+other group's loads are in flight, then they swap. Each region's `wait_group(5)` drains
+the async copy whose data the upcoming load needs, so the load → MFMA dependency is
+satisfied without stalling the issue pipe. The figure below shows the full unrolled
+schedule — 8 mfma / 8 mem regions over the four quadrants × 2 buffers.
+
+<p align="center">
+  <img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="640">
+</p>
+
+## 3. Epilogue: register pressure and the spill fix
+
+At 8 waves there are **2 waves/SIMD**, so the per-wave budget is 256 VGPR. The four live
+f32 `[128×128]` accumulators alone are 128 VGPR; with the dot operands (~96) and the store
+machinery, the **epilogue** (not the loop) overflowed and spilled the accumulators to
+scratch — 67 spills, a 32,240-cycle epilogue (~11% of the kernel at K=8192). The loop body
+itself never spills (it runs at ~99.8% MFMA).
+
+Two kernel-side changes bring spills to **0**:
+
+1. **Store-side pointer-walk.** All four quadrants have identical internal structure, so
+   they share **one** within-quadrant offset tensor plus four **scalar** base pointers
+   (`c_tl/bl/tr/br_base = c_base + const`), instead of four full `[128×128]` offset
+   tensors (~32 VGPR each).
+2. **De-interleave the epilogue.** Finish all four final mfmas *before* the convert+store
+   phase. This lets the dot operands die first, so only the four accumulators (+ one
+   in-flight `convert_layout`) are live during the stores.
 
 > [!NOTE]
-> The step-by-step TFLOPS / MFMA numbers in this fix-progression table are from the
-> original **MI350X** tuning run — keep them for the *relative* gains each change bought.
-> The current-build **MI355X** absolute figures are in [§4](#4-performance).
-
-| Step | TFLOPS | MFMA (per-SIMD) | Optimization |
-|---|---|---|---|
-| as-ported | 760 | ~72% | baseline: 2×-unroll, default backend (f32 accumulator allocated in AGPRs), original PID map |
-| + no-AGPR | 820 | 83.0% | `llvm_fn_attrs=(("amdgpu-agpr-alloc","0,0"),)` forbids AGPRs so the gfx950 MFMAs write VGPRs directly; the unified register file packs tighter (256 VGPR + 16 spills → 212 VGPR / 0 spills) |
-| + 3× unroll | 839 | 83.7% | unroll = ring size (3) makes the LDS buffer indices compile-time constants `0,1,2`, removing the runtime `tile % 3` and wrap-around address math |
-| + v9 XCD remap | 909 | 85.2% | XCD-aware PID remap + `GROUP_SIZE_M` swizzle (from `common.py`) for L2 locality — cut measured VMEM latency substantially |
-| + relaxed `local_load` | ~915 | ~85% | each mem region reads `smem.index(k+1)` (LR) then writes `smem.index(k)` (AC) — same allocation, different ring index. The membar can't disambiguate `MemDescIndexOp` sub-buffers, so it inserts a redundant `lgkmcnt(0)`+`s_barrier`; `load_shared_relaxed` carries an async-wait token the AMD `membarFilter` skips |
-
-Result @4096²×8192 (current build, MI355X): **~1190 TFLOPS, ~85% loop MFMA, 196 VGPR / 0 spills**. Because the
-single triple-buffered ring covers the full 256×256 tile, its `buffer_load`s cluster
-in time and hit the TCP/HBM buffer-load stall at large K — MFMA drops to ~78–80% at
-K ≥ 16384 (see the [v8_sliceMN TCP analysis](../../intra_wave/a16w16/v8_sliceMN/README.md#4-buffer-load-throughput-and-tcp-limitations)).
-The near-100% loop MFMA is reached by v1 below, which slices the tile to spread the
-loads.
-
-## 3. v1_sliceMN_BK64_nS2 — sliceMN × warp-pipeline
-
-`v1` combines the hot-loop structure of
-[`a16w16/v8_sliceMN`](../../intra_wave/a16w16/v8_sliceMN/README.md) — the slicing v9 uses — with the
-8-wave `warp_pipeline_stage` scheduling. The 256×256 tile is split into a **2×2 grid
-of [128×128] quadrants**, each operand half-tile in its **own** double-buffered LDS
-allocation (`smemA_top/bot`, `smemB_left/right`). Two consequences:
-
-- **Non-relaxed loads, no membar barrier.** The four separate allocations have
-  distinct buffer IDs, so the membar disambiguates LR vs AC by allocation — the
-  loads stay plain `smem.index().load()` and carry no extra barrier. v0's relaxed
-  trick is unnecessary here.
-- **BLOCK_K=64, 2 buffers, loads spread across four regions** — more compute per
-  async copy and no clustering, so the K≥16384 stall that hurts v0 disappears.
-
-The loop is unrolled 2× → **8 mfma regions + 8 mem regions**, each wrapped in
-`warp_pipeline_stage` with `cdna4_async.wait_group(5)` placed **before** the mfma
-region. A store-side pointer-walk + a de-interleaved epilogue eliminate the
-epilogue's accumulator spills (see [v1 README](v1_sliceMN_BK64_nS2/README.md#4-epilogue-register-pressure-and-the-spill-fix)).
-
-Result @4096²×8192 (current build, MI355X): **~1446 TFLOPS, ~99.8% loop MFMA, 242 VGPR / 0
-spills** — it peaks ~1495 at K=16384, then eases to ~1287 (still ~92% loop MFMA) at K=32768,
-staying far above v0 at every K.
+> The store downcasts f32→f16 (`v_cvt_pk_f16_f32`) **before** `convert_layout`, so the
+> layout shuffle through LDS already moves f16, not f32. The remaining ~16,660-cycle
+> epilogue is the inherent `convert_layout` LDS round-trip (`mfmaLayout → BlockedLayout`)
+> plus the stores.
 
 ## 4. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-current build (Triton 3.8.0), rocprof cold-rotating (`--rotating-buffer-size 2048`). v0/v1
-are 8-wave; the 4-wave `a16w16/v9` reference uses the LLIR scheduler + force-agpr + amdgcnas
-(`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`):
+current build (Triton 3.8.0), rocprof cold-rotating (`--rotating-buffer-size 2048`). The
+8-wave kernel vs the 4-wave `a16w16/v9` reference (LLIR scheduler + force-agpr + amdgcnas,
+`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`):
 
-| K | v0 TFLOPS | v0 MFMA eff | v1 TFLOPS | v1 MFMA eff | v9 TFLOPS | v9 MFMA eff |
-|---|---|---|---|---|---|---|
-| 8192  | 1190 | ~85% | 1446 | 99.8% | **1485** | 97.0% |
-| 16384 | 1100 | ~64% | 1495 | 99.3% | **1532** | 97.4% |
-| 32768 | 1122 | ~58% | 1287 | 92.3% | **1310** | ~81% |
+| K | 8-wave TFLOPS | 8-wave MFMA eff | v9 TFLOPS | v9 MFMA eff |
+|---|---|---|---|---|
+| 8192  | 1446 | 99.8% | **1485** | 97.0% |
+| 16384 | 1495 | 99.3% | **1532** | 97.4% |
+| 32768 | 1287 | 92.3% | **1310** | ~81% |
 
-VGPRs / spills: **v0 196 / 0**, **v1 242 / 0** (both loop-spill-free).
+VGPRs / spills: **242 / 0** (loop-spill-free).
 
-The 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges 8-wave v1 on TFLOPS
-at all three K (**~+3% / +2% / +2%**); v1 keeps the highest loop MFMA-eff (~99% at
-K ≤ 16384, dipping to ~92% at K=32768 as the buffer-load stall sets in). Both clear v0 by a
-wide margin — v0's full-tile triple-ring hits the buffer-load stall, so its loop MFMA-eff
-falls to ~58–64% at K ≥ 16384. (MFMA-eff is a single-dispatch ATT reading — treat the last
-digit as noise.)
+The 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges the 8-wave kernel on
+TFLOPS at all three K (**~+3% / +2% / +2%**); the 8-wave keeps the highest loop MFMA-eff
+(~99% at K ≤ 16384, dipping to ~92% at K=32768 as the buffer-load stall sets in).
+(MFMA-eff is a single-dispatch ATT reading — treat the last digit as noise.)
 
 > [!NOTE]
-> **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's
-> MFMA-cycle fraction; with 2 waves/SIMD interleaving issue, `collect_perf.py`
-> doubles it for the per-SIMD figure (the 4-wave kernels run 1 wave/SIMD, factor 1).
-> The number is for the hot loop — v1's prologue/epilogue carry no MFMA, so its
-> *whole-kernel* efficiency is lower (~94% at K=8192) and converges toward the loop
-> number as K grows.
+> **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's MFMA-cycle
+> fraction; with 2 waves/SIMD interleaving issue, `collect_perf.py` doubles it for the
+> per-SIMD figure (the 4-wave kernels run 1 wave/SIMD, factor 1). The number is for the hot
+> loop — the prologue/epilogue carry no MFMA, so the *whole-kernel* efficiency is lower
+> (~94% at K=8192) and converges toward the loop number as K grows.
 
 ### Trace (MI355X, K=8192)
 
-![v0 / v1 / v9 ATT trace on MI355X](images/v0_v1_v9_trace_mi355.png)
+![8-wave sliceMN vs 4-wave v9 ATT trace on MI355X](images/v0_v1_v9_trace_mi355.png)
 
-ATT timelines for v0, v1, and v9 at 4096²×8192 on MI355X. **v1 and v9 both reach very
-high MFMA utilization** — near-solid MFMA issue, with the loads hidden behind compute.
-**v0 is bound by HBM latency**: its full-tile triple-ring clusters the `buffer_load`s in
-time, so the MFMA units stall waiting on memory (the gaps in the v0 lane).
+ATT timelines at 4096²×8192 on MI355X. **Left:** an earlier full-tile triple-buffered ring
+prototype — bound by HBM latency, its loads cluster in time so the MFMA units stall
+(the gaps in the lane). **Middle:** this 8-wave sliceMN kernel. **Right:** the 4-wave `v9`.
+Both the sliceMN kernel and `v9` reach **near-solid MFMA issue**, with the loads hidden
+behind compute — which is exactly why slicing the tile (to spread the loads) beats the
+full-tile ring.
 
 ## 5. Running
 
 ```bash
 # correctness + do_bench TFLOPS
-python bench.py --version 1 --K 8192 --dtype fp16
+python bench.py --K 8192 --dtype fp16
 
 # rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill
-python collect_perf.py --version 1 --K 8192 --dtype fp16
+python collect_perf.py --K 8192 --dtype fp16
 
 # large K needs a bigger rotating buffer to stay cold (≥3 copies)
-python collect_perf.py --version 1 --K 32768 --dtype fp16 --rotating-buffer-size 2048
+python collect_perf.py --K 32768 --dtype fp16 --rotating-buffer-size 2048
 ```
 
-`--version 0` selects `v0_BK32_nS3`, `--version 1` selects `v1_sliceMN_BK64_nS2`. Drop
-`--K` to sweep all sizes, `--dtype` to run fp16 + bf16. Clear `~/.triton/cache` after
-editing a kernel.
+Drop `--K` to sweep all sizes, `--dtype` to run fp16 + bf16. Clear `~/.triton/cache` after
+editing the kernel.
 
-The **no-AGPR** setting is baked into each kernel's launch via Triton's built-in
+The **no-AGPR** setting is baked into the kernel's launch via Triton's built-in
 `llvm_fn_attrs=(("amdgpu-agpr-alloc","0,0"),)` compile option — no env var or compiler
 patch needed, and it survives a Triton rebuild.
 
 ## 6. Files
 
+- `matmul_kernel.py` — the kernel; exposes `a16w16_kernel` (the jit kernel),
+  `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
 - `common.py` — shared `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) and
-  `store_result`, used by every version.
+  `store_result`.
 - `bench.py` — correctness + do_bench TFLOPS + `--rocprof` rotating-tensor mode.
-- `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA
-  efficiency + VGPR/spill.
+- `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
+  VGPR/spill.
 - `collect_counters.py` — VMEM-latency rocprof counters.
-- `v0_BK32_nS3/`, `v1_sliceMN_BK64_nS2/` — the kernels, each with its own README;
-  every `matmul_kernel.py` exposes `matmul_kernel_only`, `matmul`, `MIN_K`,
-  `KERNEL_NAME`.

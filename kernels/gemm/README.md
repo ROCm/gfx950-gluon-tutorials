@@ -25,11 +25,8 @@ gemm/
 │       ├── v0_sliceN/                     #   N-slicing + LDS round-trip scales
 │       └── v1_sliceMN/                    #   M+N slicing + direct-to-LDS scales
 └── inter_wave/                            # 8-wave — two waves ping-pong (warp_pipeline_stage, no AGPRs)
-    ├── a16w16/                            # FP16/BF16 — 8-wave warp-pipeline
-    │   ├── v0_BK32_nS3/                   #   BLOCK_K=32, 3-stage
-    │   └── v1_sliceMN_BK64_nS2/           #   M+N slicing, BLOCK_K=64, 2-buffer (recommended)
-    ├── a8w8/                              # BF8 — 8-wave warp-pipeline
-    │   └── v1_sliceMN_BK128_nS2/          #   M+N slicing, BLOCK_K=128, 2-buffer
+    ├── a16w16/                            # FP16/BF16 — 8-wave warp-pipeline (sliceMN, BLOCK_K=64) — single kernel
+    ├── a8w8/                              # BF8 — 8-wave warp-pipeline (sliceMN, BLOCK_K=128) — single kernel
     └── a4w4/                              # MXFP4 — 8-wave warp-pipeline
         ├── v0_sliceMN_BK256_nS2/          #   byte-shuffle B scale (baseline)
         ├── v1_combineBsc_BK256_nS2/       #   combined transpose-read B scale (recommended)
@@ -64,9 +61,8 @@ for the full a16w16 narrative.
 | **`intra_wave/a8w8`** (BF8) | *(single kernel)* | Data type | a16w16 design at BF8 parameters |
 | **`intra_wave/a4w4`** (MXFP4) | `v0_sliceN` | Scale pipeline | N-slicing + LDS round-trip scales |
 | | `v1_sliceMN` | Scale pipeline | M+N slicing + direct-to-LDS async scales |
-| **`inter_wave/a16w16`** (FP16/BF16) | `v0_BK32_nS3` | Warp pipeline | 8-wave ping-pong baseline, `BLOCK_K=32` |
-| | `v1_sliceMN_BK64_nS2` | Warp pipeline | M+N slicing, `BLOCK_K=64`, 2-buffer *(recommended)* |
-| **`inter_wave/a8w8`** (BF8) | `v1_sliceMN_BK128_nS2` | Warp pipeline | M+N slicing, `BLOCK_K=128`, 2-buffer |
+| **`inter_wave/a16w16`** (FP16/BF16) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=64`, 2-buffer, 8-wave ping-pong |
+| **`inter_wave/a8w8`** (BF8) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=128`, 2-buffer, 8-wave ping-pong |
 | **`inter_wave/a4w4`** (MXFP4) | `v0_sliceMN_BK256_nS2` | Scale + pipeline | Byte-shuffle B scale (baseline) |
 | | `v1_combineBsc_BK256_nS2` | Scale + pipeline | Combined transpose-read B scale *(recommended)* |
 | | `v2_mfma32x32x64_BK256_nS2` | MFMA shape | 32×32×64 MFMA + conflict-free LDS layout |
@@ -252,8 +248,8 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 | | inter_wave/a16w16 | inter_wave/a8w8 | inter_wave/a4w4 |
 |---|---|---|---|
 | Data type | FP16 / BF16 | BF8 (e5m2) | MXFP4 (e2m1) |
-| Versions | `v0_BK32_nS3`, `v1_sliceMN_BK64_nS2` | `v1_sliceMN_BK128_nS2` | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2`, `v2_mfma32x32x64_BK256_nS2` |
-| Tile M×N×K | 256×256×32 (v0) / 64 (v1) | 256×256×128 | 256×256×256 |
+| Versions | *(single kernel)* | *(single kernel)* | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2`, `v2_mfma32x32x64_BK256_nS2` |
+| Tile M×N×K | 256×256×64 | 256×256×128 | 256×256×256 |
 | MFMA | `mfma` `[16,16,32]` | `mfma_scaled` e5m2 `[16,16,128]` | `mfma_scaled` e2m1 `[16,16,128]` |
 | Scheduling | `warp_pipeline_stage`, no-AGPR | same | same |
 
@@ -261,17 +257,17 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 
 | Kernel (final version) | K=8192 | K=16384 | K=32768 | VGPR / spills |
 |---|---|---|---|---|
-| inter_wave/a16w16 `v1` (fp16) | 1442 / 99.8% | 1489 / 98.1% | 1287 / 81.6% | 242 / 0 |
-| inter_wave/a8w8 `v1` (BF8)    | 2853 / 99.7% | 3094 / 99.9% | 2968 / 96.8% | 256 / 13 (loop 0) |
+| inter_wave/a16w16 (fp16) | 1442 / 99.8% | 1489 / 98.1% | 1287 / 81.6% | 242 / 0 |
+| inter_wave/a8w8 (BF8)    | 2853 / 99.7% | 3094 / 99.9% | 2968 / 96.8% | 256 / 13 (loop 0) |
 | inter_wave/a4w4 `v1` (MXFP4)  | 4116 / 79.7% | 4630 / 79.9% | 4938 / 80.0% | 256 / 12 (loop 0) |
 
 Run them with each kernel's `collect_perf.py` (no env vars):
 
 ```bash
-cd kernels/gemm/inter_wave/a16w16 && python collect_perf.py --version 1 --K 8192 --dtype fp16
-cd kernels/gemm/inter_wave/a8w8   && python collect_perf.py --version 1 --K 8192
+cd kernels/gemm/inter_wave/a16w16 && python collect_perf.py --K 8192 --dtype fp16
+cd kernels/gemm/inter_wave/a8w8   && python collect_perf.py --K 8192
 cd kernels/gemm/inter_wave/a4w4   && python collect_perf.py --version 1 --K 8192
 ```
 
-**Where the 8-wave lands vs the 4-wave** (v1.0 build): for **FP16**, 8-wave `v1` now edges the 4-wave `v9` by ~1.5% (1442 vs 1421 @ K=8192) — on the v1.0 build the 4-wave FP16 path sits at 1421. For **BF8**, the tuned 4-wave `llir+force-agpr+amdgcnas` leads (3232 vs 3094 @ K=16384). For **MXFP4**, `v1` (combined B-scale, the default) **beats the 4-wave *base*** at large K (4938 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, and the intra-stage `fence_loads` (PR #10840) lifts loop MFMA from ~57% (`v0`) to ~80%, TFLOPS +16–22%. The tuned 4-wave `llir+force-agpr+amdgcnas` (~5.2 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each `-8wave/README.md` for the full breakdown.
+**Where the 8-wave lands vs the 4-wave** (v1.0 build): for **FP16**, the 8-wave kernel now edges the 4-wave `v9` by ~1.5% (1442 vs 1421 @ K=8192) — on the v1.0 build the 4-wave FP16 path sits at 1421. For **BF8**, the tuned 4-wave `llir+force-agpr+amdgcnas` leads (3232 vs 3094 @ K=16384). For **MXFP4**, `v1` (combined B-scale, the default) **beats the 4-wave *base*** at large K (4938 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, and the intra-stage `fence_loads` (PR #10840) lifts loop MFMA from ~57% (`v0`) to ~80%, TFLOPS +16–22%. The tuned 4-wave `llir+force-agpr+amdgcnas` (~5.2 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each `-8wave/README.md` for the full breakdown.
 

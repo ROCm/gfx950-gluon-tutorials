@@ -26,8 +26,7 @@
 Collect VMEM-latency hardware counters for the 8-wave warp-pipeline GEMM.
 
 Reuses the tutorial's existing counter mechanism (scripts/run_counter_collection.py
-helpers) but targets the version selected by --version (v0_BK32_nS3 /
-v1_sliceMN_BK64_nS2).
+helpers), targeting the a16w16_kernel.
 
 Default counters answer "how long are the buffer_load / VMEM stalls":
   VmemLatency                  avg VMEM instruction latency (cycles), derived
@@ -38,7 +37,7 @@ Default counters answer "how long are the buffer_load / VMEM stalls":
 
 The kernels bake in the no-AGPR config (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
 so no env var is needed:
-  python collect_counters.py --version 0 --K 8192 --dtype fp16
+  python collect_counters.py --K 8192 --dtype fp16
 """
 
 import argparse
@@ -71,7 +70,6 @@ def parse_args():
     p = argparse.ArgumentParser(description="Collect VMEM-latency counters for the 8-wave kernel")
     p.add_argument("--K", type=int, default=8192)
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
-    p.add_argument("--version", type=int, default=0, choices=[0, 1])
     p.add_argument("--rotating-buffer-size", type=int, default=512)
     p.add_argument("--counters", default=DEFAULT_COUNTERS, help="comma-separated counter list")
     return p.parse_args()
@@ -80,10 +78,10 @@ def parse_args():
 def main():
     args = parse_args()
     counters = [c.strip() for c in args.counters.split(",")]
-    kernel_name = {0: "v0_BK32_nS3", 1: "v1_sliceMN_BK64_nS2"}[args.version]
+    kernel_name = "a16w16_kernel"
 
     print("=" * 70)
-    print(f"VMEM-latency counters — {kernel_name}  K={args.K} {args.dtype}  version={args.version}")
+    print(f"VMEM-latency counters — {kernel_name}  K={args.K} {args.dtype}")
     print("AGPR alloc: 0,0 (baked into kernel via llvm_fn_attrs)")
     print("=" * 70)
 
@@ -114,8 +112,6 @@ def main():
         str(args.K),
         "--dtype",
         args.dtype,
-        "--version",
-        str(args.version),
         "--rotating-buffer-size",
         str(args.rotating_buffer_size),
     ]

@@ -60,8 +60,7 @@ from run_perf_table import (  # noqa: E402
 )
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-VERSION_MAP = {1: "v1_sliceMN_BK128_nS2"}
-KERNEL_NAME = None  # set in main() from --version
+KERNEL_NAME = "a8w8_kernel"
 RUN_ATT = os.path.join(SCRIPTS_DIR, "run_att.py")
 
 # 8 waves across a CU's 4 SIMDs => 2 waves/SIMD. process_json.py measures a
@@ -84,13 +83,6 @@ def parse_args():
     p.add_argument("--M", type=int, default=4096, help="M dimension (default: 4096)")
     p.add_argument("--N", type=int, default=4096, help="N dimension (default: 4096)")
     p.add_argument("--rotating-buffer-size", type=int, default=512, help="MB (default: 512)")
-    p.add_argument(
-        "--version",
-        type=int,
-        default=1,
-        choices=sorted(VERSION_MAP),
-        help="Kernel version 1=v1_sliceMN_BK128_nS2 (default: 1)",
-    )
     p.add_argument("--skip-trace", action="store_true", help="Skip rocprof kernel-trace (TFLOPS)")
     p.add_argument("--skip-att", action="store_true", help="Skip ATT (MFMA efficiency)")
     return p.parse_args()
@@ -119,8 +111,6 @@ def run_kernel_trace(args):
         str(args.K),
         "--rotating-buffer-size",
         str(args.rotating_buffer_size),
-        "--version",
-        str(args.version),
     ]
     print(f"  rocprofv3 --kernel-trace: {KERNEL_NAME} K={args.K} ...")
     proc = subprocess.run(cmd, cwd=WORK_DIR, capture_output=True, text=True)
@@ -158,8 +148,6 @@ def run_att(args):
         "bench.py",
         "--K",
         str(args.K),
-        "--version",
-        str(args.version),
     ]
     print(f"  rocprofv3 --att (MFMA eff): {KERNEL_NAME} K={args.K} ...")
     env = os.environ.copy()
@@ -182,12 +170,8 @@ def run_att(args):
 
 def main():
     args = parse_args()
-    global KERNEL_NAME
-    KERNEL_NAME = VERSION_MAP[args.version]
     print("=" * 64)
-    print(
-        f"a8w8 8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} f8  (version={args.version}, {KERNEL_NAME})"
-    )
+    print(f"a8w8 8-wave warp-pipeline perf — {args.M}x{args.N}x{args.K} f8  ({KERNEL_NAME})")
     print("=" * 64)
 
     clean_caches(WORK_DIR)

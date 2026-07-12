@@ -30,27 +30,17 @@ Mirrors kernels/gemm/a16w16/bench.py: same --K / --dtype / --rocprof /
 mechanisms, so the tutorial's rocprof kernel-trace and ATT tooling can be
 pointed at this kernel (see collect_perf.py).
 
-Like a16w16/bench.py, --version selects the kernel (v0_BK32_nS3 /
-v1_sliceMN_BK64_nS2 subdirs). The only 8-wave-specific quirk: B is pre-transposed
-to (N, K) outside the timed region (kernel-only timing) since these kernels need
-K contiguous.
+The only 8-wave-specific quirk: B is pre-transposed to (N, K) outside the timed
+region (kernel-only timing) since these kernels need K contiguous.
 """
 
 import argparse
-import importlib
 
 import torch
 import triton
+from matmul_kernel import KERNEL_NAME, MIN_K, matmul_kernel_only
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
-
-# Versioned kernels live in subdirs, mirroring a16w16's v0_naive .. v9_beyond_hotloop.
-VERSION_MAP = {0: "v0_BK32_nS3", 1: "v1_sliceMN_BK64_nS2"}
-
-# Rebound in main() once the selected version module is imported.
-matmul_kernel_only = None
-MIN_K = None
-KERNEL_NAME = None
 
 name_to_torch_type = {"fp16": torch.float16, "bf16": torch.bfloat16}
 
@@ -125,13 +115,6 @@ def parse_args():
         default=512,
         help="Total size (MB) of rotating tensors (a, b, c) for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
-    )
-    parser.add_argument(
-        "--version",
-        type=int,
-        default=0,
-        choices=sorted(VERSION_MAP),
-        help="Kernel version: 0=v0_BK32_nS3, 1=v1_sliceMN_BK64_nS2. Default: 0",
     )
     return parser.parse_args()
 
@@ -221,15 +204,7 @@ def run_rocprof_iterations(dtypes, gemm_sizes, n_iters=1000, rotating_buffer_siz
 def main():
     args = parse_args()
 
-    # Select the kernel version (subdir) and rebind the globals the
-    # correctness/rotating/benchmark helpers use.
-    global matmul_kernel_only, MIN_K, KERNEL_NAME
-    version_dir = VERSION_MAP[args.version]
-    km = importlib.import_module(f"{version_dir}.matmul_kernel")
-    matmul_kernel_only = km.matmul_kernel_only
-    MIN_K = km.MIN_K
-    KERNEL_NAME = km.KERNEL_NAME
-    print(f"[8wave] version={args.version} ({version_dir})  kernel={KERNEL_NAME}")
+    print(f"[8wave] inter_wave/a16w16  kernel={KERNEL_NAME}")
 
     gemm_sizes = get_gemm_sizes(args.K)
     dtypes = get_dtypes(args.dtype)

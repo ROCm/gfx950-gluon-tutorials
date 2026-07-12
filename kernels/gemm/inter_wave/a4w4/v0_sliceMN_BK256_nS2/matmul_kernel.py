@@ -8,7 +8,7 @@
 v0_sliceMN_BK256_nS2 -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced.
 
 This is the a4w4 (4-bit, MXFP4/e2m1) analogue of
-inter_wave/a16w16/v1_sliceMN_BK64_nS2. The 8-wave skeleton -- 8 warps ([2,4] =
+inter_wave/a16w16. The 8-wave skeleton -- 8 warps ([2,4] =
 2 waves/SIMD), the 2x2 [128x128] quadrant slicing with four separate
 double-buffered LDS allocations, the warp_pipeline_stage wave-level schedule,
 no-AGPR, and the spill-free store-side pointer-walk epilogue -- is copied from

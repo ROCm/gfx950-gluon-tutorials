@@ -30,25 +30,15 @@ Mirrors kernels/gemm/inter_wave/a16w16/bench.py (same --K / --rocprof /
 mechanisms) but with BF8 (float8_e5m2) inputs and an fp16 output, matching the
 4-wave kernels/gemm/a8w8/bench.py numerics. B is pre-transposed to (N, K)
 contiguous outside the timed region since the kernel needs K contiguous.
-
---version selects the kernel subdir (only v1_sliceMN_BK128_nS2 exists here).
 """
 
 import argparse
-import importlib
 
 import torch
 import triton
+from matmul_kernel import KERNEL_NAME, MIN_K, matmul_kernel_only
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
-
-# Versioned kernels live in subdirs, mirroring the inter_wave/a16w16 layout.
-VERSION_MAP = {1: "v1_sliceMN_BK128_nS2"}
-
-# Rebound in main() once the selected version module is imported.
-matmul_kernel_only = None
-MIN_K = None
-KERNEL_NAME = None
 
 
 def get_x_vals():
@@ -96,13 +86,6 @@ def parse_args():
         default=512,
         help="Total size (MB) of rotating tensors (a, b, c) for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
-    )
-    parser.add_argument(
-        "--version",
-        type=int,
-        default=1,
-        choices=sorted(VERSION_MAP),
-        help="Kernel version: 1=v1_sliceMN_BK128_nS2. Default: 1",
     )
     return parser.parse_args()
 
@@ -184,13 +167,7 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
 def main():
     args = parse_args()
 
-    global matmul_kernel_only, MIN_K, KERNEL_NAME
-    version_dir = VERSION_MAP[args.version]
-    km = importlib.import_module(f"{version_dir}.matmul_kernel")
-    matmul_kernel_only = km.matmul_kernel_only
-    MIN_K = km.MIN_K
-    KERNEL_NAME = km.KERNEL_NAME
-    print(f"[inter_wave/a8w8] version={args.version} ({version_dir})  kernel={KERNEL_NAME}")
+    print(f"[inter_wave/a8w8] kernel={KERNEL_NAME}")
 
     gemm_sizes = get_gemm_sizes(args.K)
 

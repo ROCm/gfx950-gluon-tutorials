@@ -36,16 +36,16 @@ still has MFMA work ready to issue, and the matrix pipes stay busy. The scheme
 does **not** reduce raw memory latency; it hides it behind the *other group's*
 compute.
 
-In this tutorial the technique is realized by the two `inter_wave/a16w16` kernels.
-Both launch **8 warps/CTA**, which on a gfx950 CU (4 SIMDs) is **2 waves/SIMD** —
-exactly the two resident warps per SIMD the scheme needs to interleave. The
-phase split puts one of each SIMD's two warps in group A and the other in
-group B (one warp per SIMD per group, 4 warps per group):
+In this tutorial the technique is realized by the `inter_wave/a16w16` kernel (and
+its `a8w8` / `a4w4` siblings), which launch **8 warps/CTA** — on a gfx950 CU
+(4 SIMDs) that is **2 waves/SIMD**, exactly the two resident warps per SIMD the
+scheme needs to interleave. The phase split puts one of each SIMD's two warps in
+group A and the other in group B (one warp per SIMD per group, 4 warps per group):
 
-| Kernel | Loop shape | Notable for warp-pipelining |
+| Loop shape | Realized in | Notable for warp-pipelining |
 |---|---|---|
-| [`v0_BK32_nS3`](../kernels/gemm/inter_wave/a16w16/v0_BK32_nS3/README.md) | full 256×256 tile, triple-buffered ring | uses **relaxed** LDS loads to keep a memory fence out of the compute stage (§6) |
-| [`v1_sliceMN_BK64_nS2`](../kernels/gemm/inter_wave/a16w16/v1_sliceMN_BK64_nS2/README.md) | 2×2 quadrants, double-buffered | separate per-quadrant LDS allocations make the fence unnecessary (§6) |
+| 2×2 quadrants, double-buffered | [`inter_wave/a16w16`](../kernels/gemm/inter_wave/a16w16/README.md) (ships) | separate per-quadrant LDS allocations make the memory fence unnecessary (§6) |
+| full 256×256 tile, triple-buffered ring | an earlier prototype (not shipped) | needs **relaxed** LDS loads to keep a memory fence out of the compute stage (§6) |
 
 ## 2. Where warp-pipelining sits
 
@@ -162,7 +162,7 @@ from triton.experimental.gluon.language.amd import warp_pipeline_stage
 Each `with warp_pipeline_stage(name, priority=...)` block becomes one cluster.
 `name` ("mfma" / "mem" in these kernels) is a label; `priority` is an integer
 **0–3** that lowers to the hardware `s_setprio` hint (higher = more eagerly
-scheduled). The hot loop of [`v1_sliceMN_BK64_nS2`](../kernels/gemm/inter_wave/a16w16/v1_sliceMN_BK64_nS2/matmul_kernel.py)
+scheduled). The hot loop of [`inter_wave/a16w16`](../kernels/gemm/inter_wave/a16w16/matmul_kernel.py)
 alternates an MFMA cluster and a memory cluster per quadrant:
 
 ```python
@@ -274,21 +274,21 @@ fence and a local `ttg.barrier` only where an LDS dependency requires it.
 
 ### The tutorial's live example
 
-The two `inter_wave/a16w16` kernels are two different answers to this exact problem:
+There are two different answers to this exact problem:
 
-- **`v0_BK32_nS3`** drives its triple-buffered ring from a *single* LDS
-  allocation, reading `smem.index(k+1)` while a previous `index(k)` write is
-  still in flight. Triton's membar analysis cannot disambiguate sub-buffers of
-  one allocation, so it conservatively inserts a redundant `lgkmcnt(0)` +
-  `s_barrier` — a memory fence right where the compute stage wants to issue.
-  v0 dodges it by switching the LDS read to
-  `cdna4_async.load_shared_relaxed`, whose async-wait token the AMD `membarFilter`
-  recognizes and skips; that single change lifts per-SIMD MFMA efficiency from
-  ~79% to ~85% (see [v0 §3.1](../kernels/gemm/inter_wave/a16w16/v0_BK32_nS3/README.md#31-relaxed-local_load-to-drop-a-redundant-lds-barrier)).
-- **`v1_sliceMN_BK64_nS2`** sidesteps the problem structurally: its four quadrant
-  half-tiles live in four **separate** LDS allocations with distinct buffer IDs,
-  so the membar disambiguates the read-vs-refill by allocation and never inserts
-  the redundant fence in the first place. No relaxed-load trick needed.
+- **A full-tile triple-buffered ring** (an earlier prototype) drives its ring from
+  a *single* LDS allocation, reading `smem.index(k+1)` while a previous `index(k)`
+  write is still in flight. Triton's membar analysis cannot disambiguate sub-buffers
+  of one allocation, so it conservatively inserts a redundant `lgkmcnt(0)` +
+  `s_barrier` — a memory fence right where the compute stage wants to issue. It can
+  be dodged by switching the LDS read to `cdna4_async.load_shared_relaxed`, whose
+  async-wait token the AMD `membarFilter` recognizes and skips; that single change
+  lifted per-SIMD MFMA efficiency from ~79% to ~85%.
+- **The shipping [`inter_wave/a16w16`](../kernels/gemm/inter_wave/a16w16/README.md)
+  kernel** sidesteps the problem structurally: its four quadrant half-tiles live in
+  four **separate** LDS allocations with distinct buffer IDs, so the membar
+  disambiguates the read-vs-refill by allocation and never inserts the redundant
+  fence in the first place. No relaxed-load trick needed.
 
 Both are the same lesson from §6 in practice: a fence the analysis inserts for
 safety is, in a phase-shifted schedule, a performance hazard if it lands in the

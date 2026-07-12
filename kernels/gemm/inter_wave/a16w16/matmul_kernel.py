@@ -5,27 +5,15 @@
 ##############################################################################
 
 """
-v1_sliceMN_BK128_nS2 -- 8-wave warp-pipeline a8w8 (BF8/e5m2) GEMM, M/N-sliced.
+a16w16_kernel -- 8-wave warp-pipeline FP16/BF16 GEMM, M/N-sliced (sliceMN, BLOCK_K=64).
 
-This is the a8w8 (8-bit) analogue of inter_wave/a16w16/v1_sliceMN_BK64_nS2. The
-structure -- 8 warps ([2,4] = 2 waves/SIMD), the 2x2 [128x128] quadrant slicing
-with four separate double-buffered LDS allocations, the warp_pipeline_stage
-wave-level schedule, no-AGPR, and the spill-free store-side pointer-walk
-epilogue -- is copied verbatim from the fp16 8-wave kernel. Only the numerics
-change from 16-bit to 8-bit:
-
-  * operands are BF8 (float8_e5m2), 1 byte each;
-  * BLOCK_K = 128 (vs 64 for fp16), so the K-step packs the same 128 bytes /
-    row into LDS;
-  * MFMA is `mfma_scaled(..., "e5m2", ..., "e5m2")` with instr_shape
-    [16,16,128] and k_width=32 (vs mfma / [16,16,32] / k_width=8 for fp16);
-    scales are None (plain BF8 GEMM, no per-block scale);
-  * output C is fp16.
-
-The 8-wave global-load layouts are the 4-wave a8w8 layouts with one register
-base promoted to a third warp base (the extra warp dim, since warpsPerCTA goes
-[2,2] -> [2,4]). The padded shared layouts are warp-independent and reused
-verbatim from the 4-wave a8w8 kernel.
+BLOCK 256x256x64. The C tile is sliced into 4x [128x128] quadrants
+(C_tl/C_bl/C_tr/C_br = A_t/A_b x B_l/B_r), each its OWN double-buffered LDS
+allocation (smemA_top/bot, smemB_left/right) -- so the membar disambiguates the
+LR/GR buffers and non-relaxed smem.load() carries no extra barrier. K loop is
+unrolled 2x. This file is STEP 1: the sliceMN structure + 8-wave layouts copied
+from a16w16/v9 (with the warp dim extended 4->8), validated for correctness
+before the warp_pipeline_stage wrapping is added.
 """
 
 import torch
@@ -36,10 +24,11 @@ from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
 from triton.experimental.gluon.language.amd import warp_pipeline_stage
 from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
+from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
 
 BLOCK_M = 256
 BLOCK_N = 256
-BLOCK_K = 128
+BLOCK_K = 64
 
 NUM_WARPS = 8
 WARPS_M = 2
@@ -49,11 +38,11 @@ NUM_XCDS = 8
 GROUP_SIZE_M = 4
 
 MIN_K = 4 * BLOCK_K
-KERNEL_NAME = "v1_sliceMN_BK128_nS2"
+KERNEL_NAME = "a16w16_kernel"
 
 
 @gluon.jit
-def v1_sliceMN_BK128_nS2(
+def a16w16_kernel(
     a_ptr,
     b_ptr,
     c_ptr,  #
@@ -77,27 +66,27 @@ def v1_sliceMN_BK128_nS2(
 ):
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
-    # ---- 8-wave global-load layouts (4-wave a8w8 + 1 extra warp dim) ----
-    # A half-M tile [BLOCK_M//2, BLOCK_K] = [128, 128]; warps tile M (3 bits = 8 warps).
+    # ---- 8-wave global-load layouts (v9 4-wave + 1 extra warp dim) ----
+    # A half-M tile [BLOCK_M//2, BLOCK_K] = [128, 64]; warps tile M (3 bits = 8 warps).
     gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [8, 0]],
-        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
+        reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0]],
+        lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [64, 0]],
         warp_bases=[[1, 0], [2, 0], [4, 0]],
         block_bases=[],
         shape=[BLOCK_M // 2, BLOCK_K],
     )
-    # B half-N tile [BLOCK_K, BLOCK_N//2] = [128, 128]; warps tile N (3 bits = 8 warps).
+    # B half-N tile [BLOCK_K, BLOCK_N//2] = [64, 128]; warps tile N (3 bits = 8 warps).
     gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[1, 0], [2, 0], [4, 0], [8, 0], [0, 8]],
-        lane_bases=[[16, 0], [32, 0], [64, 0], [0, 16], [0, 32], [0, 64]],
+        reg_bases=[[1, 0], [2, 0], [4, 0], [0, 8]],
+        lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 64]],
         warp_bases=[[0, 1], [0, 2], [0, 4]],
         block_bases=[],
         shape=[BLOCK_K, BLOCK_N // 2],
     )
 
-    # ---- padded shared layouts (storage pattern; warp-independent, reused from 4-wave a8w8) ----
+    # ---- padded shared layouts (storage pattern; warp-independent, reused from v9) ----
     sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 16], [2048, 32]],
+        [[512, 16]],
         [
             [0, 1],
             [0, 2],
@@ -105,7 +94,6 @@ def v1_sliceMN_BK128_nS2(
             [0, 8],
             [0, 16],
             [0, 32],
-            [0, 64],
             [16, 0],
             [32, 0],
             [64, 0],
@@ -118,7 +106,7 @@ def v1_sliceMN_BK128_nS2(
         [BLOCK_M // 2, BLOCK_K],
     )
     sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 16], [2048, 32]],
+        [[512, 16]],
         [
             [1, 0],
             [2, 0],
@@ -126,7 +114,6 @@ def v1_sliceMN_BK128_nS2(
             [8, 0],
             [16, 0],
             [32, 0],
-            [64, 0],
             [0, 16],
             [0, 32],
             [0, 64],
@@ -141,12 +128,12 @@ def v1_sliceMN_BK128_nS2(
 
     mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
         version=4,
-        instr_shape=[16, 16, 128],
+        instr_shape=[16, 16, 32],
         transposed=True,
         warps_per_cta=[WARPS_M, WARPS_N],
     )
-    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=32)
-    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=32)
+    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
+    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
     nBuffers: gl.constexpr = 2
     smemA_top = gl.allocate_shared_memory(
@@ -220,7 +207,7 @@ def v1_sliceMN_BK128_nS2(
         # --- sub-iter 0 (buffer 0) ---
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_tl = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_left, None, "e5m2", acc_tl)
+            acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
         with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(0).load(dotOpLayoutA)
             cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_left_offsets)
@@ -228,7 +215,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_bl = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl)
+            acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
         with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(0).load(dotOpLayoutB)
             cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_top_offsets)
@@ -236,7 +223,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_tr = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_right, None, "e5m2", acc_tr)
+            acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
         with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(1).load(dotOpLayoutB)
             cdna4_async.buffer_load_to_shared(smemA_bot.index(0), a_base, a_bot_offsets)
@@ -244,7 +231,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_br = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_right, None, "e5m2", acc_br)
+            acc_br = mfma_cdna4(a_bot, b_right, acc_br)
         with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(1).load(dotOpLayoutA)
             cdna4_async.buffer_load_to_shared(smemB_right.index(0), b_base, b_right_offsets)
@@ -253,7 +240,7 @@ def v1_sliceMN_BK128_nS2(
         # --- sub-iter 1 (buffer 1, _next offsets) ---
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_tl = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_left, None, "e5m2", acc_tl)
+            acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
         with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(1).load(dotOpLayoutA)
             cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base, b_left_offsets_next)
@@ -261,7 +248,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_bl = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl)
+            acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
         with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(1).load(dotOpLayoutB)
             cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base, a_top_offsets_next)
@@ -269,7 +256,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_tr = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_right, None, "e5m2", acc_tr)
+            acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
         with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(0).load(dotOpLayoutB)
             cdna4_async.buffer_load_to_shared(smemA_bot.index(1), a_base, a_bot_offsets_next)
@@ -277,7 +264,7 @@ def v1_sliceMN_BK128_nS2(
 
         cdna4_async.wait_group(5)
         with warp_pipeline_stage("mfma", priority=0):
-            acc_br = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_right, None, "e5m2", acc_br)
+            acc_br = mfma_cdna4(a_bot, b_right, acc_br)
         with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(0).load(dotOpLayoutA)
             cdna4_async.buffer_load_to_shared(smemB_right.index(1), b_base, b_right_offsets_next)
@@ -289,9 +276,11 @@ def v1_sliceMN_BK128_nS2(
     gStoreLayoutC: gl.constexpr = gl.BlockedLayout([4, 8], [4, 16], [WARPS_M, WARPS_N], [1, 0])
     offs_cm = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
-    # Store-side pointer-walk: ONE shared within-quadrant offset tensor + four
-    # SCALAR base pointers, so a single [128x128] offset tensor stays live in the
-    # epilogue instead of four -- keeps the f32 accumulators from spilling.
+    # Store-side pointer-walk: ONE shared within-quadrant offset tensor (all four
+    # [128x128] quadrants have identical internal structure) + four SCALAR base
+    # pointers. This keeps a single offset tensor (~32 VGPR) live in the epilogue
+    # instead of four (~128 VGPR), which is what was evicting the live f32
+    # accumulators to scratch.
     c_quad_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
     c_tl_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
     c_bl_base = c_tl_base + (BLOCK_M // 2) * stride_cm
@@ -299,36 +288,39 @@ def v1_sliceMN_BK128_nS2(
     c_br_base = c_bl_base + (BLOCK_N // 2) * stride_cn
 
     # iter iterMax-2
-    acc_tl = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_left, None, "e5m2", acc_tl)
+    acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
     cdna4_async.wait_group(5)
     l_idx = (iterMax - 2) % 2
     a_bot = smemA_bot.index(l_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl)
+    acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
     cdna4_async.wait_group(4)
     b_right = smemB_right.index(l_idx).load(dotOpLayoutB)
 
-    acc_tr = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_right, None, "e5m2", acc_tr)
+    acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
     cdna4_async.wait_group(3)
     g_idx = 1 - l_idx
     b_left = smemB_left.index(g_idx).load(dotOpLayoutB)
 
-    acc_br = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_right, None, "e5m2", acc_br)
+    acc_br = mfma_cdna4(a_bot, b_right, acc_br)
     cdna4_async.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
-    # iter iterMax-1: complete ALL four accumulators FIRST, then convert + store,
-    # so the dot operands die before the store phase and nothing spills.
-    acc_tl = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_left, None, "e5m2", acc_tl)
+    # iter iterMax-1: complete ALL four accumulators FIRST, then convert + store.
+    # Finishing every mfma before the store phase lets the dot operands
+    # (a_top/a_bot/b_left/b_right, ~96 VGPR) die, so the store phase holds only the
+    # four f32 accumulators (+ one in-flight convert) -> the accumulators no longer
+    # get evicted to scratch.
+    acc_tl = mfma_cdna4(a_top, b_left, acc_tl)
     cdna4_async.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl)
+    acc_bl = mfma_cdna4(a_bot, b_left, acc_bl)
     cdna4_async.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
-    acc_tr = gl.amd.cdna4.mfma_scaled(a_top, None, "e5m2", b_right, None, "e5m2", acc_tr)
-    acc_br = gl.amd.cdna4.mfma_scaled(a_bot, None, "e5m2", b_right, None, "e5m2", acc_br)
+    acc_tr = mfma_cdna4(a_top, b_right, acc_tr)
+    acc_br = mfma_cdna4(a_bot, b_right, acc_br)
 
     c_tl = gl.convert_layout(acc_tl.to(c_ptr.dtype.element_ty), layout=gStoreLayoutC)
     gl.amd.cdna4.buffer_store(ptr=c_tl_base, offsets=c_quad_offsets, stored_value=c_tl)
@@ -341,14 +333,14 @@ def v1_sliceMN_BK128_nS2(
 
 
 def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-    """Kernel-only entry (b_t pre-transposed (N,K) contiguous, c pre-allocated fp16).
+    """Kernel-only entry (b_t pre-transposed (N,K) contiguous, c pre-allocated).
     The kernel sees B as logical (K,N) with K contiguous via the strides below."""
     M, K = a.shape
     N = b_t.shape[0]
     grid_m = triton.cdiv(M, BLOCK_M)
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
-    v1_sliceMN_BK128_nS2[(GRID_MN,)](
+    a16w16_kernel[(GRID_MN,)](
         a,
         b_t,
         c,
@@ -377,12 +369,11 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
 
 
 def matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor = None) -> torch.Tensor:
-    """C = A @ B. `a`,`b` are BF8 (e5m2); `b` is (K, N), transposed to (N, K)
-    contiguous for the kernel. Output C is fp16."""
+    """C = A @ B. `b` is (K, N); transposed to (N, K) contiguous for the kernel."""
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     M, K = a.shape
     N = b.shape[1]
     b_t = b.t().contiguous()
     if c is None:
-        c = torch.empty((M, N), device=a.device, dtype=torch.float16)
+        c = torch.empty((M, N), device=a.device, dtype=a.dtype)
     return matmul_kernel_only(a, b_t, c)

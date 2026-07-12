@@ -18,7 +18,7 @@ v0_sliceMN_BK256_nS2/
 ## 2. What this is
 
 The **MXFP4 (4-bit) port** of
-[`inter_wave/a16w16/v1_sliceMN_BK64_nS2`](../../a16w16/v1_sliceMN_BK64_nS2/README.md),
+[`inter_wave/a16w16`](../../a16w16/README.md),
 carrying the scale pipeline of the 4-wave
 [`a4w4/v1_sliceMN`](../../../intra_wave/a4w4/v1_sliceMN/README.md). The 256×256 output tile is split
 into a **2×2 grid of `[128×128]` quadrants**, each operand half-tile in its **own**

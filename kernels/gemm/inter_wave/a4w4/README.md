@@ -36,10 +36,10 @@ near-saturated variant for studying the MFMA-occupancy / clock trade.
 
 The 8-wave skeleton — 8 warps `[2,4]`, the 2×2 `[128×128]` quadrant slicing with four
 separate double-buffered LDS allocations, the `warp_pipeline_stage` ping-pong schedule,
-and no-AGPR — is the same as `inter_wave/a16w16/v1`. The MXFP4 numerics come from the 4-wave
+and no-AGPR — is the same as `inter_wave/a16w16`. The MXFP4 numerics come from the 4-wave
 `a4w4/v1_sliceMN`:
 
-| | `inter_wave/a16w16/v1` (16-bit) | **`inter_wave/a4w4` (4-bit)** |
+| | `inter_wave/a16w16` (16-bit) | **`inter_wave/a4w4` (4-bit)** |
 |---|---|---|
 | Operand dtype | fp16 / bf16 (2 B) | **packed FP4 / e2m1 (uint8, 2 nibbles/byte)** |
 | `BLOCK_K` | 64 | **256** (K//2 = 128 B / row into LDS) |
