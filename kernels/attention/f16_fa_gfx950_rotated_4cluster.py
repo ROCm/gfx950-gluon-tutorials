@@ -460,15 +460,15 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 def run_gluon_attention(q, k, v, o, metadata: MetaData):
     """Run gluon_attn_fwd on the given inputs and write output into o.
 
-    Simplified tutorial kernel: non-causal only, and the K sequence length must be
-    a multiple of BLOCK_N (64). Both hold for the tutorial's seqlen sweep.
+    Simplified tutorial kernel: non-causal only, the K sequence length must be a
+    multiple of BLOCK_N (64), and the head dim must be a power of two (so it can be
+    used directly as BLOCK_DMODEL with no padding). All hold for the tutorial.
     """
     assert not metadata.causal, "simplified FAV3 tutorial kernel supports non-causal only"
     assert metadata.max_seqlens_k % 64 == 0, "K seqlen must be a multiple of BLOCK_N (64)"
     batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q, k, metadata)
+    assert head_size & (head_size - 1) == 0, "head dim must be a power of two"
     q_strides, k_strides, v_strides, o_strides = get_strides_from_layout(q, k, v, o, metadata)
-
-    padded_d_model = max(1 << (head_size - 1).bit_length(), 16)
 
     M = torch.empty((batch, nheads_q, metadata.max_seqlens_q), device=q.device, dtype=torch.float32)
 
@@ -481,5 +481,5 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData):
         HQ=nheads_q, HK=nheads_k,
         SEQLEN_Q=metadata.max_seqlens_q, SEQLEN_K=metadata.max_seqlens_k,
         IS_CAUSAL=False,
-        BLOCK_DMODEL=padded_d_model,
+        BLOCK_DMODEL=head_size,
     )
