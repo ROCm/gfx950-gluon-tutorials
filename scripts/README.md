@@ -63,7 +63,7 @@ python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcna
 
 ### Configs
 
-Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
+Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
 
 - **base** — no extra env vars (default Triton scheduling)
 - **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so` + `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`

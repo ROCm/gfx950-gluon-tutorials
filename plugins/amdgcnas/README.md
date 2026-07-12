@@ -28,5 +28,5 @@ TRITON_AMDGCNAS_PLUGIN=1 \
 ```
 
 `scripts/run_perf_table.py` wires these into the tutorial's configs; see
-[gemm/README §2.1](../../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins)
+[gemm/README §2.1](../../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)
 for the component stack.

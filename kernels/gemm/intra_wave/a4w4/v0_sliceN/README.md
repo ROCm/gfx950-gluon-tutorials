@@ -221,7 +221,7 @@ Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 | llir+force-agpr          |   4927 |   492 |      0 |    79.70% |
 | llir+force-agpr+amdgcnas |   4921 |   496 |      0 |    81.00% |
 
-See the [gemm README section 2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
+See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
 **Effect of the LLIR scheduler**: v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and the scheduler alone spills 40 VGPRs, collapsing the kernel to 1454 TFLOPS / 21.52% MFMA efficiency. The interleaving itself is correct, but with a full register file every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip the scheduler cannot hide.
 
