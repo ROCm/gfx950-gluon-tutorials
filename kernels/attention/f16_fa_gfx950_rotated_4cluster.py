@@ -32,7 +32,6 @@ from triton.language.core import _aggregate as aggregate
 
 
 from f16_fa_gfx950_common import (
-    attn_fwd_inner,
     compute_dot1_qk,
     compute_dot2_pv,
     compute_softmax,
@@ -377,7 +376,6 @@ class AttentionInnerContext:
     ACTUAL_BLOCK_DMODEL: gl.constexpr
     NUM_STAGES: gl.constexpr
     IS_CAUSAL: gl.constexpr
-    PRE_LOAD_V: gl.constexpr
     VARLEN: gl.constexpr
     MMA_TYPE: gl.constexpr
     kt_blocked_layout: gl.constexpr
@@ -414,7 +412,7 @@ def get_gluon_cdna_autotune_configs():
     # Simplified tutorial baseline: the single most performant config for the
     # focus shape (D=128, non-causal). Full autotune space is in git history.
     return [
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'PRE_LOAD_V': False, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'NUM_STAGES': 4, 'waves_per_eu': 2}, num_warps=8),
     ]
 
 
@@ -440,7 +438,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
                    MAX_SEQLENS_Q: gl.constexpr, MAX_SEQLENS_K: gl.constexpr,
                    IS_CAUSAL: gl.constexpr,
                    BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr,
-                   PRE_LOAD_V: gl.constexpr,
                    MMA_TYPE: gl.constexpr, NUM_STAGES: gl.constexpr):
     """
     Gluon Flash Attention Forward Kernel (AMD CDNA4 / gfx950).
@@ -573,7 +570,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         MAX_SEQLENS_Q, MAX_SEQLENS_K, qk_scale,
         MAX_SEQLENS_Q, MAX_SEQLENS_K,
         BLOCK_M, BLOCK_N, BLOCK_DMODEL, ACTUAL_BLOCK_DMODEL,
-        NUM_STAGES, IS_CAUSAL, PRE_LOAD_V, False,
+        NUM_STAGES, IS_CAUSAL, False,
         MMA_TYPE, kt_blocked_layout, blocked_layout,
         kt_async_layout, v_async_layout,
         kt_dot_layout, p_dot_layout, v_dot_layout,
