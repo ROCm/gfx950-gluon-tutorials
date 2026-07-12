@@ -244,16 +244,18 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     block_start = 0
     block_end = n_blocks
 
-    # Invariant async-copy index vectors (the layout aranges); each tile folds
-    # start_n into (start_n + offs)*stride at the call site (as issue_async_load did).
+    # Fixed async-copy offset (intra-tile pattern) computed once; each tile loads
+    # from a base pointer advanced by a constant step, so the offset never changes.
     kt_ad: gl.constexpr = gl.SliceLayout(dim=1, parent=kt_async_layout)
     kt_an: gl.constexpr = gl.SliceLayout(dim=0, parent=kt_async_layout)
-    kt_offs_d = gl.arange(0, BLOCK_DMODEL, layout=kt_ad)
-    kt_offs_n = gl.arange(0, BLOCK_N, layout=kt_an)
+    kt_off = (gl.arange(0, BLOCK_DMODEL, layout=kt_ad)[:, None] * stride_kk
+              + gl.arange(0, BLOCK_N, layout=kt_an)[None, :] * stride_kn)
     v_an: gl.constexpr = gl.SliceLayout(dim=1, parent=v_async_layout)
     v_ad: gl.constexpr = gl.SliceLayout(dim=0, parent=v_async_layout)
-    v_offs_n = gl.arange(0, BLOCK_N, layout=v_an)
-    v_offs_d = gl.arange(0, BLOCK_DMODEL, layout=v_ad)
+    v_off = (gl.arange(0, BLOCK_N, layout=v_an)[:, None] * stride_vk
+             + gl.arange(0, BLOCK_DMODEL, layout=v_ad)[None, :] * stride_vn)
+    kt_step = BLOCK_N * stride_kn   # per-tile base pointer advance
+    v_step = BLOCK_N * stride_vk
 
     cdna4_async.wait_group(0)
 
@@ -275,12 +277,11 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     #
     # Commit order: K0, V0, K1, (barrier) K2, V1  ->  end pending {K2, V1},
     # matching the loop's steady-state entry condition.
-    b0 = block_start
-    cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base, kt_offs_d[:, None] * stride_kk + (((b0 + 0) * BLOCK_N) + kt_offs_n[None, :]) * stride_kn)
+    cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base, kt_off)
     cdna4_async.commit_group()  # ACK[0]
-    cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base, (((b0 + 0) * BLOCK_N) + v_offs_n[:, None]) * stride_vk + v_offs_d[None, :] * stride_vn)
+    cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base, v_off)
     cdna4_async.commit_group()   # ACV[0]
-    cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base, kt_offs_d[:, None] * stride_kk + (((b0 + 1) * BLOCK_N) + kt_offs_n[None, :]) * stride_kn)
+    cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + kt_step, kt_off)
     cdna4_async.commit_group()  # ACK[1]
 
     cdna4_async.wait_group(2)                                       # K[0] complete
@@ -289,11 +290,11 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     m_run, p_c, alpha_c = sc_vec1(qk, m_i, qk_scale)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
-    cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base, kt_offs_d[:, None] * stride_kk + (((b0 + 2) * BLOCK_N) + kt_offs_n[None, :]) * stride_kn)
+    cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base + 2 * kt_step, kt_off)
     cdna4_async.commit_group()  # ACK[2] (slot0 reuse)
     cdna4_async.wait_group(1)                                       # K[1] complete
     kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)                 # LRK[1] -> K regs tile 1
-    cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base, (((b0 + 1) * BLOCK_N) + v_offs_n[:, None]) * stride_vk + v_offs_d[None, :] * stride_vn)
+    cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + v_step, v_off)
     cdna4_async.commit_group()   # ACV[1]
 
     # -- Main loop (full rotated body) -------------------------------------
@@ -303,8 +304,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     for block_n in tl.range(block_start, block_end - 3):
         cur_slot = ((block_n - block_start) % BUF_DEPTH).to(tl.int32)
         nxt_slot = ((block_n + 1 - block_start) % BUF_DEPTH).to(tl.int32)
-        ack_n = ((block_n + 3) * BLOCK_N).to(tl.int32)
-        acv_n = ((block_n + 2) * BLOCK_N).to(tl.int32)
 
         # cluster 0 DOT1: dot_qk[i+1] (s1) then VEC2[i] (s0). dot_qk leads so
         # iglp.opt prefixes the MFMA.
@@ -318,7 +317,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # cluster 1 MEM1: LRV[i] (stage 0) then ACK[i+3] (stage 3).
         with warp_pipeline_stage("mem1", priority=1):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(cur_slot), v_dot_layout)               # LRV   s0
-            cdna4_async.buffer_load_to_shared(kt_smem.index(nxt_slot), k_base, kt_offs_d[:, None] * stride_kk + ((ack_n) + kt_offs_n[None, :]) * stride_kn)
+            cdna4_async.buffer_load_to_shared(kt_smem.index(nxt_slot), k_base + (block_n + 3) * kt_step, kt_off)
             cdna4_async.commit_group()  # ACK s3
 
         # cluster 2 DOT2: dot_pv[i] (s0) then VEC1[i+1] (s1: new max + exp2
@@ -332,7 +331,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # cluster 3 MEM2: LRK[i+2] (stage 2) then ACV[i+2] (stage 2).
         with warp_pipeline_stage("mem2", priority=1):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(cur_slot), kt_dot_layout)            # LRK   s2 -> K regs tile i+2
-            cdna4_async.buffer_load_to_shared(v_smem.index(cur_slot), v_base, ((acv_n) + v_offs_n[:, None]) * stride_vk + v_offs_d[None, :] * stride_vn)
+            cdna4_async.buffer_load_to_shared(v_smem.index(cur_slot), v_base + (block_n + 2) * v_step, v_off)
             cdna4_async.commit_group()   # ACV s2
 
     # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
@@ -354,7 +353,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-3]
     m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-2] -> m_new, p[n-2]
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
-    cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base, (((nm1 * BLOCK_N).to(tl.int32)) + v_offs_n[:, None]) * stride_vk + v_offs_d[None, :] * stride_vn)
+    cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base + nm1 * v_step, v_off)
     cdna4_async.commit_group()   # ACV[n-1]
     cdna4_async.wait_group(2)                                           # K[n-1] complete
     kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(s_nm1), kt_dot_layout)                 # LRK[n-1] -> K regs tile n-1
