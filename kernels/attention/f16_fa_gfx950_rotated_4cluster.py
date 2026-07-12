@@ -180,15 +180,6 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     """
     num_warps: gl.constexpr = gl.num_warps()
 
-    gl.assume(stride_qz >= 0); gl.assume(stride_qh >= 0)
-    gl.assume(stride_qm >= 0); gl.assume(stride_qk >= 0)
-    gl.assume(stride_kz >= 0); gl.assume(stride_kh >= 0)
-    gl.assume(stride_kn >= 0); gl.assume(stride_kk >= 0)
-    gl.assume(stride_vz >= 0); gl.assume(stride_vh >= 0)
-    gl.assume(stride_vk >= 0); gl.assume(stride_vn >= 0)
-    gl.assume(stride_oz >= 0); gl.assume(stride_oh >= 0)
-    gl.assume(stride_om >= 0); gl.assume(stride_on >= 0)
-
     off_h_q = gl.program_id(0)
     off_h_q = remap_xcd(off_h_q, HQ)
     start_m  = gl.program_id(1)
