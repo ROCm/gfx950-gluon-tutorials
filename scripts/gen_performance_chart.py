@@ -33,7 +33,8 @@ collected with:
         --configs base llir llir+force-agpr llir+force-agpr+amdgcnas \
         --K 8192 --dtype fp16 --rocprof --allow-unreported
 
-Run:  python gen_performance_chart.py   (writes performance_chart.png next to it)
+Run:  python scripts/gen_performance_chart.py
+      (writes kernels/gemm/intra_wave/a16w16/images/performance_chart.png)
 """
 
 import os
@@ -111,6 +112,17 @@ ax1.legend(handles=legend_handles, loc="upper left", fontsize=11)
 ax1.set_title("FP16 GEMM Performance on MI355 (4096×4096×8192)", fontsize=15, fontweight="bold")
 fig.tight_layout()
 
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "performance_chart.png")
+out = os.path.normpath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "kernels",
+        "gemm",
+        "intra_wave",
+        "a16w16",
+        "images",
+        "performance_chart.png",
+    )
+)
 fig.savefig(out, dpi=120, bbox_inches="tight")
 print(f"wrote {out}")

@@ -17,6 +17,3 @@ rocprof_*/
 att_matmul.json
 counters.yaml
 gpucore.*
-
-# local-only chart generator for the a16w16 perf bar chart
-kernels/gemm/a16w16/generate_perf_chart.py
