@@ -1,8 +1,14 @@
 # GEMM Kernels in Gluon
 
-This directory contains **high-performance GEMM kernels written in Gluon**, targeting **AMD MI350/355 GPUs** (gfx950).
+This directory contains high-performance GEMM kernels written in Gluon for AMD MI350/355 (gfx950).
 
-The goal is not just to provide fast kernels, but to **teach how to design, analyze, and optimize GEMM kernels** on AMD hardware—from memory layout to instruction scheduling.
+The objective of this repository is broader than implementing a fast GEMM.
+
+It explores a fundamental systems question:
+
+> **Where should scheduling intelligence live?**
+
+Once memory hierarchy and tiling are optimized, peak GEMM performance depends on overlapping MFMA execution with memory operations. This repository presents two different scheduling models that solve this problem.
 
 ## Directory Structure
 
@@ -33,18 +39,25 @@ gemm/
         └── v2_mfma32x32x64_BK256_nS2/     #   32×32×64 MFMA + conflict-free LDS layout
 ```
 
-Two routes to peak MFMA utilization on the *same* problems:
+## Two scheduling models
 
-- **4-wave** ([`intra_wave/`](intra_wave/README.md)) — one wave per SIMD; the compiler
-  interleaves MFMA + memory ops via the LLIR scheduler + force-agpr + amdgcnas. Build, run,
-  and the full FP16 → BF8 → MXFP4 walkthrough live in
-  [`intra_wave/README.md`](intra_wave/README.md).
-- **8-wave** ([`inter_wave/`](inter_wave/README.md)) — two waves per SIMD kept out of phase
-  (ping-pong) via wave-level `warp_pipeline_stage`, with no AGPRs and no env vars. See
-  [`inter_wave/README.md`](inter_wave/README.md).
+### Intra-wave scheduling
 
-New here? Start with [`intra_wave/a16w16/`](intra_wave/a16w16/) for the full step-by-step
-walkthrough.
+The **intra-wave** kernels — [`intra_wave/`](intra_wave/README.md) (`a16w16`, `a8w8`, `a4w4`) — launch **one wave per SIMD**.
+
+Memory instructions and MFMA instructions are interleaved within each wave. This relies on compiler assistance through `llirSched`, `force-agpr`, and `amdgcnas` to preserve the scheduling intent expressed by the Gluon kernel.
+
+These kernels demonstrate how compiler infrastructure can recover an efficient instruction schedule while keeping the kernel relatively straightforward. Build, run, and the full FP16 → BF8 → MXFP4 optimization journey are in [`intra_wave/README.md`](intra_wave/README.md).
+
+### Inter-wave scheduling
+
+The **inter-wave** kernels — [`inter_wave/`](inter_wave/README.md) (`a16w16`, `a8w8`, `a4w4`) — launch **two waves per SIMD**.
+
+Instead of relying on compiler instruction scheduling, the kernel itself organizes execution into alternating MFMA and memory stages. Different waves execute different stages simultaneously, allowing the hardware to overlap computation and data movement naturally.
+
+These kernels require little compiler assistance and run using upstream Triton and LLVM. See [`inter_wave/README.md`](inter_wave/README.md) for the design and per-kernel details.
+
+For a detailed discussion of these two scheduling models, see [`docs/scheduling_models.md`](../../docs/scheduling_models.md).
 
 ## Versions
 
@@ -109,13 +122,14 @@ where rocprofv3 7.0+ now defaults to a binary `.db` output, and
 6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
 and different CLI defaults, and are not supported by these scripts.
 
-## The two routes in depth
+## Learning path
 
-The build, run, and optimization details live in the per-route READMEs:
+This repository is organized as both a tutorial and a comparison of two system designs.
 
-- **4-wave (intra-wave)** — [`intra_wave/README.md`](intra_wave/README.md): the Triton build
-  + the out-of-tree plugins (llirSched / force-agpr / amdgcnas), running benchmarks, the
-  manual workflow, and the FP16 → BF8 → MXFP4 optimization journey.
-- **8-wave (inter-wave)** — [`inter_wave/README.md`](inter_wave/README.md): the
-  warp-pipeline design, the three kernels, their performance, and where the 8-wave lands
-  vs the 4-wave.
+For readers new to Gluon, we recommend the following path:
+
+1. Start with [`intra_wave/a16w16/`](intra_wave/a16w16/) to learn the optimization journey from a naive GEMM to a near-peak implementation.
+2. Continue with [`intra_wave/a8w8/`](intra_wave/a8w8/) and [`intra_wave/a4w4/`](intra_wave/a4w4/) to see how the same design extends to lower-precision kernels.
+3. Finally, study the [`inter_wave/`](inter_wave/README.md) kernels to compare an alternative scheduling model that reaches similar performance through a different system design.
+
+Together, these kernels illustrate two complementary approaches to building high-performance GPU software: moving scheduling intelligence into the compiler, or expressing it directly in the kernel structure.
