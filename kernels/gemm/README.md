@@ -81,21 +81,13 @@ cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run wi
 scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
 
-| Data Type | Shape           | Solution                    | TFLOPS | MFMA Eff. |
-|-----------|-----------------|-----------------------------|--------|-----------|
-| FP16      | 4096×4096×8192  | 4-wave (`intra_wave/a16w16` v9)        |   1421 |    98.66% |
-| FP16      | 4096×4096×8192  | 8-wave (`inter_wave/a16w16` v1)  |   1442 |    99.8%  |
-| BF16      | 4096×4096×8192  | 4-wave (`intra_wave/a16w16` v9)        |   1514 |    98.66% |
-| BF16      | 4096×4096×8192  | 8-wave (`inter_wave/a16w16` v1)  |   1534 |    99.8%  |
-| BF8       | 4096×4096×16384 | 4-wave (`intra_wave/a8w8`)             |   3232 |    99.52% |
-| BF8       | 4096×4096×16384 | 8-wave (`inter_wave/a8w8` v1)    |   3094 |    99.9%  |
-| MXFP4     | 4096×4096×32768 | 4-wave (`intra_wave/a4w4` v1)          |   5189 |    93.86% |
-| MXFP4     | 4096×4096×32768 | 8-wave (`inter_wave/a4w4` v1)    |   4938 |    80.0%  |
-| MXFP4     | 4096×4096×32768 | 8-wave (`inter_wave/a4w4` v2)    |   4799 |    98.0%  |
+![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
+
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the grey label under each value is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). MXFP4 8-wave shows **v1** (combined B-scale, 4938 TFLOPS / 80.0% MFMA); the alternate **v2** (32×32×64 MFMA) trades throughput for occupancy at **4799 / 98.0%**.
 
 > [!NOTE]
-> The **4-wave** rows are the `gfx950-tutorial-v1.0`-build numbers from
-> `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** rows
+> The **4-wave** bars are the `gfx950-tutorial-v1.0`-build numbers from
+> `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** bars
 > come from `collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
 > (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~6% above FP16** here despite the
 > nominally identical MFMA rate (a clock/power effect on this build, reproducible across runs).
