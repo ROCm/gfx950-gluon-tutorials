@@ -58,7 +58,12 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
     from triton import knobs
 
     knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
-from matmul_kernel import matmul
+
+# Put the shared kernels/gemm/utils/ on the path so the kernel's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+
+from matmul_kernel import matmul  # noqa: E402
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 

@@ -23,9 +23,12 @@
 ##############################################################################
 
 """
-Shared utilities for the 8-wave warp-pipeline GEMM kernels (gfx950 / CDNA4):
-the XCD-aware PID mapping (get_pids) and the masked store epilogue
-(store_result), used by every version under this directory.
+Shared Gluon device helpers for the gemm kernels.
+
+`get_pids` (XCD-aware PID remap + GROUP_SIZE_M swizzle) is used by both the
+4-wave (`intra_wave/`) and 8-wave (`inter_wave/`) kernels. Each kernel's
+`bench.py` puts this directory on `sys.path`, so a kernel can simply
+`from common import get_pids`.
 """
 
 from triton.experimental import gluon
@@ -35,26 +38,32 @@ from triton.experimental.gluon import language as gl
 @gluon.jit
 def get_pids(
     M,
-    N,  #
+    N,
     BM: gl.constexpr,
-    BN: gl.constexpr,  #
+    BN: gl.constexpr,
     GRID_MN: gl.constexpr,
     NUM_XCDS: gl.constexpr,
     GROUP_SIZE_M: gl.constexpr,
 ):
-    """XCD-aware PID remapping + GROUP_SIZE_M swizzle, copied verbatim from the
-    a16w16 v9 tutorial kernel (v9_beyond_hotloop). Active at any grid_mn."""
+    """XCD-aware PID remapping + GROUP_SIZE_M swizzle. Active at any grid_mn."""
     pid = gl.program_id(axis=0)
     num_pid_m = gl.cdiv(M, BM)
     num_pid_n = gl.cdiv(N, BN)
 
     if NUM_XCDS != 1:
         ## pid remapping on xcds
+        # Number of pids per XCD in the new arrangement
         pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS
+        # When GRID_MN cannot divide NUM_XCDS, some xcds will have
+        # pids_per_xcd pids, the other will have pids_per_xcd - 1 pids.
+        # We calculate the number of xcds that have pids_per_xcd pids as
+        # tall_xcds
         tall_xcds = GRID_MN % NUM_XCDS
         tall_xcds = NUM_XCDS if tall_xcds == 0 else tall_xcds
+        # Compute current XCD and local pid within the XCD
         xcd = pid % NUM_XCDS
         local_pid = pid // NUM_XCDS
+        # Calculate new pid based on the new grouping
         if xcd < tall_xcds:
             pid = xcd * pids_per_xcd + local_pid
         else:
@@ -72,32 +81,3 @@ def get_pids(
         pid_n = (pid % num_pid_in_group) // group_size_m
 
     return pid_m, pid_n
-
-
-@gluon.jit
-def store_result(
-    acc,
-    c_ptr,
-    c_dtype,  #
-    pid_m,
-    pid_n,
-    M,
-    N,  #
-    stride_cm,
-    stride_cn,  #
-    BLOCK_M: gl.constexpr,
-    BLOCK_N: gl.constexpr,  #
-    STORE_LAYOUT_C: gl.constexpr,
-):
-    """Convert accumulator and store to global memory with masking."""
-    c = acc.to(c_dtype)
-    c = gl.convert_layout(c, layout=STORE_LAYOUT_C)
-
-    offs_cm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, STORE_LAYOUT_C))
-    offs_cn = gl.arange(0, BLOCK_N, gl.SliceLayout(0, STORE_LAYOUT_C))
-
-    c_base = c_ptr + pid_m * BLOCK_M * stride_cm + pid_n * BLOCK_N * stride_cn
-    c_offsets = stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
-
-    c_mask = ((pid_m * BLOCK_M + offs_cm[:, None]) < M) & ((pid_n * BLOCK_N + offs_cn[None, :]) < N)
-    gl.amd.cdna4.buffer_store(ptr=c_base, offsets=c_offsets, stored_value=c, mask=c_mask)

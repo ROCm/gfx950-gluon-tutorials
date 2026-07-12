@@ -35,10 +35,17 @@ region (kernel-only timing) since these kernels need K contiguous.
 """
 
 import argparse
+import os
+import sys
 
 import torch
 import triton
-from matmul_kernel import KERNEL_NAME, MIN_K, matmul_kernel_only
+
+# Put the shared kernels/gemm/utils/ on the path so the kernel's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+
+from matmul_kernel import KERNEL_NAME, MIN_K, matmul_kernel_only  # noqa: E402
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 

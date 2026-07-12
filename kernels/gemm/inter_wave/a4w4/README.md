@@ -176,7 +176,7 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 
 ## 5. Files
 
-- `common.py` — shared `get_pids`, copied from `inter_wave/a16w16`.
+- `get_pids` is imported from the shared [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.mm`) + do_bench TFLOPS + `--rocprof`
   rotating-tensor mode, with the MXFP4 input generation from the 4-wave `a4w4/bench.py`.
 - `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +

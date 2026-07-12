@@ -177,8 +177,8 @@ patch needed, and it survives a Triton rebuild.
 
 - `matmul_kernel.py` — the kernel; exposes `a16w16_kernel` (the jit kernel),
   `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
-- `common.py` — shared `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) and
-  `store_result`.
+- `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) is imported from the shared
+  [`kernels/gemm/utils/common.py`](../../utils/common.py) (`bench.py` puts it on the path).
 - `bench.py` — correctness + do_bench TFLOPS + `--rocprof` rotating-tensor mode.
 - `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
   VGPR/spill.

@@ -99,8 +99,8 @@ Inputs are BF8 (`float8_e5m2`); the output is fp16. Drop `--K` to sweep all size
 
 - `matmul_kernel.py` — the kernel; exposes `a8w8_kernel` (the jit kernel),
   `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
-- `common.py` — shared `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle), copied
-  from `inter_wave/a16w16`.
+- `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) is imported from the shared
+  [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.matmul`) + do_bench TFLOPS + `--rocprof`
   rotating-tensor mode.
 - `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +

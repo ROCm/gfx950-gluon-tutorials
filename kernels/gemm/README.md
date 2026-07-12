@@ -14,6 +14,7 @@ Once memory hierarchy and tiling are optimized, peak GEMM performance depends on
 
 ```
 gemm/
+├── utils/                                # shared Gluon device helpers (get_pids), used by both routes
 ├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + force-agpr + amdgcnas)
 │   ├── a16w16/                            # FP16/BF16 — the v0→v9 optimization journey (start here)
 │   │   ├── v0_naive/                      #   baseline: explicit layouts, correctness-first

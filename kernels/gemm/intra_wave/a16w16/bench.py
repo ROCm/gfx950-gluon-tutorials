@@ -60,6 +60,10 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
     knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
 
+# Put the shared kernels/gemm/utils/ on the path so each version's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+
 VERSION_MAP = {
     0: "v0_naive",
     1: "v1_buffer_load",

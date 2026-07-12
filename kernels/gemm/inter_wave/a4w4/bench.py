@@ -33,9 +33,15 @@ bench.py. --version selects the kernel subdir (v0=sliceMN(byte-scale), v1=combin
 
 import argparse
 import importlib
+import os
+import sys
 
 import torch
 import triton
+
+# Put the shared kernels/gemm/utils/ on the path so each version's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 

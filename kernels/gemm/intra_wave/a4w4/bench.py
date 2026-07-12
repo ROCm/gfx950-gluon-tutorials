@@ -60,6 +60,10 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
     knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
 
+# Put the shared kernels/gemm/utils/ on the path so each version's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+
 # Map --version flag to subdirectory name. Each version directory exports a
 # `matmul(a_fp4, b_fp4, a_scales, b_scales)` callable from `matmul_kernel`.
 VERSION_MAP = {
