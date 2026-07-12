@@ -106,8 +106,15 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
 def get_gluon_cdna_autotune_configs():
     # Simplified tutorial baseline: the single most performant config for the
     # focus shape (D=128, non-causal). Full autotune space is in git history.
+    #
+    # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs (VGPR-only). By default
+    # the backend parks accumulators in 128 AGPRs and shuffles them with ~254
+    # v_accvgpr moves; those are hidden in the pipeline's slack, so disabling AGPRs
+    # is perf-neutral (~802 TFLOPS either way) but yields cleaner, AGPR-free asm.
+    # Tuple form is required: the string form would split the "0,0" value on the comma.
     return [
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2,
+                       'llvm_fn_attrs': (("amdgpu-agpr-alloc", "0,0"),)}, num_warps=8),
     ]
 
 
