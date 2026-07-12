@@ -1,9 +1,9 @@
-# v2_mfma32x32x64_BK256_nS2 — 8-wave MXFP4, 32×32×64 MFMA + conflict-free layout
+# v2_mfma32x32x64 — 8-wave MXFP4, 32×32×64 MFMA + conflict-free layout
 
 ## 1. Directory Structure
 
 ```
-v2_mfma32x32x64_BK256_nS2/
+v2_mfma32x32x64/
 ├── matmul_kernel.py    # The kernel implementation
 ├── images/             # Figures used in this README
 └── README.md           # This file
@@ -11,7 +11,7 @@ v2_mfma32x32x64_BK256_nS2/
 
 ## 2. What this is
 
-The [`v1_combineBsc`](../v1_combineBsc_BK256_nS2/README.md) kernel with the MFMA shape changed from
+The [`v1_combineBsc`](../v1_combineBsc/README.md) kernel with the MFMA shape changed from
 **16×16×128 → 32×32×64**, plus a **new LDS + global-load layout tuned to keep the wider read
 bank-conflict-free**. The 2×2 `[128×128]` sliceMN quadrants, combined B-scale transpose read,
 no-AGPR, and warp-pipeline are all unchanged. The changes:
@@ -34,7 +34,7 @@ dot_a_layout = gl.DotOperandLayout(..., k_width=16)                            #
 
 ## 3. Why 32×32×64 — the ds co-issue window
 
-See v1 [§5 "scaled MFMA vs the SP bus"](../v1_combineBsc_BK256_nS2/README.md#5-the-remaining-ds_read-stall--scaled-mfma-vs-the-sp-bus).
+See v1 [§5 "scaled MFMA vs the SP bus"](../v1_combineBsc/README.md#5-the-remaining-ds_read-stall--scaled-mfma-vs-the-sp-bus).
 A `mfma_scale_16x16x128` has only an **8-cyc compute window** and the next MFMA's `ld_scale` eats half
 → 1 free ds slot/MFMA → the SP bus serializes the reads. A `mfma_scale_32x32x64` is **36 cyc**: 4-cyc
 `ld_scale` + 8-cyc read + a **24-cyc compute window** = **5 free ds slots** — enough room to hide the

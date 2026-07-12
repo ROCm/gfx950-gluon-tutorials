@@ -1,16 +1,16 @@
-# v0_sliceMN_BK256_nS2 — 8-wave warp-pipeline MXFP4, M/N-sliced (BLOCK_K=256, 2-buffer)
+# v0_sliceMN — 8-wave warp-pipeline MXFP4, M/N-sliced (BLOCK_K=256, 2-buffer)
 
 > [!NOTE]
 > This is the **baseline**. It N-slices the B scale into `[128,8]` halves, which at 8 warps
 > forces the B-scale MFMA operand through per-byte `ds_read_u8` + `v_perm` reassembly (118
-> `v_perm` in the loop). [`v1_combineBsc_BK256_nS2`](../v1_combineBsc_BK256_nS2/README.md)
+> `v_perm` in the loop). [`v1_combineBsc`](../v1_combineBsc/README.md)
 > loads the B scale as one combined `[256,8]` so it transpose-reads with no `v_perm`, for
 > **+16–22% TFLOPS**. See the [family README §2](../README.md#2-the-b-scale-bottleneck-and-how-v1-fixes-it).
 
 ## 1. Directory Structure
 
 ```
-v0_sliceMN_BK256_nS2/
+v0_sliceMN/
 ├── matmul_kernel.py    # The kernel implementation
 └── README.md           # This file
 ```
@@ -102,7 +102,7 @@ The loop is spill-free and reaches ~57% loop MFMA efficiency — comparable to t
 base's ~61%. Unlike a16w16/a8w8, the 8-wave does **not** beat the tuned 4-wave for MXFP4:
 the loop is LDS/scale-throughput-bound rather than latency-bound, so the 8-wave's
 ping-pong latency-hiding has little to hide, while its halved VGPR budget is a real cost.
-See the [family README](../README.md#2-performance) for the full comparison.
+See the [family README](../README.md#3-performance) for the full comparison.
 
 ```bash
 # correctness + do_bench TFLOPS

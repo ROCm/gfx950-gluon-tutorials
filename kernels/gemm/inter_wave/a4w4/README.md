@@ -17,15 +17,15 @@ kernel versions, and the measured performance.
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
-| **v0** | [`v0_sliceMN_BK256_nS2`](v0_sliceMN_BK256_nS2/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3525 | 4064 | ~57% |
-| **v1** | [`v1_combineBsc_BK256_nS2`](v1_combineBsc_BK256_nS2/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4116** | **4938** | **~80%** |
-| **v2** | [`v2_mfma32x32x64_BK256_nS2`](v2_mfma32x32x64_BK256_nS2/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4114 | 4799 | **~98%** |
+| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3525 | 4064 | ~57% |
+| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4116** | **4938** | **~80%** |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4114 | 4799 | **~98%** |
 
 **v1 is the recommended version** (`--version 1`, the default): +16–22% TFLOPS over v0 at
 the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
 baseline that exposes the problem.
 
-**v2** ([`v2_mfma32x32x64_BK256_nS2`](v2_mfma32x32x64_BK256_nS2/README.md)) widens the MFMA
+**v2** ([`v2_mfma32x32x64`](v2_mfma32x32x64/README.md)) widens the MFMA
 **16×16×128 → 32×32×64** with a width-matched, bank-conflict-free LDS layout, lifting loop MFMA
 efficiency to **~98%** (spill-free). It is a **cycle-efficiency** result — the wider MFMAs are
 power-hungrier, so the GPU clock-throttles and wall-clock TFLOPS ends up **even with v1** (v1's
@@ -66,10 +66,10 @@ the 64-bit transpose-read width — so it degrades to **per-byte `ds_read_u8` + 
 byte-shuffle reassembly. In the real kernel that is **118 `v_perm` + 32 `ds_read_u8`**
 purely for the B scale, VALU work that stalls between MFMAs and inflates register pressure.
 
-**v0** ([`v0_sliceMN_BK256_nS2`](v0_sliceMN_BK256_nS2/README.md)) N-slices the B scale into
+**v0** ([`v0_sliceMN`](v0_sliceMN/README.md)) N-slices the B scale into
 `b_sc_left` / `b_sc_right` `[128,8]` halves like everything else, and pays this cost.
 
-**v1** ([`v1_combineBsc_BK256_nS2`](v1_combineBsc_BK256_nS2/README.md)) keeps the *tiles*
+**v1** ([`v1_combineBsc`](v1_combineBsc/README.md)) keeps the *tiles*
 M/N-sliced but loads the **full `[BLOCK_N, NG] = [256, 8]` B scale as ONE combined buffer**
 (both the async fill and the LDS read). At `[2,4]` the un-sliced `[256,8]` gives each thread
 **8 bytes = 64 bits**, so the read lowers to `ds_read_b64_tr_b8` with **no `v_perm`**.
@@ -131,7 +131,7 @@ v2 widens the MFMA and pairs it with a bank-conflict-free `[[1024, 16]]` LDS lay
 the GPU **frequency-throttles ~21%** — wall-clock TFLOPS is a **wash** with v1 (v1's higher
 datapath peak edges ahead at large, loop-dominated K). It is the [MFMA-efficiency
 caveat](../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is clock-independent,
-TFLOPS is not. Details in [`v2_mfma32x32x64_BK256_nS2/`](v2_mfma32x32x64_BK256_nS2/README.md).
+TFLOPS is not. Details in [`v2_mfma32x32x64/`](v2_mfma32x32x64/README.md).
 
 ### 3.2 `fence_loads` A/B
 
@@ -181,7 +181,7 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
   rotating-tensor mode, with the MXFP4 input generation from the 4-wave `a4w4/bench.py`.
 - `collect_perf.py` — rocprof kernel-trace TFLOPS (cold/rotating) + ATT MFMA efficiency +
   VGPR/spill.
-- `v0_sliceMN_BK256_nS2/` — baseline kernel (N-sliced B scale) + its README.
-- `v1_combineBsc_BK256_nS2/` — combined-B-scale kernel (recommended) + its README.
-- `v2_mfma32x32x64_BK256_nS2/` — 32×32×64 MFMA + conflict-free LDS layout variant + its README.
+- `v0_sliceMN/` — baseline kernel (N-sliced B scale) + its README.
+- `v1_combineBsc/` — combined-B-scale kernel (recommended) + its README.
+- `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout variant + its README.
   All three expose `matmul_kernel_only`, `matmul`, `MIN_K`, `KERNEL_NAME`.

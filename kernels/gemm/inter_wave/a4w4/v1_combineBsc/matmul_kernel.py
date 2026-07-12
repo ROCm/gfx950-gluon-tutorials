@@ -5,7 +5,7 @@
 ##############################################################################
 
 """
-v1_combineBsc_BK256_nS2 -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced
+v1_combineBsc -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced
 tiles + combined (un-N-sliced) B scale so the B scale is read with the hardware
 transpose (ds_read_b64_tr_b8) instead of byte-gather + v_perm.
 
@@ -60,7 +60,7 @@ GROUP_SIZE_M = 4
 SCALE_GROUP_SIZE = 32
 
 MIN_K = 4 * BLOCK_K
-KERNEL_NAME = "v1_combineBsc_BK256_nS2"
+KERNEL_NAME = "v1_combineBsc"
 
 
 @gluon.jit
@@ -78,7 +78,7 @@ def _bsc_load_split(
 
 
 @gluon.jit
-def v1_combineBsc_BK256_nS2(
+def v1_combineBsc(
     a_ptr,
     b_ptr,
     c_ptr,  #
@@ -625,7 +625,7 @@ def matmul_kernel_only(a, b, a_scales, b_scales, c):
     grid_m = triton.cdiv(M, BLOCK_M)
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
-    v1_combineBsc_BK256_nS2[(GRID_MN,)](
+    v1_combineBsc[(GRID_MN,)](
         a,
         b,
         c,

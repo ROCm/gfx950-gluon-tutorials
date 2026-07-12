@@ -15,7 +15,7 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 | | inter_wave/a16w16 | inter_wave/a8w8 | inter_wave/a4w4 |
 |---|---|---|---|
 | Data type | FP16 / BF16 | BF8 (e5m2) | MXFP4 (e2m1) |
-| Versions | *(single kernel)* | *(single kernel)* | `v0_sliceMN_BK256_nS2`, `v1_combineBsc_BK256_nS2`, `v2_mfma32x32x64_BK256_nS2` |
+| Versions | *(single kernel)* | *(single kernel)* | `v0_sliceMN`, `v1_combineBsc`, `v2_mfma32x32x64` |
 | Tile M×N×K | 256×256×64 | 256×256×128 | 256×256×256 |
 | MFMA | `mfma` `[16,16,32]` | `mfma_scaled` e5m2 `[16,16,128]` | `mfma_scaled` e2m1 `[16,16,128]` |
 | Scheduling | `warp_pipeline_stage`, no-AGPR | same | same |

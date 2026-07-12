@@ -34,9 +34,9 @@ gemm/
     ├── a16w16/                            # FP16/BF16 — 8-wave warp-pipeline (sliceMN, BLOCK_K=64) — single kernel
     ├── a8w8/                              # BF8 — 8-wave warp-pipeline (sliceMN, BLOCK_K=128) — single kernel
     └── a4w4/                              # MXFP4 — 8-wave warp-pipeline
-        ├── v0_sliceMN_BK256_nS2/          #   byte-shuffle B scale (baseline)
-        ├── v1_combineBsc_BK256_nS2/       #   combined transpose-read B scale (recommended)
-        └── v2_mfma32x32x64_BK256_nS2/     #   32×32×64 MFMA + conflict-free LDS layout
+        ├── v0_sliceMN/          #   byte-shuffle B scale (baseline)
+        ├── v1_combineBsc/       #   combined transpose-read B scale (recommended)
+        └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout
 ```
 
 ## Two scheduling models
@@ -83,9 +83,9 @@ for the full a16w16 narrative.
 | | `v1_sliceMN` | Scale pipeline | M+N slicing + direct-to-LDS async scales |
 | **`inter_wave/a16w16`** (FP16/BF16) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=64`, 2-buffer, 8-wave ping-pong |
 | **`inter_wave/a8w8`** (BF8) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=128`, 2-buffer, 8-wave ping-pong |
-| **`inter_wave/a4w4`** (MXFP4) | `v0_sliceMN_BK256_nS2` | Scale + pipeline | Byte-shuffle B scale (baseline) |
-| | `v1_combineBsc_BK256_nS2` | Scale + pipeline | Combined transpose-read B scale *(recommended)* |
-| | `v2_mfma32x32x64_BK256_nS2` | MFMA shape | 32×32×64 MFMA + conflict-free LDS layout |
+| **`inter_wave/a4w4`** (MXFP4) | `v0_sliceMN` | Scale + pipeline | Byte-shuffle B scale (baseline) |
+| | `v1_combineBsc` | Scale + pipeline | Combined transpose-read B scale *(recommended)* |
+| | `v2_mfma32x32x64` | MFMA shape | 32×32×64 MFMA + conflict-free LDS layout |
 
 ## Performance Summary
 

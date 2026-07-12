@@ -5,36 +5,32 @@
 ##############################################################################
 
 """
-v2_mfma32x32x64_BK256_nS2 -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced
-tiles + combined (un-N-sliced) B scale so the B scale is read with the hardware
-transpose (ds_read_b64_tr_b8) instead of byte-gather + v_perm.
+v0_sliceMN -- 8-wave warp-pipeline MXFP4 (a4w4) GEMM, M/N-sliced.
 
-Why v0's B scale degrades. v0 slices *everything* into the 2x2 [128x128] quadrant
-grid, including the B scale (b_sc_left / b_sc_right, each [128, 8]). At 8 warps N
-is tiled by WARPS_N=4 warps, so a [128, 8] B-scale half gives each thread only
-4 bytes -- below the 64-bit width of ds_read_b64_tr_b8 -- and the B scale
-degrades to per-byte ds_read_u8 + v_perm reassembly (the A scale, tiled by
-WARPS_M=2, is unaffected and keeps the transpose read).
+This is the a4w4 (4-bit, MXFP4/e2m1) analogue of
+inter_wave/a16w16. The 8-wave skeleton -- 8 warps ([2,4] =
+2 waves/SIMD), the 2x2 [128x128] quadrant slicing with four separate
+double-buffered LDS allocations, the warp_pipeline_stage wave-level schedule,
+no-AGPR, and the spill-free store-side pointer-walk epilogue -- is copied from
+the fp16 8-wave kernel. The MXFP4 numerics come from the 4-wave
+a4w4/v1_sliceMN kernel:
 
-The fix (hybrid slice): keep the *tiles* M/N-sliced, but load the FULL
-[BLOCK_N, NG] = [256, 8] B scale as ONE combined buffer (both the async
-global->LDS fill and the LDS->register read). At [2,4] the un-sliced [256, 8]
-gives each thread 8 bytes = 64 bits, so the local_load lowers to
-ds_read_b64_tr_b8 with no v_perm. get_mfma_scale_layout([256,8]) is exactly the
-per-quadrant get_mfma_scale_layout([128,8]) (== scale_b_layout) plus one extra
-register base [128,0], so a zero-cost split + convert_layout recovers the left
-(N in [0,128)) and right (N in [128,256)) [128, 8] halves that feed the
-left/right MFMA columns -- the same operands v0 uses.
+  * operands are packed FP4 (uint8, two e2m1 nibbles per byte), so the K-step
+    is BLOCK_K=256 logical = 128 bytes / row into LDS;
+  * every group of 32 e2m1 elements shares an 8-bit e8m0 scale. Each tile
+    carries a [128, 8] uint8 scale half-tile that streams straight into LDS
+    (buffer_load_to_shared, no ds_write) in the SAME commit group as its tile;
+  * MFMA is `mfma_scaled(..., a_format="e2m1", ..., b_format="e2m1")` with the
+    e8m0 scale operands, instr_shape [16,16,128], k_width=16;
+  * B is stored (N, K//2); the LDS tile is loaded with `.permute([1,0])` to
+    feed the MFMA as a logical (K, N) operand;
+  * output C is bf16.
 
-The async fill of the whole [256, 8] scale needs the right blocked layout. The
-scale is N-contiguous in HBM (b_scales is (K/32, N).T, strides (1, N)), and
-gfx950 direct-to-LDS cannot scatter: each warp's dword writes must land in ONE
-contiguous LDS run. With v0's [4,1],[32,2],[2,4] a warp spans 128 N x 2 K, and
-the two K groups are tileN=256 apart in LDS -> a 128-byte gap -> not coalesced
--> the load will not lower. So the B-scale fill uses [4,1],[64,1],[1,8]: each
-warp = 64 N-lanes x 1 K-lane covers 256 N x 1 K = one contiguous 256-byte
-K-column, and the 8 warps cover the 8 K groups. (v0's [128,8] halves happen to
-coalesce because there tileN=128 == the warp's N-span, so no gap.)
+The 8-wave global-load layouts are the 4-wave a4w4 layouts with one register
+base promoted to a third warp base (warpsPerCTA [2,2] -> [2,4]); the scale
+global-load blocked layout gains the extra warp along M. The padded shared tile
+layouts and the identity scale shared layout are warp-independent and reused
+verbatim from the 4-wave a4w4 kernel.
 """
 
 import torch
@@ -60,25 +56,11 @@ GROUP_SIZE_M = 4
 SCALE_GROUP_SIZE = 32
 
 MIN_K = 4 * BLOCK_K
-KERNEL_NAME = "v2_mfma32x32x64_BK256_nS2"
+KERNEL_NAME = "v0_sliceMN"
 
 
 @gluon.jit
-def _bsc_load_split(
-    smem_bsc, COMB: gl.constexpr, HALF: gl.constexpr, HN: gl.constexpr, NG: gl.constexpr
-):
-    """Read the combined [2*HN, NG] B scale from LDS with the hardware transpose
-    (8 bytes/thread at [2,4] -> ds_read_b64_tr_b8, no v_perm), then split it into
-    the two [HN, NG] N-halves (left, right) that feed the left/right MFMA columns.
-    The split is a register slice and the convert_layout (slice-enc -> linear
-    scale_b_layout) is free."""
-    sb = smem_bsc.load(COMB)  # [2*HN, NG] transpose read
-    left, right = gl.split(gl.permute(sb.reshape([2, HN, NG]), [1, 2, 0]))
-    return gl.convert_layout(left, HALF), gl.convert_layout(right, HALF)
-
-
-@gluon.jit
-def v2_mfma32x32x64_BK256_nS2(
+def v0_sliceMN(
     a_ptr,
     b_ptr,
     c_ptr,  #
@@ -107,39 +89,45 @@ def v2_mfma32x32x64_BK256_nS2(
     GROUP_SIZE_M: gl.constexpr,
 ):
     SCALE_GROUP_SIZE: gl.constexpr = 32
-    NG: gl.constexpr = BLOCK_K // SCALE_GROUP_SIZE  # scale groups along K = 8
-    HN: gl.constexpr = BLOCK_N // 2  # 128
 
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
     # ---- 8-wave global-load layouts (4-wave a4w4 + 1 extra warp dim) ----
+    # A half-M tile [BLOCK_M//2, BLOCK_K//2] = [128, 128] packed-FP4 bytes;
+    # warps tile M (3 bits = 8 warps).
     gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [16, 0]],
-        lane_bases=[[0, 16], [0, 32], [0, 64], [1, 0], [32, 0], [64, 0]],
-        warp_bases=[[2, 0], [4, 0], [8, 0]],
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [8, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
+        warp_bases=[[1, 0], [2, 0], [4, 0]],
         block_bases=[],
         shape=[BLOCK_M // 2, BLOCK_K // 2],
     )
+    # B half-N tile [BLOCK_N//2, BLOCK_K//2] = [128, 128]; warps tile N.
     gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [16, 0]],
-        lane_bases=[[0, 16], [0, 32], [0, 64], [1, 0], [32, 0], [64, 0]],
-        warp_bases=[[2, 0], [4, 0], [8, 0]],
+        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [8, 0]],
+        lane_bases=[[0, 16], [0, 32], [0, 64], [16, 0], [32, 0], [64, 0]],
+        warp_bases=[[1, 0], [2, 0], [4, 0]],
         block_bases=[],
         shape=[BLOCK_N // 2, BLOCK_K // 2],
     )
 
-    # ---- A scale global-load blocked layout (half tile = [128, 8] uint8) ----
-    # v0-style [4,1],[32,2],[2,4]: 256 dword-threads over-cover [128,8] by 2x.
-    blocked_a_scales: gl.constexpr = gl.BlockedLayout([4, 1], [32, 2], [2, 4], [0, 1])
-    # ---- B scale global-load blocked layout (FULL tile = [256, 8] uint8) ----
-    # Each warp = 64 N-lanes x 1 K-lane -> 256 N x 1 K = ONE contiguous 256-byte
-    # K-column; the 8 warps cover the 8 K groups. This is the layout that keeps the
-    # direct-to-LDS write coalesced for the whole [256,8] (see the module docstring).
-    blocked_b_scales: gl.constexpr = gl.BlockedLayout([4, 1], [64, 1], [1, 8], [0, 1])
+    # ---- scale global-load blocked layout (half tile = [128, 8] uint8) ----
+    # Keep 4 contiguous bytes/thread along M (order[0,1]) so the async copy to
+    # LDS lowers to a single `buffer_load_dword ... lds` (the LDS DMA needs dword
+    # granularity). The half-tile is only 1024 bytes = 256 dword-threads, but an
+    # 8-warp kernel spans 512 threads, so warpsPerCTA=[2,4] over-covers M by 2x:
+    # 256 threads issue the dword loads, the other 256 are masked. The 4-wave
+    # layout was [4,1],[32,2],[1,4]; only warpsPerCTA changes ([1,4]->[2,4]).
+    blocked_scales_half: gl.constexpr = gl.BlockedLayout(
+        [4, 1],
+        [32, 2],
+        [2, 4],
+        [0, 1],
+    )
 
     # ---- padded shared tile layouts (warp-independent, reused from 4-wave a4w4) ----
     sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 16]],
+        [[1024, 32]],
         [
             [0, 1],
             [0, 2],
@@ -148,19 +136,19 @@ def v2_mfma32x32x64_BK256_nS2(
             [0, 16],
             [0, 32],
             [0, 64],
-            [1, 0],
+            [16, 0],
             [32, 0],
             [64, 0],
+            [1, 0],
             [2, 0],
             [4, 0],
             [8, 0],
-            [16, 0],
         ],
         [],
         [BLOCK_M // 2, BLOCK_K // 2],
     )
     sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
-        [[1024, 16]],
+        [[1024, 32]],
         [
             [0, 1],
             [0, 2],
@@ -169,13 +157,13 @@ def v2_mfma32x32x64_BK256_nS2(
             [0, 16],
             [0, 32],
             [0, 64],
-            [1, 0],
+            [16, 0],
             [32, 0],
             [64, 0],
+            [1, 0],
             [2, 0],
             [4, 0],
             [8, 0],
-            [16, 0],
         ],
         [],
         [BLOCK_N // 2, BLOCK_K // 2],
@@ -184,7 +172,7 @@ def v2_mfma32x32x64_BK256_nS2(
 
     mfma_layout: gl.constexpr = gl.amd.AMDMFMALayout(
         version=4,
-        instr_shape=[32, 32, 64],
+        instr_shape=[16, 16, 128],
         transposed=True,
         warps_per_cta=[WARPS_M, WARPS_N],
     )
@@ -195,15 +183,10 @@ def v2_mfma32x32x64_BK256_nS2(
         operand_index=1, parent=mfma_layout, k_width=16
     )
     scale_a_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
-        dot_a_layout, [BLOCK_M // 2, NG]
+        dot_a_layout, [BLOCK_M // 2, BLOCK_K // SCALE_GROUP_SIZE]
     )
-    # Per-quadrant B-scale layout (mfma operand) and the combined full-N layout
-    # (== per-quadrant + one register base [128,0]) used for the transpose read.
     scale_b_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
-        dot_b_layout, [BLOCK_N // 2, NG]
-    )
-    scale_b_comb_layout: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(
-        dot_b_layout, [BLOCK_N, NG]
+        dot_b_layout, [BLOCK_N // 2, BLOCK_K // SCALE_GROUP_SIZE]
     )
 
     nBuffers: gl.constexpr = 2
@@ -220,17 +203,33 @@ def v2_mfma32x32x64_BK256_nS2(
         b_ptr.type.element_ty, [nBuffers, BLOCK_N // 2, BLOCK_K // 2], sharedLayoutB
     )
     smem_a_sc_t = gl.allocate_shared_memory(
-        a_scales_ptr.type.element_ty, [nBuffers, BLOCK_M // 2, NG], sharedScaleLayout
+        a_scales_ptr.type.element_ty,
+        [nBuffers, BLOCK_M // 2, BLOCK_K // SCALE_GROUP_SIZE],
+        sharedScaleLayout,
     )
     smem_a_sc_b = gl.allocate_shared_memory(
-        a_scales_ptr.type.element_ty, [nBuffers, BLOCK_M // 2, NG], sharedScaleLayout
+        a_scales_ptr.type.element_ty,
+        [nBuffers, BLOCK_M // 2, BLOCK_K // SCALE_GROUP_SIZE],
+        sharedScaleLayout,
     )
-    # Combined B scale: ONE [BLOCK_N, NG] = [256, 8] buffer per K-buffer.
-    smem_b_sc = gl.allocate_shared_memory(
-        b_scales_ptr.type.element_ty, [nBuffers, BLOCK_N, NG], sharedScaleLayout
+    smem_b_sc_l = gl.allocate_shared_memory(
+        b_scales_ptr.type.element_ty,
+        [nBuffers, BLOCK_N // 2, BLOCK_K // SCALE_GROUP_SIZE],
+        sharedScaleLayout,
+    )
+    smem_b_sc_r = gl.allocate_shared_memory(
+        b_scales_ptr.type.element_ty,
+        [nBuffers, BLOCK_N // 2, BLOCK_K // SCALE_GROUP_SIZE],
+        sharedScaleLayout,
     )
 
     # ---- load-side pointer-walk offsets ----
+    # All four A/B quadrants (and both K-buffers) share ONE within-tile offset
+    # tensor; the top/bot, left/right, and even/odd(_next) variants are reached
+    # by adding SCALAR deltas to the (uniform) base pointer instead of holding a
+    # separate [128x128] offset tensor per variant. This keeps the four f32
+    # accumulators resident under the 256-VGPR (2 waves/SIMD) budget: 8 tile +
+    # 8 scale offset tensors -> 2 tile + 2 scale offset tensors.
     offs_am = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gLoadLayoutA))
     offs_ak = gl.arange(0, BLOCK_K // 2, gl.SliceLayout(0, gLoadLayoutA))
     a_tile_offsets = offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
@@ -241,15 +240,16 @@ def v2_mfma32x32x64_BK256_nS2(
     b_tile_offsets = offs_bn[:, None] * stride_bn + offs_bk[None, :] * stride_bk
     b_base = b_ptr + pid_n * BLOCK_N * stride_bn
 
-    offs_ks_a = gl.arange(0, NG, gl.SliceLayout(0, blocked_a_scales))
+    offs_ks_a = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales_half))
     offs_asm = (
-        pid_m * BLOCK_M + gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, blocked_a_scales))
+        pid_m * BLOCK_M + gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, blocked_scales_half))
     ) % M
     a_sc_offsets = offs_asm[:, None] * stride_asm + offs_ks_a[None, :] * stride_ask
 
-    # B scale offsets cover the FULL N tile ([256, 8]) in one async copy.
-    offs_ks_b = gl.arange(0, NG, gl.SliceLayout(0, blocked_b_scales))
-    offs_bsn = (pid_n * BLOCK_N + gl.arange(0, BLOCK_N, gl.SliceLayout(1, blocked_b_scales))) % N
+    offs_ks_b = gl.arange(0, BLOCK_K // SCALE_GROUP_SIZE, gl.SliceLayout(0, blocked_scales_half))
+    offs_bsn = (
+        pid_n * BLOCK_N + gl.arange(0, BLOCK_N // 2, gl.SliceLayout(1, blocked_scales_half))
+    ) % N
     b_sc_offsets = offs_bsn[:, None] * stride_bsn + offs_ks_b[None, :] * stride_bsk
 
     # Scalar (uniform) base-pointer deltas for the quadrant / K-buffer variants.
@@ -258,8 +258,9 @@ def v2_mfma32x32x64_BK256_nS2(
     a_k2 = (BLOCK_K // 2) * stride_ak  # even -> odd (_next) K-step
     b_k2 = (BLOCK_K // 2) * stride_bk
     a_sc_half_m = (BLOCK_M // 2) * stride_asm
-    a_sc_k = NG * stride_ask
-    b_sc_k = NG * stride_bsk
+    b_sc_half_n = (BLOCK_N // 2) * stride_bsn
+    a_sc_k = (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask
+    b_sc_k = (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk
 
     acc_tl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfma_layout)
     acc_bl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfma_layout)
@@ -268,11 +269,9 @@ def v2_mfma32x32x64_BK256_nS2(
 
     iterMax = gl.cdiv(K, BLOCK_K)
 
-    # ---- Prologue: prefetch K-steps 0,1 into buffers 0,1 (8 commits) ----
-    # The combined B scale rides in the B_left commit group; the B_right group is
-    # now tile-only (its scale is covered by the combined load).
+    # ---- Prologue: prefetch K-steps 0,1 into buffers 0,1 (8 commits, tile+scale each) ----
     cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_tile_offsets)
-    cdna4_async.buffer_load_to_shared(smem_b_sc.index(0), b_scales_ptr, b_sc_offsets)
+    cdna4_async.buffer_load_to_shared(smem_b_sc_l.index(0), b_scales_ptr, b_sc_offsets)
     cdna4_async.commit_group()
     cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_tile_offsets)
     cdna4_async.buffer_load_to_shared(smem_a_sc_t.index(0), a_scales_ptr, a_sc_offsets)
@@ -283,10 +282,13 @@ def v2_mfma32x32x64_BK256_nS2(
     )
     cdna4_async.commit_group()
     cdna4_async.buffer_load_to_shared(smemB_right.index(0), b_base + b_half_n, b_tile_offsets)
+    cdna4_async.buffer_load_to_shared(
+        smem_b_sc_r.index(0), b_scales_ptr + b_sc_half_n, b_sc_offsets
+    )
     cdna4_async.commit_group()
 
     cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base + b_k2, b_tile_offsets)
-    cdna4_async.buffer_load_to_shared(smem_b_sc.index(1), b_scales_ptr + b_sc_k, b_sc_offsets)
+    cdna4_async.buffer_load_to_shared(smem_b_sc_l.index(1), b_scales_ptr + b_sc_k, b_sc_offsets)
     cdna4_async.commit_group()
     cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base + a_k2, a_tile_offsets)
     cdna4_async.buffer_load_to_shared(smem_a_sc_t.index(1), a_scales_ptr + a_sc_k, a_sc_offsets)
@@ -299,20 +301,21 @@ def v2_mfma32x32x64_BK256_nS2(
     cdna4_async.buffer_load_to_shared(
         smemB_right.index(1), b_base + b_half_n + b_k2, b_tile_offsets
     )
+    cdna4_async.buffer_load_to_shared(
+        smem_b_sc_r.index(1), b_scales_ptr + b_sc_half_n + b_sc_k, b_sc_offsets
+    )
     cdna4_async.commit_group()
 
     a_base += (BLOCK_K // 2) * stride_ak * 2
     b_base += (BLOCK_K // 2) * stride_bk * 2
-    a_scales_ptr += NG * stride_ask * 2
-    b_scales_ptr += NG * stride_bsk * 2
+    a_scales_ptr += (BLOCK_K // SCALE_GROUP_SIZE) * stride_ask * 2
+    b_scales_ptr += (BLOCK_K // SCALE_GROUP_SIZE) * stride_bsk * 2
 
     cdna4_async.wait_group(6)
     b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
+    b_sc_left = smem_b_sc_l.index(0).load(scale_b_layout)
     a_top = smemA_top.index(0).load(dot_a_layout)
     a_sc_top = smem_a_sc_t.index(0).load(scale_a_layout)
-    b_sc_left, b_sc_right = _bsc_load_split(
-        smem_b_sc.index(0), scale_b_comb_layout, scale_b_layout, HN, NG
-    )
 
     gl.assume(iterMax > 3)
 
@@ -330,11 +333,11 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_tl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(0).load(dot_a_layout)
             a_sc_bot = smem_a_sc_b.index(0).load(scale_a_layout)
             cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_tile_offsets)
-            cdna4_async.buffer_load_to_shared(smem_b_sc.index(0), b_scales_ptr, b_sc_offsets)
+            cdna4_async.buffer_load_to_shared(smem_b_sc_l.index(0), b_scales_ptr, b_sc_offsets)
             cdna4_async.commit_group()
 
         cdna4_async.wait_group(5)
@@ -348,8 +351,9 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_bl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(0).permute([1, 0]).load(dot_b_layout)
+            b_sc_right = smem_b_sc_r.index(0).load(scale_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(smem_a_sc_t.index(0), a_scales_ptr, a_sc_offsets)
             cdna4_async.commit_group()
@@ -365,8 +369,9 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_tr,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(1).permute([1, 0]).load(dot_b_layout)
+            b_sc_left = smem_b_sc_l.index(1).load(scale_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_bot.index(0), a_base + a_half_m, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(
                 smem_a_sc_b.index(0), a_scales_ptr + a_sc_half_m, a_sc_offsets
@@ -384,14 +389,14 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_br,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(1).load(dot_a_layout)
             a_sc_top = smem_a_sc_t.index(1).load(scale_a_layout)
-            b_sc_left, b_sc_right = _bsc_load_split(
-                smem_b_sc.index(1), scale_b_comb_layout, scale_b_layout, HN, NG
-            )
             cdna4_async.buffer_load_to_shared(
                 smemB_right.index(0), b_base + b_half_n, b_tile_offsets
+            )
+            cdna4_async.buffer_load_to_shared(
+                smem_b_sc_r.index(0), b_scales_ptr + b_sc_half_n, b_sc_offsets
             )
             cdna4_async.commit_group()
 
@@ -407,12 +412,12 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_tl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(1).load(dot_a_layout)
             a_sc_bot = smem_a_sc_b.index(1).load(scale_a_layout)
             cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base + b_k2, b_tile_offsets)
             cdna4_async.buffer_load_to_shared(
-                smem_b_sc.index(1), b_scales_ptr + b_sc_k, b_sc_offsets
+                smem_b_sc_l.index(1), b_scales_ptr + b_sc_k, b_sc_offsets
             )
             cdna4_async.commit_group()
 
@@ -427,8 +432,9 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_bl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(1).permute([1, 0]).load(dot_b_layout)
+            b_sc_right = smem_b_sc_r.index(1).load(scale_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base + a_k2, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(
                 smem_a_sc_t.index(1), a_scales_ptr + a_sc_k, a_sc_offsets
@@ -446,8 +452,9 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_tr,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
+            b_sc_left = smem_b_sc_l.index(0).load(scale_b_layout)
             cdna4_async.buffer_load_to_shared(
                 smemA_bot.index(1), a_base + a_half_m + a_k2, a_tile_offsets
             )
@@ -467,14 +474,14 @@ def v2_mfma32x32x64_BK256_nS2(
                 b_format="e2m1",
                 acc=acc_br,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(0).load(dot_a_layout)
             a_sc_top = smem_a_sc_t.index(0).load(scale_a_layout)
-            b_sc_left, b_sc_right = _bsc_load_split(
-                smem_b_sc.index(0), scale_b_comb_layout, scale_b_layout, HN, NG
-            )
             cdna4_async.buffer_load_to_shared(
                 smemB_right.index(1), b_base + b_half_n + b_k2, b_tile_offsets
+            )
+            cdna4_async.buffer_load_to_shared(
+                smem_b_sc_r.index(1), b_scales_ptr + b_sc_half_n + b_sc_k, b_sc_offsets
             )
             cdna4_async.commit_group()
             a_base += a_k2 * 2
@@ -492,7 +499,7 @@ def v2_mfma32x32x64_BK256_nS2(
     c_tr_base = c_tl_base + (BLOCK_N // 2) * stride_cn
     c_br_base = c_bl_base + (BLOCK_N // 2) * stride_cn
 
-    # iter iterMax-2 (b_sc_left/right for this step were prefetched at loop tail)
+    # iter iterMax-2
     acc_tl = gl.amd.cdna4.mfma_scaled(
         a=a_top,
         a_scale=a_sc_top,
@@ -518,6 +525,7 @@ def v2_mfma32x32x64_BK256_nS2(
     )
     cdna4_async.wait_group(4)
     b_right = smemB_right.index(l_idx).permute([1, 0]).load(dot_b_layout)
+    b_sc_right = smem_b_sc_r.index(l_idx).load(scale_b_layout)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
         a=a_top,
@@ -531,6 +539,7 @@ def v2_mfma32x32x64_BK256_nS2(
     cdna4_async.wait_group(3)
     g_idx = 1 - l_idx
     b_left = smemB_left.index(g_idx).permute([1, 0]).load(dot_b_layout)
+    b_sc_left = smem_b_sc_l.index(g_idx).load(scale_b_layout)
 
     acc_br = gl.amd.cdna4.mfma_scaled(
         a=a_bot,
@@ -544,11 +553,9 @@ def v2_mfma32x32x64_BK256_nS2(
     cdna4_async.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dot_a_layout)
     a_sc_top = smem_a_sc_t.index(g_idx).load(scale_a_layout)
-    b_sc_left, b_sc_right = _bsc_load_split(
-        smem_b_sc.index(g_idx), scale_b_comb_layout, scale_b_layout, HN, NG
-    )
 
-    # iter iterMax-1: complete ALL four accumulators FIRST, then convert + store.
+    # iter iterMax-1: complete ALL four accumulators FIRST, then convert + store,
+    # so the dot/scale operands die before the store phase and nothing spills.
     acc_tl = gl.amd.cdna4.mfma_scaled(
         a=a_top,
         a_scale=a_sc_top,
@@ -573,6 +580,7 @@ def v2_mfma32x32x64_BK256_nS2(
     )
     cdna4_async.wait_group(0)
     b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
+    b_sc_right = smem_b_sc_r.index(g_idx).load(scale_b_layout)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
         a=a_top,
@@ -625,7 +633,7 @@ def matmul_kernel_only(a, b, a_scales, b_scales, c):
     grid_m = triton.cdiv(M, BLOCK_M)
     grid_n = triton.cdiv(N, BLOCK_N)
     GRID_MN = grid_m * grid_n
-    v2_mfma32x32x64_BK256_nS2[(GRID_MN,)](
+    v0_sliceMN[(GRID_MN,)](
         a,
         b,
         c,

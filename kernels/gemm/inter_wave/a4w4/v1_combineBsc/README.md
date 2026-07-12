@@ -1,9 +1,9 @@
-# v1_combineBsc_BK256_nS2 — 8-wave MXFP4, combined B-scale (transpose-read)
+# v1_combineBsc — 8-wave MXFP4, combined B-scale (transpose-read)
 
 ## 1. Directory Structure
 
 ```
-v1_combineBsc_BK256_nS2/
+v1_combineBsc/
 ├── matmul_kernel.py    # The kernel implementation
 └── README.md           # This file
 ```
@@ -11,12 +11,12 @@ v1_combineBsc_BK256_nS2/
 ## 2. What this is
 
 The same 8-wave warp-pipeline MXFP4 kernel as
-[`v0_sliceMN_BK256_nS2`](../v0_sliceMN_BK256_nS2/README.md) — 2×2 `[128×128]` quadrants,
+[`v0_sliceMN`](../v0_sliceMN/README.md) — 2×2 `[128×128]` quadrants,
 `warp_pipeline_stage` ping-pong, no-AGPR, load-side pointer-walk — with **one change: the
 B scale is loaded combined instead of N-sliced**, so it reaches the MFMA via the hardware
 transpose read (`ds_read_b64_tr_b8`) instead of per-byte `ds_read_u8` + `v_perm`.
 
-Read [`v0`'s README](../v0_sliceMN_BK256_nS2/README.md) and the
+Read [`v0`'s README](../v0_sliceMN/README.md) and the
 [family README §2](../README.md#2-the-b-scale-bottleneck-and-how-v1-fixes-it) first — this
 document only covers the B-scale delta.
 
