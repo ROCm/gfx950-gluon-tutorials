@@ -93,11 +93,13 @@ def radar(version, scores, out_png):
     # "optimal" reference envelope (all HI), dashed grey
     ax.plot(closed, np.full(n + 1, HI), color="#9aa4b0", lw=1.2, ls=(0, (4, 3)))
 
-    # fill colour by mean maturity (red = immature -> green = mature)
+    # fill colour by mean maturity (red = immature -> green = mature); darken the
+    # map because RdYlGn's mid-range is a pale yellow that washes out.
     mean = float(np.mean(scores))
-    color = cm.RdYlGn((mean - LO) / (HI - LO))
+    rgb = np.asarray(cm.RdYlGn((mean - LO) / (HI - LO)))[:3] * 0.78
+    color = (*rgb, 1.0)
     ax.plot(closed, vals, color=color, lw=2.2)
-    ax.fill(closed, vals, color=color, alpha=0.30)
+    ax.fill(closed, vals, color=color, alpha=0.38)
     ax.plot(ang, scores, "o", color=color, ms=5)
 
     # A rough visual (polygon size vs the dashed optimal envelope) — no numeric
