@@ -1,5 +1,14 @@
 # v5_local_prefetch — 3-Stage Pipeline with Local Prefetch
 
+<p align="center">
+  <img src="../v4_global_prefetch/images/maturity_radar.png" alt="v4_global_prefetch optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v5_local_prefetch optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v4_global_prefetch`), right = this version (`v5_local_prefetch`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 ## 1. Directory Structure
 
 ```

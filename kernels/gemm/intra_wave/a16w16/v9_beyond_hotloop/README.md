@@ -1,5 +1,14 @@
 # v9_beyond_hotloop — Optimizations Beyond the Hot Loop
 
+<p align="center">
+  <img src="../v8_sliceMN/images/maturity_radar.png" alt="v8_sliceMN optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v9_beyond_hotloop optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v8_sliceMN`), right = this version (`v9_beyond_hotloop`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 ## 1. Directory Structure
 
 ```

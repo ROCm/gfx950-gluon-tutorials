@@ -1,5 +1,14 @@
 # v1_buffer_load — Buffer Operations
 
+<p align="center">
+  <img src="../v0_naive/images/maturity_radar.png" alt="v0_naive optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v1_buffer_load optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v0_naive`), right = this version (`v1_buffer_load`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 This version replaces `global_load` with `buffer_load` to improve codegen quality for masked loads.
 
 ## 1. Directory Structure

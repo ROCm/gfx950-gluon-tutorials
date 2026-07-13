@@ -1,5 +1,14 @@
 # v3_lds — Designing and Evaluating LDS Data Layouts
 
+<p align="center">
+  <img src="../v2_async_copy/images/maturity_radar.png" alt="v2_async_copy optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v3_lds optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v2_async_copy`), right = this version (`v3_lds`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 > [!NOTE]
 > **Prerequisites:** Before proceeding, read [Understanding `ds_read` Throughput](../../../../../docs/lds_throughput.md).
 > This is the first version where LDS throughput dominates the analysis, and the mental model that doc builds — steady-state service rate, the SP-to-LDS FIFO, bank conflicts — is used throughout the rest of this tutorial. It is not optional reading.

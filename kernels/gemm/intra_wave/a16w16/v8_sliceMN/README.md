@@ -1,5 +1,14 @@
 # v8_sliceMN — Slicing Both M and N
 
+<p align="center">
+  <img src="../v7_sliceN/images/maturity_radar.png" alt="v7_sliceN optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v8_sliceMN optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v7_sliceN`), right = this version (`v8_sliceMN`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 ## 1. Directory Structure
 
 ```

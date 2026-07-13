@@ -61,9 +61,21 @@ DIMS = [
 ]
 LO, HI = 1, 5  # score scale: 1 = naive/lowest, 5 = optimal
 
-# version dir -> six scores, in DIMS order.
+# version dir -> six scores, in DIMS order:
+#   [codegen, global-latency, lds-latency, lds-bank-conflict, scheduling, L2-locality]
+# Cumulative (each version keeps prior gains), so scores never decrease down the list.
+# Rough by design — edit as the rubric firms up.
 SCORES = {
-    "v0_naive": [1, 1, 1, 1, 1, 1],
+    "v0_naive": [1, 1, 1, 1, 1, 1],  # naive baseline
+    "v1_buffer_load": [2, 1, 1, 1, 1, 1],  # buffer_load: hardware OOB, branch elimination
+    "v2_async_copy": [3, 1, 1, 1, 1, 1],  # direct-to-LDS async copy (no register staging)
+    "v3_lds": [3, 1, 1, 5, 1, 1],  # LDS layout: conflict-free ds_read/write
+    "v4_global_prefetch": [3, 3, 1, 5, 1, 1],  # 2-stage pipeline: hide global latency
+    "v5_local_prefetch": [3, 3, 4, 5, 3, 1],  # 3-stage + LLIR: hide LDS latency, schedule
+    "v6_loop_unroll": [4, 3, 4, 5, 4, 1],  # unroll: tighter codegen + scheduling
+    "v7_sliceN": [4, 3, 5, 5, 4, 1],  # N-slice: register pressure -> full LDS prefetch
+    "v8_sliceMN": [5, 5, 5, 5, 5, 1],  # M+N slice: buffer-load stall gone; loop optimal
+    "v9_beyond_hotloop": [5, 5, 5, 5, 5, 5],  # XCD-aware PID remap: L2 locality
 }
 
 

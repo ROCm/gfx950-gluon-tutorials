@@ -1,5 +1,14 @@
 # v6_loop_unroll — Eliminating Copy Overhead via Loop Unrolling
 
+<p align="center">
+  <img src="../v5_local_prefetch/images/maturity_radar.png" alt="v5_local_prefetch optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v6_loop_unroll optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v5_local_prefetch`), right = this version (`v6_loop_unroll`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 ## 1. Directory Structure
 
 ```

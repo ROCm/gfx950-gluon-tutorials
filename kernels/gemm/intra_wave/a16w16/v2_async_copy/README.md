@@ -1,5 +1,14 @@
 # v2_async_copy — Direct-to-LDS
 
+<p align="center">
+  <img src="../v1_buffer_load/images/maturity_radar.png" alt="v1_buffer_load optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v2_async_copy optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v1_buffer_load`), right = this version (`v2_async_copy`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 This version uses async copy (also known as direct-to-LDS) to load data directly from global memory into LDS, bypassing registers entirely.
 
 ## 1. Directory Structure

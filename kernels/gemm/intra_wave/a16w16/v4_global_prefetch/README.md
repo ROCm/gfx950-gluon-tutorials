@@ -1,5 +1,14 @@
 # v4_global_prefetch — Software Pipelining with Global Data Prefetch
 
+<p align="center">
+  <img src="../v3_lds/images/maturity_radar.png" alt="v3_lds optimization maturity (previous)" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="v4_global_prefetch optimization maturity (current)" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (`v3_lds`), right = this version (`v4_global_prefetch`). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../v0_naive/README.md); each version pushes the axes it improves toward the dashed "optimal" envelope.
+
+
 > [!NOTE]
 > **Prerequisites:** Before proceeding, read [Memory Bandwidth Model](../../../../../docs/memory_bandwidth_model.md).
 > This is the first version where global-memory latency and bandwidth drive the design, and the mental model that doc builds — request count, request size, concurrency, HBM bandwidth — is the basis for reasoning about every pipelining decision from here onward.
