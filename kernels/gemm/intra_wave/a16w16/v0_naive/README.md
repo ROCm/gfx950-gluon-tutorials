@@ -1,5 +1,17 @@
 # v0_naive — Correctness First
 
+<p align="center">
+  <img src="images/maturity_radar.png" alt="v0_naive optimization maturity radar" width="300">
+</p>
+
+**Optimization maturity.** Every dimension starts at the floor (score 1 of 5): this naive
+baseline hides no latency, uses no codegen tricks, and does no scheduling or locality work.
+Each later version pushes one or more axes outward toward the dashed "optimal" envelope. The
+six axes are **codegen** (optimal instruction count / choice), **global latency** (no
+`s_waitcnt vmcnt` stalls), **LDS latency** (no `s_waitcnt lgkmcnt` stalls), **LDS bank
+conflict** (conflict-free `ds_read` / `ds_write`), **scheduling** (MFMA interleaved with
+non-MFMA on the SIMD), and **L2 locality** (nearby / same tiles land on the same XCD).
+
 This is the very first GEMM kernel in the FP16 optimization journey.
 
 At this stage, the goal is not performance. The goal is to produce a **correct MFMA-based GEMM kernel** and to make all Gluon-specific concepts explicit. This version serves as a reference point for everything that follows.
