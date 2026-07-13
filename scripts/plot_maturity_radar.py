@@ -78,7 +78,7 @@ SCORES = {
     "intra_wave/a16w16/v9_beyond_hotloop": [5, 5, 5, 5, 5, 5],  # XCD-aware PID remap: L2 locality
     # intra_wave a8w8 / a4w4 — the mature 4-wave design at BF8 / MXFP4
     "intra_wave/a8w8": [5, 5, 5, 5, 5, 5],  # a16w16 v8+v9 design at BF8 (~99.5% MFMA)
-    "intra_wave/a4w4/v0_sliceN": [4, 5, 3, 4, 4, 5],  # +scale pipeline via LDS round-trip
+    "intra_wave/a4w4/v0_sliceN": [4, 5, 3, 4.5, 4, 5],  # +scale pipeline via LDS round-trip
     "intra_wave/a4w4/v1_sliceMN": [5, 5, 5, 5, 4.5, 5],  # M+N slice + direct-to-LDS scales (~94%)
     # inter_wave — the 8-wave warp-pipeline route
     "inter_wave/a16w16": [5, 5, 5, 5, 5, 5],  # ping-pong, ~99.8% loop MFMA
