@@ -108,10 +108,10 @@ def get_gluon_cdna_autotune_configs():
     # focus shape (D=128, non-causal). Full autotune space is in git history.
     #
     # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs (VGPR-only). By default
-    # the backend parks accumulators in 128 AGPRs and shuffles them with ~254
-    # v_accvgpr moves; those are hidden in the pipeline's slack, so disabling AGPRs
-    # is perf-neutral (~802 TFLOPS either way) but yields cleaner, AGPR-free asm.
-    # Tuple form is required: the string form would split the "0,0" value on the comma.
+    # the backend parks accumulators in AGPRs and shuffles them with v_accvgpr moves;
+    # with the 2x-unrolled loop that shuffling lands on the critical path and costs
+    # ~50 TFLOPS (~803 VGPR-only vs ~754 with AGPRs), so VGPR-only is required here,
+    # not just cosmetic. Tuple form required: the string form splits "0,0" on its comma.
     return [
         triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2,
                        'llvm_fn_attrs': (("amdgpu-agpr-alloc", "0,0"),)}, num_warps=8),
@@ -304,42 +304,70 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + v_step, v_off)
     cdna4_async.commit_group()   # ACV[1]
 
-    # -- Main loop (full rotated body) -------------------------------------
-    # Runs output tiles [block_start, block_end-3): the last full iteration
-    # whose K prefetch (ACK[i+3]) is still in bounds. The final three tiles are
-    # drained below without out-of-bounds global prefetch.
-    for block_n in tl.range(block_start, block_end - 3):
-        cur_slot = ((block_n - block_start) % BUF_DEPTH).to(tl.int32)
-        nxt_slot = ((block_n + 1 - block_start) % BUF_DEPTH).to(tl.int32)
+    # -- Main loop (2x-unrolled: even tile then odd tile) ------------------
+    # Runs output tiles [block_start, block_end-3). Unrolling by BUF_DEPTH=2
+    # makes the ping-pong LDS slots compile-time constants (0/1) instead of a
+    # runtime `% BUF_DEPTH`, dropping the slot arithmetic from the hot loop. An
+    # odd tail tile (constexpr) is handled after the loop.
+    main_loop_pairs = (block_end - 3 - block_start) // 2
+    for pair_idx in tl.range(0, main_loop_pairs):
+        block_n = block_start + pair_idx * 2
 
-        # cluster 0 DOT1: dot_qk[i+1] (s1) then VEC2[i] (s0). dot_qk leads so
-        # iglp.opt prefixes the MFMA.
+        # even tile (block_n): LDS slots cur=0, next=1
         with warp_pipeline_stage("dot1", priority=0):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk s1 -> qk[i+1]
-            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c,                 # VEC2 s0 (sum + acc rescale
-                                      p_dot_layout, q_dot.dtype)              #         + l_i + p->fp16 cast)
-
-        cdna4_async.wait_group(WAIT_LOOP - 1)  # V[i] complete (for LRV[i]); -1: backend vmcnt workaround
-
-        # cluster 1 MEM1: LRV[i] (stage 0) then ACK[i+3] (stage 3).
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+        cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1", priority=1):
-            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(cur_slot), v_dot_layout)               # LRV   s0
-            cdna4_async.buffer_load_to_shared(kt_smem.index(nxt_slot), k_base + (block_n + 3) * kt_step, kt_off)
-            cdna4_async.commit_group()  # ACK s3
-
-        # cluster 2 DOT2: dot_pv[i] (s0) then VEC1[i+1] (s1: new max + exp2
-        # burst).  The exp2 lands AFTER the P*V MFMA and feeds the next iteration's dot_pv.
+            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
+            cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + (block_n + 3) * kt_step, kt_off)   # ACK
+            cdna4_async.commit_group()
         with warp_pipeline_stage("dot2", priority=0):
-            acc = mfma_cdna4(p_dot, v_dot, acc)                                # dot_pv s0
-            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1 s1 -> m_new, p[i+1]
-
-        cdna4_async.wait_group(WAIT_LOOP - 1)  # K[i+2] complete (for LRK[i+2]); -1: backend vmcnt workaround
-
-        # cluster 3 MEM2: LRK[i+2] (stage 2) then ACV[i+2] (stage 2).
+            acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
+            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
+        cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem2", priority=1):
-            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(cur_slot), kt_dot_layout)            # LRK   s2 -> K regs tile i+2
-            cdna4_async.buffer_load_to_shared(v_smem.index(cur_slot), v_base + (block_n + 2) * v_step, v_off)
-            cdna4_async.commit_group()   # ACV s2
+            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
+            cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
+            cdna4_async.commit_group()
+
+        # odd tile (block_n+1): LDS slots cur=1, next=0
+        with warp_pipeline_stage("dot1", priority=0):
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem1", priority=1):
+            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(1), v_dot_layout)   # LRV
+            cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base + (block_n + 4) * kt_step, kt_off)   # ACK
+            cdna4_async.commit_group()
+        with warp_pipeline_stage("dot2", priority=0):
+            acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
+            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem2", priority=1):
+            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)   # LRK
+            cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + (block_n + 3) * v_step, v_off)   # ACV
+            cdna4_async.commit_group()
+
+    if (block_end - 3 - block_start) % 2 == 1:
+        # odd tail: one more even tile (slots cur=0, next=1)
+        block_n = block_start + main_loop_pairs * 2
+        with warp_pipeline_stage("dot1", priority=0):
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem1", priority=1):
+            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
+            cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + (block_n + 3) * kt_step, kt_off)   # ACK
+            cdna4_async.commit_group()
+        with warp_pipeline_stage("dot2", priority=0):
+            acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
+            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem2", priority=1):
+            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
+            cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
+            cdna4_async.commit_group()
 
     # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
     # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
