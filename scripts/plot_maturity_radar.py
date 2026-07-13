@@ -63,17 +63,17 @@ LO, HI = 1, 5  # score scale: 1 = naive/lowest, 5 = optimal
 
 # version dir -> six scores, in DIMS order:
 #   [codegen, global-latency, lds-latency, lds-bank-conflict, scheduling, L2-locality]
-# Cumulative (each version keeps prior gains), so scores never decrease down the list.
-# Rough by design — edit as the rubric firms up.
+# Roughly cumulative; a rough author judgment (e.g. v5's codegen dips before v6's
+# unroll cleans it up). Edit as the rubric firms up.
 SCORES = {
     "v0_naive": [1, 1, 1, 1, 1, 1],  # naive baseline
     "v1_buffer_load": [2, 1, 1, 1, 1, 1],  # buffer_load: hardware OOB, branch elimination
     "v2_async_copy": [3, 1, 1, 1, 1, 1],  # direct-to-LDS async copy (no register staging)
     "v3_lds": [3, 1, 1, 5, 1, 1],  # LDS layout: conflict-free ds_read/write
     "v4_global_prefetch": [3, 3, 1, 5, 1, 1],  # 2-stage pipeline: hide global latency
-    "v5_local_prefetch": [3, 3, 4, 5, 3, 1],  # 3-stage + LLIR: hide LDS latency, schedule
-    "v6_loop_unroll": [4, 3, 4, 5, 4, 1],  # unroll: tighter codegen + scheduling
-    "v7_sliceN": [4, 3, 5, 5, 4, 1],  # N-slice: register pressure -> full LDS prefetch
+    "v5_local_prefetch": [2.5, 3, 5, 5, 4, 1],  # 3-stage + LLIR: LDS latency fully hidden
+    "v6_loop_unroll": [4, 3, 5, 5, 4, 1],  # unroll: tighter codegen (keeps v5's LDS win)
+    "v7_sliceN": [5, 4, 5, 5, 5, 1],  # N-slice: frees registers -> codegen/scheduling optimal
     "v8_sliceMN": [5, 5, 5, 5, 5, 1],  # M+N slice: buffer-load stall gone; loop optimal
     "v9_beyond_hotloop": [5, 5, 5, 5, 5, 5],  # XCD-aware PID remap: L2 locality
 }
@@ -98,8 +98,8 @@ def radar(version, scores, out_png):
     mean = float(np.mean(scores))
     rgb = np.asarray(cm.RdYlGn((mean - LO) / (HI - LO)))[:3] * 0.78
     color = (*rgb, 1.0)
-    ax.plot(closed, vals, color=color, lw=2.2)
-    ax.fill(closed, vals, color=color, alpha=0.38)
+    ax.plot(closed, vals, color=color, lw=2.4)
+    ax.fill(closed, vals, color=color, alpha=0.22)  # translucent so the grid shows through
     ax.plot(ang, scores, "o", color=color, ms=5)
 
     # A rough visual (polygon size vs the dashed optimal envelope) — no numeric
