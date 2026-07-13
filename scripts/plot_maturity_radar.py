@@ -63,7 +63,9 @@ LO, HI = 1, 5  # score scale: 1 = naive/lowest, 5 = optimal
 
 # path under kernels/gemm/ -> six scores, in DIMS order:
 #   [codegen, global-latency, lds-latency, lds-bank-conflict, scheduling, L2-locality]
-# Roughly cumulative within a series; rough author judgment. Edit as it firms up.
+# A kernel may carry a 7th score for "Freq" (clock frequency) when throttling is
+# part of its story — the inter_wave/a4w4 series does, to show v2 trading clock
+# for occupancy. Roughly cumulative within a series; rough author judgment.
 SCORES = {
     # intra_wave/a16w16 — the 4-wave FP16 v0->v9 optimization journey
     "intra_wave/a16w16/v0_naive": [1, 1, 1, 1, 1, 1],  # naive baseline
@@ -83,9 +85,12 @@ SCORES = {
     # inter_wave — the 8-wave warp-pipeline route
     "inter_wave/a16w16": [5, 5, 5, 5, 5, 5],  # ping-pong, ~99.8% loop MFMA
     "inter_wave/a8w8": [5, 5, 5, 5, 5, 5],  # ping-pong BF8, ~99.7%
-    "inter_wave/a4w4/v0_sliceMN": [2, 4, 3, 4, 3, 5],  # B-scale byte-shuffle (118 v_perm), ~57%
-    "inter_wave/a4w4/v1_combineBsc": [5, 4, 4, 4, 4, 5],  # combined B-scale ds_read_tr, ~80%
-    "inter_wave/a4w4/v2_mfma32x32x64": [5, 5, 5, 5, 5, 5],  # 32x32x64 + conflict-free LDS, ~98%
+    # a4w4 8-wave series carries the 7th "Freq" axis (clock frequency):
+    "inter_wave/a4w4/v0_sliceMN": [2, 4, 3, 4, 3, 5, 5],  # byte-shuffle (~57%); full clock
+    "inter_wave/a4w4/v1_combineBsc": [5, 5, 5, 4, 4, 5, 5],  # combined B-scale (~80%); full clock
+    # v2: 32x32x64 lifts scheduling/occupancy (~98%) but the wider MFMA throttles
+    # the clock, so freq drops and end-to-end TFLOPS lands below v1.
+    "inter_wave/a4w4/v2_mfma32x32x64": [5, 5, 5, 5, 5, 5, 3],  # +sched, throttled clock
 }
 
 
@@ -101,7 +106,11 @@ def title_of(key):
 
 
 def radar(title, scores, out_png):
-    n = len(DIMS)
+    # Most kernels use the 6 DIMS; a kernel may carry a 7th "Freq" (clock
+    # frequency) score when clock throttling is part of its story (e.g. the
+    # inter_wave/a4w4 series, where wider MFMA trades occupancy for clock).
+    dims = DIMS + ["Freq"] if len(scores) > len(DIMS) else DIMS
+    n = len(dims)
     ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
     closed = np.concatenate([ang, ang[:1]])
     vals = np.array(scores + scores[:1], dtype=float)
@@ -130,7 +139,7 @@ def radar(title, scores, out_png):
     # A rough visual (polygon size vs the dashed optimal envelope) — no numeric
     # scale, per-vertex values, or legend.
     ax.set_xticks(ang)
-    ax.set_xticklabels(DIMS, fontsize=13)
+    ax.set_xticklabels(dims, fontsize=13)
     ax.set_ylim(0, HI + 0.2)
     ax.set_yticks(range(LO, HI + 1))
     ax.set_yticklabels([])
@@ -155,7 +164,7 @@ def radar(title, scores, out_png):
 
 def main():
     for key, scores in SCORES.items():
-        assert len(scores) == len(DIMS), f"{key}: need {len(DIMS)} scores"
+        assert len(scores) in (len(DIMS), len(DIMS) + 1), f"{key}: need 6 or 7 scores"
         out = os.path.join(GEMM, key, "images", "maturity_radar.png")
         radar(title_of(key), scores, out)
 
