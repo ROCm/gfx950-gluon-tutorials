@@ -9,11 +9,16 @@ myplot.tex
 *.hsaco
 *.source
 
-# profiling / rocprofv3 / ATT scratch outputs
+# profiling / rocprofv3 / ATT / counter scratch (rocprof + ATT + counter tooling, both wave routes)
 tmp/
 att_output/
 *_rocprof_trace/
 rocprof_*/
+.rocprofv3/
+counter_tmp/
 att_matmul.json
 counters.yaml
 gpucore.*
+
+# per-kernel Triton cache (TRITON_CACHE_DIR)
+cache/
