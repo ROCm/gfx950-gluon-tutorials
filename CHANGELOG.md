@@ -5,6 +5,45 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-13 — 8-wave warp-pipeline (`inter_wave`) GEMM kernels + `gemm/` reorganization
+
+Adds an **8-wave warp-pipeline** variant of each GEMM — a second scheduling model
+alongside the 4-wave `llir + force-agpr + amdgcnas` kernels — and reorganizes
+`kernels/gemm/` around the two models.
+
+**The 8-wave kernels** (`inter_wave/a16w16` FP16/BF16, `inter_wave/a8w8` BF8,
+`inter_wave/a4w4` MXFP4) launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot
+loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD
+are kept out of phase (a ping-pong) so one issues MFMAs while the other issues loads,
+then they swap. They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`)
+and need **no plugins and no env vars** — they build against stock `gfx950-tutorial-v1.0`
+(the `a4w4` v1/v2 kernels additionally need a Triton built with warp-pipeline
+`fence_loads`, upstream PR #10840). The theory is in
+[`docs/warp_pipelining.md`](docs/warp_pipelining.md) and
+[`docs/scheduling_models.md`](docs/scheduling_models.md).
+
+Performance (MI355X, 4096×4096):
+
+- **FP16** — the 8-wave kernel edges the 4-wave `v9` (~1442 vs 1421 TFLOPS @ K=8192,
+  ~99.8% loop MFMA).
+- **BF8 / MXFP4** — the tuned 4-wave stack still leads on TFLOPS, but the 8-wave reaches
+  comparable MFMA occupancy at roughly **half the VGPRs** (no-AGPR: 242–256 vs ~488).
+
+**Reorganization** (no behavior change to the existing 4-wave kernels):
+
+- `kernels/gemm/{a16w16,a8w8,a4w4}` moved under `kernels/gemm/intra_wave/`; the 8-wave
+  kernels live under `kernels/gemm/inter_wave/`.
+- `gemm/README` is split into a family overview + per-route READMEs
+  (`intra_wave/README`, `inter_wave/README`) and reframed around *where scheduling
+  intelligence lives*, with a 4-wave-vs-8-wave bar chart.
+- The XCD-aware `get_pids` helper is shared from `kernels/gemm/utils/common.py`
+  (used by both routes) instead of being duplicated per kernel.
+- 8-wave perf collection is a single `scripts/collect_perf.py --kernel {a16w16,a8w8,a4w4}`
+  (the per-dir `collect_perf.py` copies are gone); an `inter_wave/` kernel dir is now just
+  `{matmul_kernel, README, bench.py}`, matching `intra_wave/`.
+
+No Triton pin change — the 4-wave kernels keep the `gfx950-tutorial-v1.0` toolchain.
+
 ## 2026-07-10 — LLIR scheduler is now the `sched.barrier` variant
 
 The v1.0 out-of-tree LLIR-scheduler plugin is the **`sched.barrier` variant**: it
