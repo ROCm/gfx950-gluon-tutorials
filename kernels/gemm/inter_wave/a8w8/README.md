@@ -1,12 +1,10 @@
 # inter_wave/a8w8 — 8-wave warp-pipeline BF8 (a8w8) GEMM (gfx950)
 
 <p align="center">
-  <img src="../../intra_wave/a8w8/images/maturity_radar.png" alt="4-wave a8w8 optimization maturity" width="300">
-  &nbsp;&nbsp;
   <img src="images/maturity_radar.png" alt="8-wave a8w8 optimization maturity" width="300">
 </p>
 
-**Optimization maturity (rough).** Left = 4-wave a8w8, right = 8-wave a8w8. Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../intra_wave/a16w16/v0_naive/README.md).
+**Optimization maturity (rough).** Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../intra_wave/a16w16/v0_naive/README.md); the polygon vs the dashed "optimal" envelope shows how mature this kernel is.
 
 
 An **8-wave** (8 warps/CTA → **2 waves/SIMD**) BF8/e5m2 GEMM for gfx950 / MI350X /
