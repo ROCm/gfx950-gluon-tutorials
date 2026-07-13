@@ -1,5 +1,12 @@
 # MXFP4 GEMM Kernel — v1_sliceMN
 
+<p align="center">
+  <img src="images/maturity_radar.png" alt="v1_sliceMN optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../a16w16/v0_naive/README.md); the polygon vs the dashed "optimal" envelope shows how mature this kernel is.
+
+
 `v1_sliceMN` is a refined MXFP4 kernel that makes **two independent changes on
 top of [v0_sliceN](../v0_sliceN/README.md)**. Read v0's README first — it
 introduces all the MXFP4 fundamentals (e8m0 scales, `mfma_scaled`, the scale

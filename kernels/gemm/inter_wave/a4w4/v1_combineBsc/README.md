@@ -1,5 +1,14 @@
 # v1_combineBsc — 8-wave MXFP4, combined B-scale (transpose-read)
 
+<p align="center">
+  <img src="../v0_sliceMN/images/maturity_radar.png" alt="previous (v0_sliceMN) optimization maturity" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="this version (v1_combineBsc) optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (v0_sliceMN), right = this version (v1_combineBsc). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../../intra_wave/a16w16/v0_naive/README.md).
+
+
 ## 1. Directory Structure
 
 ```

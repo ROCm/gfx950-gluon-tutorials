@@ -1,5 +1,12 @@
 # MXFP4 GEMM Kernel — v0_sliceN
 
+<p align="center">
+  <img src="images/maturity_radar.png" alt="v0_sliceN optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../a16w16/v0_naive/README.md); the polygon vs the dashed "optimal" envelope shows how mature this kernel is.
+
+
 This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). The **tile pipeline** is unchanged from [a16w16](../../a16w16/) and [a8w8](../../a8w8/) — same double-buffered async copy, 3-stage pipeline, N-slicing, loop unrolling by 2, LLIR scheduler, and amdgcnas. What's new is a **separate scale pipeline**: per-group 8-bit scales require a GR → LW → LR round-trip through LDS for layout conversion, with its own register buffering and scheduling considerations. Read the rest of this README with the tile pipeline as inherited background; the new material — scale layouts (§2.2–§2.4), `ds_read_tr` (§2.5), and scale-pipeline scheduling (§3.5–§3.6) — is where the real work of this kernel lives.
 
 If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, the LLIR scheduler, and amdgcnas. See [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md) for the design rationale behind these tools.

@@ -49,7 +49,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-A16W16 = os.path.join(REPO, "kernels", "gemm", "intra_wave", "a16w16")
+GEMM = os.path.join(REPO, "kernels", "gemm")
 
 DIMS = [
     "Codegen",
@@ -61,25 +61,46 @@ DIMS = [
 ]
 LO, HI = 1, 5  # score scale: 1 = naive/lowest, 5 = optimal
 
-# version dir -> six scores, in DIMS order:
+# path under kernels/gemm/ -> six scores, in DIMS order:
 #   [codegen, global-latency, lds-latency, lds-bank-conflict, scheduling, L2-locality]
-# Roughly cumulative; a rough author judgment (e.g. v5's codegen dips before v6's
-# unroll cleans it up). Edit as the rubric firms up.
+# Roughly cumulative within a series; rough author judgment. Edit as it firms up.
 SCORES = {
-    "v0_naive": [1, 1, 1, 1, 1, 1],  # naive baseline
-    "v1_buffer_load": [2, 1, 1, 1, 1, 1],  # buffer_load: hardware OOB, branch elimination
-    "v2_async_copy": [3, 1, 1, 1, 1, 1],  # direct-to-LDS async copy (no register staging)
-    "v3_lds": [3, 1, 1, 5, 1, 1],  # LDS layout: conflict-free ds_read/write
-    "v4_global_prefetch": [3, 3, 1, 5, 1, 1],  # 2-stage pipeline: hide global latency
-    "v5_local_prefetch": [2.5, 3, 5, 5, 4, 1],  # 3-stage + LLIR: LDS latency fully hidden
-    "v6_loop_unroll": [4, 3, 5, 5, 4, 1],  # unroll: tighter codegen (keeps v5's LDS win)
-    "v7_sliceN": [5, 4, 5, 5, 5, 1],  # N-slice: frees registers -> codegen/scheduling optimal
-    "v8_sliceMN": [5, 5, 5, 5, 5, 1],  # M+N slice: buffer-load stall gone; loop optimal
-    "v9_beyond_hotloop": [5, 5, 5, 5, 5, 5],  # XCD-aware PID remap: L2 locality
+    # intra_wave/a16w16 — the 4-wave FP16 v0->v9 optimization journey
+    "intra_wave/a16w16/v0_naive": [1, 1, 1, 1, 1, 1],  # naive baseline
+    "intra_wave/a16w16/v1_buffer_load": [2, 1, 1, 1, 1, 1],  # hardware OOB, branch elimination
+    "intra_wave/a16w16/v2_async_copy": [3, 1, 1, 1, 1, 1],  # direct-to-LDS async copy
+    "intra_wave/a16w16/v3_lds": [3, 1, 1, 5, 1, 1],  # LDS layout: conflict-free ds_read/write
+    "intra_wave/a16w16/v4_global_prefetch": [3, 3, 1, 5, 1, 1],  # 2-stage: hide global latency
+    "intra_wave/a16w16/v5_local_prefetch": [2.5, 3, 5, 5, 4, 1],  # 3-stage: LDS latency hidden
+    "intra_wave/a16w16/v6_loop_unroll": [4, 3, 5, 5, 4, 1],  # unroll: tighter codegen
+    "intra_wave/a16w16/v7_sliceN": [5, 4, 5, 5, 5, 1],  # N-slice: codegen/scheduling optimal
+    "intra_wave/a16w16/v8_sliceMN": [5, 5, 5, 5, 5, 1],  # M+N slice: loop optimal
+    "intra_wave/a16w16/v9_beyond_hotloop": [5, 5, 5, 5, 5, 5],  # XCD-aware PID remap: L2 locality
+    # intra_wave a8w8 / a4w4 — the mature 4-wave design at BF8 / MXFP4
+    "intra_wave/a8w8": [5, 5, 5, 5, 5, 5],  # a16w16 v8+v9 design at BF8 (~99.5% MFMA)
+    "intra_wave/a4w4/v0_sliceN": [4, 5, 3, 4, 4, 5],  # +scale pipeline via LDS round-trip
+    "intra_wave/a4w4/v1_sliceMN": [5, 5, 4, 5, 5, 5],  # M+N slice + direct-to-LDS scales (~94%)
+    # inter_wave — the 8-wave warp-pipeline route
+    "inter_wave/a16w16": [5, 5, 5, 5, 5, 5],  # ping-pong, ~99.8% loop MFMA
+    "inter_wave/a8w8": [5, 5, 5, 5, 5, 5],  # ping-pong BF8, ~99.7%
+    "inter_wave/a4w4/v0_sliceMN": [2, 4, 3, 4, 3, 5],  # B-scale byte-shuffle (118 v_perm), ~57%
+    "inter_wave/a4w4/v1_combineBsc": [5, 4, 4, 4, 4, 5],  # combined B-scale ds_read_tr, ~80%
+    "inter_wave/a4w4/v2_mfma32x32x64": [5, 5, 5, 5, 5, 5],  # 32x32x64 + conflict-free LDS, ~98%
 }
 
 
-def radar(version, scores, out_png):
+def title_of(key):
+    """Radar title for a SCORES key: single-kernel dirs get a 4/8-wave tag;
+    versioned dirs use just the version name (their README gives the context)."""
+    parts = key.split("/")
+    kernel, name = parts[1], parts[-1]
+    if name == kernel:  # single-kernel dir (a8w8, a16w16, ...)
+        wave = "8-wave" if parts[0] == "inter_wave" else "4-wave"
+        return f"{name} ({wave})"
+    return name
+
+
+def radar(title, scores, out_png):
     n = len(DIMS)
     ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
     closed = np.concatenate([ang, ang[:1]])
@@ -118,7 +139,7 @@ def radar(version, scores, out_png):
     ax.spines["polar"].set_color("#cccccc")
 
     ax.set_title(
-        f"Optimization maturity — {version}",
+        f"Optimization maturity — {title}",
         fontsize=12.5,
         fontweight="bold",
         pad=14,
@@ -133,9 +154,10 @@ def radar(version, scores, out_png):
 
 
 def main():
-    for version, scores in SCORES.items():
-        assert len(scores) == len(DIMS), f"{version}: need {len(DIMS)} scores"
-        radar(version, scores, os.path.join(A16W16, version, "images", "maturity_radar.png"))
+    for key, scores in SCORES.items():
+        assert len(scores) == len(DIMS), f"{key}: need {len(DIMS)} scores"
+        out = os.path.join(GEMM, key, "images", "maturity_radar.png")
+        radar(title_of(key), scores, out)
 
 
 if __name__ == "__main__":

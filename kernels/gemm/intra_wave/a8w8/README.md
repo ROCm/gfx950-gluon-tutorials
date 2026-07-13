@@ -1,5 +1,12 @@
 # BF8 GEMM Kernel (a8w8)
 
+<p align="center">
+  <img src="images/maturity_radar.png" alt="a8w8 (4-wave) optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../a16w16/v0_naive/README.md); the polygon vs the dashed "optimal" envelope shows how mature this kernel is.
+
+
 This kernel applies the design principles developed in the [a16w16/](../a16w16/) tutorial, adapted for BF8 (e5m2) compute. **We deliberately do not rebuild the full v0 → v9 journey for BF8** — the story is the same, only the parameters change. What you will find here is the final kernel, with the parameter deltas (tile size, MFMA instruction, `BLOCK_K`, LDS padding) explained in terms of the techniques you already know from a16w16. Think of this as the *checklist proof* that the design transfers cleanly: same 3× speedup pattern, different data type.
 
 If you haven't completed the a16w16 journey (v0–v9), start there first — this kernel assumes familiarity with all techniques introduced in that series.

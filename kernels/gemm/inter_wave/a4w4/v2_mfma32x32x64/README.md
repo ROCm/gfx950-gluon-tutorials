@@ -1,5 +1,14 @@
 # v2_mfma32x32x64 — 8-wave MXFP4, 32×32×64 MFMA + conflict-free layout
 
+<p align="center">
+  <img src="../v1_combineBsc/images/maturity_radar.png" alt="previous (v1_combineBsc) optimization maturity" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="this version (v2_mfma32x32x64) optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = previous (v1_combineBsc), right = this version (v2_mfma32x32x64). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../../intra_wave/a16w16/v0_naive/README.md).
+
+
 ## 1. Directory Structure
 
 ```

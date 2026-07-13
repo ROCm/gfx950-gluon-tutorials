@@ -1,5 +1,14 @@
 # v0_sliceMN — 8-wave warp-pipeline MXFP4, M/N-sliced (BLOCK_K=256, 2-buffer)
 
+<p align="center">
+  <img src="../../../intra_wave/a4w4/v1_sliceMN/images/maturity_radar.png" alt="4-wave a4w4 v1_sliceMN optimization maturity" width="300">
+  &nbsp;&nbsp;
+  <img src="images/maturity_radar.png" alt="8-wave a4w4 v0_sliceMN optimization maturity" width="300">
+</p>
+
+**Optimization maturity (rough).** Left = 4-wave a4w4 v1_sliceMN, right = 8-wave a4w4 v0_sliceMN. Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../../intra_wave/a16w16/v0_naive/README.md).
+
+
 > [!NOTE]
 > This is the **baseline**. It N-slices the B scale into `[128,8]` halves, which at 8 warps
 > forces the B-scale MFMA operand through per-byte `ds_read_u8` + `v_perm` reassembly (118
