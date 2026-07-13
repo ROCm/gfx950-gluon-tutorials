@@ -85,7 +85,7 @@ def radar(version, scores, out_png):
     closed = np.concatenate([ang, ang[:1]])
     vals = np.array(scores + scores[:1], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(4.7, 4.7), dpi=150, subplot_kw=dict(polar=True))
+    fig, ax = plt.subplots(figsize=(5.0, 5.0), dpi=150, subplot_kw=dict(polar=True))
     fig.patch.set_facecolor("white")
     ax.set_theta_offset(np.pi / 2)  # first axis at top
     ax.set_theta_direction(-1)  # clockwise
@@ -113,13 +113,15 @@ def radar(version, scores, out_png):
 
     ax.set_title(
         f"Optimization maturity — {version}",
-        fontsize=14.5,
+        fontsize=12.5,
         fontweight="bold",
-        pad=16,
+        pad=14,
     )
-    fig.tight_layout()
+    # Fixed axes box (labels live in the margins) + a fixed canvas size — so every
+    # version's PNG has identical dimensions and the before/after pair matches.
+    fig.subplots_adjust(left=0.16, right=0.84, top=0.84, bottom=0.16)
     os.makedirs(os.path.dirname(out_png), exist_ok=True)
-    fig.savefig(out_png, facecolor="white", bbox_inches="tight")
+    fig.savefig(out_png, facecolor="white")
     plt.close(fig)
     print("wrote", os.path.relpath(out_png, REPO))
 
