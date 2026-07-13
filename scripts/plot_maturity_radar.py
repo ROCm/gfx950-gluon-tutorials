@@ -87,7 +87,7 @@ SCORES = {
     "inter_wave/a8w8": [5, 5, 5, 5, 5, 5],  # ping-pong BF8, ~99.7%
     # a4w4 8-wave series carries the 7th "Freq" axis (clock frequency):
     "inter_wave/a4w4/v0_sliceMN": [2, 4, 3, 4, 3, 5, 5],  # byte-shuffle (~57%); full clock
-    "inter_wave/a4w4/v1_combineBsc": [5, 5, 5, 4.5, 4, 5, 5],  # combined B-scale (~80%)
+    "inter_wave/a4w4/v1_combineBsc": [5, 5, 3, 4.5, 4, 5, 5],  # combined B-scale (~80%)
     # v2: 32x32x64 lifts scheduling/occupancy (~98%) but the wider MFMA throttles
     # the clock, so freq drops and end-to-end TFLOPS lands below v1. Bank conflict
     # matches v1 (4.5) — the MXFP4 scale-read conflict is inherent to both.
