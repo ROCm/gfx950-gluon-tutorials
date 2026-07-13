@@ -98,8 +98,12 @@ def radar(version, scores, out_png):
     mean = float(np.mean(scores))
     rgb = np.asarray(cm.RdYlGn((mean - LO) / (HI - LO)))[:3] * 0.78
     color = (*rgb, 1.0)
+    # fuller polygons get a more transparent fill so the grid (spider web) is never
+    # buried — the near-full v8/v9 end up lighter than the mid versions.
+    n = len(scores)
+    cover = sum(scores[i] * scores[(i + 1) % n] for i in range(n)) / (n * HI * HI)
     ax.plot(closed, vals, color=color, lw=2.4)
-    ax.fill(closed, vals, color=color, alpha=0.22)  # translucent so the grid shows through
+    ax.fill(closed, vals, color=color, alpha=0.13 if cover > 0.70 else 0.22)
     ax.plot(ang, scores, "o", color=color, ms=5)
 
     # A rough visual (polygon size vs the dashed optimal envelope) — no numeric
