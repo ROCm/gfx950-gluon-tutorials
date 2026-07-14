@@ -86,7 +86,7 @@ def wave_label(ax, y, text):
 
 
 def finish(ax, title, xlim, ylim):
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+    # `title` documents each diagram at the call site; it is not drawn on the image.
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.axis("off")

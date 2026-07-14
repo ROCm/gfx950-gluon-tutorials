@@ -46,6 +46,8 @@ The third option splits waves by **role** rather than by tile: one **compute wav
 
 ---
 
+Seen together, the three paradigms are less competing implementations of one idea than points on a spectrum of **where the scheduling decision is made** — and, correspondingly, how much of the work lands on the compiler versus the kernel structure. Intra-wave makes it at the level of individual instructions and leans hardest on the compiler; inter-wave lifts it to whole pipeline stages that two waves alternate; warp specialization raises it all the way to fixed per-wave roles. The same progression, side by side:
+
 | Model | Scheduling unit | Compiler involvement |
 |---|---|---|
 | **Intra-wave** | Individual instructions | **Very high** |
