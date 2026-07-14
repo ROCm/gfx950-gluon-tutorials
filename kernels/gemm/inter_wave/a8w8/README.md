@@ -10,17 +10,8 @@
 An **8-wave** (8 warps/CTA → **2 waves/SIMD**) BF8/e5m2 GEMM for gfx950 / MI350X /
 MI355X. It is the **8-bit sibling** of [`inter_wave/a16w16`](../a16w16/README.md): the same
 `sliceMN` warp-pipeline solution with the 16-bit numerics swapped for 8-bit. Read the
-[`inter_wave/a16w16` README](../a16w16/README.md) first for the 8-wave design, loop
-structure, and epilogue spill-fix — this document covers the 8-bit deltas and the measured
-performance.
-
-> [!IMPORTANT]
-> Like the fp16 8-wave kernel, this schedules the hot loop at the **wave level** with
-> `warp_pipeline_stage` and runs with **no AGPRs**: it sets `amdgpu-agpr-alloc=0,0` at
-> launch via Triton's built-in `llvm_fn_attrs` option, so the f32 accumulators write VGPRs
-> directly. The 4-wave `llir+amdgcnas` toolchain (`TRITON_ENABLE_LLIR_SCHED` /
-> `TRITON_ENABLE_AMDGCN_AS`) is built around the 4-wave register/schedule model and is
-> **not** used here.
+[`inter_wave/a16w16` README](../a16w16/README.md) first for the 8-wave design and loop
+structure — this document covers the 8-bit deltas and the measured performance.
 
 ## 1. What changes from 16-bit to 8-bit
 
@@ -60,31 +51,25 @@ epilogue (which carries no MFMA).
 
 ## 2. Performance
 
-MI355X, gfx950, 4096×4096, BF8, **no-AGPR**, current build (Triton 3.8.0), rocprof
-cold-rotating tensors (last-100 average of 1000 dispatches; `--rotating-buffer-size 2048`
-for K ≥ 16384). The 4-wave reference is `kernels/gemm/intra_wave/a8w8` measured on the same
-machine:
+MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000 dispatches;
+`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v1.1`. The 8-wave kernel
+(`scripts/collect_perf.py`, **no-AGPR**) vs the 4-wave `intra_wave/a8w8` reference
+(`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
-| K | **8-wave TFLOPS** | 8-wave MFMA eff (per-SIMD, loop) | 4-wave base | 4-wave llir+amdgcnas |
+| K | 8-wave TFLOPS | 8-wave MFMA eff | 4-wave TFLOPS | 4-wave MFMA eff |
 |---|---|---|---|---|
-| 8192  | **2894** | 99.7% | 2497 | 3216 |
-| 16384 | **3147** | 99.9% | 2777 | 3455 |
-| 32768 | **3129** | 99.1% | — | — |
+| 8192  | 2901 | 99.7% | **3043** | 99.5% |
+| 16384 | 3076 | 99.8% | **3233** | 99.5% |
+| 32768 | 3054 | 99.0% | **3059** | 97.6% |
 
-On the current build the 8-wave kernel **beats the 4-wave base** (2894 vs 2497, +16% at
-K=8192) but the tuned 4-wave `llir+amdgcnas` now **edges ahead** (3216 vs 2894, ~+11%). This
-is a change from the original pinned-compiler numbers, where the 8-wave led every 4-wave
-config (8-wave 2841 vs 4-wave base 2604 / llir+amdgcnas 2746): on newer LLVM the 4-wave BF8
-`llir+amdgcnas` path improved more (~2746 → 3216) than the 8-wave (~2841 → 2894). The 8-wave
-loop is still genuinely MFMA-bound at **~99.7%** (per-SIMD, loop-only). VGPRs: 256, spills:
-13 — and the **hot loop is spill-free** (all 13 spills are in the `convert_layout` + store
-epilogue).
+(4-wave = `llir+force-agpr+amdgcnas`; MFMA eff is per-SIMD loop-only, a single-dispatch ATT
+reading — treat the last digit as noise.)
 
-> [!NOTE]
-> **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's MFMA-cycle
-> fraction; with 2 waves/SIMD interleaving issue, `scripts/collect_perf.py` doubles it for the
-> per-SIMD figure. The whole-kernel efficiency is lower (the prologue/epilogue carry no
-> MFMA) and converges toward the loop number as K grows.
+Both loops are genuinely MFMA-bound (~99.5–99.8% at K ≤ 16384), but the tuned 4-wave
+`llir+force-agpr+amdgcnas` leads on TFLOPS at every K (**~+5%** at K ≤ 16384, near-parity at
+K=32768): its AGPR-form accumulators and LLIR schedule extract slightly more throughput than
+the 8-wave's no-AGPR VGPR budget. The 8-wave's **hot loop is spill-free** (256 VGPR, 8 residual
+spills all in the `convert_layout` + store epilogue); the 4-wave runs at 488 VGPR / 0 spills.
 
 ## 3. Running
 
