@@ -8,9 +8,53 @@ It explores a fundamental systems question:
 
 > **Where should scheduling intelligence live?**
 
-Once memory hierarchy and tiling are optimized, peak GEMM performance depends on overlapping MFMA execution with memory operations. There are three fundamental ways to structure that overlap on a GPU SIMD ([§2](#2-gpu-scheduling-models)); this repository implements and compares the two that gfx950 supports.
+Once memory hierarchy and tiling are optimized, peak GEMM performance depends on keeping the matrix unit issuing `mfma` every cycle while memory operations run concurrently. This tutorial frames that through three representative scheduling paradigms ([§1](#1-gpu-scheduling-models)); it implements and compares the two that gfx950 supports.
 
-## 1. Directory Structure
+## 1. GPU scheduling models
+
+On each SIMD, two kinds of instruction must issue: **memory instructions** — `buffer_load` (global → LDS) and `ds_read` (LDS → registers) — that *prepare* operands, and **tensor instructions** (`mfma`) that *compute* on them. They run on separate hardware pipes, so they can execute concurrently.
+
+Memory **latency** is not the hard part — it is hidden by **prefetching** in the kernel design: a long-latency `buffer_load` is issued many stages ahead of the `mfma` that consumes its data, a quick `ds_read` only a few. Prefetch far enough ahead and the operands are always ready by the time an `mfma` runs.
+
+The scheduling problem is therefore about **throughput, not latency**: how to keep the matrix pipe issuing an `mfma` on *every* cycle, so that the memory instructions the SIMD must also issue never open a bubble in the compute stream. Kernels differ in *which wave issues the memory, and when, relative to the compute*.
+
+This tutorial focuses on three representative scheduling paradigms: **intra-wave** scheduling, **inter-wave** scheduling, and **warp specialization**. They differ in the granularity at which scheduling decisions are made — individual instructions, pipeline stages, or functional roles — and together they provide a useful framework for understanding many existing GPU kernel designs.
+
+All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`** (8 `mfma` total); each region needs **2 `ds_read`** to stage its operands and issues **2 `buffer_load`** to prefetch later regions. A row is one wave's *issue timeline* — wide green = `mfma`, small orange/yellow = memory, and the arrow is the `ds_read → first mfma` dependency. Latencies are assumed fully hidden, so all three finish the 8 `mfma` in the same time; what differs is how each keeps the matrix pipe busy.
+
+### 1.1 Intra-wave — one wave, software-pipelined
+
+![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
+
+A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
+
+This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
+
+### 1.2 Inter-wave — two waves ping-pong
+
+![inter-wave schedule: two waves alternate compute and memory](images/sched_inter_wave.png)
+
+Two waves share the SIMD and split the work evenly, running **phase-offset**: while `wave0` executes its 4-`mfma` region, `wave1` issues that region's `ds_read` + `buffer_load`; then they swap roles. Because at every instant *one* of the two waves is in its compute region, the SIMD's matrix pipe is never idle — the overlap is a property of the **ping-pong**, not of any within-wave instruction ordering. Each wave simply runs a compute block, then a memory block, so almost no compiler scheduling is required and these kernels build on stock upstream Triton + LLVM.
+
+This is the [`inter_wave/`](inter_wave/README.md) route (`a16w16`, `a8w8`, `a4w4`): **two waves per SIMD**, driven by `warp_pipeline_stage`.
+
+### 1.3 Warp specialization — dedicated producer + consumer waves
+
+![warp-specialization schedule: one compute wave, one memory wave](images/sched_warp_spec.png)
+
+The third option splits waves by **role** rather than by tile: one **compute wave** issues *only* `mfma`, while a **producer wave** issues *only* `ds_read`/`buffer_load` and feeds the compute wave through LDS. The `ds_read → mfma` dependency now crosses *between* waves. This is the cleanest overlap of the three — the compute wave's matrix pipe is 100% busy with zero memory-issue overhead — but it needs a hardware **asynchronous-copy + cross-wave synchronization** primitive (NVIDIA's TMA plus named-barrier / warpgroup specialization on Hopper/Blackwell). **gfx950 has no such primitive**, so this repository does not implement warp specialization; it is shown to complete the design space and to frame what the two AMD-supported models are approximating.
+
+---
+
+| Model | Scheduling unit | Compiler involvement |
+|---|---|---|
+| **Intra-wave** | Individual instructions | **Very high** |
+| **Inter-wave** | Pipeline stages | **Medium** |
+| **Warp specialization** | Functional roles | **Low** |
+
+The larger question this repository asks is **where the scheduling intelligence should live** — pushed into the compiler (intra-wave) or expressed directly in the kernel's wave structure (inter-wave). Both reach near-peak MFMA utilization on gfx950 by different means; the trade-offs are detailed in [`docs/scheduling_models.md`](../../docs/scheduling_models.md).
+
+## 2. Directory Structure
 
 ```
 gemm/
@@ -40,45 +84,9 @@ gemm/
         └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout
 ```
 
-## 2. GPU scheduling models
-
-Once the memory hierarchy and tiling are fixed, peak GEMM throughput comes down to one scheduling problem on **each SIMD**:
-
-> Every SIMD must **issue memory instructions** — `buffer_load` (global → LDS) and `ds_read` (LDS → registers) — to *prepare* operands, and **issue tensor instructions** (`mfma`) to *compute* on them. The two use different hardware pipes and can run concurrently, but a `ds_read` (producer) feeds an `mfma` (consumer), and that dependency must be spanned with enough distance to hide the memory latency. Peak means keeping the matrix pipe issuing `mfma` **back-to-back** while the memory for future tiles is already in flight.
-
-The design knob is **who issues the memory, relative to who issues the compute**. On a GPU SIMD there are only **three fundamental answers**, and this repository is organized around them.
-
-All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`** (8 `mfma` total); each region needs **2 `ds_read`** to stage its operands and issues **2 `buffer_load`** to prefetch later regions. A row is one wave's *issue timeline* — wide green = `mfma`, small orange/yellow = memory, and the arrow is the `ds_read → first mfma` dependency. Latencies are assumed fully hidden, so all three finish the 8 `mfma` in the same time; what differs is the *structure* that makes the overlap happen.
-
-### 2.1 Intra-wave — one wave, software-pipelined
-
-![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
-
-A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler + `force-agpr` + `amdgcnas` plugins recover and preserve the interleaved schedule the Gluon kernel expresses.
-
-This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
-
-### 2.2 Inter-wave — two waves ping-pong
-
-![inter-wave schedule: two waves alternate compute and memory](images/sched_inter_wave.png)
-
-Two waves share the SIMD and split the work evenly, running **phase-offset**: while `wave0` executes its 4-`mfma` region, `wave1` issues that region's `ds_read` + `buffer_load`; then they swap roles. Because at every instant *one* of the two waves is in its compute region, the SIMD's matrix pipe is never idle — the overlap is a property of the **ping-pong**, not of any within-wave instruction ordering. Each wave simply runs a compute block, then a memory block, so almost no compiler scheduling is required and these kernels build on stock upstream Triton + LLVM.
-
-This is the [`inter_wave/`](inter_wave/README.md) route (`a16w16`, `a8w8`, `a4w4`): **two waves per SIMD**, driven by `warp_pipeline_stage`, no AGPRs.
-
-### 2.3 Warp specialization — dedicated producer + consumer waves
-
-![warp-specialization schedule: one compute wave, one memory wave](images/sched_warp_spec.png)
-
-The third option splits waves by **role** rather than by tile: one **compute wave** issues *only* `mfma` (it never spends an issue slot on memory and never stalls on it), while a **producer wave** issues *only* `ds_read`/`buffer_load` and feeds the compute wave through LDS. The `ds_read → mfma` dependency now crosses *between* waves. This is the cleanest overlap of the three — the compute wave's matrix pipe is 100% busy with zero memory-issue overhead — but it needs a hardware **asynchronous-copy + cross-wave synchronization** primitive (NVIDIA's TMA plus named-barrier / warpgroup specialization on Hopper/Blackwell). **gfx950 has no such primitive**, so this repository does not implement warp specialization; it is shown to complete the design space and to frame what the two AMD-supported models are approximating.
-
----
-
-The larger question this repository asks is **where the scheduling intelligence should live** — pushed into the compiler (intra-wave) or expressed directly in the kernel's wave structure (inter-wave). Both reach near-peak MFMA utilization on gfx950 by different means; the trade-offs are detailed in [`docs/scheduling_models.md`](../../docs/scheduling_models.md).
-
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), Triton built from the `gfx950-tutorial-v1.1` tag, rocprof
+Measured on a single MI355X (gfx950), Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
 scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
