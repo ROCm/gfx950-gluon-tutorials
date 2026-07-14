@@ -12,13 +12,9 @@ It schedules the hot loop at the **wave level** with `warp_pipeline_stage`, slic
 256×256 output tile into a **2×2 grid of [128×128] quadrants**, and runs with **no
 AGPRs**.
 
-> For the theory behind `warp_pipeline_stage` — the phase-shifted, two-group
-> schedule, why it raises MFMA utilization, and the barrier/membar rules this
-> kernel follows — see [`docs/warp_pipelining.md`](../../../../docs/warp_pipelining.md).
-
 ## 1. Design
 
-The kernel (`a16w16_kernel` — sliceMN, `BLOCK_K=64`, 2-buffer) borrows the hot-loop
+The kernel borrows the hot-loop
 structure from the 4-wave [`a16w16/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
 and runs it with 8-wave `warp_pipeline_stage` wave-level scheduling. The
 256×256 tile is split into a **2×2 grid of [128×128] quadrants**, each operand half-tile
@@ -37,76 +33,111 @@ in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/righ
 | Hot-loop scheduling | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
 | XCD PID remap | yes (v9-style) | yes |
 
-## 2. Loop structure
+## 2. What changes from the 4-wave kernel
 
-The output is split into four quadrants, each its own f32 accumulator:
+The 8-wave kernel is the 4-wave `a16w16/v9` with **three deltas**. Everything else — the
+2×2 `[128×128]` quadrant slicing, the four separate double-buffered LDS allocations, the
+`mfma` / `local_load` / `buffer_load_to_shared` operations, and the XCD PID remap — carries
+over unchanged.
+
+### 2.1 Loop structure — the same region, restaged
+
+The output is four quadrants, each its own f32 accumulator, and the loop is unrolled 2×
+into **8 regions** (one per quadrant × buffer):
 
 ```
 acc_tl += DOT(A_top, B_left)     acc_tr += DOT(A_top, B_right)
 acc_bl += DOT(A_bot, B_left)     acc_br += DOT(A_bot, B_right)
 ```
 
-The loop is unrolled 2× → **8 mfma regions + 8 mem regions**. Each region is wrapped in
-`warp_pipeline_stage`, with `cdna4_async.wait_group(5)` placed **before** the mfma region
-(so the async copy whose data the upcoming load needs is drained ahead of use, and the
-wait sits at an empty stage-cluster boundary so `WarpPipeliner` accepts it):
+In the 4-wave `v9`, a region is a single block — one `mfma` immediately followed by the
+`local_load` + async refill for the next region — and the LLIR scheduler interleaves the
+two. The 8-wave kernel takes that **same region** and only splits its `mfma` and its memory
+ops into two `warp_pipeline_stage` clusters; the wave-level pipeliner then stripes one wave
+group's mfma cluster over the other group's mem cluster:
 
-```
-cdna4_async.wait_group(5)
-with warp_pipeline_stage("mfma", priority=0):
-    acc_X = mfma(operand_a, operand_b, acc_X)
-with warp_pipeline_stage("mem", priority=1):
-    operand = smem.index(buf).load(dotOp)      # LR for the next region
-    cdna4_async.buffer_load_to_shared(...)     # AC refills this buffer
-    cdna4_async.commit_group()
-```
+| 4-wave `v9` region (compiler-interleaved) | 8-wave region (wave-pipelined) |
+|---|---|
+| <pre>acc_tl = mfma(a_top, b_left, acc_tl)<br>a_bot  = smemA_bot.load(dotA)<br>buffer_load_to_shared(smemB_left, …)<br>commit_group()</pre> | <pre>wait_group(5)<br>with warp_pipeline_stage("mfma", priority=0):<br>    acc_tl = mfma(a_top, b_left, acc_tl)<br>with warp_pipeline_stage("mem", priority=1):<br>    a_bot = smemA_bot.load(dotA)<br>    buffer_load_to_shared(smemB_left, …)<br>    commit_group()</pre> |
 
-The 8-wave global-load layouts are the 4-wave `v9` layouts with **one extra warp
-dimension** (tiling M for A, N for B, since `warpsPerCTA=[2,4]` = 8 warps); the shared /
-dot-operand / MFMA layouts are reused unchanged. B is pre-transposed to `(N, K)` and fed
-as a logical `(K, N)` operand via strides, so K is contiguous for the async copy.
+Same instructions, same order — the only edits are the two `with warp_pipeline_stage(...)`
+wrappers and moving `wait_group` ahead of the mfma cluster. The **memory** cluster carries
+the **higher** priority (1 vs 0) so it can still issue its address-update VALU while the
+other group hammers the matrix unit (see [`docs/warp_pipelining.md §5`](../../../../docs/warp_pipelining.md)).
 
-The 8 mfma regions and 8 mem regions are interleaved across the two co-resident wave
-groups (**ping-pong**) via `warp_pipeline_stage`: one wave group's MFMAs issue while the
-other group's loads are in flight, then they swap. Each region's `wait_group(5)` drains
-the async copy whose data the upcoming load needs, so the load → MFMA dependency is
-satisfied without stalling the issue pipe. The figure below shows the full unrolled
-schedule — 8 mfma / 8 mem regions over the four quadrants × 2 buffers.
+### 2.2 Layout changes — one warp-grid edit, `[2,2] → [2,4]`
+
+Doubling the waves changes exactly one thing in the layouts: `warpsPerCTA` goes from
+**`[2,2]` (4 warps) to `[2,4]` (8 warps)**. Every layout delta follows mechanically from
+that — the global-load layouts gain one extra warp dimension (tiling M for A, N for B) so
+8 warps split the same tile, while the shared / dot-operand / MFMA layouts are
+warp-count-independent and reused **verbatim**. Because all of them are constructed
+**parametrically** from the `[WARPS_M, WARPS_N]` constants (`= [2, 4]`) by the layout
+builders, the change is a one-line edit rather than a hand-rewrite of every layout — a small,
+regular change for a16w16. B is still pre-transposed to `(N, K)` and fed as a logical
+`(K, N)` operand via strides so K stays contiguous for the async copy, exactly as in `v9`.
+
+### 2.3 Where `async_wait` goes — the counter-intuitive part
+
+The tiling and ping-pong schedule are essentially identical to `intra_wave/a16w16/v9`, so
+the figure below is **not** about the tile decomposition. It highlights the one thing the
+8-wave kernel must get right that the 4-wave kernel does not: **where the `async_wait`
+(`wait_group`) lands**.
 
 <p align="center">
-  <img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="640">
+  <img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong schedule highlighting async_wait placement" width="680">
 </p>
+
+Read the two columns as the two co-resident wave groups (`wave0-3`, `wave4-7`), running a
+full stage apart. Follow the red `A_t[2]`: `wave0-3` issues the async copy `AC A_t[2]` near
+the top, but the `local_read` `LR A_t[2]` that consumes it does not happen until many stages
+later — by which point `wave4-7` is the group *ahead*. The `async_wait(5)` guarding that read
+(also red) therefore has to guarantee that **both** wave groups have committed their
+outstanding async copies into LDS before the ahead group reads — not just the reader's own
+group. Because the two groups run a stage apart, the LDS producer→consumer window spans
+**`S-1 → S+1`** (two stages, across groups), which is exactly why every `wait_group(...)` is
+placed *before* its mfma cluster rather than at the immediately following boundary. The full
+derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelining.md).
 
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v1.1`, rocprof cold-rotating (`--rotating-buffer-size 2048`). The
-8-wave kernel (`scripts/collect_perf.py`) vs the 4-wave `a16w16/v9` reference
-(`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
+Triton `gfx950-tutorial-v1.1`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
+reference (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
-| K | 8-wave TFLOPS | 8-wave MFMA eff | v9 TFLOPS | v9 MFMA eff |
+| K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
 | 8192  | **1437** | 99.8% | 1425 | 98.7% |
 | 16384 | **1485** | 99.8% | 1460 | 97.7% |
 | 32768 | 1291 | 84.3% | **1305** | 62.7% |
 
-VGPRs / spills: 8-wave **242 / 0**, v9 **480 / 0** (both loop-spill-free).
+VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **480 / 0** (both loop-spill-free).
 
-The two routes are neck-and-neck. The 8-wave edges the 4-wave `a16w16/v9` (LLIR scheduler +
+The two routes are neck-and-neck. This kernel edges the 4-wave `intra_wave/v9` (LLIR scheduler +
 force-agpr + amdgcnas) on TFLOPS at K ≤ 16384 (**~+1–2%**) and holds ~99.8% loop MFMA there;
-at K=32768 `v9` edges it (1305 vs 1291) and both kernels' loop MFMA drops as the buffer-load
-stall sets in. (MFMA-eff is a single-dispatch ATT reading — treat the last digit as noise.)
+at K=32768 `intra_wave/v9` edges it (1305 vs 1291) and both kernels' loop MFMA drops as the
+buffer-load stall sets in. (MFMA-eff is a single-dispatch ATT reading — treat the last digit as
+noise.)
 
 ### Trace (MI355X, K=8192)
 
-![8-wave sliceMN vs 4-wave v9 ATT trace on MI355X](images/v0_v1_v9_trace_mi355.png)
+Two single-dispatch ATT timelines at 4096²×8192 on MI355X, drawn at the same width — this
+8-wave `inter_wave` kernel on top, the 4-wave `intra_wave/v9` below. Green = MFMA, orange =
+memory:
 
-ATT timelines at 4096²×8192 on MI355X. **Left:** an earlier full-tile triple-buffered ring
-prototype — bound by HBM latency, its loads cluster in time so the MFMA units stall
-(the gaps in the lane). **Middle:** this 8-wave sliceMN kernel. **Right:** the 4-wave `v9`.
-Both the sliceMN kernel and `v9` reach **near-solid MFMA issue**, with the loads hidden
-behind compute — which is exactly why slicing the tile (to spread the loads) beats the
-full-tile ring.
+<p align="center">
+  <img src="images/att_inter_8wave_K8192.png" alt="inter_wave 8-wave a16w16 ATT trace: 2 waves/SIMD ping-pong" width="820"><br>
+  <em><b>this kernel (8-wave)</b>: two rows per SIMD (e.g. SM0-00 / SM0-01) ping-pong — while one wave group runs green MFMA, the other runs orange memory, then they swap.</em>
+</p>
+
+<p align="center">
+  <img src="images/att_v9_intra_K8192.png" alt="intra_wave a16w16 v9 ATT trace: 1 wave/SIMD, compiler-interleaved" width="820"><br>
+  <em><b>4-wave <code>intra_wave/v9</code></b>: one row per SIMD (e.g. SM0-00), near-solid green with the memory ops interleaved inline by the compiler.</em>
+</p>
+
+Both reach **near-solid MFMA issue** with the loads hidden behind compute — the same result
+via the two different scheduling models (wave-level ping-pong vs compiler interleave).
 
 ## 4. Running
 
