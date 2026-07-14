@@ -77,56 +77,25 @@ schedule — 8 mfma / 8 mem regions over the four quadrants × 2 buffers.
   <img src="images/new_8wave_pingpong_design.png" alt="8-wave warp ping-pong loop design" width="640">
 </p>
 
-## 3. Epilogue: register pressure and the spill fix
-
-At 8 waves there are **2 waves/SIMD**, so the per-wave budget is 256 VGPR. The four live
-f32 `[128×128]` accumulators alone are 128 VGPR; with the dot operands (~96) and the store
-machinery, the **epilogue** (not the loop) overflowed and spilled the accumulators to
-scratch — 67 spills, a 32,240-cycle epilogue (~11% of the kernel at K=8192). The loop body
-itself never spills (it runs at ~99.8% MFMA).
-
-Two kernel-side changes bring spills to **0**:
-
-1. **Store-side pointer-walk.** All four quadrants have identical internal structure, so
-   they share **one** within-quadrant offset tensor plus four **scalar** base pointers
-   (`c_tl/bl/tr/br_base = c_base + const`), instead of four full `[128×128]` offset
-   tensors (~32 VGPR each).
-2. **De-interleave the epilogue.** Finish all four final mfmas *before* the convert+store
-   phase. This lets the dot operands die first, so only the four accumulators (+ one
-   in-flight `convert_layout`) are live during the stores.
-
-> [!NOTE]
-> The store downcasts f32→f16 (`v_cvt_pk_f16_f32`) **before** `convert_layout`, so the
-> layout shuffle through LDS already moves f16, not f32. The remaining ~16,660-cycle
-> epilogue is the inherent `convert_layout` LDS round-trip (`mfmaLayout → BlockedLayout`)
-> plus the stores.
-
-## 4. Performance
+## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-current build (Triton 3.8.0), rocprof cold-rotating (`--rotating-buffer-size 2048`). The
-8-wave kernel vs the 4-wave `a16w16/v9` reference (LLIR scheduler + force-agpr + amdgcnas,
-`TRITON_ENABLE_LLIR_SCHED=1 TRITON_ENABLE_AMDGCN_AS=1`):
+Triton `gfx950-tutorial-v1.1`, rocprof cold-rotating (`--rotating-buffer-size 2048`). The
+8-wave kernel (`scripts/collect_perf.py`) vs the 4-wave `a16w16/v9` reference
+(`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
 | K | 8-wave TFLOPS | 8-wave MFMA eff | v9 TFLOPS | v9 MFMA eff |
 |---|---|---|---|---|
-| 8192  | 1446 | 99.8% | **1485** | 97.0% |
-| 16384 | 1495 | 99.3% | **1532** | 97.4% |
-| 32768 | 1287 | 92.3% | **1310** | ~81% |
+| 8192  | **1437** | 99.8% | 1425 | 98.7% |
+| 16384 | **1485** | 99.8% | 1460 | 97.7% |
+| 32768 | 1291 | 84.3% | **1305** | 62.7% |
 
-VGPRs / spills: **242 / 0** (loop-spill-free).
+VGPRs / spills: 8-wave **242 / 0**, v9 **480 / 0** (both loop-spill-free).
 
-The 4-wave `a16w16/v9` (LLIR scheduler + force-agpr + amdgcnas) edges the 8-wave kernel on
-TFLOPS at all three K (**~+3% / +2% / +2%**); the 8-wave keeps the highest loop MFMA-eff
-(~99% at K ≤ 16384, dipping to ~92% at K=32768 as the buffer-load stall sets in).
-(MFMA-eff is a single-dispatch ATT reading — treat the last digit as noise.)
-
-> [!NOTE]
-> **MFMA eff is per-SIMD and loop-only.** `process_json.py` reports one wave's MFMA-cycle
-> fraction; with 2 waves/SIMD interleaving issue, `scripts/collect_perf.py` doubles it for the
-> per-SIMD figure (the 4-wave kernels run 1 wave/SIMD, factor 1). The number is for the hot
-> loop — the prologue/epilogue carry no MFMA, so the *whole-kernel* efficiency is lower
-> (~94% at K=8192) and converges toward the loop number as K grows.
+The two routes are neck-and-neck. The 8-wave edges the 4-wave `a16w16/v9` (LLIR scheduler +
+force-agpr + amdgcnas) on TFLOPS at K ≤ 16384 (**~+1–2%**) and holds ~99.8% loop MFMA there;
+at K=32768 `v9` edges it (1305 vs 1291) and both kernels' loop MFMA drops as the buffer-load
+stall sets in. (MFMA-eff is a single-dispatch ATT reading — treat the last digit as noise.)
 
 ### Trace (MI355X, K=8192)
 
@@ -139,7 +108,7 @@ Both the sliceMN kernel and `v9` reach **near-solid MFMA issue**, with the loads
 behind compute — which is exactly why slicing the tile (to spread the loads) beats the
 full-tile ring.
 
-## 5. Running
+## 4. Running
 
 ```bash
 # correctness + do_bench TFLOPS (from this kernel dir)
@@ -159,7 +128,7 @@ The **no-AGPR** setting is baked into the kernel's launch via Triton's built-in
 `llvm_fn_attrs=(("amdgpu-agpr-alloc","0,0"),)` compile option — no env var or compiler
 patch needed, and it survives a Triton rebuild.
 
-## 6. Files
+## 5. Files
 
 - `matmul_kernel.py` — the kernel; exposes `a16w16_kernel` (the jit kernel),
   `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
