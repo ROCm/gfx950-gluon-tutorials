@@ -16,19 +16,11 @@ AGPRs**.
 > schedule, why it raises MFMA utilization, and the barrier/membar rules this
 > kernel follows — see [`docs/warp_pipelining.md`](../../../../docs/warp_pipelining.md).
 
-> [!IMPORTANT]
-> The 4-wave `llir+amdgcnas` toolchain (`TRITON_ENABLE_LLIR_SCHED` /
-> `TRITON_ENABLE_AMDGCN_AS`) is built around the 4-wave register/schedule model and
-> **fails register allocation** at 8 waves. This kernel schedules itself via
-> `warp_pipeline_stage` and runs with **no AGPRs** — it sets `amdgpu-agpr-alloc=0,0`
-> at launch via Triton's built-in `llvm_fn_attrs` option, so the f32 accumulators write
-> VGPRs directly, which packs tighter than the default AGPR allocation.
-
 ## 1. Design
 
-The kernel (`a16w16_kernel` — sliceMN, `BLOCK_K=64`, 2-buffer) combines the hot-loop
-structure of the 4-wave [`a16w16/v8_sliceMN`](../../intra_wave/a16w16/v8_sliceMN/README.md)
-— the slicing `v9` uses — with 8-wave `warp_pipeline_stage` wave-level scheduling. The
+The kernel (`a16w16_kernel` — sliceMN, `BLOCK_K=64`, 2-buffer) borrows the hot-loop
+structure from the 4-wave [`a16w16/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
+and runs it with 8-wave `warp_pipeline_stage` wave-level scheduling. The
 256×256 tile is split into a **2×2 grid of [128×128] quadrants**, each operand half-tile
 in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/right`).
 
@@ -44,19 +36,6 @@ in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/righ
 | `local_load` | non-relaxed (separate allocs) | non-relaxed (separate allocs) |
 | Hot-loop scheduling | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
 | XCD PID remap | yes (v9-style) | yes |
-
-Two consequences of the four separate allocations:
-
-- **Non-relaxed loads, no membar barrier.** Because `smemA_top`, `smemA_bot`,
-  `smemB_left`, `smemB_right` are four *separate* allocations with distinct buffer IDs,
-  the membar disambiguates the load-read (LR) from the async-copy write (AC) by
-  allocation — so the loads stay plain (non-relaxed) `smem.index().load()` and carry no
-  extra `s_barrier`.
-- **`BLOCK_K=64` with only 2 buffers.** A larger K-step means more compute per async copy
-  to hide its latency, and the four-region structure spreads the buffer loads across the
-  K-step — so the TCP/HBM buffer-load stall that hits a full-tile ring at K≥16384 (the
-  [v8_sliceMN TCP analysis](../../intra_wave/a16w16/v8_sliceMN/README.md#4-buffer-load-throughput-and-tcp-limitations))
-  does not appear here.
 
 ## 2. Loop structure
 

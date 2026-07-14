@@ -10,7 +10,7 @@ It explores a fundamental systems question:
 
 Once memory hierarchy and tiling are optimized, peak GEMM performance depends on overlapping MFMA execution with memory operations. This repository presents two different scheduling models that solve this problem.
 
-## Directory Structure
+## 1. Directory Structure
 
 ```
 gemm/
@@ -40,9 +40,9 @@ gemm/
         └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout
 ```
 
-## Two scheduling models
+## 2. Two scheduling models
 
-### Intra-wave scheduling
+### 2.1 Intra-wave scheduling
 
 The **intra-wave** kernels — [`intra_wave/`](intra_wave/README.md) (`a16w16`, `a8w8`, `a4w4`) — launch **one wave per SIMD**.
 
@@ -50,7 +50,7 @@ Memory instructions and MFMA instructions are interleaved within each wave. This
 
 These kernels demonstrate how compiler infrastructure can recover an efficient instruction schedule while keeping the kernel relatively straightforward. Build, run, and the full FP16 → BF8 → MXFP4 optimization journey are in [`intra_wave/README.md`](intra_wave/README.md).
 
-### Inter-wave scheduling
+### 2.2 Inter-wave scheduling
 
 The **inter-wave** kernels — [`inter_wave/`](inter_wave/README.md) (`a16w16`, `a8w8`, `a4w4`) — launch **two waves per SIMD**.
 
@@ -60,35 +60,7 @@ These kernels require little compiler assistance and run using upstream Triton a
 
 For a detailed discussion of these two scheduling models, see [`docs/scheduling_models.md`](../../docs/scheduling_models.md).
 
-## Versions
-
-Every version isolates one idea, in the spirit of the a16w16 journey. The `a16w16` series is the
-full teaching arc (v0 → v9); the other solutions reuse that design and add only what their data
-type or wave count needs. See [`a16w16/README` §3](intra_wave/a16w16/README.md#3-the-optimization-journey)
-for the full a16w16 narrative.
-
-| Solution | Version | Focus | Key concept |
-|----------|---------|-------|-------------|
-| **`intra_wave/a16w16`** (FP16/BF16) | `v0_naive` | Baseline | Explicit layouts, correctness-first MFMA |
-| | `v1_buffer_load` | Codegen | Hardware OOB checking, branch elimination |
-| | `v2_async_copy` | Codegen | Direct-to-LDS, eliminates register staging |
-| | `v3_lds` | Codegen | LDS layout design: swizzling vs padding |
-| | `v4_global_prefetch` | Latency hiding | 2-stage pipeline, double buffering |
-| | `v5_local_prefetch` | Latency hiding | 3-stage pipeline, LLIR scheduler |
-| | `v6_loop_unroll` | Codegen | Unroll to eliminate copy overhead |
-| | `v7_sliceN` | Register pressure | N-slicing |
-| | `v8_sliceMN` | Register pressure, throughput | M+N slicing, buffer-load stall analysis |
-| | `v9_beyond_hotloop` | L2 locality | XCD-aware PID remapping |
-| **`intra_wave/a8w8`** (BF8) | *(single kernel)* | Data type | a16w16 design at BF8 parameters |
-| **`intra_wave/a4w4`** (MXFP4) | `v0_sliceN` | Scale pipeline | N-slicing + LDS round-trip scales |
-| | `v1_sliceMN` | Scale pipeline | M+N slicing + direct-to-LDS async scales |
-| **`inter_wave/a16w16`** (FP16/BF16) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=64`, 2-buffer, 8-wave ping-pong |
-| **`inter_wave/a8w8`** (BF8) | *(single kernel)* | Warp pipeline | M+N slicing, `BLOCK_K=128`, 2-buffer, 8-wave ping-pong |
-| **`inter_wave/a4w4`** (MXFP4) | `v0_sliceMN` | Scale + pipeline | Byte-shuffle B scale (baseline) |
-| | `v1_combineBsc` | Scale + pipeline | Combined transpose-read B scale *(recommended)* |
-| | `v2_mfma32x32x64` | MFMA shape | 32×32×64 MFMA + conflict-free LDS layout |
-
-## Performance Summary
+## 3. Performance Summary
 
 Measured on a single MI355X (gfx950), Triton built from the `gfx950-tutorial-v1.1` tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
@@ -103,15 +75,14 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > The **4-wave** bars are the `gfx950-tutorial-v1.1`-build numbers from
 > `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** bars
 > come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
-> (2 waves/SIMD → per-wave fraction × 2). **BF16 measures ~6% above FP16** here despite the
-> nominally identical MFMA rate (a clock/power effect on this build, reproducible across runs).
+> (2 waves/SIMD → per-wave fraction × 2).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
 > FP16 optimization journey's near-optimal headline (1421 TFLOPS on `gfx950-tutorial-v1.1`) is
 > documented in [`a16w16/`](intra_wave/a16w16/).
 
 The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 
-## ROCm
+## 4. ROCm
 
 This tutorial assumes **ROCm ≥ 7.0**. The benchmarking and trace
 collection scripts (`scripts/run_perf_table.py`, `scripts/run_att.py`,
@@ -123,7 +94,7 @@ where rocprofv3 7.0+ now defaults to a binary `.db` output, and
 6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
 and different CLI defaults, and are not supported by these scripts.
 
-## Learning path
+## 5. Learning path
 
 This repository is organized as both a tutorial and a comparison of two system designs.
 
