@@ -68,7 +68,7 @@ v0's `[4,1],[32,2],[2,4]` puts 2 K-groups per warp, which for `[256,8]` are 256 
 for a `[128,8]` half because there the 128-N span equals the tile's N. See the
 [family README §2.1](../README.md#21-why-the-combined-2568-fill-needs-a-special-blocked-layout).
 
-## 4. Performance (MI355X, `gfx950-tutorial-v1.0` + `fence_loads` #10840, rocprof cold-rotating)
+## 4. Performance (MI355X, `gfx950-tutorial-v1.1` — always-on warp-pipeline barrier #10840, rocprof cold-rotating)
 
 | K | v0 TFLOPS | **v1 TFLOPS** | v0 MFMA | **v1 MFMA** | speedup |
 |---|---|---|---|---|---|

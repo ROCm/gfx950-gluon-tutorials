@@ -22,7 +22,7 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 
 ## 2. Performance
 
-Measured on MI355X, gfx950, 4096×4096, Triton `gfx950-tutorial-v1.0` — a4w4 rows also need `fence_loads` PR #10840 — rocprof cold-rotating; per-SIMD loop MFMA eff):
+Measured on MI355X, gfx950, 4096×4096, Triton `gfx950-tutorial-v1.1` (its warp-pipeline barrier, #10840, applies to all rows) — rocprof cold-rotating; per-SIMD loop MFMA eff):
 
 | Kernel (final version) | K=8192 | K=16384 | K=32768 | VGPR / spills |
 |---|---|---|---|---|
@@ -42,4 +42,4 @@ python scripts/collect_perf.py --kernel a4w4   --version 1 --K 8192
 
 ## 4. Where the 8-wave lands vs the 4-wave
 
-On the v1.0 build, for **FP16**, the 8-wave kernel now edges the 4-wave `v9` by ~1.5% (1442 vs 1421 @ K=8192) — on the v1.0 build the 4-wave FP16 path sits at 1421. For **BF8**, the tuned 4-wave `llir+force-agpr+amdgcnas` leads (3232 vs 3094 @ K=16384). For **MXFP4**, `v1` (combined B-scale, the default) **beats the 4-wave *base*** at large K (4938 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, and the intra-stage `fence_loads` (PR #10840) lifts loop MFMA from ~57% (`v0`) to ~80%, TFLOPS +16–22%. The tuned 4-wave `llir+force-agpr+amdgcnas` (~5.2 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each kernel's README ([`a16w16`](a16w16/README.md), [`a8w8`](a8w8/README.md), [`a4w4`](a4w4/README.md)) for the full breakdown.
+On the v1.1 build, for **FP16**, the 8-wave kernel now edges the 4-wave `v9` by ~1.5% (1442 vs 1421 @ K=8192) — the 4-wave FP16 path sits at 1421. For **BF8**, the tuned 4-wave `llir+force-agpr+amdgcnas` leads (3232 vs 3094 @ K=16384). For **MXFP4**, `v1` (combined B-scale, the default) **beats the 4-wave *base*** at large K (4938 vs 4137 @ K=32768): combining the B scale so it transpose-reads instead of byte-shuffling deleted 118 loop `v_perm`, and the always-on warp-pipeline `sched.barrier` (#10840) lifts loop MFMA from ~57% (`v0`) to ~80%, TFLOPS +16–22%. The tuned 4-wave `llir+force-agpr+amdgcnas` (~5.2 PFLOP/s) still leads, as the loop remains LDS/scale-throughput bound. See each kernel's README ([`a16w16`](a16w16/README.md), [`a8w8`](a8w8/README.md), [`a4w4`](a4w4/README.md)) for the full breakdown.

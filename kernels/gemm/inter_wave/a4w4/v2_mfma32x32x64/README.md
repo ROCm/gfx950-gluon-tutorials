@@ -96,8 +96,8 @@ clock-independent, TFLOPS is not.
   the matrix ops, ≤4 SALU/mfma) saves **~74 cyc/iter (−1.75%)**. It can't be produced from Gluon (LLVM
   hoists loop-carried address math) nor by relaxing the `sched_barrier` mask to allow SALU (tested —
   the scheduler doesn't sink them and makes counterproductive moves instead); it needs a forceful hint.
-- **fence dependency:** the `fence_loads` warp-pipeline flag (on v1 and v2) needs `fence_loads` support
-  (PR #10840) **not in the pinned `gfx950-tutorial-v1.0`**; those numbers require a Triton built with it.
+- **warp-pipeline barrier:** the per-stage `sched.barrier` v1/v2 rely on (PR #10840) is now
+  **always-on and part of the pinned `gfx950-tutorial-v1.1`** — no flag or special build needed.
 
 ## Conclusion
 

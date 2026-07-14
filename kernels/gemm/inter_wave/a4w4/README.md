@@ -99,7 +99,7 @@ gfx950 rejects — the load must stay N-major to get a real dword.)
 
 MI355X, gfx950, 4096×4096, MXFP4, **no-AGPR**, rocprof cold-rotating tensors (last-100
 average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Triton
-`gfx950-tutorial-v1.0` + the `fence_loads` PR (#10840):
+`gfx950-tutorial-v1.1` (which carries the merged warp-pipeline barrier, #10840):
 
 | K | v0 TFLOPS | v0 MFMA eff | **v1 TFLOPS** | **v1 MFMA eff** | v1 speedup |
 |---|---|---|---|---|---|
@@ -112,8 +112,8 @@ Codegen (K=8192): B-scale `v_perm` **118 → 0**, `ds_read_u8` **32 → 0**, `ds
 halves the (epilogue) spills.
 
 The win comes entirely from the loop: removing 118 register-shuffle `v_perm` lifts per-SIMD
-loop MFMA efficiency from **~57% to ~73%**, and the intra-stage `fence_loads` (a `sched.barrier`
-after the stage's LDS reads, PR #10840) takes it to **~80%** — together **+16–22%** TFLOPS,
+loop MFMA efficiency from **~57% to ~73%**, and the always-on warp-pipeline `sched.barrier`
+after each stage's memory ops (merged as #10840, §3.2) takes it to **~80%** — together **+16–22%** TFLOPS,
 growing with K as the loop dominates. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
 ~90%+ of a16w16/a8w8), but v1 recovers most of the headroom the B-scale byte-shuffle was
 wasting. The 4-wave `a4w4` reaches ~5189 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
@@ -133,24 +133,25 @@ datapath peak edges ahead at large, loop-dominated K). It is the [MFMA-efficienc
 caveat](../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is clock-independent,
 TFLOPS is not. Details in [`v2_mfma32x32x64/`](v2_mfma32x32x64/README.md).
 
-### 3.2 `fence_loads` A/B
+### 3.2 The warp-pipeline barrier (why it's unconditional)
 
-Each `warp_pipeline_stage("mem", …, fence_loads=True)` emits a full `sched.barrier` after the
-stage's LDS reads (PR #10840), so the backend cannot hoist the next tile's global→LDS prefetch
-ahead of the reads a following MFMA depends on. All inter_wave/a4w4 numbers above are **fence-on**;
-turning it off (K=32768):
+The warp-pipeline lowering emits a full `sched.barrier` after each stage's memory ops
+([#10840](https://github.com/triton-lang/triton/pull/10840) — **always on**, no opt-in flag),
+so the backend cannot hoist the next tile's global→LDS prefetch ahead of the reads a following
+MFMA depends on. All inter_wave/a4w4 numbers above include the barrier; the A/B that justified
+making it unconditional (K=32768, barrier off vs on):
 
-| Version | fence | TFLOPS | MFMA eff | VGPR | Spills |
+| Version | barrier | TFLOPS | MFMA eff | VGPR | Spills |
 |---|---|---|---|---|---|
 | v1 | off | 4842 | 73.6% | 256 | 12 |
 | v1 | **on** | 4908 | **80.0%** | 256 | 12 |
 | v2 | off | 4685 | 91.0% | 250 | 0 |
 | v2 | **on** | 4767 | **98.2%** | 246 | 0 |
 
-The fence lifts loop MFMA efficiency **+6.4 pp** (v1) and **+7.2 pp** (v2), for **+1.4–1.8%**
-TFLOPS — the largest `fence_loads` gain among the 8-wave kernels (the a16w16 / a8w8 loops are
-already MFMA-saturated at their operating points, so there the fence mainly helps via reduced
-register pressure rather than occupancy).
+The barrier lifts loop MFMA efficiency **+6.4 pp** (v1) and **+7.2 pp** (v2), for **+1.4–1.8%**
+TFLOPS — the largest barrier gain among the 8-wave kernels (the a16w16 / a8w8 loops are already
+MFMA-saturated at their operating points, so there it mainly helps via reduced register pressure
+rather than occupancy).
 
 ## 4. Running
 
