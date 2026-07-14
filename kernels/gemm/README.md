@@ -50,21 +50,21 @@ The design knob is **who issues the memory, relative to who issues the compute**
 
 All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`** (8 `mfma` total); each region needs **2 `ds_read`** to stage its operands and issues **2 `buffer_load`** to prefetch later regions. A row is one wave's *issue timeline* — wide green = `mfma`, small orange/yellow = memory, and the arrow is the `ds_read → first mfma` dependency. Latencies are assumed fully hidden, so all three finish the 8 `mfma` in the same time; what differs is the *structure* that makes the overlap happen.
 
-### 2.1 Inter-wave — two waves ping-pong
-
-![inter-wave schedule: two waves alternate compute and memory](images/sched_inter_wave.png)
-
-Two waves share the SIMD and split the work evenly, running **phase-offset**: while `wave0` executes its 4-`mfma` region, `wave1` issues that region's `ds_read` + `buffer_load`; then they swap roles. Because at every instant *one* of the two waves is in its compute region, the SIMD's matrix pipe is never idle — the overlap is a property of the **ping-pong**, not of any within-wave instruction ordering. Each wave simply runs a compute block, then a memory block, so almost no compiler scheduling is required and these kernels build on stock upstream Triton + LLVM.
-
-This is the [`inter_wave/`](inter_wave/README.md) route (`a16w16`, `a8w8`, `a4w4`): **two waves per SIMD**, driven by `warp_pipeline_stage`, no AGPRs.
-
-### 2.2 Intra-wave — one wave, software-pipelined
+### 2.1 Intra-wave — one wave, software-pipelined
 
 ![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
 
 A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler + `force-agpr` + `amdgcnas` plugins recover and preserve the interleaved schedule the Gluon kernel expresses.
 
 This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
+
+### 2.2 Inter-wave — two waves ping-pong
+
+![inter-wave schedule: two waves alternate compute and memory](images/sched_inter_wave.png)
+
+Two waves share the SIMD and split the work evenly, running **phase-offset**: while `wave0` executes its 4-`mfma` region, `wave1` issues that region's `ds_read` + `buffer_load`; then they swap roles. Because at every instant *one* of the two waves is in its compute region, the SIMD's matrix pipe is never idle — the overlap is a property of the **ping-pong**, not of any within-wave instruction ordering. Each wave simply runs a compute block, then a memory block, so almost no compiler scheduling is required and these kernels build on stock upstream Triton + LLVM.
+
+This is the [`inter_wave/`](inter_wave/README.md) route (`a16w16`, `a8w8`, `a4w4`): **two waves per SIMD**, driven by `warp_pipeline_stage`, no AGPRs.
 
 ### 2.3 Warp specialization — dedicated producer + consumer waves
 

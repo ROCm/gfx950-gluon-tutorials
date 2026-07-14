@@ -54,8 +54,8 @@ MF = "#4E7D2A"  # mfma          (green rectangle)
 DEP = "#2E6E8E"  # dependency arrow (teal)
 EDGE = "#2b2b2b"
 
-MW, MH = 1.0, 0.62  # mfma rectangle (wide = long compute op)
-MS = 0.36  # mem square side (small = quick issue)
+MW, MH = 1.0, 0.36  # mfma rectangle (wide = long compute op; height == mem square)
+MS = 0.36  # ds_read / buffer_load square side
 
 
 def mfma(ax, x, y):
@@ -117,11 +117,31 @@ def save(fig, name):
     print("wrote", out)
 
 
+# ------------------------------------------------------------------ intra-wave
+def plot_intra():
+    fig, ax = plt.subplots(figsize=(8.6, 1.9))
+    fig.patch.set_facecolor("white")
+    y = 0.4
+    wave_label(ax, y, "wave0")
+    for i in range(8):  # 8 mfma, contiguous -> matrix pipe stays busy
+        mfma(ax, i, y)
+    # ds/buffer_load overlap the mfma inline (one wave weaves them into its stream)
+    cols = (DS, DS, BL, BL, DS, DS, BL, BL)
+    for i, c in enumerate(cols):
+        mem(ax, i + 0.5, y, c)
+    # dep: a region-A ds prepares region-B operands (issued a full region early)
+    dep(ax, (1.5, y + MS / 2), (4.0, y + MH / 2), rad=-0.55)
+    finish(ax, "Intra-wave: one wave, memory software-pipelined into the mfma stream",
+           (-1.4, 8.3), (-0.15, 1.5))
+    legend(fig)
+    save(fig, "sched_intra_wave.png")
+
+
 # ------------------------------------------------------------------ inter-wave
 def plot_inter():
-    fig, ax = plt.subplots(figsize=(8.6, 2.5))
+    fig, ax = plt.subplots(figsize=(8.6, 2.3))
     fig.patch.set_facecolor("white")
-    y0, y1 = 1.15, 0.0  # wave0 top, wave1 bottom
+    y0, y1 = 0.85, 0.0  # wave0 top, wave1 bottom
     wave_label(ax, y0, "wave0")
     wave_label(ax, y1, "wave1")
     # phase A (x 0-4): wave0 computes, wave1 preps memory
@@ -134,41 +154,20 @@ def plot_inter():
         mfma(ax, i, y1)
     for xc, c in zip((4.5, 5.5, 6.5, 7.5), (DS, DS, BL, BL)):
         mem(ax, xc, y0, c)
-    # dep: wave1's ds (phase A) -> wave1's first mfma (phase B)
-    dep(ax, (1.5, y1 - MS / 2), (4.02, y1), rad=-0.5)
-    ax.text(2.0, y0 + 0.6, "phase A", ha="center", fontsize=9, color="#555")
-    ax.text(6.0, y0 + 0.6, "phase B", ha="center", fontsize=9, color="#555")
-    finish(ax, "Inter-wave: two waves ping-pong (compute ↔ memory)", (-1.4, 8.3), (-1.0, 1.85))
+    # dep: wave1's ds (phase A) -> wave1's first mfma (phase B), routed *below* the mem row
+    dep(ax, (1.5, y1 - MS / 2), (4.0, y1), rad=0.55)
+    ax.text(2.0, y0 + 0.45, "phase A", ha="center", fontsize=9, color="#555")
+    ax.text(6.0, y0 + 0.45, "phase B", ha="center", fontsize=9, color="#555")
+    finish(ax, "Inter-wave: two waves ping-pong (compute ↔ memory)", (-1.4, 8.3), (-1.0, 1.4))
     legend(fig)
     save(fig, "sched_inter_wave.png")
 
 
-# ------------------------------------------------------------------ intra-wave
-def plot_intra():
-    fig, ax = plt.subplots(figsize=(8.6, 1.9))
-    fig.patch.set_facecolor("white")
-    y = 0.5
-    wave_label(ax, y, "wave0")
-    for i in range(8):  # 8 mfma, contiguous -> matrix pipe stays busy
-        mfma(ax, i, y)
-    seams = (0.9, 1.9, 2.9, 3.9, 4.9, 5.9, 6.9, 7.9)
-    cols = (DS, DS, BL, BL, DS, DS, BL, BL)
-    ytop = y + MH / 2 + MS / 2 + 0.02
-    for xc, c in zip(seams, cols):
-        mem(ax, xc, ytop, c)
-    # dep: a region-A ds prepares region-B operands (issued a full region early)
-    dep(ax, (1.9, ytop + MS / 2), (4.02, y + MH / 2), rad=0.5)
-    finish(ax, "Intra-wave: one wave, memory software-pipelined into the mfma stream",
-           (-1.4, 8.3), (-0.2, 1.55))
-    legend(fig)
-    save(fig, "sched_intra_wave.png")
-
-
 # ---------------------------------------------------------- warp specialization
 def plot_ws():
-    fig, ax = plt.subplots(figsize=(8.6, 2.5))
+    fig, ax = plt.subplots(figsize=(8.6, 2.3))
     fig.patch.set_facecolor("white")
-    y0, y1 = 1.15, 0.0
+    y0, y1 = 0.85, 0.0
     wave_label(ax, y0, "wave0")
     wave_label(ax, y1, "wave1")
     for i in range(8):  # wave0: only mfma, back to back, never stalls
@@ -179,18 +178,18 @@ def plot_ws():
         mem(ax, xc, y1, c)
     # dep crosses waves: producer (wave1 ds) -> consumer (wave0 mfma)
     dep(ax, (1.5, y1 + MS / 2), (4.0, y0 - MH / 2), rad=0.0)
-    ax.text(4.0, y0 + 0.6, "compute wave (never issues memory)", ha="center", fontsize=8.5,
+    ax.text(4.0, y0 + 0.42, "compute wave (never issues memory)", ha="center", fontsize=8.5,
             color="#555")
-    ax.text(4.0, y1 - 0.55, "producer wave (only memory)", ha="center", fontsize=8.5, color="#555")
+    ax.text(4.0, y1 - 0.5, "producer wave (only memory)", ha="center", fontsize=8.5, color="#555")
     finish(ax, "Warp specialization: dedicated compute + producer waves (not on gfx950)",
-           (-1.4, 8.3), (-1.0, 1.85))
+           (-1.4, 8.3), (-1.0, 1.4))
     legend(fig)
     save(fig, "sched_warp_spec.png")
 
 
 def main():
-    plot_inter()
     plot_intra()
+    plot_inter()
     plot_ws()
 
 
