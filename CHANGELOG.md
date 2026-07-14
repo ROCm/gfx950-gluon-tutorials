@@ -5,6 +5,30 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-14 — Re-pin to `gfx950-tutorial-v1.1` (upstream merge of the warp-pipeline barrier PR)
+
+The pinned Triton commit moves from `gfx950-tutorial-v1.0` to `gfx950-tutorial-v1.1`.
+`v1.1` rebases the tutorial's out-of-tree-plugin support onto current upstream
+`triton-lang/triton` `main`, which now carries the merged warp-pipeline barrier work
+([#10840](https://github.com/triton-lang/triton/pull/10840)): `ConvertWarpPipeline`
+**always** emits a `sched.barrier` (`SchedGroupMask::non_mem_non_sideeffect`) after every
+top-level memory op in each warp-pipeline stage — no opt-in flag. The tutorial's local
+`fence_loads` / `keep_order` commits are dropped (superseded by the merge).
+
+- **LLVM pin: `62b7cf96` → `850a2b1b`.** The out-of-tree LLIR-scheduler plugin
+  (`plugins/llir_scheduler/libLlirSched.so`) is ABI-locked to the LLVM and has been
+  **rebuilt** against `850a2b1b`.
+- **`inter_wave` a4w4 v1/v2 drop the `fence_loads=True` kwarg** — the barrier is now
+  unconditional, so the kwarg is a no-op and is removed.
+
+Perf is preserved by the re-pin (MI355X, rocprof):
+
+- **intra_wave** (`llir+force-agpr+amdgcnas`): a16w16 v9 1418 / 98.6%, a8w8 3231 / 99.5%,
+  a4w4 v0 4901 / 81.2%, v1 5180 / 93.9% — matches `v1.0` within noise.
+- **inter_wave**: a16w16 1440 / 99.8%, a8w8 2868 / 99.7%, a4w4 v1 4931 / 79.5%,
+  v2 4798 / 98.9% — matches. **a4w4 v0 improves 57% → 66% MFMA** (4276 TFLOPS): v0 never
+  used the flag, so the now-always-on barrier applies to it too.
+
 ## 2026-07-13 — 8-wave warp-pipeline (`inter_wave`) GEMM kernels + `gemm/` reorganization
 
 Adds an **8-wave warp-pipeline** variant of each GEMM — a second scheduling model

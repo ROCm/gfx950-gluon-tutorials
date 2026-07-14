@@ -330,7 +330,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_tl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(0).load(dot_a_layout)
             a_sc_bot = smem_a_sc_b.index(0).load(scale_a_layout)
             cdna4_async.buffer_load_to_shared(smemB_left.index(0), b_base, b_tile_offsets)
@@ -348,7 +348,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_bl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(0).permute([1, 0]).load(dot_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_top.index(0), a_base, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(smem_a_sc_t.index(0), a_scales_ptr, a_sc_offsets)
@@ -365,7 +365,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_tr,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(1).permute([1, 0]).load(dot_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_bot.index(0), a_base + a_half_m, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(
@@ -384,7 +384,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_br,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(1).load(dot_a_layout)
             a_sc_top = smem_a_sc_t.index(1).load(scale_a_layout)
             b_sc_left, b_sc_right = _bsc_load_split(
@@ -407,7 +407,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_tl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_bot = smemA_bot.index(1).load(dot_a_layout)
             a_sc_bot = smem_a_sc_b.index(1).load(scale_a_layout)
             cdna4_async.buffer_load_to_shared(smemB_left.index(1), b_base + b_k2, b_tile_offsets)
@@ -427,7 +427,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_bl,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_right = smemB_right.index(1).permute([1, 0]).load(dot_b_layout)
             cdna4_async.buffer_load_to_shared(smemA_top.index(1), a_base + a_k2, a_tile_offsets)
             cdna4_async.buffer_load_to_shared(
@@ -446,7 +446,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_tr,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
             cdna4_async.buffer_load_to_shared(
                 smemA_bot.index(1), a_base + a_half_m + a_k2, a_tile_offsets
@@ -467,7 +467,7 @@ def v1_combineBsc(
                 b_format="e2m1",
                 acc=acc_br,
             )
-        with warp_pipeline_stage("mem", priority=1, fence_loads=True):
+        with warp_pipeline_stage("mem", priority=1):
             a_top = smemA_top.index(0).load(dot_a_layout)
             a_sc_top = smem_a_sc_t.index(0).load(scale_a_layout)
             b_sc_left, b_sc_right = _bsc_load_split(
