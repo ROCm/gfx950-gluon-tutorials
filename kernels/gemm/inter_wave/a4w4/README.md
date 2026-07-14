@@ -103,28 +103,29 @@ average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Trit
 
 | K | v0 TFLOPS | v0 MFMA eff | **v1 TFLOPS** | **v1 MFMA eff** | v1 speedup |
 |---|---|---|---|---|---|
-| 8192  | 3525 | ~57% | **4116** | **79.7%** | +16.8% |
-| 16384 | 3986 | 57.2% | **4630** | **79.9%** | +16.2% |
-| 32768 | 4064 | ~57% | **4938** | **80.0%** | +21.5% |
+| 8192  | 3653 | ~65% | **4107** | **79.2%** | +12.4% |
+| 16384 | 4152 | ~65% | **4623** | **79.4%** | +11.3% |
+| 32768 | 4254 | ~66% | **4919** | **79.6%** | +15.6% |
 
 Codegen (K=8192): B-scale `v_perm` **118 → 0**, `ds_read_u8` **32 → 0**, `ds_read_b64_tr_b8`
-**8 → 12**. VGPRs/spills **256 / 23 → 256 / 12** — deleting the `v_perm` temporaries also
-halves the (epilogue) spills.
+**8 → 12**. VGPRs/spills **256 / 29 → 256 / 12** — deleting the `v_perm` temporaries also
+more than halves the (epilogue) spills.
 
-The win comes entirely from the loop: removing 118 register-shuffle `v_perm` lifts per-SIMD
-loop MFMA efficiency from **~57% to ~73%**, and the always-on warp-pipeline `sched.barrier`
-after each stage's memory ops (merged as #10840, §3.2) takes it to **~80%** — together **+16–22%** TFLOPS,
-growing with K as the loop dominates. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
+The win comes entirely from the loop: v1's combined B-scale removes the 118 register-shuffle
+`v_perm`, lifting per-SIMD loop MFMA efficiency from v0's **~65% to ~80%** — **+12–16% TFLOPS**,
+growing with K as the loop dominates. Both versions run with the always-on warp-pipeline
+`sched.barrier` after each stage's memory ops (merged as #10840); its isolated contribution to
+each is the A/B in §3.2. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
 ~90%+ of a16w16/a8w8), but v1 recovers most of the headroom the B-scale byte-shuffle was
-wasting. The 4-wave `a4w4` reaches ~5189 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
+wasting. The 4-wave `a4w4` reaches ~5180 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
 targets the 4-wave register model and cannot be applied at 8 waves).
 
 ### 3.1 v2 — 32×32×64 MFMA (cycle-efficient, clock-throttled)
 
 | K | v1 (16×16×128) | v2 (32×32×64) |
 |---|---|---|
-| 8192  | 4116 / 79.7% | 4114 / 97.4% |
-| 32768 | 4938 / 80.0% | 4799 / 98.0% |
+| 8192  | 4107 / 79.2% | 4094 / 98.3% |
+| 32768 | 4919 / 79.6% | 4800 / 98.9% |
 
 v2 widens the MFMA and pairs it with a bank-conflict-free `[[1024, 16]]` LDS layout, reaching
 **~98% loop MFMA efficiency** (spill-free, 246 VGPRs). But the wider MFMAs draw more power, so
