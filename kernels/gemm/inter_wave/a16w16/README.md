@@ -58,12 +58,21 @@ group's mfma cluster over the other group's mem cluster:
 
 | 4-wave `v9` region (compiler-interleaved) | 8-wave region (wave-pipelined) |
 |---|---|
-| <pre>acc_tl = mfma(a_top, b_left, acc_tl)<br>a_bot  = smemA_bot.load(dotA)<br>buffer_load_to_shared(smemB_left, …)<br>commit_group()</pre> | <pre>wait_group(5)<br>with warp_pipeline_stage("mfma", priority=0):<br>    acc_tl = mfma(a_top, b_left, acc_tl)<br>with warp_pipeline_stage("mem", priority=1):<br>    a_bot = smemA_bot.load(dotA)<br>    buffer_load_to_shared(smemB_left, …)<br>    commit_group()</pre> |
+| <pre>acc_tl = mfma(a_top, b_left, acc_tl)<br>wait_group(5)<br>a_bot  = smemA_bot.load(dotA)<br>buffer_load_to_shared(smemB_left, …)<br>commit_group()</pre> | <pre>wait_group(5)<br>with warp_pipeline_stage("mfma", priority=0):<br>    acc_tl = mfma(a_top, b_left, acc_tl)<br>with warp_pipeline_stage("mem", priority=1):<br>    a_bot = smemA_bot.load(dotA)<br>    buffer_load_to_shared(smemB_left, …)<br>    commit_group()</pre> |
 
-Same instructions, same order — the only edits are the two `with warp_pipeline_stage(...)`
-wrappers and moving `wait_group` ahead of the mfma cluster. The **memory** cluster carries
-the **higher** priority (1 vs 0) so it can still issue its address-update VALU while the
-other group hammers the matrix unit (see [`docs/warp_pipelining.md §5`](../../../../docs/warp_pipelining.md)).
+Same instructions, near-identical order — the only edits are the two `with warp_pipeline_stage(...)`
+wrappers and **hoisting the `wait_group`** from just before the load (4-wave) up to *before* the
+mfma cluster (8-wave). The **memory** cluster carries the **higher** priority (1 vs 0) so it can
+still issue its address-update VALU while the other group hammers the matrix unit (see
+[`docs/warp_pipelining.md §5`](../../../../docs/warp_pipelining.md)).
+
+> [!NOTE]
+> Why is `wait_group(5)` hoisted **above the mfma stage** rather than left just before the
+> **mem stage** that actually issues the `local_load` whose data it drains? That placement looks
+> wrong at first glance — draining right before the consuming load would seem natural — and it is
+> the crux of the 8-wave design. [§2.3](#23-where-async_wait-goes--the-counter-intuitive-part)
+> explains it: the two wave groups run a stage apart, so the LDS hazard must be closed a full
+> stage early.
 
 ### 2.2 Layout changes — one warp-grid edit, `[2,2] → [2,4]`
 
