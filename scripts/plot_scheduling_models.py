@@ -63,9 +63,7 @@ def mfma(ax, x, y):
 
 
 def mem(ax, xc, yc, color):
-    ax.add_patch(
-        Rectangle((xc - MS / 2, yc - MS / 2), MS, MS, fc=color, ec=EDGE, lw=0.8, zorder=4)
-    )
+    ax.add_patch(Rectangle((xc - MS / 2, yc - MS / 2), MS, MS, fc=color, ec=EDGE, lw=0.8, zorder=4))
 
 
 def dep(ax, xy_from, xy_to, rad):
@@ -105,7 +103,11 @@ LEGEND = [
 
 def legend(fig):
     fig.legend(
-        handles=LEGEND, loc="lower center", ncol=4, frameon=False, fontsize=9.5,
+        handles=LEGEND,
+        loc="lower center",
+        ncol=4,
+        frameon=False,
+        fontsize=9.5,
         bbox_to_anchor=(0.5, -0.02),
     )
 
@@ -131,8 +133,12 @@ def plot_intra():
         mem(ax, i + 0.5, y, c)
     # dep: a region-A ds prepares region-B operands (issued a full region early)
     dep(ax, (1.5, y + MS / 2), (4.0, y + MH / 2), rad=-0.55)
-    finish(ax, "Intra-wave: one wave, memory software-pipelined into the mfma stream",
-           (-1.4, 8.3), (-0.15, 1.5))
+    finish(
+        ax,
+        "Intra-wave: one wave, memory software-pipelined into the mfma stream",
+        (-1.4, 8.3),
+        (-0.15, 1.5),
+    )
     legend(fig)
     save(fig, "sched_intra_wave.png")
 
@@ -178,11 +184,21 @@ def plot_ws():
         mem(ax, xc, y1, c)
     # dep crosses waves: producer (wave1 ds) -> consumer (wave0 mfma)
     dep(ax, (1.5, y1 + MS / 2), (4.0, y0 - MH / 2), rad=0.0)
-    ax.text(4.0, y0 + 0.42, "compute wave (never issues memory)", ha="center", fontsize=8.5,
-            color="#555")
+    ax.text(
+        4.0,
+        y0 + 0.42,
+        "compute wave (never issues memory)",
+        ha="center",
+        fontsize=8.5,
+        color="#555",
+    )
     ax.text(4.0, y1 - 0.5, "producer wave (only memory)", ha="center", fontsize=8.5, color="#555")
-    finish(ax, "Warp specialization: dedicated compute + producer waves (not on gfx950)",
-           (-1.4, 8.3), (-1.0, 1.4))
+    finish(
+        ax,
+        "Warp specialization: dedicated compute + producer waves (not on gfx950)",
+        (-1.4, 8.3),
+        (-1.0, 1.4),
+    )
     legend(fig)
     save(fig, "sched_warp_spec.png")
 
