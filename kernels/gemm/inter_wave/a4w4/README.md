@@ -17,11 +17,11 @@ kernel versions, and the measured performance.
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
-| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3525 | 4064 | ~57% |
-| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4116** | **4938** | **~80%** |
-| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4114 | 4799 | **~98%** |
+| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3653 | 4254 | ~66% |
+| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4107** | **4919** | **~80%** |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4094 | 4800 | **~98%** |
 
-**v1 is the recommended version** (`--version 1`, the default): +16–22% TFLOPS over v0 at
+**v1 is the recommended version** (`--version 1`, the default): +12–16% TFLOPS over v0 at
 the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
 baseline that exposes the problem.
 
