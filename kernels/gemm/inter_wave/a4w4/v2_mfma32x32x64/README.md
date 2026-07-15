@@ -9,16 +9,7 @@
 **Optimization maturity (rough).** Left = previous (v1_combineBsc), right = this version (v2_mfma32x32x64). Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../../intra_wave/a16w16/v0_naive/README.md).
 
 
-## 1. Directory Structure
-
-```
-v2_mfma32x32x64/
-├── matmul_kernel.py    # The kernel implementation
-├── images/             # Figures used in this README
-└── README.md           # This file
-```
-
-## 2. What this is
+## 1. What changed from v1
 
 The [`v1_combineBsc`](../v1_combineBsc/README.md) kernel with the MFMA shape changed from
 **16×16×128 → 32×32×64**, plus a **new LDS + global-load layout tuned to keep the wider read
@@ -41,7 +32,7 @@ dot_a_layout = gl.DotOperandLayout(..., k_width=16)                            #
   + register base [128,0]` for mdim=32 too, so the B-scale still reads with one `ds_read_b64_tr_b8`
   and a zero-cost register split — **0 `v_perm`, 0 `ds_read_u8`, 0 spills** (v1 has 12 spills).
 
-## 3. Why 32×32×64 — the ds co-issue window
+## 2. Why 32×32×64 — the ds co-issue window
 
 See v1 [§3 "scaled MFMA vs the SP bus"](../v1_combineBsc/README.md#3-the-remaining-ds_read-stall--scaled-mfma-vs-the-sp-bus).
 A `mfma_scale_16x16x128` has only an **8-cyc compute window** and the next MFMA's `ld_scale` eats half
@@ -51,37 +42,19 @@ tile reads and keep the MFMA fed.
 
 <p align="center"><img src="images/fig_ds_fifo_throttle.png" alt="32x32x64 co-issue window + SP FIFO" width="100%"></p>
 
-(The 8-slot SP FIFO caps *peak* ds throughput, but with a conflict-free layout the reads still keep
-pace with the MFMAs — see §4.)
+(The 8-slot SP FIFO caps *peak* ds throughput, but the conflict-free, width-matched LDS layout — the
+`[[1024, 16]]` padding co-designed with the 16-byte read — keeps the reads in pace with the MFMAs.)
 
-## 4. The conflict-free layout — the actual unlock
+## 3. Performance
 
-The wider window only pays off if the reads don't stall. With v1's padded layout (`[[1024, 32]]`, tuned
-for the 16-byte `b128` access) the 32×32×64 reads hit **bank conflicts** — MFMA occupancy is capped at
-~81%. The fix is a layout **co-designed with the read width**: reorder the M offset bases and use
-**`[[1024, 16]]`** padding. That makes the 16-byte read conflict-free and occupancy jumps to **~98%**.
-
-| layout | SQ_LDS_BANK_CONFLICT | MFMA occ |
+| kernel | TFLOPS | MFMA eff |
 |---|---|---|
-| `[[1024, 32]]` (v1's, on 32×32×64) | 7.47M | ~81% |
-| **`[[1024, 16]]` (this kernel)** | **1.18M** | **~98%** |
+| v1 | **4923** | 79.6% |
+| v2 | 4800 | **98.9%** |
 
-Padding is width-specific: `[[1024,32]]` is bad for both, `[[1024,16]]` for `b128`, `[[1024,8]]` for
-`b64`. Reading a layout with the wrong width tanks perf (a b128 read on the b64-tuned layout drops to
-~1400 TFLOPS) — LDS layout and access width are one unit.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v1.1`, rocprof cold-rotating.
 
-## 5. Performance — cycle-efficient, but clock-throttled
-
-MI355X, rocprof cold-rotating, fence-on:
-
-| K | kernel | TFLOPS | MFMA occ | GRBM active cyc |
-|---|---|---|---|---|
-| 8192  | v1 16×16×128 | **4116** | 79.7% | 1.25M |
-| 8192  | v2 32×32×64  | 4114 | **97.4%** | **0.99M** |
-| 32768 | v1 16×16×128 | **4938** | 80.0% | — |
-| 32768 | v2 32×32×64  | 4799 | **98.0%** | — |
-
-The conflict-free layout removes the ds stall → **~98% MFMA occupancy** (the matrix core is nearly
+The conflict-free layout removes the ds stall → **~98% MFMA efficiency** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in **~20% fewer cycles** than v1. **But the win is
 cycle-based, not wall-clock:** the bigger 32×32×64 MFMAs are power-hungrier, so the GPU
 **frequency-throttles ~21%** — the two effects cancel and wall-clock TFLOPS is essentially even with
@@ -89,23 +62,21 @@ v1 (neck-and-neck at K=8192; at large, loop-dominated K v1's higher datapath pea
 the [MFMA-efficiency caveat](../../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is
 clock-independent, TFLOPS is not.
 
-## 6. Notes
+The single-dispatch ATT trace (K=16384) shows the near-solid MFMA the wider co-issue window buys —
+`ds` keeps pace with compute, so the green MFMA runs with far fewer of the periodic idle gaps v1 has:
 
-- **SALU micro-opt (asm only):** the loop-header pointer-walk SALU (10 scalar address-math instrs)
-  run serially before the first barrier; interleaving them into the first mfma region (co-execute with
-  the matrix ops, ≤4 SALU/mfma) saves **~74 cyc/iter (−1.75%)**. It can't be produced from Gluon (LLVM
-  hoists loop-carried address math) nor by relaxing the `sched_barrier` mask to allow SALU (tested —
-  the scheduler doesn't sink them and makes counterproductive moves instead); it needs a forceful hint.
-- **warp-pipeline barrier:** the per-stage `sched.barrier` v1/v2 rely on (PR #10840) is now
-  **always-on and part of the pinned `gfx950-tutorial-v1.1`** — no flag or special build needed.
+<p align="center"><img src="images/att_v2_K16384.png" alt="ATT: v2 32×32×64, near-solid MFMA at ~98% efficiency" width="100%"></p>
 
 ## Conclusion
 
 32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~98% MFMA
-occupancy, spill-free — but clock throttling makes it a **wall-clock wash** with 16×16×128. Kept as the
+efficiency, spill-free — but clock throttling makes it a **wall-clock wash** with 16×16×128. Kept as the
 reference 32×32×64 kernel; **v1 remains the production choice**.
 
 ```bash
-python bench.py --version 2 --K 8192            # correctness + do_bench
-python collect_perf.py --version 2 --K 8192     # rocprof + ATT MFMA eff
+# correctness + do_bench TFLOPS (from this v2_mfma32x32x64 dir)
+python ../bench.py --version 2 --K 8192
+
+# rocprof cold-rotating TFLOPS + MFMA eff + VGPR/spill (from the repo root)
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 8192
 ```
