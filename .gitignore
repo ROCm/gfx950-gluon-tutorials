@@ -9,14 +9,16 @@ myplot.tex
 *.hsaco
 *.source
 
-# profiling / rocprofv3 / ATT scratch outputs
+# profiling / rocprofv3 / ATT / counter scratch (rocprof + ATT + counter tooling, both wave routes)
 tmp/
 att_output/
 *_rocprof_trace/
 rocprof_*/
+.rocprofv3/
+counter_tmp/
 att_matmul.json
 counters.yaml
 gpucore.*
 
-# local-only chart generator for the a16w16 perf bar chart
-kernels/gemm/a16w16/generate_perf_chart.py
+# per-kernel Triton cache (TRITON_CACHE_DIR)
+cache/

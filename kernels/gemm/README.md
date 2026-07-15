@@ -1,27 +1,114 @@
 # GEMM Kernels in Gluon
 
-This directory contains **high-performance GEMM kernels written in Gluon**, targeting **AMD MI350/355 GPUs** (gfx950).
+This directory contains high-performance GEMM kernels written in Gluon for AMD MI350/355 (gfx950).
 
-The goal is not just to provide fast kernels, but to **teach how to design, analyze, and optimize GEMM kernels** on AMD hardware—from memory layout to instruction scheduling.
+The objective of this repository is broader than implementing a fast GEMM.
 
-## 1. Performance Summary
+It explores a fundamental systems question:
 
-Measured on MI355:
+> **Where should scheduling intelligence live?**
 
-| Data Type | Shape           | TFLOPS | MFMA Eff. |
-|-----------|-----------------|--------|-----------|
-| FP16      | 4096x4096x8192  |   1421 |    98.66% |
-| BF8       | 4096x4096x16384 |   3232 |    99.52% |
-| MXFP4     | 4096x4096x32768 |   5189 |    93.86% |
+Once memory hierarchy and tiling are optimized, peak GEMM performance depends on keeping the matrix unit issuing `mfma` every cycle while memory operations run concurrently. This tutorial frames that through three representative scheduling paradigms ([§1](#1-gpu-scheduling-models)); it implements and compares the two that gfx950 supports.
+
+## 1. GPU scheduling models
+
+On each SIMD, two kinds of instruction must issue: **memory instructions** — `buffer_load` (global → LDS) and `ds_read` (LDS → registers) — that *prepare* operands, and **tensor instructions** (`mfma`) that *compute* on them. They run on separate hardware pipes, so they can execute concurrently.
+
+Memory **latency** is not the hard part — it is hidden by **prefetching** in the kernel design: a long-latency `buffer_load` is issued many stages ahead of the `mfma` that consumes its data, a quick `ds_read` only a few. Prefetch far enough ahead and the operands are always ready by the time an `mfma` runs.
+
+The scheduling problem is therefore about **throughput, not latency**: how to keep the matrix pipe issuing an `mfma` on *every* cycle, so that the memory instructions the SIMD must also issue never open a bubble in the compute stream. Kernels differ in *which wave issues the memory, and when, relative to the compute*.
+
+This tutorial focuses on three representative scheduling paradigms: **intra-wave** scheduling, **inter-wave** scheduling, and **warp specialization**. They differ in the granularity at which scheduling decisions are made — individual instructions, pipeline stages, or functional roles — and together they provide a useful framework for understanding many existing GPU kernel designs.
+
+All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`** (8 `mfma` total); each region needs **2 `ds_read`** to stage its operands and issues **2 `buffer_load`** to prefetch later regions. A row is one wave's *issue timeline* — wide green = `mfma`, small orange/yellow = memory, and the arrow is the `ds_read → first mfma` dependency. Latencies are assumed fully hidden, so all three finish the 8 `mfma` in the same time; what differs is how each keeps the matrix pipe busy.
+
+### 1.1 Intra-wave — one wave, software-pipelined
+
+![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
+
+A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
+
+This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
+
+### 1.2 Inter-wave — two waves ping-pong
+
+![inter-wave schedule: two waves alternate compute and memory](images/sched_inter_wave.png)
+
+Two waves share the SIMD and split the work evenly, running **phase-offset**: while `wave0` executes its 4-`mfma` region, `wave1` issues that region's `ds_read` + `buffer_load`; then they swap roles. Because at every instant *one* of the two waves is in its compute region, the SIMD's matrix pipe is never idle — the overlap is a property of the **ping-pong**, not of any within-wave instruction ordering. Each wave simply runs a compute block, then a memory block, so almost no compiler scheduling is required and these kernels build on stock upstream Triton + LLVM.
+
+This is the [`inter_wave/`](inter_wave/README.md) route (`a16w16`, `a8w8`, `a4w4`): **two waves per SIMD**, driven by `warp_pipeline_stage`.
+
+### 1.3 Warp specialization — dedicated producer + consumer waves
+
+![warp-specialization schedule: one compute wave, one memory wave](images/sched_warp_spec.png)
+
+The third option splits waves by **role** rather than by tile: one **compute wave** issues *only* `mfma`, while a **producer wave** issues *only* `ds_read`/`buffer_load` and feeds the compute wave through LDS. The `ds_read → mfma` dependency now crosses *between* waves. This is the cleanest overlap of the three — the compute wave's matrix pipe is 100% busy with zero memory-issue overhead — but it needs a hardware **asynchronous-copy + cross-wave synchronization** primitive (NVIDIA's TMA plus named-barrier / warpgroup specialization on Hopper/Blackwell). **gfx950 has no such primitive**, so this repository does not implement warp specialization; it is shown to complete the design space and to frame what the two AMD-supported models are approximating.
+
+---
+
+Seen together, the three paradigms are less competing implementations of one idea than points on a spectrum of **where the scheduling decision is made** — and, correspondingly, how much of the work lands on the compiler versus the kernel structure. Intra-wave makes it at the level of individual instructions and leans hardest on the compiler; inter-wave lifts it to whole pipeline stages that two waves alternate; warp specialization raises it all the way to fixed per-wave roles. The same progression, side by side:
+
+| Model | Scheduling unit | Compiler involvement |
+|---|---|---|
+| **Intra-wave** | Individual instructions | **Very high** |
+| **Inter-wave** | Pipeline stages | **Medium** |
+| **Warp specialization** | Functional roles | **Low** |
+
+The larger question this repository asks is **where the scheduling intelligence should live** — pushed into the compiler (intra-wave) or expressed directly in the kernel's wave structure (inter-wave). Both reach near-peak MFMA utilization on gfx950 by different means.
+
+## 2. Directory Structure
+
+```
+gemm/
+├── utils/                                # shared Gluon device helpers (get_pids), used by both routes
+├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + force-agpr + amdgcnas)
+│   ├── a16w16/                            # FP16/BF16 — the v0→v9 optimization journey (start here)
+│   │   ├── v0_naive/                      #   baseline: explicit layouts, correctness-first
+│   │   ├── v1_buffer_load/                #   buffer_load for hardware OOB (branch elimination)
+│   │   ├── v2_async_copy/                 #   direct-to-LDS async copy
+│   │   ├── v3_lds/                        #   LDS layout design: swizzle vs padding
+│   │   ├── v4_global_prefetch/            #   2-stage pipeline (double buffering)
+│   │   ├── v5_local_prefetch/             #   3-stage pipeline + LLIR scheduler
+│   │   ├── v6_loop_unroll/                #   loop unrolling
+│   │   ├── v7_sliceN/                     #   N-slicing (register pressure)
+│   │   ├── v8_sliceMN/                    #   M+N slicing
+│   │   └── v9_beyond_hotloop/             #   XCD-aware PID remapping (L2 locality)
+│   ├── a8w8/                              # BF8 (e5m2) — single kernel (no version subdirs)
+│   └── a4w4/                              # MXFP4 (e2m1) — adds the per-group scale pipeline
+│       ├── v0_sliceN/                     #   N-slicing + LDS round-trip scales
+│       └── v1_sliceMN/                    #   M+N slicing + direct-to-LDS scales
+└── inter_wave/                            # 8-wave — two waves ping-pong (warp_pipeline_stage, no AGPRs)
+    ├── a16w16/                            # FP16/BF16 — 8-wave warp-pipeline (sliceMN, BLOCK_K=64) — single kernel
+    ├── a8w8/                              # BF8 — 8-wave warp-pipeline (sliceMN, BLOCK_K=128) — single kernel
+    └── a4w4/                              # MXFP4 — 8-wave warp-pipeline
+        ├── v0_sliceMN/          #   byte-shuffle B scale (baseline)
+        ├── v1_combineBsc/       #   combined transpose-read B scale (recommended)
+        └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout
+```
+
+## 3. Performance Summary
+
+Measured on a single MI355X (gfx950), Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag, rocprof
+cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
+scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
+**8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
+
+![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
+
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v1** (combined B-scale, 4938 TFLOPS / 80.0% MFMA); the alternate **v2** (32×32×64 MFMA) trades throughput for occupancy at **4799 / 98.0%**.
 
 > [!NOTE]
-> Measured on a single MI355 with ROCm ≥ 7.0 and Triton built from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) tag, collected via `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). Numbers may vary on other MI350-class parts and across ROCm/Triton versions.
+> The **4-wave** bars are the `gfx950-tutorial-v1.1`-build numbers from
+> `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** bars
+> come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
+> (2 waves/SIMD → per-wave fraction × 2).
+> Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
+> FP16 optimization journey's near-optimal headline (1421 TFLOPS on `gfx950-tutorial-v1.1`) is
+> documented in [`a16w16/`](intra_wave/a16w16/).
 
-All kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) for optimal performance.
+The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 
-## 2. Prerequisites
-
-### 2.0 ROCm
+## 4. ROCm
 
 This tutorial assumes **ROCm ≥ 7.0**. The benchmarking and trace
 collection scripts (`scripts/run_perf_table.py`, `scripts/run_att.py`,
@@ -33,127 +120,14 @@ where rocprofv3 7.0+ now defaults to a binary `.db` output, and
 6.5) ship a different rocprofv3 with V2-style trace-decoder libraries
 and different CLI defaults, and are not supported by these scripts.
 
-### 2.1 Triton Build and the Out-of-tree Plugins
+## 5. Learning path
 
-The LLIR Scheduler and amdgcnas ship as **out-of-tree plugins in this repo** — [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md) (an LLVM pass plugin, `libLlirSched.so`) and [`plugins/amdgcnas/`](../../plugins/amdgcnas/README.md) (a pure-Python post-assembly hook). The third component, **force-agpr**, is an env-var RA hint (not a plugin). All three are essential for the kernels (a16w16, a8w8, a4w4); see the component table below.
+This repository is organized as both a tutorial and a comparison of two system designs.
 
-**Build.** Build Triton from the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) annotated tag on `triton-lang/triton`, **with default symbol visibility** (`TRITON_EXT_ENABLED=1`) so the LLVM plugin can resolve LLVM symbols from `libtriton` at load time:
+For readers new to Gluon, we recommend the following path:
 
-```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v1.0 /tmp/triton
-cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
-```
+1. Start with [`intra_wave/a16w16/`](intra_wave/a16w16/) to learn the optimization journey from a naive GEMM to a near-peak implementation.
+2. Continue with [`intra_wave/a8w8/`](intra_wave/a8w8/) and [`intra_wave/a4w4/`](intra_wave/a4w4/) to see how the same design extends to lower-precision kernels.
+3. Finally, study the [`inter_wave/`](inter_wave/README.md) kernels to compare an alternative scheduling model that reaches similar performance through a different system design.
 
-Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`62b7cf96`); if the pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v1.0`; the relative structure (`llir` vs. `llir+force-agpr` vs. `llir+force-agpr+amdgcnas`) is expected to remain stable across later pins.
-
-**Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap — all three are targeted for the LLVM backend. The LLIR scheduler will be implemented as a scheduling pass in the LLVM backend; the RA hints will move into the LLVM backend's AMDGPU register allocator (the `RewriteMFMAFormStage` pass — see the force-agpr note above); the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../docs/performance_philosophy.md#4-llirsched-force-agpr-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
-
-**Why these tools exist.** Upstream LLVM's scheduling and register-allocation passes were designed for the discovery model: they receive thread-level IR, recover dependencies by analysis, and solve the resulting NP-hard problems with heuristics. Gluon's block-level programming model makes those problems smaller — dependencies are *engineered* at the block level (e.g., `DOT`, `local_load`, and `buffer_load` are designed to be independent within a 3-stage pipeline), so at the instruction level, MFMAs, `ds_read`s, and `buffer_load`s can be interleaved by a simple throughput-model pass. Likewise, register budgets have a closed-form expression at block level, so allocation becomes a matter of honoring that budget rather than solving graph coloring.
-
-`llirSched`, `force-agpr`, and `amdgcnas` are the minimum tools that honor this block-level contract today. `llirSched` (scheduling) and `force-agpr` (register allocation) are not general-purpose replacements for LLVM's `misched` and register allocator — on arbitrary C-like code they would not make sense; on Gluon-shaped kernels they just honor the schedule and register budget the kernel already engineered. `amdgcnas` does neither scheduling nor allocation: it is a post-assembly LICM + MFMA/scalar-interleave peephole that closes the residual gaps left after codegen, which the earlier passes structurally cannot reach. Together they recover the MFMA efficiency the upstream LLVM flow loses, and their underlying ideas are being integrated into LLVM itself in collaboration with LLVM engineers, so that upstream LLVM will eventually produce the same output. See [`docs/performance_philosophy.md`](../../docs/performance_philosophy.md) for the full argument.
-
-**The three components.** The speedups come from three independently-toggleable components. Each has its own enable mechanism and its own `run_perf_table.py` config; the configs are **cumulative**, so each perf-table row's number reflects the whole stack up to that point.
-
-| Component | What it does | Enable for a manual (dry) run | `run_perf_table.py` config |
-|-----------|--------------|-------------------------------|----------------------------|
-| **llirSched** | interleave MFMA with memory ops (throughput-model instruction scheduler) | `LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so` `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1` | `llir` |
-| **force-agpr** | force MFMA accumulators into AGPRs (RA hint) | `TRITON_FORCE_MFMA_AGPR=1` | `llir+force-agpr` |
-| **amdgcnas** | post-assembly peephole (LICM + MFMA/scalar interleave) | `TRITON_AMDGCNAS_PLUGIN=1` | `llir+force-agpr+amdgcnas` |
-
-**Requirements.** All three need Triton built from the `gfx950-tutorial-v1.0` tag. **llirSched** additionally requires the `TRITON_EXT_ENABLED=1` (default-visibility) build and libtriton loaded with `RTLD_GLOBAL` so the LLVM plugin can resolve LLVM symbols — `bench.py` sets `RTLD_GLOBAL` automatically whenever `LLVM_PASS_PLUGIN_PATH` is set. **force-agpr** and **amdgcnas** work on a stock v1.0 build (no `TRITON_EXT_ENABLED`, no plugin `.so`).
-
-**1. llirSched — the LLIR scheduler** (out-of-tree LLVM pass plugin [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md), `libLlirSched.so`) is an LLVM-IR-level pass that interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory-operation completion rate. To preserve this scheduling, it pins each region with `llvm.amdgcn.sched.barrier(0)` after every memory anchor, so LLVM's machine scheduler keeps the interleave instead of clustering the MFMAs (no misched-disable needed). Without it, the backend clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation and [`plugins/llir_scheduler/`](../../plugins/llir_scheduler/README.md) for the plugin itself. The scheduler:
-- Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
-- Distributes MFMAs among anchors based on throughput (e.g., 4 MFMAs per global load for 16-cycle MFMA, 2 for 32-cycle)
-- For MXFP4 kernels, moves scale-related LR instructions to interleave with global loads and allocates remaining MFMAs after ds_write to cover LDS port contention
-
-**2. force-agpr — reserve AGPRs for MFMA accumulators.** A single env var `TRITON_FORCE_MFMA_AGPR=1` drives two paired effects: (a) the tutorial kernels set `llvm_fn_attrs="amdgpu-agpr-alloc=256"`, directing LLVM's register allocator to reserve 256 AGPRs for MFMA accumulators; and (b) `llvm.cc` sets `amdgpu-mfma-vgpr-form=false`, preventing LLVM from using the VGPR form of MFMA instructions. Together they keep accumulators in AGPRs and reduce VGPR pressure. This addresses the register-allocation challenges in [a16w16 v7 sections 4.3–4.4](a16w16/v7_sliceN/README.md#43-register-allocation-workaround). **Tradeoff**: forcing accumulators into AGPRs maximizes `v_accvgpr_read` copies in the epilogue, because `v_cvt` (used to downcast FP32 accumulators to the output dtype) requires VGPR inputs. Acceptable for compute-bound GEMM with large K (~95% time in the main loop), potentially harmful where the epilogue is a larger fraction of runtime.
-
-> **`amdgpu-mfma-vgpr-form=0` is a temporary stopgap.** It is a blunt instrument — it forces *all* MFMA C/D operands into AGPRs, which is what we want inside the loop but emits more `v_accvgpr_*` copies than necessary in the epilogue. The LLVM team is developing the **`RewriteMFMAFormStage`** pass, which chooses AGPR vs. VGPR form for each MFMA's C/D based on register pressure. Once it lands and is on by default, `amdgpu-mfma-vgpr-form=0` can be dropped from `llvm.cc` (and `TRITON_FORCE_MFMA_AGPR` reduced to just the `amdgpu-agpr-alloc` hint).
-
-**3. amdgcnas — the post-assembly peephole** (`TRITON_AMDGCNAS_PLUGIN=1`, a pure-Python `amdgcn`-stage hook installed by `bench.py` — no compiler rebuild) optimizes the final generated assembly. **It is *only* the peephole** — the RA hint that older docs bundled under "amdgcnas" is now the separate **force-agpr** component above. It does:
-- **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted output is redefined inside the loop.
-- **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These scalar instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
-
-**Relative contributions.** force-agpr and amdgcnas are not equally important across dtypes. On FP16 and BF8, `force-agpr` alone closes 75–85% of the MFMA-efficiency gap between `llir` and `llir+force-agpr+amdgcnas`, landing within 1–2% TFLOPS of the full stack; the amdgcnas peephole adds only ~+2pp on top. MXFP4 leans more on the peephole: on `v1_sliceMN`, `force-agpr` closes only about half the gap (`llir` ~71% → `llir+force-agpr` ~84%), and amdgcnas adds the remaining ~+10pp to reach ~94% — the paired scale loads create denser SALU activity for the peephole to pack. The two therefore have different upstream stories: force-agpr maps to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
-
-### 2.2 Running Benchmarks
-
-The easiest way to run benchmarks with all optimizations enabled is `run_perf_table.py`:
-
-```bash
-# FP16 (a16w16)
-python scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof
-
-# BF8 (a8w8)
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 16384 --rocprof
-
-# MXFP4 (a4w4)
-python scripts/run_perf_table.py --kernel a4w4 --versions 1 --configs llir+force-agpr+amdgcnas --K 32768 --rocprof
-```
-
-This script automatically:
-- Sets the environment variables for llirSched, force-agpr, and amdgcnas
-- Collects kernel traces using rocprofv3
-- Calculates and reports TFLOPS, VGPRs, spills, and MFMA efficiency
-
-### 2.3 Manual Workflow
-
-To run benchmarks manually, export the component environment variables, then run from the kernel directory. The env is the same for all three kernels — the plugin `.so` path is absolute, so it works from any kernel dir. This is the full `llir+force-agpr+amdgcnas` config; drop `TRITON_AMDGCNAS_PLUGIN` for `llir+force-agpr`, drop `TRITON_FORCE_MFMA_AGPR` as well for `llir`, or unset all of them for `base`:
-
-```bash
-# Enable llirSched + force-agpr + amdgcnas (once per shell)
-export LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so
-export LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1  # llirSched
-export TRITON_FORCE_MFMA_AGPR=1                # force-agpr
-export TRITON_AMDGCNAS_PLUGIN=1                # amdgcnas
-
-# FP16 (from kernels/gemm/a16w16/)
-python bench.py --version 8 --K 8192 --dtype fp16
-
-# BF8 (from kernels/gemm/a8w8/)
-python bench.py --K 16384
-
-# MXFP4 (from kernels/gemm/a4w4/)
-python bench.py --version 1 --K 32768
-```
-
-For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
-
-1. Collect the kernel trace (`-d` specifies the output directory; `-f csv`
-   selects CSV output, which `calc_kernel_time.py` reads — rocprofv3 on
-   ROCm 7.0+ defaults to a binary `.db` format):
-   ```bash
-   # with the plugin env vars from §2.3 still exported
-   rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
-   ```
-
-2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:
-   ```bash
-   python ../../../scripts/calc_kernel_time.py [trace_csv_file] [kernel_name]
-   ```
-
-3. Convert to TFLOPS: `TFLOPS = 2 × M × N × K / (time_in_us × 10^6)`
-
-## 3. FP16: The Optimization Journey
-
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 541 TFLOPS baseline to a near-optimal 1421 TFLOPS implementation—a **~2.6× improvement** through 10 versions (v0–v9).
-
-**Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
-
-## 4. BF8 and MXFP4: Applying the Same Design
-
-The optimization principles from the FP16 journey apply directly to BF8 and MXFP4. The final kernel for all three data types shares the same fundamental design: M+N slicing, 3-stage pipeline, loop unrolling by 2, and the LLIR scheduler + amdgcnas optimizations.
-
-| Aspect | FP16 (a16w16) | BF8 (a8w8) | MXFP4 (a4w4) |
-|--------|---------------|------------|--------------|
-| Tile size | 256x256x64 | 256x256x128 | 256x256x256 |
-| MFMA instruction | `v_mfma_f32_16x16x32_f16` | `v_mfma_scale_f32_16x16x128_f8f6f4` | `v_mfma_scale_f32_16x16x128_f8f6f4` |
-| cbsz / blgp | N/A | 1 / 1 (E5M2) | 4 / 4 (E2M1) |
-| MFMA cycles | 16 | 32 (cbsz/blgp <= 1) | 16 (cbsz/blgp > 1) |
-| Scaling | None | None | Per-group e8m0 |
-
-The [a8w8/](a8w8/) directory provides the final optimized BF8 kernel. If you understand the FP16 journey, you will understand the BF8 kernel. The key differences are tile shape, MFMA instruction, and LDS padding.
-
-The [a4w4/](a4w4/) directory implements the MXFP4 kernel, whose genuinely new element is the per-group scale pipeline: every 32 e2m1 elements share an 8-bit e8m0 scale that must be loaded and laid out for `mfma_scaled`. It ships in two versions — `v0_sliceN` stages scales through LDS with a `local_store` → `local_load` round-trip, while the final `v1_sliceMN` loads them straight into LDS via `buffer_load_to_lds` alongside the input tiles (no `local_store`) and uses M+N slicing for a more balanced design. See the [a4w4 README](a4w4/README.md) for full details.
-
+Together, these kernels illustrate two complementary approaches to building high-performance GPU software: moving scheduling intelligence into the compiler, or expressing it directly in the kernel structure.

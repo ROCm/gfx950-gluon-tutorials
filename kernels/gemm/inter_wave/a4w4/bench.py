@@ -1,0 +1,312 @@
+##############################################################################
+# MIT License
+#
+# Copyright (c) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+##############################################################################
+
+"""
+Benchmark + correctness driver for the 8-wave warp-pipeline MXFP4 (a4w4) GEMM.
+
+Mirrors kernels/gemm/inter_wave/a16w16/bench.py (same --K / --rocprof /
+--rotating-buffer-size args + rocprof-rotating-tensor mode) with the MXFP4
+input generation and dequantized reference from the 4-wave kernels/gemm/a4w4/
+bench.py. --version selects the kernel subdir (v0=sliceMN(byte-scale), v1=combineBsc(transpose-scale)).
+"""
+
+import argparse
+import importlib
+import os
+import sys
+
+import torch
+import triton
+
+# Put the shared kernels/gemm/utils/ on the path so each version's
+# `from common import get_pids` resolves to the shared helper.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+
+DEVICE = triton.runtime.driver.active.get_active_torch_device()
+
+VERSION_MAP = {
+    0: "v0_sliceMN",
+    1: "v1_combineBsc",
+    2: "v2_mfma32x32x64",
+}
+
+# HW-defined; cannot be changed.
+SCALE_GROUP_SIZE = 32
+
+matmul = None
+MIN_K = None
+KERNEL_NAME = None
+
+
+def mxfp4_to_f32(x):
+    """Unpack MXFP4 (e2m1) values from packed uint8 to float32."""
+    x = x.repeat_interleave(2, dim=1)
+    x[:, ::2] = x[:, ::2] & 0xF
+    x[:, 1::2] = x[:, 1::2] >> 4
+    mxfp4_list = [
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
+    ]
+    mxfp4_in_f32 = torch.tensor(mxfp4_list, dtype=torch.float32, device=x.device)
+    return mxfp4_in_f32[x.long()]
+
+
+def e8m0_to_f32(x):
+    """Convert e8m0 scale values to float32."""
+    return 2 ** ((x - 127).to(torch.float32))
+
+
+def generate_mxfp4_inputs(M, N, K):
+    """Random MXFP4 packed tensors and e8m0 scales.
+
+    Returns a_fp4 (M,K//2), b_fp4 (N,K//2), a_scales (M,K//32), b_scales (N,K//32).
+    """
+    torch.manual_seed(42)
+
+    a_low = torch.randint(0, 16, (M, K // 2), dtype=torch.uint8)
+    a_high = torch.randint(0, 16, (M, K // 2), dtype=torch.uint8)
+    a_fp4 = (a_high << 4 | a_low).to(device=DEVICE)
+
+    b_low = torch.randint(0, 16, (N, K // 2), dtype=torch.uint8, device=DEVICE)
+    b_high = torch.randint(0, 16, (N, K // 2), dtype=torch.uint8, device=DEVICE)
+    b_fp4 = b_low | b_high << 4
+
+    M_pad = (M + 255) // 256 * 256
+    a_scales = torch.randint(
+        124, 128, (K // SCALE_GROUP_SIZE, M_pad), dtype=torch.uint8, device=DEVICE
+    ).T[:M]
+    b_scales = torch.randint(
+        124, 128, (K // SCALE_GROUP_SIZE, N), dtype=torch.uint8, device=DEVICE
+    ).T
+
+    return a_fp4, b_fp4, a_scales, b_scales
+
+
+def torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16):
+    """Reference GEMM by dequantizing MXFP4 to float32."""
+    a_f32 = mxfp4_to_f32(a_fp4)
+    b_f32 = mxfp4_to_f32(b_fp4)
+    a_scales_f32 = e8m0_to_f32(
+        a_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
+    )
+    b_scales_f32 = e8m0_to_f32(
+        b_scales.repeat_interleave(SCALE_GROUP_SIZE, dim=1).to(torch.float32)
+    )
+    a_f32 = a_f32 * a_scales_f32
+    b_f32 = b_f32 * b_scales_f32
+    return torch.mm(a_f32, b_f32.T).to(dtype)
+
+
+def get_x_vals():
+    return [
+        (4096, 4096, 512),
+        (4096, 4096, 1024),
+        (4096, 4096, 2048),
+        (4096, 4096, 3072),
+        (4096, 4096, 4096),
+        (4096, 4096, 8192),
+        (4096, 4096, 16384),
+        (4096, 4096, 32768),
+        (4096, 4096, 65536),
+    ]
+
+
+def get_gemm_sizes(selected_k=None):
+    sizes = get_x_vals()
+
+    if selected_k is None:
+        return sizes
+
+    filtered = [s for s in sizes if s[2] == selected_k]
+
+    if not filtered:
+        raise ValueError(
+            f"No GEMM size found with K={selected_k}. "
+            f"Available K values: {[k for _, _, k in sizes]}"
+        )
+
+    return filtered
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="8-wave warp-pipeline MXFP4 (a4w4) GEMM benchmark")
+    parser.add_argument("--K", type=int, default=None, help="Select GEMM problem size with given K")
+    parser.add_argument(
+        "--version",
+        type=int,
+        default=max(VERSION_MAP),
+        choices=sorted(VERSION_MAP),
+        help=f"Kernel version to benchmark (default: {max(VERSION_MAP)})",
+    )
+    parser.add_argument(
+        "--rocprof",
+        action="store_true",
+        help="Rocprof mode: run kernel 1000 times without do_bench. "
+        "Use with rocprofv3 --kernel-trace to measure timing externally.",
+    )
+    parser.add_argument(
+        "--rotating-buffer-size",
+        type=int,
+        default=512,
+        help="Total size (MB) of rotating tensors for rocprof mode. "
+        "Should exceed GPU cache (L2+MALL) size. (default: 512)",
+    )
+    return parser.parse_args()
+
+
+def test_correctness(gemm_sizes):
+    for M, N, K in gemm_sizes:
+        if K < MIN_K:
+            print(f"[inter_wave/a4w4] {M=} {N=} {K=}: SKIPPED (K < {MIN_K})")
+            continue
+
+        a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
+        triton_output = matmul(a_fp4, b_fp4, a_scales, b_scales)
+        torch_output = torch_reference(a_fp4, b_fp4, a_scales, b_scales, dtype=torch.bfloat16)
+
+        if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
+            print(f"[inter_wave/a4w4] {M=} {N=} {K=}: ✅ Triton and Torch match")
+        else:
+            max_diff = (triton_output - torch_output).abs().max().item()
+            print(
+                f"[inter_wave/a4w4] {M=} {N=} {K=}: ❌ Triton and Torch differ (max_diff={max_diff:.4f})"
+            )
+
+
+def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
+    """Allocate multiple copies of tensors to exceed GPU cache size."""
+    a_size = M * (K // 2)
+    b_size = (K // 2) * N
+    as_size = M * (K // 32)
+    bs_size = N * (K // 32)
+    c_size = M * N * 2  # bf16 output
+    total_size = a_size + b_size + as_size + bs_size + c_size
+
+    block_count = max(1, rotating_buffer_size_mb * 1024 * 1024 // total_size)
+
+    a_list, b_list, as_list, bs_list, c_list = [], [], [], [], []
+    for _ in range(block_count):
+        a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
+        a_list.append(a_fp4)
+        b_list.append(b_fp4)
+        as_list.append(a_scales)
+        bs_list.append(b_scales)
+        c_list.append(torch.empty((M, N), device=DEVICE, dtype=torch.bfloat16))
+
+    return a_list, b_list, as_list, bs_list, c_list, block_count
+
+
+def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
+    """Run kernel n_iters times with rotating tensors for cache-cold profiling."""
+    for M, N, K in gemm_sizes:
+        if K < MIN_K:
+            print(f"[inter_wave/a4w4] {M=} {N=} {K=}: SKIPPED (K < {MIN_K})")
+            continue
+        a_list, b_list, as_list, bs_list, c_list, block_count = gen_rotating_tensors(
+            M, N, K, rotating_buffer_size_mb
+        )
+        total_bytes = block_count * (
+            M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32) + M * N * 2
+        )
+        print(
+            f"[inter_wave/a4w4] {M=} {N=} {K=}: "
+            f"rotating tensors: {block_count} copies, {total_bytes / 1024**2:.0f} MB"
+        )
+        matmul(a_list[0], b_list[0], as_list[0], bs_list[0], c_list[0])
+        torch.cuda.synchronize()
+        for i in range(n_iters):
+            idx = i % block_count
+            matmul(a_list[idx], b_list[idx], as_list[idx], bs_list[idx], c_list[idx])
+        torch.cuda.synchronize()
+        print(f"[inter_wave/a4w4] {M=} {N=} {K=}: {n_iters} iterations done")
+
+
+def main():
+    args = parse_args()
+
+    global matmul, MIN_K, KERNEL_NAME
+    version_dir = VERSION_MAP[args.version]
+    module = importlib.import_module(f"{version_dir}.matmul_kernel")
+    matmul = module.matmul
+    MIN_K = module.MIN_K
+    KERNEL_NAME = module.KERNEL_NAME
+    print(f"[inter_wave/a4w4] version={args.version} ({version_dir})  kernel={KERNEL_NAME}")
+
+    gemm_sizes = get_gemm_sizes(args.K)
+
+    test_correctness(gemm_sizes)
+
+    if args.rocprof:
+        run_rocprof_iterations(gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size)
+        return
+
+    configs = [
+        triton.testing.Benchmark(
+            x_names=["M", "N", "K"],
+            x_vals=gemm_sizes,
+            line_arg="dtype",
+            line_vals=["mxfp4"],
+            line_names=["mxfp4"],
+            styles=[("green", "-")],
+            ylabel="TFLOPS",
+            plot_name="matmul-performance-inter_wave/a4w4",
+            args={},
+        )
+    ]
+
+    @triton.testing.perf_report(configs)
+    def benchmark(M, N, K, dtype):
+        a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
+        c_out = torch.empty((M, N), device=DEVICE, dtype=torch.bfloat16)
+        quantiles = [0.5, 0.2, 0.8]
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: matmul(a_fp4, b_fp4, a_scales, b_scales, c_out),
+            quantiles=quantiles,
+        )
+
+        def perf(ms):
+            return 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
+        return perf(ms), perf(max_ms), perf(min_ms)
+
+    print(f"\ninter_wave/a4w4 ({KERNEL_NAME}):")
+    benchmark.run(show_plots=False, print_data=True)
+
+
+if __name__ == "__main__":
+    main()

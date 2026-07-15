@@ -18,7 +18,7 @@ Neither problem is hard because the hardware is hard. They are hard because the 
 Gluon is a **block-level** programming model. Kernels operate on tiles and express pipelines in terms of `DOT`, `local_load`, `async_copy`, and related block-level ops. Layouts are explicit. The kernel author designs, at block level, the things a traditional compiler tries to recover from thread-level IR:
 
 - **Dependencies are a design decision.** When a Gluon author writes a 3-stage pipeline where `DOT`, `local_load`, and `buffer_load` are independent within an iteration, that independence is a *structural property of the kernel*, not a fact to be recovered. Downstream, `mfma`, `ds_read`, and `buffer_load_to_lds` inherit that independence and can be interleaved freely based on throughput — not on dependency analysis.
-- **Register usage has a closed form.** At block level, register requirements are arithmetic: `(M × N × elemType × sharing_factor) / (num_warps × waveSize)` per tile. The kernel author evaluates the formula up front, budgets registers against the SIMD's 512 VGPRs, and slices along M or N if the budget does not fit (see [v7_sliceN](../kernels/gemm/a16w16/v7_sliceN/README.md)). Allocation is not graph coloring at this level — it is bookkeeping.
+- **Register usage has a closed form.** At block level, register requirements are arithmetic: `(M × N × elemType × sharing_factor) / (num_warps × waveSize)` per tile. The kernel author evaluates the formula up front, budgets registers against the SIMD's 512 VGPRs, and slices along M or N if the budget does not fit (see [v7_sliceN](../kernels/gemm/intra_wave/a16w16/v7_sliceN/README.md)). Allocation is not graph coloring at this level — it is bookkeeping.
 
 > [!IMPORTANT]
 > The methodological shift: **what used to be compiler problems become kernel design problems.** And kernel design problems are tractable — the author has full block-level visibility and can evaluate register formulas, pipeline depths, and dependency chains by hand.
@@ -46,14 +46,14 @@ Today's LLVM pipeline was designed for the discovery model. Its IR has no place 
 
 None of the three is a general-purpose replacement for an LLVM pass. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses; on arbitrary C-like code they would not make sense.
 
-See [kernels/gemm/README.md §2.1](../kernels/gemm/README.md#21-triton-build-and-the-out-of-tree-plugins) for the mechanical details of each pass.
+See [kernels/gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the mechanical details of each pass.
 
 ## 5. Collaboration with LLVM
 
 The goal is not to keep `llirSched`, `force-agpr`, and `amdgcnas` outside the standard Triton/LLVM flow forever. The goal is to fold their ideas into the LLVM backend in three phases, smallest-lift first:
 
 1. **`llirSched` → an LLVM backend scheduling pass**, gated on backend and kernel shape. This retires most of the friction: users on stock Triton + LLVM reach the O(n)-interleaving regime without loading a plugin.
-2. **`force-agpr` → LLVM's AMDGPU register allocator.** The flags are small, local changes; the challenge is making the policy *selective* — the `RewriteMFMAFormStage` pass, which chooses AGPR vs. VGPR form per MFMA by register pressure so it need not fall back to the blunt all-AGPR form for kernels where the epilogue is a larger share of runtime (see [a16w16 v7 §4.3](../kernels/gemm/a16w16/v7_sliceN/README.md#43-register-allocation-workaround)).
+2. **`force-agpr` → LLVM's AMDGPU register allocator.** The flags are small, local changes; the challenge is making the policy *selective* — the `RewriteMFMAFormStage` pass, which chooses AGPR vs. VGPR form per MFMA by register pressure so it need not fall back to the blunt all-AGPR form for kernels where the epilogue is a larger share of runtime (see [a16w16 v7 §4.3](../kernels/gemm/intra_wave/a16w16/v7_sliceN/README.md#43-register-allocation-workaround-force-agpr)).
 3. **`amdgcnas` → an LLVM AMDGPU MachineInstr-level pass.** The biggest engineering lift and the smallest measured impact on FP16/BF8 (~2pp MFMA efficiency); may remain a prototype indefinitely.
 
 This work is in progress in collaboration with LLVM engineers. When phases 1 and 2 land, upstream Triton + stock LLVM will produce most of what the three components produce today on a pinned build, and this tutorial's out-of-tree plugin dependency can retire.

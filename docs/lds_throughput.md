@@ -13,7 +13,7 @@ Both are important,
 but they are solved in different ways and by different parts of the kernel design.
 
 In this tutorial, we focus on building an accurate mental model of `ds_read` throughput. 
-Latency is discussed separately in §3, and worked through concretely in the [`v5_local_prefetch`](../kernels/gemm/a16w16/v5_local_prefetch/README.md) kernel tutorial.
+Latency is discussed separately in §3, and worked through concretely in the [`v5_local_prefetch`](../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md) kernel tutorial.
 
 ## 1. The basic mental model for throughput
 
@@ -130,7 +130,7 @@ Only when the FIFO fills does back-pressure force the issue rate down to the LDS
 The same FIFO also buffers `ds_write` requests, not just `ds_read`s.
 A slow `ds_write` at the head of the queue can block subsequent `ds_read`s behind it —
 a detail that matters for kernels that mix the two,
-see [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) for a worked example where this dynamic drives the pipeline design.
+see [a4w4 §3.5–3.6](../kernels/gemm/intra_wave/a4w4/v0_sliceN/README.md#35-where-to-place-lwlr-for-scales) for a worked example where this dynamic drives the pipeline design.
 
 With SQ issuing every 4 cycles and the FIFO depth at 8, the first eight `ds_read`s enter the FIFO without waiting — they issue at the SQ rate of one every 4 cycles, filling the FIFO over ~28 cycles.
 The first completion from LDS arrives ~50–70 cycles after the first issue (this is the LDS pipeline latency, not the 16-cycle steady-state service rate), and subsequent completions arrive every 16 cycles.
@@ -242,7 +242,7 @@ It reads from LDS exactly like `ds_read`, but the hardware transposes the data d
 Its throughput profile is identical to `ds_read_b*` — the same SP-to-LDS pipeline, the same bank-conflict rules, and the same 8-entry FIFO — so everything in this doc applies unchanged.
 The choice to use it is a layout-conversion decision, not a throughput decision.
 The MXFP4 kernel uses `ds_read_tr` for the LR step of its scale pipeline;
-see [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) for the full treatment.
+see [a4w4 §2.5](../kernels/gemm/intra_wave/a4w4/v0_sliceN/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) for the full treatment.
 
 
 ## 5. LDS bank conflicts and their impact on throughput
@@ -253,7 +253,7 @@ In practice, this assumption does not always hold, and when it does not,
 the effect on performance can be dramatic.
 
 For a practical demonstration of how layout design affects bank conflicts,
-see the [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md).
+see the [v3_lds kernel tutorial](../kernels/gemm/intra_wave/a16w16/v3_lds/README.md).
 
 LDS is organized into 64 banks, each servicing one 4-byte access per cycle. 
 When a `ds_read` instruction reaches LDS, the 64 threads in a wave are not serviced individually. 
@@ -347,9 +347,9 @@ Whether that contract *should* change at all is the design question — not just
 
 ## 7. See Also
 
-- [v3_lds kernel tutorial](../kernels/gemm/a16w16/v3_lds/README.md) — Practical application of the throughput model to evaluate LDS layout designs (raw, swizzling, padding).
-- [v5_local_prefetch kernel tutorial](../kernels/gemm/a16w16/v5_local_prefetch/README.md) — Where latency hiding (the other side of the latency-vs-throughput distinction in §3) is worked through concretely.
-- [a4w4 §2.5](../kernels/gemm/a4w4/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) — Full treatment of `ds_read_tr` in the MXFP4 scale pipeline.
-- [a4w4 §3.5–3.6](../kernels/gemm/a4w4/README.md#35-where-to-place-lwlr-for-scales) — Worked example of how the SP-to-LDS FIFO (shared between `ds_read` and `ds_write`) drives the scale pipeline design.
+- [v3_lds kernel tutorial](../kernels/gemm/intra_wave/a16w16/v3_lds/README.md) — Practical application of the throughput model to evaluate LDS layout designs (raw, swizzling, padding).
+- [v5_local_prefetch kernel tutorial](../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md) — Where latency hiding (the other side of the latency-vs-throughput distinction in §3) is worked through concretely.
+- [a4w4 §2.5](../kernels/gemm/intra_wave/a4w4/v0_sliceN/README.md#25-ds_read_tr-hardware-assisted-layout-conversion-for-scales) — Full treatment of `ds_read_tr` in the MXFP4 scale pipeline.
+- [a4w4 §3.5–3.6](../kernels/gemm/intra_wave/a4w4/v0_sliceN/README.md#35-where-to-place-lwlr-for-scales) — Worked example of how the SP-to-LDS FIFO (shared between `ds_read` and `ds_write`) drives the scale pipeline design.
 - [LDS throughput validation experiment](../experiments/lds_throughput_validation) — Microbenchmark + ATT traces validating the steady-state model.
 - [Performance philosophy](performance_philosophy.md) — The broader block-level programming model that the LDS throughput model fits inside.

@@ -31,6 +31,7 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 | 4-bit + Scales | Implement baseline 4-bit MoE kernel in Gluon | :calendar: |
 | 4-bit + Scales | Optimize with llirSched + amdgcnas | :calendar: |
 | 4-bit + Scales | Document preshuffling and related optimizations | :calendar: |
+| 8-wave Warp-Pipeline | Ship warp-pipeline (pingpong) GEMM — a16w16, a8w8, a4w4 (`kernels/gemm/*-8wave/`) | :white_check_mark: |
 | **FlashAttention** | | |
 | FAv3 8-Wave | Port existing Triton FAv3 kernel to Gluon | :calendar: |
 | FAv3 8-Wave | Adapt llirSched and amdgcnas for 8-wave solution | :calendar: |
@@ -41,9 +42,8 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 | LLVM Path | Investigate LLVM scheduling infrastructure | :construction: |
 | LLVM Path | Prototype LLVM-based scheduler | :construction: |
 | **Backlog** | | |
-| Future | 8-wave pingpong for GEMM kernels | :grey_question: |
 | Future | 4-wave solution for FA | :grey_question: |
 
 ---
 
-*Last updated: 2026-04-16*
+*Last updated: 2026-07-07*

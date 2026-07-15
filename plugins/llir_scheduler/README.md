@@ -1,7 +1,7 @@
 # LLIR Scheduler — out-of-tree LLVM pass plugin
 
 The LLIR scheduler (MFMA ↔ memory interleave for GEMM hot loops, described in the
-[a16w16 v5 README](../../kernels/gemm/a16w16/v5_local_prefetch/README.md)) is
+[a16w16 v5 README](../../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md)) is
 shipped here as an **out-of-tree LLVM pass plugin**. It is the `sched.barrier`
 variant: it reorders the MFMA/`ds_read`/
 `buffer_load` instructions in the LLVM-IR hot loop and pins the order with
@@ -23,12 +23,12 @@ scheduler preserves the interleave (no misched-disable needed).
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
 Triton is built with**. This tutorial pins Triton to
-[`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0),
-whose LLVM is commit **`62b7cf96`** (see `cmake/llvm-info.json`). If the Triton /
+[`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1),
+whose LLVM is commit **`850a2b1b`** (see `cmake/llvm-info.json`). If the Triton /
 LLVM pin changes, **rebuild the `.so`**.
 
 ## Build
-Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-62b7cf96-*`):
+Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-850a2b1b-*`):
 
 ```bash
 LLVM=$(dirname $(dirname $(find ~/.triton/llvm -name llvm-config | head -1)))
@@ -40,7 +40,7 @@ The plugin does **not** link LLVM; it resolves LLVM symbols from `libtriton` at
 load time (see prerequisites).
 
 ## Triton prerequisites
-The `gfx950-tutorial-v1.0` pin carries the source change this plugin needs: it
+The `gfx950-tutorial-v1.1` pin carries the source change this plugin needs: it
 *keeps the TargetMachine for LLVM plugins* via `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`,
 without which `optimize_module` runs all of O3 with no target machine and codegen
 regresses. The one thing left to the builder is symbol visibility:
