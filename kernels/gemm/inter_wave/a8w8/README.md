@@ -62,15 +62,6 @@ MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000
 | 16384 | 3076 | 99.8% | **3233** | 99.5% |
 | 32768 | 3054 | 99.0% | **3059** | 97.6% |
 
-(4-wave = `llir+force-agpr+amdgcnas`; MFMA eff is per-SIMD loop-only, a single-dispatch ATT
-reading — treat the last digit as noise.)
-
-Both loops are genuinely MFMA-bound (~99.5–99.8% at K ≤ 16384), but the tuned 4-wave
-`llir+force-agpr+amdgcnas` leads on TFLOPS at every K (**~+5%** at K ≤ 16384, near-parity at
-K=32768): its AGPR-form accumulators and LLIR schedule extract slightly more throughput than
-the 8-wave's no-AGPR VGPR budget. The 8-wave's **hot loop is spill-free** (256 VGPR, 8 residual
-spills all in the `convert_layout` + store epilogue); the 4-wave runs at 488 VGPR / 0 spills.
-
 ## 3. Running
 
 ```bash
