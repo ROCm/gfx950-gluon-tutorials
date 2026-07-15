@@ -47,8 +47,7 @@ whole contiguous N-column:
 
 v0's `[4,1],[32,2],[2,4]` puts 2 K-groups per warp, which for `[256,8]` are 256 bytes apart
 (a 128-byte gap) and fail `canCoalesceWriteIntoSharedMemory`; it only happens to coalesce
-for a `[128,8]` half because there the 128-N span equals the tile's N. See the
-[family README §3.1](../README.md#31-why-the-combined-2568-fill-needs-a-special-blocked-layout).
+for a `[128,8]` half because there the 128-N span equals the tile's N.
 
 ## 2. Performance
 

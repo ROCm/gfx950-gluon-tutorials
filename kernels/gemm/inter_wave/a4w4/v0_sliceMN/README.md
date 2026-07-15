@@ -67,7 +67,7 @@ the B-scale byte-shuffle (11 `v_perm` + 16 `ds_read_u8`, §2) keeps the loop
 LDS/scale-throughput-bound rather than latency-bound — so the 8-wave's ping-pong latency-hiding
 has little to hide — and the halved 8-wave VGPR budget (256 vs 492) is a real cost. Eliminating the
 B-scale `v_perm` in [`v1_combineBsc`](../v1_combineBsc/README.md) closes most of the gap; see the
-[family README §4](../README.md#4-performance) for the full v0 → v1 → v2 comparison.
+[family README Versions table](../README.md#1-versions) for the full v0 → v1 → v2 comparison.
 
 <p align="center">
   <img src="images/att_v0_K16384.png" alt="inter_wave a4w4 v0 ATT trace at K=16384: memory-heavy loop, ~65% MFMA" width="900">

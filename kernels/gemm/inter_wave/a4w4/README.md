@@ -46,109 +46,7 @@ On gfx950 the MFMA lowers to `v_mfma_scale_f32_16x16x128_f8f6f4 … cbsz:4 blgp:
 format select), which runs at **~2× the BF8 rate** — so the a4w4 peak is roughly double
 a8w8's.
 
-## 3. The B-scale bottleneck, and how v1 fixes it
-
-Every tile carries an e8m0 scale that streams **straight into LDS** (`buffer_load_to_shared`,
-no `ds_write`) and is read back with the MFMA scale layout just before its DOT.
-
-**The A scale is fine; the B scale is the problem.** The MFMA scale operand is delivered by
-a `ds_read_b64_tr_b8` hardware-transpose read, which needs **8 bytes/thread**. The scale
-operand layout is derived from the dot-operand layout, so it inherits the warp tiling:
-the A scale is tiled by `WARPS_M=2` (unchanged from 4-wave), but the B scale is tiled by
-`WARPS_N=4`. A `[128,8]` B-scale half therefore gives each thread only **4 bytes** — below
-the 64-bit transpose-read width — so it degrades to **per-byte `ds_read_u8` + `v_perm`**
-byte-shuffle reassembly. In the real kernel that is **118 `v_perm` + 32 `ds_read_u8`**
-purely for the B scale, VALU work that stalls between MFMAs and inflates register pressure.
-
-**v0** ([`v0_sliceMN`](v0_sliceMN/README.md)) N-slices the B scale into
-`b_sc_left` / `b_sc_right` `[128,8]` halves like everything else, and pays this cost.
-
-**v1** ([`v1_combineBsc`](v1_combineBsc/README.md)) keeps the *tiles*
-M/N-sliced but loads the **full `[BLOCK_N, NG] = [256, 8]` B scale as ONE combined buffer**
-(both the async fill and the LDS read). At `[2,4]` the un-sliced `[256,8]` gives each thread
-**8 bytes = 64 bits**, so the read lowers to `ds_read_b64_tr_b8` with **no `v_perm`**.
-Because `get_mfma_scale_layout([256,8])` is exactly the per-quadrant
-`get_mfma_scale_layout([128,8])` plus one register base `[128,0]`, a zero-cost `split` +
-`convert_layout` recovers the left/right `[128,8]` halves that feed the left/right MFMA
-columns — the same operands v0 uses.
-
-### 3.1 Why the combined `[256,8]` fill needs a special blocked layout
-
-`b_scales` is **N-contiguous** in HBM (it is `(K/32, N).T`, strides `(1, N)`). gfx950
-direct-to-LDS (`buffer_load … lds`) needs a **32-bit dword** per thread *and* cannot scatter
-— each warp's dword writes must land in **one contiguous LDS run**. With v0's
-`[4,1],[32,2],[2,4]` blocked layout a warp spans **128 N × 2 K**, and the two K groups are
-`tileN` apart in LDS: for `[128,8]` that is `tileN=128` = the warp's N-span, so the two K
-blocks pack with **no gap** (coalesced ✅); for the combined `[256,8]`, `tileN=256` > the
-128-N span, leaving a **128-byte gap** → not coalesced → the load will not lower
-(`canCoalesceWriteIntoSharedMemory` fails).
-
-The fix is the blocked layout `[4,1],[64,1],[1,8]`: each warp = **64 N-lanes × 1 K-lane**
-covers **256 N × 1 K** = one contiguous 256-byte K-column, and the 8 warps cover the 8 K
-groups. This coalesces for the whole `[256,8]`. (Loading the scale *K*-contiguous instead
-would seem natural but is worse: K is the strided dim in HBM, giving `vectorSize=1`, which
-gfx950 rejects — the load must stay N-major to get a real dword.)
-
-## 4. Performance
-
-MI355X, gfx950, 4096×4096, MXFP4, **no-AGPR**, rocprof cold-rotating tensors (last-100
-average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Triton
-`gfx950-tutorial-v1.1` (which carries the merged warp-pipeline barrier, #10840):
-
-| K | v0 TFLOPS | v0 MFMA eff | **v1 TFLOPS** | **v1 MFMA eff** | v1 speedup |
-|---|---|---|---|---|---|
-| 8192  | 3653 | ~65% | **4107** | **79.2%** | +12.4% |
-| 16384 | 4152 | ~65% | **4623** | **79.4%** | +11.3% |
-| 32768 | 4254 | ~66% | **4919** | **79.6%** | +15.6% |
-
-Codegen (K=8192): B-scale `v_perm` **118 → 0**, `ds_read_u8` **32 → 0**, `ds_read_b64_tr_b8`
-**8 → 12**. VGPRs/spills **256 / 29 → 256 / 12** — deleting the `v_perm` temporaries also
-more than halves the (epilogue) spills.
-
-The win comes entirely from the loop: v1's combined B-scale removes the 118 register-shuffle
-`v_perm`, lifting per-SIMD loop MFMA efficiency from v0's **~65% to ~80%** — **+12–16% TFLOPS**,
-growing with K as the loop dominates. Both versions run with the always-on warp-pipeline
-`sched.barrier` after each stage's memory ops (merged as #10840); its isolated contribution to
-each is the A/B in §4.2. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
-~90%+ of a16w16/a8w8), but v1 recovers most of the headroom the B-scale byte-shuffle was
-wasting. The 4-wave `a4w4` reaches ~5180 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
-targets the 4-wave register model and cannot be applied at 8 waves).
-
-### 4.1 v2 — 32×32×64 MFMA (cycle-efficient, clock-throttled)
-
-| K | v1 (16×16×128) | v2 (32×32×64) |
-|---|---|---|
-| 8192  | 4107 / 79.2% | 4094 / 98.3% |
-| 32768 | 4919 / 79.6% | 4800 / 98.9% |
-
-v2 widens the MFMA and pairs it with a bank-conflict-free `[[1024, 16]]` LDS layout, reaching
-**~98% loop MFMA efficiency** (spill-free, 246 VGPRs). But the wider MFMAs draw more power, so
-the GPU **frequency-throttles ~21%** — wall-clock TFLOPS is a **wash** with v1 (v1's higher
-datapath peak edges ahead at large, loop-dominated K). It is the [MFMA-efficiency
-caveat](../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is clock-independent,
-TFLOPS is not. Details in [`v2_mfma32x32x64/`](v2_mfma32x32x64/README.md).
-
-### 4.2 The warp-pipeline barrier (why it's unconditional)
-
-The warp-pipeline lowering emits a full `sched.barrier` after each stage's memory ops
-([#10840](https://github.com/triton-lang/triton/pull/10840) — **always on**, no opt-in flag),
-so the backend cannot hoist the next tile's global→LDS prefetch ahead of the reads a following
-MFMA depends on. All inter_wave/a4w4 numbers above include the barrier; the A/B that justified
-making it unconditional (K=32768, barrier off vs on):
-
-| Version | barrier | TFLOPS | MFMA eff | VGPR | Spills |
-|---|---|---|---|---|---|
-| v1 | off | 4842 | 73.6% | 256 | 12 |
-| v1 | **on** | 4908 | **80.0%** | 256 | 12 |
-| v2 | off | 4685 | 91.0% | 250 | 0 |
-| v2 | **on** | 4767 | **98.2%** | 246 | 0 |
-
-The barrier lifts loop MFMA efficiency **+6.4 pp** (v1) and **+7.2 pp** (v2), for **+1.4–1.8%**
-TFLOPS — the largest barrier gain among the 8-wave kernels (the a16w16 / a8w8 loops are already
-MFMA-saturated at their operating points, so there it mainly helps via reduced register pressure
-rather than occupancy).
-
-## 5. Running
+## 3. Running
 
 ```bash
 # v1 (recommended, default): correctness + do_bench TFLOPS (from this kernel dir)
@@ -170,7 +68,7 @@ python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-bu
 Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 `~/.triton/cache` (or use `TRITON_ALWAYS_COMPILE=1`) after editing a kernel.
 
-## 6. Files
+## 4. Files
 
 - `get_pids` is imported from the shared [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.mm`) + do_bench TFLOPS + `--rocprof`
