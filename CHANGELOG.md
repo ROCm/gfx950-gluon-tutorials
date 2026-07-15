@@ -43,8 +43,7 @@ then they swap. They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn
 and need **no plugins and no env vars** — they build against stock `gfx950-tutorial-v1.0`
 (the `a4w4` v1/v2 kernels additionally need a Triton built with warp-pipeline
 `fence_loads`, upstream PR #10840). The theory is in
-[`docs/warp_pipelining.md`](docs/warp_pipelining.md) and
-[`docs/scheduling_models.md`](docs/scheduling_models.md); the warp-pipeline schedule
+[`docs/warp_pipelining.md`](docs/warp_pipelining.md); the warp-pipeline schedule
 and `docs/warp_pipelining.md` are adapted, with permission, from the write-up by
 **Jungwook Park**, who designed the Triton AMD `WarpPipeliner` / `ConvertWarpPipeline`
 passes.

@@ -54,7 +54,7 @@ Seen together, the three paradigms are less competing implementations of one ide
 | **Inter-wave** | Pipeline stages | **Medium** |
 | **Warp specialization** | Functional roles | **Low** |
 
-The larger question this repository asks is **where the scheduling intelligence should live** — pushed into the compiler (intra-wave) or expressed directly in the kernel's wave structure (inter-wave). Both reach near-peak MFMA utilization on gfx950 by different means; the trade-offs are detailed in [`docs/scheduling_models.md`](../../docs/scheduling_models.md).
+The larger question this repository asks is **where the scheduling intelligence should live** — pushed into the compiler (intra-wave) or expressed directly in the kernel's wave structure (inter-wave). Both reach near-peak MFMA utilization on gfx950 by different means.
 
 ## 2. Directory Structure
 
