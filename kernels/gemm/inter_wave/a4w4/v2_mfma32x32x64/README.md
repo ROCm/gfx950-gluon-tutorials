@@ -43,7 +43,7 @@ dot_a_layout = gl.DotOperandLayout(..., k_width=16)                            #
 
 ## 3. Why 32×32×64 — the ds co-issue window
 
-See v1 [§5 "scaled MFMA vs the SP bus"](../v1_combineBsc/README.md#5-the-remaining-ds_read-stall--scaled-mfma-vs-the-sp-bus).
+See v1 [§3 "scaled MFMA vs the SP bus"](../v1_combineBsc/README.md#3-the-remaining-ds_read-stall--scaled-mfma-vs-the-sp-bus).
 A `mfma_scale_16x16x128` has only an **8-cyc compute window** and the next MFMA's `ld_scale` eats half
 → 1 free ds slot/MFMA → the SP bus serializes the reads. A `mfma_scale_32x32x64` is **36 cyc**: 4-cyc
 `ld_scale` + 8-cyc read + a **24-cyc compute window** = **5 free ds slots** — enough room to hide the
