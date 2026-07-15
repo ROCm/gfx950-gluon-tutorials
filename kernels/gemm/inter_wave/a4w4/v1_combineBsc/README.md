@@ -78,7 +78,7 @@ python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 --rotating-bu
 the 8-wave hot loop every `ds_read_b128` stalls **~21 cyc**, yet `SQ_LDS_BANK_CONFLICT = 0` —
 so it is **not** a bank conflict.
 
-Per [`docs/lds_throughput.md`](../../../../docs/lds_throughput.md), a conflict-free
+Per [`docs/lds_throughput.md`](../../../../../docs/lds_throughput.md), a conflict-free
 `ds_read_b128` can be issued at most **once per 16 cycles** per SIMD in steady state (LDS serves
 the compute unit's four SIMDs — 4096 B per round — at 256 B/cyc = 16 cyc). So ~16 cyc/read is the
 floor; the measured ~21 cyc means the reads are already falling behind it. The cause is that a
