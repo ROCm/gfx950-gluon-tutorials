@@ -8,18 +8,13 @@ kernel. Read the [`inter_wave/a16w16`](../a16w16/README.md) and
 [`a4w4`](../a4w4/README.md) READMEs first — this document covers the 4-bit deltas, the two
 kernel versions, and the measured performance.
 
-> [!IMPORTANT]
-> Like the fp16 8-wave kernels, this schedules the hot loop at the **wave level** with
-> `warp_pipeline_stage` and runs with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via
-> `llvm_fn_attrs`). The 4-wave `llir+force-agpr+amdgcnas` toolchain is **not** used here.
-
-## Versions
+## 1. Versions
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
 | **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3653 | 4254 | ~66% |
 | **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4107** | **4919** | **~80%** |
-| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA + conflict-free LDS** | 4094 | 4800 | **~98%** |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | 4094 | 4800 | **~98%** |
 
 **v1 is the recommended version** (`--version 1`, the default): +12–16% TFLOPS over v0 at
 the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
@@ -30,9 +25,9 @@ baseline that exposes the problem.
 efficiency to **~98%** (spill-free). It is a **cycle-efficiency** result — the wider MFMAs are
 power-hungrier, so the GPU clock-throttles and wall-clock TFLOPS ends up **even with v1** (v1's
 higher datapath peak still edges ahead at large K). v1 stays the recommended default; v2 is the
-near-saturated variant for studying the MFMA-occupancy / clock trade.
+near-saturated variant for studying the MFMA efficiency / clock trade.
 
-## 1. What changes from 16-bit to 4-bit (shared by v0 and v1)
+## 2. What changes from 16-bit to 4-bit
 
 The 8-wave skeleton — 8 warps `[2,4]`, the 2×2 `[128×128]` quadrant slicing with four
 separate double-buffered LDS allocations, the `warp_pipeline_stage` ping-pong schedule,
@@ -45,14 +40,13 @@ and no-AGPR — is the same as `inter_wave/a16w16`. The MXFP4 numerics come from
 | `BLOCK_K` | 64 | **256** (K//2 = 128 B / row into LDS) |
 | Per-block scale | — | **e8m0, one per 32 elements (`SCALE_GROUP_SIZE=32`)** |
 | MFMA | `mfma` `[16,16,32]` | **`mfma_scaled(…,"e2m1",…,"e2m1")` `[16,16,128]`**, `k_width=16` |
-| B LDS load | plain | **`.permute([1,0])`** (B stored `(N,K//2)`) |
 | Output C | fp16 / bf16 | **bf16** |
 
 On gfx950 the MFMA lowers to `v_mfma_scale_f32_16x16x128_f8f6f4 … cbsz:4 blgp:4` (the FP4
 format select), which runs at **~2× the BF8 rate** — so the a4w4 peak is roughly double
 a8w8's.
 
-## 2. The B-scale bottleneck, and how v1 fixes it
+## 3. The B-scale bottleneck, and how v1 fixes it
 
 Every tile carries an e8m0 scale that streams **straight into LDS** (`buffer_load_to_shared`,
 no `ds_write`) and is read back with the MFMA scale layout just before its DOT.
@@ -78,7 +72,7 @@ Because `get_mfma_scale_layout([256,8])` is exactly the per-quadrant
 `convert_layout` recovers the left/right `[128,8]` halves that feed the left/right MFMA
 columns — the same operands v0 uses.
 
-### 2.1 Why the combined `[256,8]` fill needs a special blocked layout
+### 3.1 Why the combined `[256,8]` fill needs a special blocked layout
 
 `b_scales` is **N-contiguous** in HBM (it is `(K/32, N).T`, strides `(1, N)`). gfx950
 direct-to-LDS (`buffer_load … lds`) needs a **32-bit dword** per thread *and* cannot scatter
@@ -95,7 +89,7 @@ groups. This coalesces for the whole `[256,8]`. (Loading the scale *K*-contiguou
 would seem natural but is worse: K is the strided dim in HBM, giving `vectorSize=1`, which
 gfx950 rejects — the load must stay N-major to get a real dword.)
 
-## 3. Performance
+## 4. Performance
 
 MI355X, gfx950, 4096×4096, MXFP4, **no-AGPR**, rocprof cold-rotating tensors (last-100
 average of 1000 dispatches; `--rotating-buffer-size 2048` for K ≥ 16384). Triton
@@ -115,12 +109,12 @@ The win comes entirely from the loop: v1's combined B-scale removes the 118 regi
 `v_perm`, lifting per-SIMD loop MFMA efficiency from v0's **~65% to ~80%** — **+12–16% TFLOPS**,
 growing with K as the loop dominates. Both versions run with the always-on warp-pipeline
 `sched.barrier` after each stage's memory ops (merged as #10840); its isolated contribution to
-each is the A/B in §3.2. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
+each is the A/B in §4.2. The a4w4 loop is still LDS/scale-throughput-bound (it does not reach the
 ~90%+ of a16w16/a8w8), but v1 recovers most of the headroom the B-scale byte-shuffle was
 wasting. The 4-wave `a4w4` reaches ~5180 TFLOPS with `llir+force-agpr+amdgcnas` (a toolchain that
 targets the 4-wave register model and cannot be applied at 8 waves).
 
-### 3.1 v2 — 32×32×64 MFMA (cycle-efficient, clock-throttled)
+### 4.1 v2 — 32×32×64 MFMA (cycle-efficient, clock-throttled)
 
 | K | v1 (16×16×128) | v2 (32×32×64) |
 |---|---|---|
@@ -134,7 +128,7 @@ datapath peak edges ahead at large, loop-dominated K). It is the [MFMA-efficienc
 caveat](../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is clock-independent,
 TFLOPS is not. Details in [`v2_mfma32x32x64/`](v2_mfma32x32x64/README.md).
 
-### 3.2 The warp-pipeline barrier (why it's unconditional)
+### 4.2 The warp-pipeline barrier (why it's unconditional)
 
 The warp-pipeline lowering emits a full `sched.barrier` after each stage's memory ops
 ([#10840](https://github.com/triton-lang/triton/pull/10840) — **always on**, no opt-in flag),
@@ -154,7 +148,7 @@ TFLOPS — the largest barrier gain among the 8-wave kernels (the a16w16 / a8w8 
 MFMA-saturated at their operating points, so there it mainly helps via reduced register pressure
 rather than occupancy).
 
-## 4. Running
+## 5. Running
 
 ```bash
 # v1 (recommended, default): correctness + do_bench TFLOPS (from this kernel dir)
@@ -176,7 +170,7 @@ python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-bu
 Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 `~/.triton/cache` (or use `TRITON_ALWAYS_COMPILE=1`) after editing a kernel.
 
-## 5. Files
+## 6. Files
 
 - `get_pids` is imported from the shared [`kernels/gemm/utils/common.py`](../../utils/common.py).
 - `bench.py` — correctness (vs dequantized `torch.mm`) + do_bench TFLOPS + `--rocprof`
