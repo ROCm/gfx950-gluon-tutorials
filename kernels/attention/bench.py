@@ -106,8 +106,18 @@ def make_inputs(B, HQ, HK, N_CTX, D, dtype, layout):
 def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
     q, k, v, o, md = make_inputs(B, HQ, HK, N_CTX, D, dtype, layout)
     run_gluon_attention(q, k, v, o, md)
-    o_ref = sdpa_reference(q, k, v, causal=False, sm_scale=md.sm_scale)
-    ok, max_diff, mean_diff = _check_output(o, o_ref)
+    # sdpa_reference computes attention over the last two axes, i.e. it assumes a
+    # bhsd [B, H, S, D] layout. For bshd [B, S, H, D] we must swap the H and S axes
+    # before building the reference (and compare the kernel output in the same
+    # frame), otherwise the reference attends over the wrong dims and every bshd
+    # run spuriously reports a mismatch even though the kernel is correct.
+    if layout == "bshd":
+        q_ref, k_ref, v_ref = (t.transpose(1, 2) for t in (q, k, v))
+        o_cmp = o.transpose(1, 2)
+    else:
+        q_ref, k_ref, v_ref, o_cmp = q, k, v, o
+    o_ref = sdpa_reference(q_ref, k_ref, v_ref, causal=False, sm_scale=md.sm_scale)
+    ok, max_diff, mean_diff = _check_output(o_cmp, o_ref)
     tag = "✅ match" if ok else "❌ MISMATCH"
     print(
         f"[FAV3] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} non-causal {layout} "
