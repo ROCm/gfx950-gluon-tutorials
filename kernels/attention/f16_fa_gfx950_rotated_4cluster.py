@@ -251,6 +251,19 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     block_start = 0
     block_end = n_blocks
 
+    # The main loop is 2x-unrolled over [block_start, block_end-3), so that range
+    # must contain an even number of tiles. Rather than emit a runtime odd-tail
+    # tile, require it statically. (n_blocks-3) even <=> n_blocks odd <=>
+    # N_CTX == BLOCK_N * (odd). e.g. seqlen 16320/16448 are OK; 16384
+    # (n_blocks=256) is NOT. Computed from constexpr N_CTX/BLOCK_N (block_end
+    # itself is a runtime value here).
+    NUM_BLOCKS: gl.constexpr = (N_CTX + BLOCK_N - 1) // BLOCK_N
+    gl.static_assert(
+        (NUM_BLOCKS - 3) % 2 == 0,
+        "N_CTX must give an odd n_blocks = (N_CTX + BLOCK_N - 1)//BLOCK_N so the "
+        "2x-unrolled main loop needs no odd-tail tile",
+    )
+
     # Fixed async-copy offset (intra-tile pattern) computed once; each tile loads
     # from a base pointer advanced by a constant step, so the offset never changes.
     kt_ad: gl.constexpr = gl.SliceLayout(dim=1, parent=kt_async_layout)
@@ -349,25 +362,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + (block_n + 3) * v_step, v_off)   # ACV
             cdna4_async.commit_group()
 
-    if (block_end - 3 - block_start) % 2 == 1:
-        # odd tail: one more even tile (slots cur=0, next=1)
-        block_n = block_start + main_loop_pairs * 2
-        with warp_pipeline_stage("dot1", priority=0):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
-            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
-        cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem1", priority=1):
-            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
-            cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + (block_n + 3) * kt_step, kt_off)   # ACK
-            cdna4_async.commit_group()
-        with warp_pipeline_stage("dot2", priority=0):
-            acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
-            m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
-        cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem2", priority=1):
-            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
-            cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
-            cdna4_async.commit_group()
+    # (odd-tail tile removed; the static_assert above guarantees it is never needed)
 
     # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
     # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
