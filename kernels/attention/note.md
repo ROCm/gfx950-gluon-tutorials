@@ -22,6 +22,30 @@ Measured via do_bench TFLOPS + ATT `process_json.py` (MFMA eff = mfma_cyc/iter;
 
 Net baseline → best: **+5.2% TFLOPS**, MFMA eff 32.6 → 38.0% (~76%/SIMD).
 
+## SOL sweep — 5-way build comparison (per-SIMD MFMA eff)
+
+End-to-end sweep across compiler branch + LLVM variant, one config each. MFMA
+efficiency is **per-SIMD** (= 2× the per-wave number `process_json.py` prints;
+`waves_per_eu=2`). Configs 1–4 are the gluon kernel with the `gl.fma` source
+fusion at `b1 h64 d128 sq16320 bshd fp16`; config 5 is the reference kernel at
+`sq16384`. All correctness `match`. ATT traces in `/data/sol_sweep_*`.
+
+| # | implementation | build | TFLOPS | eff/SIMD | eff/wave | iter cyc |
+|---|---|---|---:|---:|---:|---:|
+| 1 | baseline | gfx950-tutorial + pinned LLVM, no llirSched | 1002 | 62.4% | 31.2% | 6561 |
+| 2 | fix_boundary | llir_FAv3 + pinned LLVM, no llirSched | 1008 | 65.1% | 32.6% | 6288 |
+| 4 | sched.group.barrier | schedGroupBarrier + peephole LLVM (AUTO split) | 1038 | 70.1% | 35.1% | 5839 |
+| 3 | llirSched_FAv3 | llir_FAv3 + peephole LLVM + llirSched ON | 1046 | 71.9% | 35.9% | 5701 |
+| 5 | triton_reference | fav3_padded + Austin's LLVM | 1077 | 76.4% | 38.2% | 2681 |
+
+**Caveat on #4:** this run used the *auto-derived* co-issue split on *packed* math
+(no scalarize) — the weaker Path A variant. The hand-tuned **scalarize + VALU/TRANS
+split** (Results table above: 1071 / 38.0%/wave ≈ 76%/SIMD) is Path A's real
+ceiling and matches the reference; reproduce with `AMDGCN_SCALARIZE_PACKED_FOPS=1`
++ the reference split. Iter-cycles are not comparable across kernels (reference
+2681 vs gluon 5701 is loop structure — 2×-unroll — not speed); **MFMA eff/SIMD is
+the comparable microarch metric**.
+
 ## Findings
 
 1. **Placement.** `SCHED_GROUP_BARRIER` groups are formed scanning *upward*
