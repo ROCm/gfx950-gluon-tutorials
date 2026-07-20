@@ -73,7 +73,11 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
     """
     m_ij = nan_propagating_max(qk, axis=1) * qk_scale
     m_new = gl.maximum(m_run, m_ij, propagate_nan=tl.PropagateNan.ALL)
-    p = gl.exp2(qk * qk_scale - m_new[:, None])
+    # Fuse qk*scale - m_new at the source (gl.fma -> single llvm.fmuladd) instead
+    # of leaving it as fmul+fsub. The backend only contracts those into v_pk_fma
+    # AFTER llirSched runs, so an un-fused pair is double-counted by the interleave
+    # weight (2+2 vs the real 2), making its co-exec groups come out half full.
+    p = gl.exp2(gl.fma(qk, qk_scale, -m_new[:, None]))
     alpha = gl.exp2(m_run - m_new)
     return m_new, p, alpha
 
