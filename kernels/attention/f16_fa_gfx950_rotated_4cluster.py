@@ -92,12 +92,13 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
     following DOT2. p and alpha were produced by VEC1 in the *previous* iteration
     (the carried previous-tile probabilities).
 
-    Op order matches the reference VEC2 split exactly: row-sum first (l_ij), then the
-    accumulator rescale (acc *= alpha), then the running-denominator update
-    (l_i = l_i*alpha + l_ij), then the p->fp16 cast.
+    Op order: accumulator rescale (acc *= alpha) FIRST, then the row-sum (l_ij),
+    the running-denominator update (l_i = l_i*alpha + l_ij), then the p->fp16 cast.
+    Putting the big acc-rescale VALU block first (with the reverse-6 interleave)
+    front-loads it before the QK MFMAs.
     """
-    l_ij = gl.sum(p, axis=1)
     acc = acc * alpha[:, None]
+    l_ij = gl.sum(p, axis=1)
     l_i = l_i * alpha + l_ij
     p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     return acc, l_i, p_dot
@@ -331,37 +332,37 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         block_n = block_start + pair_idx * 2
 
         # even tile (block_n): LDS slots cur=0, next=1
-        with warp_pipeline_stage("dot1", priority=0):
+        with warp_pipeline_stage("dot1"):
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
             acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
         cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem1", priority=1):
+        with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
             cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + (block_n + 3) * kt_step, kt_off)   # ACK
             cdna4_async.commit_group()
-        with warp_pipeline_stage("dot2", priority=0):
+        with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
             m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem2", priority=1):
+        with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
             cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
             cdna4_async.commit_group()
 
         # odd tile (block_n+1): LDS slots cur=1, next=0
-        with warp_pipeline_stage("dot1", priority=0):
+        with warp_pipeline_stage("dot1"):
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
             acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
         cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem1", priority=1):
+        with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(1), v_dot_layout)   # LRV
             cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base + (block_n + 4) * kt_step, kt_off)   # ACK
             cdna4_async.commit_group()
-        with warp_pipeline_stage("dot2", priority=0):
+        with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
             m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
-        with warp_pipeline_stage("mem2", priority=1):
+        with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)   # LRK
             cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + (block_n + 3) * v_step, v_off)   # ACV
             cdna4_async.commit_group()
