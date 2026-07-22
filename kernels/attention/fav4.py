@@ -121,22 +121,27 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
 
 @gluon.jit
 def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
-    """VEC2: softmax denominator + accumulator correction (DOT1 cluster).
+    """VEC2: softmax denominator + accumulator correction (DOT1 cluster), LAZY.
 
-    Updates the running denominator (l_i = l_i*alpha + sum p) with one cross-lane
-    sum reduction, rescales the accumulator (acc *= alpha), and casts p to fp16
-    with the layout convert that prepares the operand for the immediately-
-    following DOT2. p and alpha were produced by VEC1 in the *previous* iteration
-    (the carried previous-tile probabilities).
+    Updates the running denominator (l_i += sum p, rescaled by alpha only when a
+    correction is due), conditionally rescales the accumulator (acc *= alpha), and
+    casts p to fp16 with the layout convert that prepares the DOT2 operand. p and
+    alpha were produced by VEC1 in the *previous* iteration.
 
-    Op order: accumulator rescale (acc *= alpha) FIRST, then the row-sum (l_ij),
-    the running-denominator update (l_i = l_i*alpha + l_ij), then the p->fp16 cast.
-    Putting the big acc-rescale VALU block first (with the reverse-6 interleave)
-    front-loads it before the QK MFMAs.
+    UNIFORM LAZY BRANCH: sc_vec1's lazy gate leaves alpha == 1 (exp2(0), exact)
+    for every row whenever no row advanced its max this tile. gl.min(alpha) < 1 is
+    therefore a CTA-uniform "a correction is actually due" predicate, and the
+    surrounding `if` lowers to a real scf.if that ELIDES the acc*=alpha rescale --
+    the ~110 v_mul/v_pk_mul that dominate this stage -- on the common no-rescale
+    path. Rows that did not advance still carry alpha==1, so applying the per-row
+    alpha inside the taken branch stays exact (their multiply is a no-op).
     """
-    acc = acc * alpha[:, None]
     l_ij = gl.sum(p, axis=1)
-    l_i = l_i * alpha + l_ij
+    if gl.min(alpha, axis=0) < 1.0:
+        acc = acc * alpha[:, None]
+        l_i = l_i * alpha + l_ij
+    else:
+        l_i = l_i + l_ij
     p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     return acc, l_i, p_dot
 
