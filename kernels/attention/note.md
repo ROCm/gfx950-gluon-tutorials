@@ -101,3 +101,71 @@ computes the `K1/K2/g0/g1` split, and emits the valu-first
 `[MFMA][VALU]×g0 + [MFMA][TRANS]×g1` sequence — with math scalarized first. The
 throwaway Triton prototype (hardcoded reference split, env-gated) is in
 `ConvertWarpPipeline.cpp`; ATT traces are archived at `/data/att_gluon_1x16320_bshd_*`.
+
+## Stage-boundary barriers & di/dt — the biggest single win (+21 TFLOPS)
+
+Independent of the interleave: at each `mem → DOT` stage boundary
+`ConvertWarpPipeline` emits either a **LOCAL** barrier (`ds_wait + s_barrier` →
+`s_waitcnt lgkmcnt(0); s_barrier`) or a **bare** `s_barrier`. In the shipped asm
+the QK boundary was LOCAL, the PV boundary bare:
+
+```
+QK:  s_waitcnt lgkmcnt(0)      PV:  s_barrier
+     s_barrier                      s_waitcnt lgkmcnt(14)   ┐ progressive drain
+                                     s_waitcnt lgkmcnt(11)  │ hoisted INTO the
+                                     ... lgkmcnt(3,2,1,0)   ┘ MFMA stage
+```
+
+A bare barrier lets the backend hoist a **progressive `lgkmcnt(N..0)` into the
+following MFMA stage**. Each `s_waitcnt` costs a **4-cyc MFMA co-exec slot and
+stalls the matrix unit** — the di/dt trigger we'd been fighting with the
+interleave. The LOCAL barrier instead drains once with a single `lgkmcnt(0)` at
+the *mem-stage* end, hidden by inter-wave scheduling (`waves_per_eu=2`).
+
+**Why QK≠PV — it's arbitrary, not intrinsic** (`TRITON_WP_DEBUG` dump of the
+cluster LDS effects): the **DOT clusters have zero LDS effects** (register-only);
+only the mem clusters touch LDS. The one hazard is `mem1↔mem1` across iterations
+(K/V buffer reuse). `analyzePipelineDependencies` places the required LOCAL
+barrier at slot `dst-1` — a "somewhat arbitrary" (its own comment) choice that
+happens to land on the QK (`dot1`) slot. PV just isn't where the heuristic put it.
+
+**Fix:** emit LOCAL unconditionally (LOCAL strictly dominates bare, always
+correctness-safe; the extra barriers only order the mem clusters, which the
+minimal placement already had to do). Triton `llir_FAv3` commit *"[AMD]
+warp-pipeline: always emit LOCAL cluster barriers"*.
+
+**Result:** loop `lgkmcnt` 14→4, bare barriers 2→0, **~1050 → ~1071 TFLOPS**,
+MFMA eff **71.4 → 76.2% per-SIMD** — matching the `triton_reference` (1077 /
+76.4%). This barrier/lgkmcnt handling was the single largest gap to the
+reference, larger than all the interleave tuning combined.
+
+**GEMM regression check.** The unconditional-LOCAL emission fires for *every*
+warp-pipeline kernel, so we A/B'd force-local vs the old minimal `bars[i]`
+placement on all three inter-wave GEMMs (`a16w16` fp16/bf16, `a8w8` f8, `a4w4`)
+across M=N=4096, K=512…65536. Correctness matches everywhere; TFLOPS is within
+run-to-run noise (this f8 kernel alone swings ~10% at large K from thermal),
+and force-local *slightly helps* small/mid-K a4w4/a8w8 (up to +1.0%). Expected:
+DOT clusters have no LDS effects, so the extra LOCAL barriers only re-order the
+mem clusters (already ordered) — no added work. **No regression.**
+
+**Isolation** (hand-edited asm via `TRITON_KERNEL_OVERRIDE`, `s_barrier`+lgkmcnt
+in the PV boundary): the win needs a single `lgkmcnt(0)` **and** it before the
+barrier — neither change alone suffices.
+
+| variant | lgkmcnt inside MFMA stage | drain position | TFLOPS |
+|---|---:|---|---:|
+| baseline (multiple, after) | 6 | after | 1049 |
+| single lgkmcnt(0), after | 1 | after | 1054 |
+| reorder only (keep multiple) | 6 | before | 1050 |
+| **single lgkmcnt(0), before** | **0** | before | **1070** |
+
+The benefit is monotonic in **#lgkmcnt inside the MFMA stage** (6→1049, 1→1054,
+0→1070); the win is getting to **zero** in-stage waits, which needs both the
+single-drain *and* the reorder before the barrier.
+
+**Revisit of the di/dt / interleave tradeoff.** The earlier "spread VALU so the
+stage tail has few VALU, else di/dt" reasoning was working around the *bare-
+barrier* stall. With the LOCAL-barrier fix removing the in-stage `lgkmcnt`
+stalls, the interleave is freer — even-spread is no longer forced by di/dt, so a
+front-loaded VALU prologue + tightly-packed `[MFMA][6-7 VALU]` groups becomes
+worth trying (WIP).
