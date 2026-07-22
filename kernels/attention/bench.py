@@ -65,7 +65,12 @@ from f16_fa_gfx950_common import (
     input_helper,
     sdpa_reference,
 )  # noqa: E402
-from f16_fa_gfx950_rotated_4cluster import run_gluon_attention  # noqa: E402
+# Select the kernel implementation: FA_MODULE=fav3 (default, eager rescale) or
+# fav4 (lazy-rescale variant). Both expose run_gluon_attention.
+import importlib  # noqa: E402
+
+_FA_MODULE = os.environ.get("FA_MODULE", "fav3")
+run_gluon_attention = importlib.import_module(_FA_MODULE).run_gluon_attention  # noqa: E402
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 

@@ -16,7 +16,7 @@ handles causal masking, ragged tails, other head dims, and a wide autotune space
 Ported from
 [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
 (`kernels/cdna4/fa/`). `f16_fa_gfx950_common.py` is verbatim.
-`f16_fa_gfx950_rotated_4cluster.py` is the upstream kernel reduced to the single
+`fav3.py` (formerly `f16_fa_gfx950_rotated_4cluster.py`) is the upstream kernel reduced to the single
 best config for the focus shape (D=128, non-causal, `BLOCK_M=256`, `BLOCK_N=64`,
 8 warps): the per-`(D, BLOCK_N, warps)` layout dispatch, causal / masked-tail
 scheduling, preload-all + non-pipelined fallbacks, head-dim padding, and the
@@ -27,10 +27,14 @@ this repo's black/ruff (see `pyproject.toml`); `bench.py` is tutorial-native and
 linted.
 
 ## Files
-- `f16_fa_gfx950_rotated_4cluster.py` — the Gluon kernel + single autotune config + host launcher (`run_gluon_attention`).
+- `fav3.py` — the Gluon kernel + single autotune config + host launcher (`run_gluon_attention`).
+- `fav4.py` — `fav3` plus lazy softmax rescaling (defer the `acc *= alpha` correction until
+  a tile's max exceeds the running max by a log2 threshold; same idea as FlyDSL
+  `dualwave_swp_lazy_rescale` / Flash-Attention-4's deferred correction).
 - `f16_fa_gfx950_common.py` — shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, ...).
 - `bench.py` — correctness vs the torch SDPA reference + `do_bench` TFLOPS, with the same
-  RTLD_GLOBAL / plugin hooks as the GEMM tutorial `bench.py`.
+  RTLD_GLOBAL / plugin hooks as the GEMM tutorial `bench.py`. Select the kernel with
+  `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`.
 
 ## Benchmark
 ```bash

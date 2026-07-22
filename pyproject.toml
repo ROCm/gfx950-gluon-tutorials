@@ -42,6 +42,7 @@ extend-exclude = '''
   )/
   # vendored FA kernels from AMD-Triton/gluon-kernels (common verbatim, kernel simplified)
   | kernels/attention/f16_fa_gfx950_.*\.py
+  | kernels/attention/fav[0-9]+\.py
 )
 '''
 
@@ -57,6 +58,7 @@ extend-exclude = [
     "*.amdgcn",
     # vendored FA kernels from AMD-Triton/gluon-kernels (common verbatim, kernel simplified)
     "kernels/attention/f16_fa_gfx950_*.py",
+    "kernels/attention/fav*.py",
 ]
 
 [tool.ruff.lint]
