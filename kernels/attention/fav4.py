@@ -120,6 +120,17 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
 
 
 @gluon.jit
+def _rescale(acc, l_i, alpha):
+    """warp_predicate body: apply the deferred per-row correction.
+
+    Runs only for wavefronts holding at least one row with alpha < 1 (see
+    sc_vec2). Rows that did not advance carry alpha == 1, so their multiply is a
+    no-op -- correct even though the whole lane executes under one exec mask.
+    """
+    return acc * alpha[:, None], l_i * alpha
+
+
+@gluon.jit
 def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
     """VEC2: softmax denominator + accumulator correction (DOT1 cluster), LAZY.
 
@@ -128,20 +139,21 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
     casts p to fp16 with the layout convert that prepares the DOT2 operand. p and
     alpha were produced by VEC1 in the *previous* iteration.
 
-    UNIFORM LAZY BRANCH: sc_vec1's lazy gate leaves alpha == 1 (exp2(0), exact)
-    for every row whenever no row advanced its max this tile. gl.min(alpha) < 1 is
-    therefore a CTA-uniform "a correction is actually due" predicate, and the
-    surrounding `if` lowers to a real scf.if that ELIDES the acc*=alpha rescale --
-    the ~110 v_mul/v_pk_mul that dominate this stage -- on the common no-rescale
-    path. Rows that did not advance still carry alpha==1, so applying the per-row
-    alpha inside the taken branch stays exact (their multiply is a no-op).
+    PER-WAVE LAZY SKIP: the correction (acc *= alpha, l_i *= alpha -- the
+    ~110 v_mul/v_pk_mul that dominate this stage) is wrapped in a
+    ``gl.warp_predicate`` keyed on the per-row predicate ``alpha < 1``. This
+    lowers to ``s_and_saveexec`` + ``s_cbranch_execz``, so each wavefront
+    independently skips the rescale when none of ITS rows advanced -- with NO
+    cross-warp reduction. (The previous ``gl.min(alpha, axis=0) < 1`` gate needed
+    a CTA-wide min, i.e. an lds write + s_barrier that serialized the two waves
+    and destroyed the inter-wave ping-pong.) The ``+ l_ij`` denominator update is
+    applied unconditionally *after* the region so a skipped wave never drops it;
+    for rescaled rows ``l_i * alpha + l_ij`` is exact, for stable rows alpha == 1.
     """
     l_ij = gl.sum(p, axis=1)
-    if gl.min(alpha, axis=0) < 1.0:
-        acc = acc * alpha[:, None]
-        l_i = l_i * alpha + l_ij
-    else:
-        l_i = l_i + l_ij
+    need = alpha < 1.0
+    acc, l_i = gl.warp_predicate(need, (acc, l_i), _rescale, args=(alpha, ))
+    l_i = l_i + l_ij
     p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     return acc, l_i, p_dot
 
