@@ -150,11 +150,13 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
     applied unconditionally *after* the region so a skipped wave never drops it;
     for rescaled rows ``l_i * alpha + l_ij`` is exact, for stable rows alpha == 1.
     """
+    # opt1: hoist the p->fp16 DOT2-operand layout convert to the top so the LDS
+    # round-trip can overlap the correction (warp_predicate) and l_i update.
+    p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     l_ij = gl.sum(p, axis=1)
     need = alpha < 1.0
     acc, l_i = gl.warp_predicate(need, (acc, l_i), _rescale, args=(alpha, ))
     l_i = l_i + l_ij
-    p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     return acc, l_i, p_dot
 
 
