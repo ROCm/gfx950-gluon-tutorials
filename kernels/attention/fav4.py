@@ -150,12 +150,14 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
     applied unconditionally *after* the region so a skipped wave never drops it;
     for rescaled rows ``l_i * alpha + l_ij`` is exact, for stable rows alpha == 1.
     """
-    # opt1: hoist the p->fp16 DOT2-operand layout convert to the top so the LDS
-    # round-trip can overlap the correction (warp_predicate) and l_i update.
-    p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
-    l_ij = gl.sum(p, axis=1)
+    # opt2: correction FIRST, then sum + the p->fp16 DOT2-operand convert AFTER it.
+    # Combined with reversing the loop's dot1 order (sc_vec2 before compute_dot1_qk),
+    # this lands the DOT1 mfma + sum + cvt together in the post-branch block so they
+    # interleave.
     need = alpha < 1.0
     acc, l_i = gl.warp_predicate(need, (acc, l_i), _rescale, args=(alpha, ))
+    l_ij = gl.sum(p, axis=1)
+    p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     l_i = l_i + l_ij
     return acc, l_i, p_dot
 
@@ -389,8 +391,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
         # even tile (block_n): LDS slots cur=0, next=1
         with warp_pipeline_stage("dot1"):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
             acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
@@ -407,8 +409,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
         # odd tile (block_n+1): LDS slots cur=1, next=0
         with warp_pipeline_stage("dot1"):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
             acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(1), v_dot_layout)   # LRV
