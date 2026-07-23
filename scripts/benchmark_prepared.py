@@ -108,7 +108,10 @@ def load_kernel(args):
             raise ValueError(f"invalid intra a16w16 version {args.version}")
         version_dir = bench.VERSION_MAP[args.version]
         module = importlib.import_module(f"{version_dir}.matmul_kernel")
-        return module, getattr(module, version_dir), version_dir
+        # v3's directory label covers two LDS-layout experiments. Match its
+        # public matmul() wrapper, which selects the padding variant by default.
+        kernel_name = "v3_lds_padding" if args.version == 3 else version_dir
+        return module, getattr(module, kernel_name), kernel_name
     if args.kernel == "a4w4":
         if args.version not in bench.VERSION_MAP:
             raise ValueError(f"invalid {args.route} a4w4 version {args.version}")
