@@ -189,7 +189,7 @@ and skipped per-wave via `gl.warp_predicate(alpha < 1.0, …)` (an
 | **opt3** | `26eca45` | rescale hoisted out of dot1 into the prior `mem2` stage | **41.7%** | ~1156 |
 
 opt2's 31.9% is the *naive* build; 38.5% is after the three compiler fixes it
-surfaced (below). opt3 (41.7%, +`QK_DRAIN` 41.96%) is the current best.
+surfaced (below). opt3 is the current best (41.7%, 41.96% with the wrap-around drain).
 
 ## opt1 — hoist the p→fp16 convert (+1.4%)
 
@@ -234,37 +234,69 @@ Semantically identical. **38.5 → 41.7%/SIMD, ~1156 TFLOPS.**
 ## Wrap-around barrier — the slot force-LOCAL can't reach
 
 The "always emit LOCAL cluster barriers" win above covers 3 of the 4 dot boundaries.
-The 4th — the **wrap-around barrier** (cluster 0, loop-top QK) — stays effectively
-bare: it sits at the loop *header*, where its LOCAL *release* fence can't
-materialize `lgkmcnt(0)` for the **backedge-carried** LRK reads, so they leak into
-the QK stage as a staggered `lgkmcnt(14→0)`. Two experiments:
+The 4th — the **wrap-around barrier** (cluster 0, loop-top QK) — behaved as if bare:
+the loop-top QK stage carried a staggered `lgkmcnt(14→0)` instead of one drain.
 
-- **`TRITON_WP_WRAP_BOTTOM`** (move it to the loop bottom): drains once, but the
-  drain+barrier front-load the QK stage ahead of the mfmas and the loop-control
-  `s_xxx` land *between* the barrier and the mfmas → stall → **−1%**. Wrong place.
-- **`TRITON_WP_QK_DRAIN`** (keep it at the QK-stage entry, after the loop-control
-  scalars, but emit an explicit `s_waitcnt lgkmcnt(0)` before it): clean single
-  drain, zero in-stage `lgkmcnt`, `s_xxx` stay with the mem stage. **Perf-neutral**
-  (41.96%) — here the staggered waits were already hidden by inter-wave scheduling.
-  Correct general fix for the wrap-around slot; committed to triton, off by default.
+**Root cause — not a missing barrier.** The wrap-around barrier's LOCAL *release*
+fence **does** ask for the drain, but `SIMemoryLegalizer` materializes it as
+**`S_WAITCNT_soft`** — an *advisory* wait that `SIInsertWaitcnts` is free to relax.
+At the seven other cluster boundaries the soft wait survives as
+`s_waitcnt lgkmcnt(0)`; at the loop *header* `SIInsertWaitcnts` **deletes** it and
+re-places minimal **per-consumer** waits instead (`lgkmcnt(14), 13, 12, …` before
+each mfma), because the first mfma only needs 2 of the 16 backedge-carried
+`ds_read`s. The staggering is the backend deliberately maximizing overlap. Confirm by
+diffing the *"SI Memory Legalizer"* vs *"SI insert wait instructions"* MIR dumps
+(`DISABLE_LLVM_OPT=print-after-all`):
 
-So on fav4 the staggered `lgkmcnt` is latency-hiding, not a defect (unlike the
-*bare*-barrier PV case above, where in-stage waits genuinely stalled the mfma).
+```
+after SI Memory Legalizer          after SI insert wait instructions
+  SCHED_BARRIER 0                    SCHED_BARRIER 0
+  S_WAITCNT_soft .Lgkmcnt_0   <--    S_BARRIER            (soft wait deleted)
+  S_WAITCNT_lds_direct               V_PK_ADD
+  S_BARRIER                          S_WAITCNT .Lgkmcnt_14   <-- re-placed
+                                     V_MFMA ...  (_13, _12, ...)
+```
 
-## Run recipe (opt3 + QK_DRAIN)
+**So no fence/barrier change can fix it** — everything the memory model emits is
+soft; the drain must be a **hard** wait.
+
+**Fix, in the lowering (default on).** `ConvertWarpPipeline` emits
+`amdgpu.memory_counter_wait(ds = 0)` immediately before the cluster-0 barrier —
+arch-portable (`s_waitcnt lgkmcnt(0)` on gfx9, `s_wait_dscnt 0` on gfx12+, encoding
+derived from the ISA version) and hard, so `SIInsertWaitcnts` must honor it. With no
+env flags:
+
+```
+.LBB0_19 (latch):   s_or exec; s_add x5; s_cmp; s_cbranch   <- all s_xxx here
+.LBB0_20 (header):  s_waitcnt lgkmcnt(0); s_barrier;        <- drain + boundary
+                    v_pk_add; v_mfma ...                    <- MFMA stage clean
+```
+
+Loop: 15 staggered waits → **4 single `lgkmcnt(0)` drains**. **Perf-neutral** on fav4
+(~1157 TFLOPS either way, 41.96%) — unlike the *bare*-barrier PV case above, these
+staggered waits were already hidden by inter-wave scheduling, so this is a
+cleanliness/robustness fix rather than a perf one. Inter-wave a16w16 warp-pipeline
+GEMM: correct, within run-to-run noise. `TRITON_WP_NO_WRAP_DRAIN` opts out.
+
+**Dead end:** `TRITON_WP_WRAP_BOTTOM` (move the wrap-around barrier to the loop
+bottom) also drains once, but it reverts the top-barrier prototype (`fc55d65df`) and
+costs **−1%** — and it was never needed; the hard drain alone yields the layout above.
+
+## Run recipe (opt3)
 
 ```bash
 HIP_VISIBLE_DEVICES=5 \                    # rocm-smi GPU[4] (shared box)
 DISABLE_LLVM_OPT=disable-machine-sink \    # opt2 finding #2 (exp/fma leak)
-TRITON_WP_QK_DRAIN=1 \                      # clean QK waitcnt (optional, neutral)
 LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \   # or the plugin regresses hard
 FA_MODULE=fav4 python bench.py --seqlen 16320
 ```
 
-- Needs triton from `llir_FAv3` (warp_predicate + `unlikely` + QK_DRAIN + force-LOCAL)
-  and `libLlirSched.so` rebuilt with the phi-rollback fix.
-- **Cache trap:** `TRITON_WP_QK_DRAIN` / `DISABLE_LLVM_OPT` / `LLVM_PASS_PLUGIN_*`
-  are NOT in Triton's cache key → `rm -rf ~/.triton/cache` when switching configs.
+- Needs triton from `llir_FAv3` (warp_predicate + `unlikely` + force-LOCAL barriers +
+  the wrap-around hard drain) and `libLlirSched.so` rebuilt with the phi-rollback fix.
+  The wrap-around drain is on by default — no env var needed.
+- **Cache trap:** `DISABLE_LLVM_OPT` / `LLVM_PASS_PLUGIN_*` / `TRITON_WP_*` are NOT
+  in Triton's cache key → `rm -rf ~/.triton/cache` when switching configs, or you
+  silently benchmark a stale kernel.
 - **Seqlen:** `ceil(N_CTX/64)` must be odd (static_assert). 16320 OK, 16384 not.
 - Traces: `/data/fav4_opt{1,2,3}_*_seqlen16320_se0_all4simd_att`.
