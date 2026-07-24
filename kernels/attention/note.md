@@ -169,3 +169,102 @@ barrier* stall. With the LOCAL-barrier fix removing the in-stage `lgkmcnt`
 stalls, the interleave is freer — even-spread is no longer forced by di/dt, so a
 front-loaded VALU prologue + tightly-packed `[MFMA][6-7 VALU]` groups becomes
 worth trying (WIP).
+
+---
+
+# FAv4 — opt1 / opt2 / opt3 (DOT1-stage restructuring)
+
+Follow-on to the co-issue/barrier work above, on `fav4.py` (lazy-softmax-rescale
+FA). Same 2×-unrolled rotated 4-stage ping-pong (`dot1`/`mem1`/`dot2`/`mem2`), but
+the online-softmax correction (`acc *= alpha`, `l_i *= alpha`) is applied **lazily**
+and skipped per-wave via `gl.warp_predicate(alpha < 1.0, …)` (an
+`s_and_saveexec`/`s_cbranch_execz` skip, no cross-warp reduction). Numbers are
+**MFMA-eff per SIMD** at `b1 h64 d128 sq16320 fp16` on rocm-smi GPU[4].
+
+| version | commit | change | eff/SIMD | TFLOPS |
+|---|---|---|:---:|:---:|
+| baseline | `8f1410b` | per-wave lazy rescale via `gl.warp_predicate` | 36.6% | — |
+| **opt1** | `4f29b69` | hoist p→fp16 cvt to top of `sc_vec2` (mfma still leads dot1) | 36.8% | — |
+| **opt2** | `f33b86e` | `sc_vec2` **before** `compute_dot1_qk` (branch leads dot1) | 31.9% → 38.5% | — |
+| **opt3** | `26eca45` | rescale hoisted out of dot1 into the prior `mem2` stage | **41.7%** | ~1156 |
+
+opt2's 31.9% is the *naive* build; 38.5% is after the three compiler fixes it
+surfaced (below). opt3 (41.7%, +`QK_DRAIN` 41.96%) is the current best.
+
+## opt1 — hoist the p→fp16 convert (+1.4%)
+
+`sc_vec2` did rescale → `sum(p)` → `p.to(fp16)` cvt (DOT2 operand). Moving the cvt
+to the **top** of `sc_vec2` overlaps it earlier; `compute_dot1_qk` still leads the
+dot1 stage. 36.6 → 36.8%.
+
+## opt2 — interleave DOT1 mfma with sum+cvt (negative, but surfaced 3 real bugs)
+
+Reversed dot1 so `sc_vec2` runs **before** `compute_dot1_qk`, to let the llir
+scheduler interleave the QK mfma with the sum/cvt VALU. **−8%** — the reversal puts
+the `warp_predicate` *branch* ahead of the QK mfma, exposing three backend issues:
+
+1. **block-placement out-of-lining.** `MachineBlockPlacement` laid the cold rescale
+   block ~50/50. Fix: `gl.warp_predicate(…, unlikely=True)` → branch weights
+   `[1,2000]` → cold block out of line. (Committed to triton `llir_FAv3` as a
+   frontend param; opt3 no longer needs it.)
+2. **MachineSink leaked exp/fma.** `MachineSink` sinks dot2's `exp2`/`fma` (VEC1)
+   toward its consumer (dot1's `sum`/`cvt`) **across** the mem2 `s_barrier` —
+   `s_barrier` is `IntrNoMem`, so it's not a code-motion fence for pure ALU ops.
+   Fix: `DISABLE_LLVM_OPT=disable-machine-sink`.
+3. **the llir scheduler was silently rolling back its ENTIRE interleave.** The QK
+   region is the first span of the loop's merge block, so its `Begin` is a PHI; the
+   plugin moved an mfma above a phi → invalid IR → the whole warp-pipeline
+   interleave reverted (the `interleaved N/M` log prints *before* the verify, so it
+   looked applied). Every "+llir" number was actually un-interleaved. Fix in
+   `LlirSchedPlugin.cpp`: **advance the region start past leading phis** → interleave
+   applies → **+8%** (32.6 → 38.5%). A second tweak (adaptive group weight for
+   VALU-light stages) spreads the QK mfma instead of clustering; perf-neutral.
+
+Lesson: "branch-leads-dot1" is the wrong shape; it just happened to surface bugs.
+
+## opt3 — hoist the rescale into mem2 (+2%, current best)
+
+Split the rescale out of `sc_vec2` into `rescale_lazy()` and run it in the **mem2**
+stage (with LRK/ACV), leaving dot1 as `[sum + cvt] + QK mfma` with **no branch
+ahead of the mfma** — the branch's latency overlaps the mem stage. The rescale for
+tile *i+1* uses `alpha` from tile *i*'s DOT2 `sc_vec1` (live in tile *i*'s mem2);
+prologue rescales tile 0, drain rescales n-2/n-1 (n-3 done by the loop's last mem2).
+Semantically identical. **38.5 → 41.7%/SIMD, ~1156 TFLOPS.**
+
+## Wrap-around barrier — the slot force-LOCAL can't reach
+
+The "always emit LOCAL cluster barriers" win above covers 3 of the 4 dot boundaries.
+The 4th — the **wrap-around barrier** (cluster 0, loop-top QK) — stays effectively
+bare: it sits at the loop *header*, where its LOCAL *release* fence can't
+materialize `lgkmcnt(0)` for the **backedge-carried** LRK reads, so they leak into
+the QK stage as a staggered `lgkmcnt(14→0)`. Two experiments:
+
+- **`TRITON_WP_WRAP_BOTTOM`** (move it to the loop bottom): drains once, but the
+  drain+barrier front-load the QK stage ahead of the mfmas and the loop-control
+  `s_xxx` land *between* the barrier and the mfmas → stall → **−1%**. Wrong place.
+- **`TRITON_WP_QK_DRAIN`** (keep it at the QK-stage entry, after the loop-control
+  scalars, but emit an explicit `s_waitcnt lgkmcnt(0)` before it): clean single
+  drain, zero in-stage `lgkmcnt`, `s_xxx` stay with the mem stage. **Perf-neutral**
+  (41.96%) — here the staggered waits were already hidden by inter-wave scheduling.
+  Correct general fix for the wrap-around slot; committed to triton, off by default.
+
+So on fav4 the staggered `lgkmcnt` is latency-hiding, not a defect (unlike the
+*bare*-barrier PV case above, where in-stage waits genuinely stalled the mfma).
+
+## Run recipe (opt3 + QK_DRAIN)
+
+```bash
+HIP_VISIBLE_DEVICES=5 \                    # rocm-smi GPU[4] (shared box)
+DISABLE_LLVM_OPT=disable-machine-sink \    # opt2 finding #2 (exp/fma leak)
+TRITON_WP_QK_DRAIN=1 \                      # clean QK waitcnt (optional, neutral)
+LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \   # or the plugin regresses hard
+FA_MODULE=fav4 python bench.py --seqlen 16320
+```
+
+- Needs triton from `llir_FAv3` (warp_predicate + `unlikely` + QK_DRAIN + force-LOCAL)
+  and `libLlirSched.so` rebuilt with the phi-rollback fix.
+- **Cache trap:** `TRITON_WP_QK_DRAIN` / `DISABLE_LLVM_OPT` / `LLVM_PASS_PLUGIN_*`
+  are NOT in Triton's cache key → `rm -rf ~/.triton/cache` when switching configs.
+- **Seqlen:** `ceil(N_CTX/64)` must be odd (static_assert). 16320 OK, 16384 not.
+- Traces: `/data/fav4_opt{1,2,3}_*_seqlen16320_se0_all4simd_att`.
