@@ -131,35 +131,43 @@ def _rescale(acc, l_i, alpha):
 
 
 @gluon.jit
-def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
-    """VEC2: softmax denominator + accumulator correction (DOT1 cluster), LAZY.
+def rescale_lazy(acc, l_i, alpha):
+    """opt3: the deferred per-row correction, hoisted into the PRIOR mem stage.
 
-    Updates the running denominator (l_i += sum p, rescaled by alpha only when a
-    correction is due), conditionally rescales the accumulator (acc *= alpha), and
-    casts p to fp16 with the layout convert that prepares the DOT2 operand. p and
-    alpha were produced by VEC1 in the *previous* iteration.
+    Same warp_predicate rescale as before (acc *= alpha, l_i *= alpha, skipped
+    per-wave when no row advanced), but pulled OUT of sc_vec2 so it runs in the
+    mem2 stage -- paired with the LRK/ACV loads -- instead of sitting ahead of the
+    DOT1 QK mfma. alpha was produced by VEC1 in THIS tile's DOT2; applying the
+    correction here (before the NEXT tile's DOT2 accumulates) keeps acc in the
+    advanced frame while overlapping the branch/control with LDS/global latency.
 
-    PER-WAVE LAZY SKIP: the correction (acc *= alpha, l_i *= alpha -- the
-    ~110 v_mul/v_pk_mul that dominate this stage) is wrapped in a
-    ``gl.warp_predicate`` keyed on the per-row predicate ``alpha < 1``. This
-    lowers to ``s_and_saveexec`` + ``s_cbranch_execz``, so each wavefront
-    independently skips the rescale when none of ITS rows advanced -- with NO
-    cross-warp reduction. (The previous ``gl.min(alpha, axis=0) < 1`` gate needed
-    a CTA-wide min, i.e. an lds write + s_barrier that serialized the two waves
-    and destroyed the inter-wave ping-pong.) The ``+ l_ij`` denominator update is
-    applied unconditionally *after* the region so a skipped wave never drops it;
-    for rescaled rows ``l_i * alpha + l_ij`` is exact, for stable rows alpha == 1.
+    PER-WAVE LAZY SKIP: ``gl.warp_predicate`` keyed on ``alpha < 1`` lowers to
+    ``s_and_saveexec`` + ``s_cbranch_execz``, so each wavefront independently skips
+    the rescale when none of ITS rows advanced -- no cross-warp reduction. Rows
+    that did not advance carry alpha == 1, so their multiply is a no-op.
     """
-    # opt2: correction FIRST, then sum + the p->fp16 DOT2-operand convert AFTER it.
-    # Combined with reversing the loop's dot1 order (sc_vec2 before compute_dot1_qk),
-    # this lands the DOT1 mfma + sum + cvt together in the post-branch block so they
-    # interleave.
     need = alpha < 1.0
     acc, l_i = gl.warp_predicate(need, (acc, l_i), _rescale, args=(alpha, ))
+    return acc, l_i
+
+
+@gluon.jit
+def sc_vec2(l_i, p, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
+    """VEC2: softmax denominator + DOT2-operand convert (DOT1 cluster).
+
+    opt3: the accumulator/denominator rescale (acc *= alpha, l_i *= alpha) has been
+    hoisted OUT into rescale_lazy() in the PRIOR mem2 stage, leaving only the
+    unconditional denominator update (l_i += sum p) and the p->fp16 convert that
+    prepares the DOT2 operand. p was produced by VEC1 in the previous iteration and
+    l_i's frame was already corrected by the preceding rescale_lazy, so the split
+    ``l_i * alpha`` (in rescale_lazy) ``+ l_ij`` (here) is exact; for stable rows
+    alpha == 1. This leaves the DOT1 stage as just [sum + cvt] + the QK mfma, with
+    no branch/control ahead of the mfma.
+    """
     l_ij = gl.sum(p, axis=1)
     p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     l_i = l_i + l_ij
-    return acc, l_i, p_dot
+    return l_i, p_dot
 
 
 # ---------------------------------------------------------------------------
@@ -385,13 +393,18 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # makes the ping-pong LDS slots compile-time constants (0/1) instead of a
     # runtime `% BUF_DEPTH`, dropping the slot arithmetic from the hot loop. An
     # odd tail tile (constexpr) is handled after the loop.
+    # opt3: rescale for tile 0's DOT2, using the prologue's alpha_c[0]. The loop's
+    # mem2 stages carry the rescale for every later tile, so the DOT1 sc_vec2 is
+    # left as just sum+cvt with no branch ahead of the QK mfma.
+    acc, l_i = rescale_lazy(acc, l_i, alpha_c)
+
     main_loop_pairs = (block_end - 3 - block_start) // 2
     for pair_idx in tl.range(0, main_loop_pairs):
         block_n = block_start + pair_idx * 2
 
         # even tile (block_n): LDS slots cur=0, next=1
         with warp_pipeline_stage("dot1"):
-            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+            l_i, p_dot = sc_vec2(l_i, p_c, p_dot_layout, q_dot.dtype)   # VEC2 (sum+cvt; rescale in prior mem2)
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
@@ -406,10 +419,11 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
             cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
             cdna4_async.commit_group()
+            acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for next DOT1, overlapped w/ mem latency
 
         # odd tile (block_n+1): LDS slots cur=1, next=0
         with warp_pipeline_stage("dot1"):
-            acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)   # VEC2
+            l_i, p_dot = sc_vec2(l_i, p_c, p_dot_layout, q_dot.dtype)   # VEC2 (sum+cvt; rescale in prior mem2)
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
@@ -424,6 +438,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)   # LRK
             cdna4_async.buffer_load_to_shared(v_smem.index(1), v_base + (block_n + 3) * v_step, v_off)   # ACV
             cdna4_async.commit_group()
+            acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for next DOT1, overlapped w/ mem latency
 
     # (odd-tail tile removed; the static_assert above guarantees it is never needed)
 
@@ -442,9 +457,10 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
     cdna4_async.wait_group(2)                                           # V[n-3] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3]
+    l_i, p_dot = sc_vec2(l_i, p_c, p_dot_layout, q_dot.dtype)  # VEC2[n-3] (rescale done in loop's last mem2)
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-3]
     m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-2] -> m_new, p[n-2]
+    acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-2
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
     cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base + nm1 * v_step, v_off)
     cdna4_async.commit_group()   # ACV[n-1]
@@ -455,14 +471,15 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-1]
     cdna4_async.wait_group(1)                                           # V[n-2] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
+    l_i, p_dot = sc_vec2(l_i, p_c, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-2]
     m_run, p_c, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-1] -> m_new, p[n-1]
+    acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-1
 
     # output tile n-1 (final; no further dot_qk / prefetch)
     cdna4_async.wait_group(0)                                           # V[n-1] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm1), v_dot_layout)                    # LRV[n-1]
-    acc, l_i, p_dot = sc_vec2(acc, l_i, p_c, alpha_c, p_dot_layout, q_dot.dtype)  # VEC2[n-1]
+    l_i, p_dot = sc_vec2(l_i, p_c, p_dot_layout, q_dot.dtype)  # VEC2[n-1]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-1]
 
 
