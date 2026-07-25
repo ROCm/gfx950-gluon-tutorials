@@ -115,25 +115,55 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr, SCALE_ON_Q: gl.constexpr):
     # warp pipeline is undisturbed; a real uniform branch (to actually elide the
     # acc multiply) is the perf follow-up co-designed with the llir interleave.
     m_new = gl.where(m_cand - m_run > LAZY_RESCALE_THRESHOLD, m_cand, m_run)
-    # With the scale pre-folded into Q (SCALE_ON_Q) this is a plain subtract. In the
-    # other mode the scale has to be applied per element here, fused as gl.fma ->
-    # one llvm.fmuladd, so the mul+sub pair is not left un-contracted for llirSched
-    # to double-count in its interleave weights.
+    # opt8 (refines opt4/opt7): slice the [BLOCK_M, BLOCK_N] = 256x64 score tile into
+    # EIGHT 256x8 column slices T0..T7 and split the softmax numerator 5:3 -- sub +
+    # exp2 on T0..T4 stay here in VEC1 (DOT2), and BOTH the sub and the exp2 for
+    # T5/T6/T7 move to VEC2 (DOT1).
+    #
+    # Progression of the split ratio, all measured at sq16320:
+    #   opt4  1:1     move 1/2 of exp only   -- over-corrected, and the deferred
+    #                                           exps' subs then sank out of PV
+    #   opt7  1:1:1:1 move 1/4 of exp + sub  -- leak fixed (the raw slice is carried,
+    #                                           so the sub is born where it is used),
+    #                                           but PV left oversubscribed: 468 cyc of
+    #                                           VALU+TRANS against 384 of window
+    #                                           capacity, 36 cyc overflow, while DOT1
+    #                                           had 80 cyc idle and 2 empty windows
+    #   opt8  eighths move 3/8 of exp + sub  -- 3/8 sits between the two, aiming to
+    #                                           land PV at ~384 and fill DOT1's idle
+    #                                           windows
+    #
+    # Carrying the RAW slices (qk_5..qk_7) rather than their subtracted form is what
+    # keeps the subs out of the mem stage: their consumer is in VEC2, so computing
+    # them in VEC2 removes ISel's incentive to sink them (see note.md).
+    #
+    # Register-neutral: p_0123 (4 slices) + p_4 + qk_5 + qk_6 + qk_7 carries the same
+    # element count as the full p. Exact, since exp2 is elementwise.
+    qk_lo, qk_hi = _split_halves(qk)        # 2 x [256, 32]
+    qk_a, qk_b = _split_halves(qk_lo)       # 4 x [256, 16]
+    qk_c, qk_d = _split_halves(qk_hi)
+    qk_0, qk_1 = _split_halves(qk_a)        # 8 x [256, 8]
+    qk_2, qk_3 = _split_halves(qk_b)
+    qk_4, qk_5 = _split_halves(qk_c)
+    qk_6, qk_7 = _split_halves(qk_d)
     if SCALE_ON_Q:
-        t = qk - m_new[:, None]
+        p_0 = gl.exp2(qk_0 - m_new[:, None])
+        p_1 = gl.exp2(qk_1 - m_new[:, None])
+        p_2 = gl.exp2(qk_2 - m_new[:, None])
+        p_3 = gl.exp2(qk_3 - m_new[:, None])
+        p_4 = gl.exp2(qk_4 - m_new[:, None])
     else:
-        t = gl.fma(qk, qk_scale, -m_new[:, None])
-    # opt4: the exp2 burst is the single biggest VALU block in the loop, and it all
-    # used to sit here in the DOT2 stage -- leaving VEC1 (DOT2) with ~2x the VALU of
-    # VEC2 (DOT1), which got much lighter once opt3 moved the rescale out. Split the
-    # burst in half: do the LEFT half here and carry the right half's *argument*
-    # (t_r) to VEC2, which exp2's it in the DOT1 stage. Register-neutral -- we carry
-    # p_l + t_r instead of the full p, same element count -- and exact, since
-    # exp2 is elementwise so exp2(concat(t_l, t_r)) == concat(exp2 t_l, exp2 t_r).
-    t_l, t_r = _split_halves(t)
-    p_l = gl.exp2(t_l)
+        # SCALE_ON_Q=False: the scale has to be applied per element, so slice the
+        # fma's input instead and keep the mul+sub fused (gl.fma -> one
+        # llvm.fmuladd), otherwise llirSched double-counts the un-contracted pair.
+        p_0 = gl.exp2(gl.fma(qk_0, qk_scale, -m_new[:, None]))
+        p_1 = gl.exp2(gl.fma(qk_1, qk_scale, -m_new[:, None]))
+        p_2 = gl.exp2(gl.fma(qk_2, qk_scale, -m_new[:, None]))
+        p_3 = gl.exp2(gl.fma(qk_3, qk_scale, -m_new[:, None]))
+        p_4 = gl.exp2(gl.fma(qk_4, qk_scale, -m_new[:, None]))
+    p_0123 = _concat_halves(_concat_halves(p_0, p_1), _concat_halves(p_2, p_3))
     alpha = gl.exp2(m_run - m_new)
-    return m_new, p_l, t_r, alpha
+    return m_new, p_0123, p_4, qk_5, qk_6, qk_7, alpha
 
 
 @gluon.jit
@@ -197,7 +227,9 @@ def rescale_lazy(acc, l_i, alpha):
 
 
 @gluon.jit
-def sc_vec2(l_i, p_l, t_r, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
+def sc_vec2(l_i, p_0123, p_4, qk_5, qk_6, qk_7, m_new,
+            p_dot_layout: gl.constexpr, out_dtype: gl.constexpr,
+            qk_scale: gl.constexpr, SCALE_ON_Q: gl.constexpr):
     """VEC2: softmax denominator + DOT2-operand convert (DOT1 cluster).
 
     opt3: the accumulator/denominator rescale (acc *= alpha, l_i *= alpha) has been
@@ -212,10 +244,19 @@ def sc_vec2(l_i, p_l, t_r, p_dot_layout: gl.constexpr, out_dtype: gl.constexpr):
     opt4: also runs the RIGHT half of VEC1's exp2 burst (VEC1 hands over the
     un-exp'd argument t_r), balancing VALU between the two DOT stages.
     """
-    # opt4: deferred half of the exp2 burst, then rejoin (both free -- see
-    # _split_halves) so the sum/cvt below are unchanged.
-    p_r = gl.exp2(t_r)
-    p = _concat_halves(p_l, p_r)
+    # opt8: the deferred 3/8 -- their subtracts happen here too, not in VEC1, so the
+    # ops live in the stage that consumes them (see sc_vec1). Then rejoin; slice and
+    # concat are both free (see _split_halves).
+    if SCALE_ON_Q:
+        p_5 = gl.exp2(qk_5 - m_new[:, None])
+        p_6 = gl.exp2(qk_6 - m_new[:, None])
+        p_7 = gl.exp2(qk_7 - m_new[:, None])
+    else:
+        p_5 = gl.exp2(gl.fma(qk_5, qk_scale, -m_new[:, None]))
+        p_6 = gl.exp2(gl.fma(qk_6, qk_scale, -m_new[:, None]))
+        p_7 = gl.exp2(gl.fma(qk_7, qk_scale, -m_new[:, None]))
+    p_4567 = _concat_halves(_concat_halves(p_4, p_5), _concat_halves(p_6, p_7))
+    p = _concat_halves(p_0123, p_4567)
     l_ij = gl.sum(p, axis=1)
     p_dot = gl.convert_layout(p.to(out_dtype), p_dot_layout)
     l_i = l_i + l_ij
@@ -442,7 +483,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     cdna4_async.wait_group(2)                                       # K[0] complete
     kt0 = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
     qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_i, qk_scale, SCALE_ON_Q)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
+    m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_i, qk_scale, SCALE_ON_Q)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
     cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base + 2 * kt_step, kt_off)
@@ -469,7 +510,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # even tile (block_n): LDS slots cur=0, next=1
         with warp_pipeline_stage("dot1"):
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
-            l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)   # VEC2 (sum+cvt; rescale in prior mem2)
+            l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2 (sum+cvt; rescale in prior mem2)
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
@@ -477,7 +518,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.commit_group()
         with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
-            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
+            m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
@@ -488,7 +529,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # odd tile (block_n+1): LDS slots cur=1, next=0
         with warp_pipeline_stage("dot1"):
             qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
-            l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)   # VEC2 (sum+cvt; rescale in prior mem2)
+            l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2 (sum+cvt; rescale in prior mem2)
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
             v_dot = cdna4_async.load_shared_relaxed(v_smem.index(1), v_dot_layout)   # LRV
@@ -496,7 +537,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.commit_group()
         with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
-            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
+            m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)   # LRK
@@ -521,9 +562,9 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
     cdna4_async.wait_group(2)                                           # V[n-3] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
-    l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)  # VEC2[n-3] (rescale done in loop's last mem2)
+    l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)  # VEC2[n-3] (rescale done in loop's last mem2)
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-3]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-2] -> m_new, p[n-2]
+    m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-2] -> m_new, p[n-2]
     acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-2
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
     cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base + nm1 * v_step, v_off)
@@ -535,15 +576,15 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-1]
     cdna4_async.wait_group(1)                                           # V[n-2] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
-    l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
+    l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)  # VEC2[n-2]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-2]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-1] -> m_new, p[n-1]
+    m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-1] -> m_new, p[n-1]
     acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-1
 
     # output tile n-1 (final; no further dot_qk / prefetch)
     cdna4_async.wait_group(0)                                           # V[n-1] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm1), v_dot_layout)                    # LRV[n-1]
-    l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)  # VEC2[n-1]
+    l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)  # VEC2[n-1]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-1]
 
 
