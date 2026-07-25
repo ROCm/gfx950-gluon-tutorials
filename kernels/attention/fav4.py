@@ -36,6 +36,33 @@ To get close to matching the LLIR from the original kernel in its docker contain
 - ``AMDGCN_SCALARIZE_PACKED_FOPS=1`` -- emits one scalar fp op per element instead of packed ``v2f16`` ops, so the LLIR/AMDGCN reads op-per-element and diffs cleanly against the docker environment dumps.  Readability/IR-match only; no perf effect.
 """
 
+import os
+import sys
+
+# The out-of-tree LLIR scheduler ships as an LLVM pass plugin. Loaded via
+# LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols (e.g. llvm::CallbackVH::anchor)
+# from libtriton at dlopen time, which requires libtriton in the *global* symbol
+# scope. CPython loads C-extensions RTLD_LOCAL by default, so the plugin dies with
+# a bogus "undefined symbol" even though libtriton defines it -- and only on a
+# *fresh* compile, so a warm ~/.triton/cache hides the breakage. Opt into
+# RTLD_GLOBAL before the first `import triton`. ``bench.py`` does the same; doing
+# it here too covers harnesses that import this module directly.
+if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+    if "triton" in sys.modules:
+        # Too late for the flag above: libtriton is already loaded RTLD_LOCAL.
+        # dlopen-ing a loaded object with RTLD_GLOBAL promotes its symbols into
+        # the global scope, which is all the plugin needs.
+        import ctypes
+
+        try:
+            ctypes.CDLL(
+                os.path.join(os.path.dirname(sys.modules["triton"].__file__), "_C", "libtriton.so"),
+                mode=ctypes.RTLD_GLOBAL,
+            )
+        except OSError:
+            pass  # best effort; bench.py sets the flag early enough on its own
+
 import torch
 import triton
 import triton.language as tl
