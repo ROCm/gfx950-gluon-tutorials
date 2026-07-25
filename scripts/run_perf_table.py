@@ -42,6 +42,9 @@ Usage:
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
     python scripts/run_perf_table.py --kernel a16w16 --configs llir+force-agpr+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
+
+    # Compile/bind once and use the cached launcher for the rocprof timing loop:
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+force-agpr+amdgcnas --versions 9 --K 8192 --dtype bf16 --rocprof --prepared
 """
 
 import argparse
@@ -274,21 +277,36 @@ def avg_kernel_time_ns(csv_path, kernel_name, last_n=100):
     Early dispatches may have inflated times due to warmup effects.
     Averaging only the last_n dispatches gives steady-state timing.
     """
-    durations = []
+    dispatches = []
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             if kernel_name in row["Kernel_Name"]:
                 start = int(row["Start_Timestamp"])
                 end = int(row["End_Timestamp"])
-                durations.append(end - start)
-    if not durations:
+                dispatches.append((int(row["Dispatch_Id"]), end - start))
+    if not dispatches:
         return None, 0
+    dispatches.sort(key=lambda item: item[0])
+    durations = [duration for _, duration in dispatches]
     tail = durations[-last_n:]
     return sum(tail) / len(tail), len(durations)
 
 
-def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type="a16w16"):
+def run_rocprof_trace(
+    version_dir,
+    K,
+    dtype,
+    version,
+    work_dir,
+    env,
+    kernel_type="a16w16",
+    prepared=False,
+    warmup=10,
+    iters=1000,
+    rotating_sets=3,
+    last_n=100,
+):
     """Run rocprofv3 --kernel-trace to collect kernel timestamps.
 
     Returns TFLOPS computed from the average kernel time, or None on failure.
@@ -308,16 +326,37 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
         "-d",
         trace_dir,
         "--",
-        "python",
-        "bench.py",
-        "--rocprof",
-        "--K",
-        str(K),
     ]
-    if kernel_type == "a16w16":
-        cmd.extend(["--dtype", dtype, "--version", str(version)])
-    elif kernel_type == "a4w4":
-        cmd.extend(["--version", str(version)])
+    if prepared:
+        prepared_driver = os.path.join(_REPO_ROOT, "scripts", "benchmark_prepared.py")
+        cmd.extend(
+            [
+                sys.executable,
+                prepared_driver,
+                "--route",
+                "intra",
+                "--kernel",
+                kernel_type,
+                "--K",
+                str(K),
+                "--sets",
+                str(rotating_sets),
+                "--warmup",
+                str(warmup),
+                "--iters",
+                str(iters),
+            ]
+        )
+        if kernel_type == "a16w16":
+            cmd.extend(["--dtype", dtype, "--version", str(version)])
+        elif kernel_type == "a4w4":
+            cmd.extend(["--version", str(version)])
+    else:
+        cmd.extend([sys.executable, "bench.py", "--rocprof", "--K", str(K)])
+        if kernel_type == "a16w16":
+            cmd.extend(["--dtype", dtype, "--version", str(version)])
+        elif kernel_type == "a4w4":
+            cmd.extend(["--version", str(version)])
 
     rocprof_env = env.copy()
     rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
@@ -346,18 +385,34 @@ def run_rocprof_trace(version_dir, K, dtype, version, work_dir, env, kernel_type
         print(f"  rocprofv3: no kernel_trace.csv found in {trace_dir}")
         return None
 
-    avg_ns, count = avg_kernel_time_ns(csv_path, version_dir)
+    avg_ns, count = avg_kernel_time_ns(csv_path, version_dir, last_n=last_n)
     if avg_ns is None:
         print(f"  rocprofv3: no rows matched kernel '{version_dir}' in {csv_path}")
         return None
 
     avg_us = avg_ns / 1e3
     tflops = 2 * M * N * K * 1e-12 / (avg_ns * 1e-9)
-    print(f"  rocprofv3: {count} dispatches, avg={avg_us:.2f} us, tflops={tflops:.1f}")
+    tail_count = min(last_n, count)
+    print(
+        f"  rocprofv3: {count} dispatches, final-{tail_count} avg={avg_us:.2f} us, "
+        f"tflops={tflops:.1f}"
+    )
     return tflops
 
 
-def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False):
+def run_benchmark(
+    version,
+    config,
+    K,
+    dtype,
+    kernel="a16w16",
+    use_rocprof=False,
+    prepared=False,
+    warmup=10,
+    iters=1000,
+    rotating_sets=3,
+    last_n=100,
+):
     """Run a single benchmark for the given version, config, and kernel type.
 
     Returns a dict with keys: tflops, vgprs, spills, mfma_eff, or None values on failure.
@@ -390,6 +445,9 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     env = os.environ.copy()
     # Clear any previous config env vars
     for key in (
+        "LLVM_PASS_PLUGIN_PATH",
+        "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
+        "TRITON_AMDGCNAS_PLUGIN",
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
         "TRITON_FORCE_MFMA_AGPR",
@@ -452,7 +510,18 @@ def run_benchmark(version, config, K, dtype, kernel="a16w16", use_rocprof=False)
     # Run rocprofv3 to get TFLOPS from kernel timestamps
     if use_rocprof:
         tflops = run_rocprof_trace(
-            version_dir, K, dtype, version, work_dir, env, kernel_type=kernel
+            version_dir,
+            K,
+            dtype,
+            version,
+            work_dir,
+            env,
+            kernel_type=kernel,
+            prepared=prepared,
+            warmup=warmup,
+            iters=iters,
+            rotating_sets=rotating_sets,
+            last_n=last_n,
         )
         result["tflops"] = tflops
 
@@ -530,6 +599,35 @@ def parse_args():
         help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
     )
     parser.add_argument(
+        "--prepared",
+        action="store_true",
+        help="With --rocprof, compile and bind once, then use the cached compiled launcher.",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=10,
+        help="Prepared-mode warmup dispatches (default: 10).",
+    )
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=1000,
+        help="Prepared-mode measured dispatches (default: 1000).",
+    )
+    parser.add_argument(
+        "--rotating-sets",
+        type=int,
+        default=3,
+        help="Complete tensor sets used by prepared mode (default: 3).",
+    )
+    parser.add_argument(
+        "--last-n",
+        type=int,
+        default=100,
+        help="Final matching rocprof dispatches averaged for timing (default: 100).",
+    )
+    parser.add_argument(
         "--allow-unreported",
         action="store_true",
         help="Run (version, config) pairs that do not have a published number "
@@ -542,6 +640,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.prepared and not args.rocprof:
+        print("Error: --prepared requires --rocprof")
+        sys.exit(2)
+    if min(args.warmup, args.iters, args.rotating_sets, args.last_n) <= 0:
+        print("Error: --warmup, --iters, --rotating-sets, and --last-n must be positive")
+        sys.exit(2)
 
     if args.kernel == "a8w8":
         # a8w8 has a single kernel, --versions is ignored
@@ -606,6 +711,11 @@ def main():
                 args.dtype,
                 kernel=args.kernel,
                 use_rocprof=args.rocprof,
+                prepared=args.prepared,
+                warmup=args.warmup,
+                iters=args.iters,
+                rotating_sets=args.rotating_sets,
+                last_n=args.last_n,
             )
             results[config].append(row)
 

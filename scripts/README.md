@@ -49,17 +49,26 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs ba
 
 # a8w8 kernel (run from anywhere):
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
+
+# Final-100 kernel timing with a prepared launcher and three rotating tensor sets:
+python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+force-agpr+amdgcnas --K 8192 --dtype bf16 --rocprof --prepared
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16` or `a8w8`) |
+| `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16`, `a8w8`, or `a4w4`) |
 | `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
 | `--configs` | `base llir llir+force-agpr+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
+| `--rocprof` | off | Derive TFLOP/s from `rocprofv3 --kernel-trace` instead of `do_bench` |
+| `--prepared` | off | With `--rocprof`, compile and bind once and enter the cached launcher directly |
+| `--warmup` | `10` | Warmup dispatches in prepared mode |
+| `--iters` | `1000` | Measured dispatches in prepared mode |
+| `--rotating-sets` | `3` | Complete input/output tensor sets in prepared mode |
+| `--last-n` | `100` | Final matching dispatches averaged from the kernel trace |
 
 ### Configs
 
@@ -110,6 +119,32 @@ Config: base
 ```
 
 If a run fails (e.g. an assertion in the scheduler), the row shows `FAIL` for the affected columns.
+
+### Prepared kernel timing
+
+`--prepared` removes repeated Python argument binding and specialization lookup from the dispatch loop. The driver calls Triton/Gluon's public `warmup(..., grid=...)` interface to compile without launching, binds the cached `CompiledKernel` to each rotating tensor set, and constructs launch metadata once. It then issues exactly `--warmup + --iters` kernel dispatches through the compiled launch stub. This requires no Triton compiler changes.
+
+The reported value remains **kernel time**, not host-to-host sustained throughput: `run_perf_table.py` sorts matching CSV records by numeric dispatch ID and computes `2*M*N*K/time` from the final `--last-n` durations. Preparing the launcher is still useful because it removes artificial host gaps that can alter device duty cycle and frequency during a long profiler run. `AMD_SERIALIZE_KERNEL=3` is set for the rocprof subprocess so each dispatch has an unambiguous serialized timing interval.
+
+The standalone driver also covers the final inter-wave kernels, which are not part of `run_perf_table.py`:
+
+```bash
+# Intra-wave BF16 v9; enable the compiler stack in the environment first.
+AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
+  --kernel-include-regex v9_beyond_hotloop -d trace_intra_bf16 -- \
+  python scripts/benchmark_prepared.py --route intra --kernel a16w16 \
+  --version 9 --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
+
+# Inter-wave BF16; all optional compiler-plugin variables must be unset.
+env -u LLVM_PASS_PLUGIN_PATH -u LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE \
+  -u TRITON_FORCE_MFMA_AGPR -u TRITON_AMDGCNAS_PLUGIN \
+  AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
+  --kernel-include-regex a16w16_kernel -d trace_inter_bf16 -- \
+  python scripts/benchmark_prepared.py --route inter --kernel a16w16 \
+  --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
+```
+
+Use `--kernel a8w8 --K 16384` for BF8 and `--kernel a4w4 --version 1 --K 32768` for MXFP4. The a16w16 driver accepts `--dtype fp16` or `--dtype bf16`; the lower-precision kernels have their fixed tutorial contracts. Run the corresponding directory's `bench.py` once outside the profiler for the PyTorch correctness check before collecting a final timing trace.
 
 ## run_counter_collection.py
 
