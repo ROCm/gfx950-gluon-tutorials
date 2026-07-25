@@ -179,9 +179,12 @@ FA). Same 2×-unrolled rotated 4-stage ping-pong (`dot1`/`mem1`/`dot2`/`mem2`), 
 the online-softmax correction (`acc *= alpha`, `l_i *= alpha`) is applied **lazily**
 and skipped per-wave via `gl.warp_predicate(alpha < 1.0, …)` (an
 `s_and_saveexec`/`s_cbranch_execz` skip, no cross-warp reduction). Numbers are
-**MFMA-eff per SIMD** at `b1 h64 d128 sq16320 fp16` on rocm-smi GPU[4].
+at `b1 h64 d128 sq16320 fp16` on rocm-smi GPU[4]. **CORRECTION:** the eff column
+below is what `process_json.py` prints, which is **per WAVE**
+(`mfma_cycles / iteration`), not per SIMD -- with `waves_per_eu=2` the matrix
+unit's occupancy is 2x these numbers. See the metric note in the opt4-6 section.
 
-| version | commit | change | eff/SIMD | TFLOPS |
+| version | commit | change | eff/wave | TFLOPS |
 |---|---|---|:---:|:---:|
 | baseline | `8f1410b` | per-wave lazy rescale via `gl.warp_predicate` | 36.6% | — |
 | **opt1** | `4f29b69` | hoist p→fp16 cvt to top of `sc_vec2` (mfma still leads dot1) | 36.8% | — |
@@ -300,3 +303,243 @@ FA_MODULE=fav4 python bench.py --seqlen 16320
   silently benchmark a stale kernel.
 - **Seqlen:** `ceil(N_CTX/64)` must be odd (static_assert). 16320 OK, 16384 not.
 - Traces: `/data/fav4_opt{1,2,3}_*_seqlen16320_se0_all4simd_att`.
+
+---
+
+# FAv4 — opt4 / opt5 / opt6, and the compiler defects they exposed
+
+Continuation of the opt1–opt3 log above. Same shape (`b1 h64 d128 sq16320 fp16`,
+rocm-smi GPU[4] = `HIP_VISIBLE_DEVICES=5`).
+
+**Metric note (important).** `process_json.py`'s `"mfma efficiency"` is
+`total_mfma_cycles_in_loop / average_iteration_duration` — that is **per WAVE**.
+With `waves_per_eu=2` the matrix unit's occupancy is **2x** that number. Both are
+quoted below (`eff/wave` and `eff/SIMD`). The opt1–opt3 table above lists per-wave
+numbers despite what its header used to say.
+
+## Where it ended up
+
+| step | TFLOPS | eff/wave | eff/SIMD | iter cyc |
+|---|---:|---:|---:|---:|
+| opt3 (previous best) | 1158 | 41.95% | 83.9% | — |
+| opt4 alone (no scheduler fixes) | 1151 | 41.24% | 82.5% | — |
+| + max-counting/fold + head fix | 1173 | 43.83% | 87.7% | 4672 |
+| + `sched_group_barrier` mode + scalarize-fma | 1181 | 45.47% | 90.9% | 4504 |
+| + opt5 (`qk_scale` on Q) | 1189 | 46.31% | 92.6% | 4423 |
+| **+ opt6 (`s_nop` at mem-stage head)** | **1196** | **46.78%** | **93.6%** | **4377** |
+| reference: no llir scheduler at all | 1132 | 37.97% | 75.9% | 5394 |
+
+For scale: 4377 cyc/iteration against 4096 cyc of mfma work (64 mfma x 32 cyc x 2
+waves) leaves only 281 cycles of non-mfma time. The kernel is **spill-free at 256
+VGPRs** (`vgpr_spill_count=0`, `private_segment_fixed_size=0`, no `v_accvgpr` in the
+loop), so there is no register headroom for further work — watch
+`vgpr_spill_count` on any change.
+
+## opt4 — split the exp2 burst across both DOT stages (`2f5b9ee`)
+
+Once opt3 moved the rescale out of DOT1, VEC1 (DOT2) had ~2x the VALU of VEC2
+(DOT1). Fix: `sc_vec1` computes `t = fma(qk, scale, -m_new)` and exp2's only the
+LEFT half, handing the right half's *argument* `t_r` to `sc_vec2`, which exp2's it
+in the DOT1 stage and rejoins before the sum. Exact (exp2 is elementwise) and
+register-neutral. exp per stage 0/33 -> 16/17; llir-weighted VALU 51/105 -> 83/91.
+
+`_split_halves`/`_concat_halves` are reshape/permute/split and join/permute/reshape
+with `convert_layout(..., assert_trivial=True)`, so the compiler *proves* the split
+is free — confirmed in the ISA: whole-kernel `v_mov` count unchanged (114 both
+ways). Same pattern as `split_subtile()` in the upstream `mxfp_fa_gfx1250` example.
+
+**opt4 alone is a small regression** (1151 vs opt3's 1158). The win came from three
+defects it exposed:
+
+### (a) The max3 reduction was invisible to the interleave
+
+`valuWeight()` returned **0** for `maximum`/`minimum` unless opted in, so the
+softmax row-max reduction was never grouped and its 16 `v_maximum3` piled up
+*before* the stage's first mfma, covered by nothing: **76 cycles stranded at the PV
+head while that stage's own windows sat 92 cycles under-filled.** Counting them
+(fold-aware, so the inner max/mins that isel merges into `v_maximum3` count 0) is
+now the default: head 76 -> 0 cyc, fill 292 -> 368/384, **+1.1%**.
+`LLIRSCHED_WP_NOCOUNTMAX` / `NOMAX3FOLD` opt out.
+
+Also fixed: the reverse group-walk only closed a group at G weight, so the
+front-most partial run got no mfma ahead of it (2 x exp2 stranded at the QK head).
+Now a leftover mfma is spent on it. **+0.2%.**
+
+Tried and rejected: sizing groups by the window (`G=6`) instead of `X/Y`. Bigger
+groups made codegen pile a heavier tail into the last sub-region (asm overflow
+16/20 -> 32/32 cyc) and measured **worse** (1162 vs 1174). `LLIRSCHED_WP_WINDOWG`
+opts in.
+
+### (b) LLVM `SIPreEmitPeephole` bails on TRANS, hiding packed ops from unpacking
+
+`collectUnpackingCandidates()` returns at the first instruction that is
+`isNeverCoissue() && !isUnpackable`, and `SIInstrInfo::isNeverCoissue()` has
+`if (isTRANS(MI)) return true;`. So in `mfma + 2 x v_exp + v_pk_add` the scan
+**terminates at the first `v_exp`** and never reaches the `v_pk_add`, which stays
+packed (8 cyc, cannot co-issue with an MFMA at all) even though the window had room.
+LLVM treats a TRANS op as ending the co-exec window; on gfx950 it does not.
+
+Fix: make a never-coissue non-unpackable op a *latency consumer* rather than a scan
+terminator (stop only at a following MFMA/DOT, which opens its own window). Proved
+with `llc` A/B on identical IR: `v_pk_add` 31 -> 27, `v_add_f32` 105 -> 113,
+`v_pk_mul` unchanged. End-to-end +0.2%. **Later made redundant** by (c) — the patch
+lives in a `/data/llvm-pin` worktree at triton's pin and is NOT needed for the
+current recipe.
+
+### (c) `ScalarizePackedFOps` missed `fmuladd`/`fma` (`fbe309e1d`)
+
+The pass matched only `m_BinOp` (FMul/FAdd/FSub); `llvm.fmuladd`/`llvm.fma` are
+intrinsic **calls**, so vector ones survived as `v_pk_fma_f32`. Extended with
+`maybeReplaceVectorFMAWithScalarFMAs()` (per-element scalar intrinsics, fast-math
+flags copied). PV fill 344 -> 368/384 with zero packed ops left; **+0.3%** on the
+physical interleave, **+0.6%** with `sched_group_barrier`.
+
+Consequence worth noting: with all packed fp ops gone before codegen, the
+peephole bug in (b) is unreachable, so **no custom LLVM build is needed** — the
+whole optimization now runs on triton's stock pinned LLVM.
+
+## What FlyDSL does (and does not) do differently
+
+- **LLVM:** `/root/llvm-project` at upstream `7f77ca0db` (Mar 2026, 23.0.0git),
+  **no local patches**. Not a fork, no custom pass. So its edge is not the backend.
+- **Hints:** it emits `llvm.amdgcn.sched.group.barrier(mask, size, syncID)` — 321 of
+  them vs 60 plain `sched.barrier` — with masks MFMA `0x8` / VALU `0x2` / TRANS
+  `0x400` and **one syncID per cluster**, e.g. `16 x [MFMA 1] + 10 x [VALU 5] +
+  6 x [TRANS 3]`. Plain `sched_barrier` is used only at cluster boundaries.
+- **It never reorders instructions.** Its clusters are written mfma-led with the
+  VALU after, so IGroupLP only has to *confirm* a schedule, not construct one.
+- `_s_nop(7)` (raw side-effecting `llvm.inline_asm`, since ROCDL has no `s.nop` op)
+  as the first statement of every mem cluster — see opt6.
+
+## `sched_group_barrier` mode in llirSched (`LLIRSCHED_WP_SGB=1`)
+
+Motivation: `sched_barrier(0)` is only advisory to the machine scheduler, and we
+measured codegen consolidating a stage's last two sub-regions anyway. IGroupLP
+instead *builds* the requested pipeline. `declareRegionGroups()` counts the region
+(M mfma, per-op cycle lists for VALU/TRANS, max3-fold-aware) and emits the
+declaration **after every real op of the region** (IGroupLP forms groups scanning
+upward; a declaration at the top yields empty groups and silently does nothing).
+
+Three things had to be right, each found the hard way:
+
+1. **Declaration order must follow the dependency order.** In `sc_vec2` the
+   adds/cvt *consume* the exps (`exp2(t_r) -> concat -> sum/cvt`), so a VALU-first
+   declaration is unsatisfiable: IGroupLP formed ~5 of 16 groups, left 11 mfma bare
+   and overflowed 216 cyc -> **1114 TFLOPS**. Declaring TRANS-first for QK and
+   VALU-first for PV (chosen automatically from the first co-issuable op in the
+   region) fixed it -> **1174**. FlyDSL orders its `exp_pairs`/`valu_pairs`
+   per cluster by hand for the same reason.
+2. **Scalarize is load-bearing.** IGroupLP counts *instructions*; a packed op
+   becomes two after `ScalarizePackedFOps`. Without scalarize, QK keeps 24 cyc of
+   `v_pk` and fill drops 336 -> 288 (-1.2%).
+3. **Group sizes must be packed by CYCLES, counted in INSTRUCTIONS.** Deriving
+   `g1 = M - g0` over-claimed groups for a class that could not fill them (3 starved
+   windows). Now each class's group count comes from its own cycle cost, and the
+   per-group instruction count from packing the region's ops in program order.
+
+Not a silver bullet: SGB **without** a feasible starting order fails badly (QK
+60/384 fill, 156 cyc stranded), and interleave+SGB was worse than either
+(1120). Only pure-declaration + dependency order + scalarize wins.
+
+## opt5 — fold `qk_scale` into Q before the loop (`75f40a0`)
+
+Removes both uses of the scale from the loop: `fma(qk, qk_scale, -m_new)` becomes a
+plain subtract, and the row max drops its scale multiply (which also shortens the
+row-max dependency chain — `max(qk)` feeds the compare directly). Costs one extra
+fp16 rounding of Q: max error 1.22e-04 vs 6.10e-05, both far inside the 1e-3
+tolerance. Selectable via the `SCALE_ON_Q` constexpr kernel arg (default = on);
+`False` reproduces pre-opt5 numerics bit-for-bit at ~-1%.
+
+## opt6 — `s_nop` at the head of each mem stage (FlyDSL trick)
+
+`LLIRSCHED_WP_MEMNOP=k` emits `k x s_nop 7` (8 idle cycles each) at the head of
+every mem stage, via the real `llvm.amdgcn.s.nop(i16)` intrinsic. Not wasted time —
+it is **phase tuning**: in the two-wave ping-pong a delay at the mem-stage head
+shifts this wave's `ds_read` burst so it does not collide with the other wave's LDS
+traffic and issue slots.
+
+| idle cyc / mem stage | 0 | 8 | 16 | 24 | 32 |
+|---|---|---|---|---|---|
+| TFLOPS | 1190.7 | 1193.1 | 1194.7 | **1196.5** | 1176.8 |
+
+Sharp optimum at 24 (`k=3`), falling off hard after. Paying 96 idle cycles/iteration
+*reduced* iteration time by 46 cycles.
+
+Bug worth remembering: the mem2 stage **spans 2-4 basic blocks** (the lazy-rescale
+`warp_predicate` branch splits it), so a per-basic-block span walk never sees its
+closing barrier and skips it — only mem1 got nops. Stage classification must be done
+in function layout order, not per block.
+
+## The `fsub` sink — ISel's pre-RA scheduler (proven)
+
+Symptom: 16 of the 32 `v_sub` computing the softmax exponent leave the PV stage and
+come to rest in the following mem stage, where no mfma can hide them (PV fill
+296/384 instead of ~360, ~64 cyc/iteration).
+
+- **Not opt6**: the sub distribution is byte-identical with 0, mem1-only and
+  all-stage `s_nop`s.
+- **It is opt5**: pre-opt5 all 32 `v_fma` stayed in PV (0 in the mem stages). The
+  2-operand `fsub` is cheaper for the scheduler to move than the 3-operand fma.
+- **Which pass:** ISel's input (the `.llir`) has `fsub = 34` in the PV region and
+  `0` in the mem region; **ISel's output (first MIR dump) already has 18 / 16**, and
+  every later pass preserves it. `llc -pre-RA-sched=linearize` on the *same* IR
+  keeps all 34 in the DOT stage -> the pre-RA list scheduler is the mover.
+  The four `disable-sched-*` heuristic flags change nothing, because the freedom
+  comes from the DAG having **no chain edge** on a pure `fsub` — `s_barrier` and
+  `sched.barrier` are chain nodes and impose no ordering on chain-free arithmetic.
+- Only half move because opt4 gave `t_r`'s subs their only consumer in the *next*
+  stage; `t_l`'s stay with PV's own exps. The second unrolled half keeps all 34 —
+  a heuristic decision, not a rule.
+
+`TRITON_PRE_RA_SCHED=<source|linearize|list-ilp|...>` was wired into `llvm.cc`
+(`setLLVMOptionFromString` -> `addOccurrence`, since `-pre-RA-sched` is a
+`RegisterPassParser` option, not `cl::opt<bool>/<std::string>`; registered in
+`CACHE_INVALIDATING_ENV_VARS` so it is part of the cache key).
+
+**`linearize` is a proof instrument, not a fix: 877 TFLOPS (-26%).** It doubles
+iteration time (9119 vs 4377 cyc) and drops to 44.9%/SIMD, with no spills in either
+build. Causes, all originating at ISel: `s_waitcnt lgkmcnt` in the loop goes **4 ->
+41** in the staggered per-consumer form (every `ds_read` is consumed where the
+source wrote it, so LDS latency is exposed per read), loop barriers go **18 -> 24**,
+and **4 of them end up adjacent** (`s_barrier / s_waitcnt vmcnt(2) / s_barrier`) —
+an adjacent pair means that stage's body migrated into its neighbour, which is the
+compute/`ds_read` interleaving that destroys the ping-pong. `ConvertWarpPipeline`
+is *not* at fault: the MLIR/`.llir` is identical in both builds. The DAG scheduler's
+real job here is hoisting loads away from their uses, and that is worth ~2x.
+
+The remaining fix is kernel-side: carry `qk_r` + `m_new` and compute
+`t_r = qk_r - m_new` inside `sc_vec2`, so those subs are in the DOT1 region by
+construction rather than at ISel's discretion. Register-neutral, but the kernel is
+at exactly 256 VGPRs — check `vgpr_spill_count` afterwards.
+
+## Component ablation — what is actually required
+
+| component | required? | measured if removed |
+|---|---|---|
+| `AMDGCN_SCALARIZE_PACKED_FOPS=1` (incl. the fma extension) | **yes** | `v_pk_fma` survives, PV 344/384 -> ~1174; no scalarize at all -> ~1160 |
+| llir scheduler + `LLIRSCHED_WP_SGB=1` | **yes** | ~1132, 75.9%/SIMD, QK/PV overflow 88/92 cyc |
+| `DISABLE_LLVM_OPT=disable-machine-sink` | **yes** | PV's `fma 32`/`exp 16` migrate into mem2, PV windows 368 -> 112/384, **~1140 (-3.5%)** |
+| the `SIPreEmitPeephole` TRANS patch | **no** | identical inventory and perf — superseded by scalarize-fma |
+
+SGB does **not** protect against MachineSink: MachineSink runs *before* the machine
+scheduler, so it moves ops out of the region entirely and IGroupLP never sees them.
+
+## Run recipe (current best, stock pinned LLVM)
+
+```bash
+HIP_VISIBLE_DEVICES=5 \                    # rocm-smi GPU[4] (shared box)
+AMDGCN_SCALARIZE_PACKED_FOPS=1 \           # required (needs the fma extension)
+LLIRSCHED_WP_SGB=1 \                       # sched_group_barrier hints
+LLIRSCHED_WP_MEMNOP=3 \                    # 24 idle cyc at each mem-stage head
+DISABLE_LLVM_OPT=disable-machine-sink \    # required
+LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+FA_MODULE=fav4 python bench.py --seqlen 16320
+```
+
+- `LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are read by the plugin, not by Triton, so
+  they are **not** in the cache key — `rm -rf ~/.triton/cache` when changing them.
+  (`DISABLE_LLVM_OPT` and `TRITON_PRE_RA_SCHED` *are* registered as
+  cache-invalidating.)
+- `ceil(N_CTX/64)` must be odd (static_assert): 16320 OK, 16384 not.
+- Traces: `/data/fav4_opt{4,5,6}_*_seqlen16320_se0_all4simd_att`.
