@@ -86,7 +86,7 @@ LAZY_RESCALE_THRESHOLD = tl.constexpr(8.0)
 
 
 @gluon.jit
-def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
+def sc_vec1(qk, m_run, qk_scale: gl.constexpr, SCALE_ON_Q: gl.constexpr):
     """VEC1: softmax numerator -- new row-max + exp2 burst (DOT2 cluster), LAZY.
 
     From the qk scores produced by DOT1 this iteration, computes the (lazily
@@ -102,7 +102,12 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
     acc and l_i stay in the same lagging frame, so acc / l_i is unchanged. Softmax
     shift-invariance makes this exact; the threshold only bounds the exp2 range.
     """
-    m_ij = nan_propagating_max(qk, axis=1) * qk_scale
+    # SCALE_ON_Q (opt5, default): qk already carries qk_scale because it was folded
+    # into Q before the loop, so the row max needs no scale multiply here.
+    if SCALE_ON_Q:
+        m_ij = nan_propagating_max(qk, axis=1)
+    else:
+        m_ij = nan_propagating_max(qk, axis=1) * qk_scale
     m_cand = gl.maximum(m_run, m_ij, propagate_nan=tl.PropagateNan.ALL)
     # Per-row lazy gate: advance the max only where the jump exceeds the threshold;
     # otherwise keep the (stale) running max so the rescale is skipped. Branchless
@@ -110,11 +115,14 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr):
     # warp pipeline is undisturbed; a real uniform branch (to actually elide the
     # acc multiply) is the perf follow-up co-designed with the llir interleave.
     m_new = gl.where(m_cand - m_run > LAZY_RESCALE_THRESHOLD, m_cand, m_run)
-    # Fuse qk*scale - m_new at the source (gl.fma -> single llvm.fmuladd) instead
-    # of leaving it as fmul+fsub. The backend only contracts those into v_pk_fma
-    # AFTER llirSched runs, so an un-fused pair is double-counted by the interleave
-    # weight (2+2 vs the real 2), making its co-exec groups come out half full.
-    t = gl.fma(qk, qk_scale, -m_new[:, None])
+    # With the scale pre-folded into Q (SCALE_ON_Q) this is a plain subtract. In the
+    # other mode the scale has to be applied per element here, fused as gl.fma ->
+    # one llvm.fmuladd, so the mul+sub pair is not left un-contracted for llirSched
+    # to double-count in its interleave weights.
+    if SCALE_ON_Q:
+        t = qk - m_new[:, None]
+    else:
+        t = gl.fma(qk, qk_scale, -m_new[:, None])
     # opt4: the exp2 burst is the single biggest VALU block in the loop, and it all
     # used to sit here in the DOT2 stage -- leaving VEC1 (DOT2) with ~2x the VALU of
     # VEC2 (DOT1), which got much lighter once opt3 moved the rescale out. Split the
@@ -253,7 +261,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
                    HQ: gl.constexpr, HK: gl.constexpr,
                    N_CTX: gl.constexpr,
                    IS_CAUSAL: gl.constexpr,
-                   BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr):
+                   BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr,
+                   SCALE_ON_Q: gl.constexpr = True):
     """
     Gluon Flash Attention Forward Kernel (AMD CDNA4 / gfx950).
     Grid: (num_heads_q, num_m_blocks, batch)
@@ -295,17 +304,28 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     q_smem_layout: gl.constexpr = gl.SwizzledSharedLayout(vec=8, per_phase=1, max_phase=16, order=[1, 0])
     q_smem = gl.allocate_shared_memory(Q.dtype.element_ty, [BLOCK_M, BLOCK_DMODEL], layout=q_smem_layout)
 
+    qk_scale: gl.constexpr = SM_SCALE * 1.44269504089
+
     q_ptrs = q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
     q_mask = offs_m[:, None] < N_CTX
     q = gl.load(q_ptrs, mask=q_mask, other=0.0)
+    # SCALE_ON_Q (opt5, the default): fold qk_scale into Q ONCE here, outside the
+    # loop. qk then already carries the scale, so VEC1's per-element
+    # fma(qk, qk_scale, -m_new) collapses to a plain subtract and the row max needs
+    # no scale multiply -- it also shortens the row-max dependency chain
+    # (max(qk) feeds the compare directly instead of max(qk) -> mul -> compare).
+    # Costs one extra fp16 rounding of Q: measured max error 1.22e-04 vs 6.10e-05,
+    # both well inside the 1e-3 tolerance. Worth ~+0.5%.
+    # SCALE_ON_Q=False keeps Q untouched and applies the scale inside VEC1 instead,
+    # which is bit-for-bit the pre-opt5 numerics.
+    if SCALE_ON_Q:
+        q = (q.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)
     q_smem.store(q)
     q_dot = q_smem.load(q_dot_layout)
 
     m_i  = gl.full([BLOCK_M], float("-inf"), dtype=gl.float32, layout=mma_m_layout)
     l_i  = gl.full([BLOCK_M], 1.0,           dtype=gl.float32, layout=mma_m_layout)
     acc  = gl.zeros([BLOCK_M, BLOCK_DMODEL],  dtype=gl.float32, layout=mma_layout)
-
-    qk_scale: gl.constexpr = SM_SCALE * 1.44269504089
 
     # Simplified tutorial kernel: non-causal, K length a multiple of BLOCK_N, so
     # every K/V block is full and unmasked (no causal / no ragged-tail masking).
@@ -422,7 +442,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     cdna4_async.wait_group(2)                                       # K[0] complete
     kt0 = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
     qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_i, qk_scale)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
+    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_i, qk_scale, SCALE_ON_Q)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
     cdna4_async.buffer_load_to_shared(kt_smem.index(0), k_base + 2 * kt_step, kt_off)
@@ -457,7 +477,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.commit_group()
         with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
-            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
+            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
@@ -476,7 +496,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.commit_group()
         with warp_pipeline_stage("dot2"):
             acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
-            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale)   # VEC1
+            m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem2"):
             kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(1), kt_dot_layout)   # LRK
@@ -503,7 +523,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
     l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)  # VEC2[n-3] (rescale done in loop's last mem2)
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-3]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-2] -> m_new, p[n-2]
+    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-2] -> m_new, p[n-2]
     acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-2
     gl.barrier()                                                       # WAR: LRV[n-3] vs V[n-1] write
     cdna4_async.buffer_load_to_shared(v_smem.index(s_nm1), v_base + nm1 * v_step, v_off)
@@ -517,7 +537,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
     l_i, p_dot = sc_vec2(l_i, p_c_l, t_c_r, p_dot_layout, q_dot.dtype)  # VEC2[n-2]
     acc = mfma_cdna4(p_dot, v_dot, acc)                                  # dot_pv[n-2]
-    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale)  # VEC1[n-1] -> m_new, p[n-1]
+    m_run, p_c_l, t_c_r, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)  # VEC1[n-1] -> m_new, p[n-1]
     acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for tile n-1
 
     # output tile n-1 (final; no further dot_qk / prefetch)
@@ -548,7 +568,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 # Metadata / input helpers (adapted from flash_attention.py)
 # ---------------------------------------------------------------------------
 
-def run_gluon_attention(q, k, v, o, metadata: MetaData):
+def run_gluon_attention(q, k, v, o, metadata: MetaData, scale_on_q: bool = True):
     """Run gluon_attn_fwd on the given inputs and write output into o.
 
     Simplified tutorial kernel: non-causal self-attention (Q and K share one N_CTX),
@@ -574,4 +594,7 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData):
         N_CTX=metadata.max_seqlens_q,
         IS_CAUSAL=False,
         BLOCK_DMODEL=head_size,
+        # Where qk_scale is applied: on Q before the loop (default, opt5) or per
+        # element inside VEC1.
+        SCALE_ON_Q=scale_on_q,
     )
