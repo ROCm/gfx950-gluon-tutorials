@@ -59,15 +59,18 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
 # Ported FAV3 kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from f16_fa_gfx950_common import (
-    _check_output,
-    compute_flops,
-    input_helper,
-    sdpa_reference,
-)  # noqa: E402
 # Select the kernel implementation: FA_MODULE=fav3 (default, eager rescale) or
 # fav4 (lazy-rescale variant). Both expose run_gluon_attention.
 import importlib  # noqa: E402
+
+from f16_fa_gfx950_common import (
+    _check_output,
+    compute_flops,
+    get_shape_from_layout,
+    get_strides_from_layout,
+    input_helper,
+    sdpa_reference,
+)  # noqa: E402
 
 _FA_MODULE = os.environ.get("FA_MODULE", "fav3")
 run_gluon_attention = importlib.import_module(_FA_MODULE).run_gluon_attention  # noqa: E402
@@ -99,6 +102,31 @@ def parse_args():
         help="run the kernel n_iters times (no do_bench); wrap with rocprofv3 --kernel-trace",
     )
     p.add_argument("--n-iters", type=int, default=1000)
+    p.add_argument(
+        "--prepared",
+        action="store_true",
+        help="rocprof mode: launch through a pre-bound PreparedKernel (scripts/prepared_kernel.py) "
+        "instead of the JIT wrapper, removing per-dispatch Python argument binding",
+    )
+    p.add_argument(
+        "--n-warmup", type=int, default=10, help="prepared mode: unmeasured warmup dispatches"
+    )
+    p.add_argument(
+        "--rotating-sets",
+        type=int,
+        default=0,
+        help="rocprof mode: number of complete (q,k,v,o) sets cycled across dispatches so "
+        "consecutive dispatches read different memory. 0 (default) derives the count from "
+        "--rotating-buffer-size",
+    )
+    p.add_argument(
+        "--rotating-buffer-size",
+        type=int,
+        default=512,
+        help="rocprof mode: total working set (MB) to spread across rotating sets, so it exceeds "
+        "the GPU cache (L2 + 256MB MALL) and dispatches see cold data. Matches the GEMM bench "
+        "default. Large FA shapes already exceed it with one set (default: 512)",
+    )
     return p.parse_args()
 
 
@@ -131,17 +159,125 @@ def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
     return ok
 
 
+def rotating_set_count(args, torch_dtype, N_CTX):
+    """How many (q,k,v,o) sets to cycle so the loop's footprint exceeds the GPU cache.
+
+    A single FA dispatch touches (2*HQ + 2*HK) * B * N_CTX * D elements (q,k,v,o). When
+    that already exceeds --rotating-buffer-size, one set is enough and rotation would only
+    waste memory; small shapes fit inside the 256MB MALL and stay warm across dispatches,
+    reporting a kernel time that no cold-start workload would ever see.
+    """
+    if args.rotating_sets > 0:
+        return args.rotating_sets
+    itemsize = torch.empty(0, dtype=torch_dtype).element_size()
+    per_set = (2 * args.hq + 2 * args.hk) * args.batch * N_CTX * args.d * itemsize
+    target = args.rotating_buffer_size * 1024 * 1024
+    return max(1, -(-target // max(1, per_set)))
+
+
 def run_rocprof_iterations(args, torch_dtype, seqlens):
     for N_CTX in seqlens:
-        q, k, v, o, md = make_inputs(
-            args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout
-        )
+        n_sets = rotating_set_count(args, torch_dtype, N_CTX)
+        sets = [
+            make_inputs(args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout)
+            for _ in range(n_sets)
+        ]
+        q, k, v, o, md = sets[0]
         run_gluon_attention(q, k, v, o, md)  # warmup + autotune
         torch.cuda.synchronize()
-        for _ in range(args.n_iters):
+        for i in range(args.n_iters):
+            q, k, v, o, md = sets[i % len(sets)]
             run_gluon_attention(q, k, v, o, md)
         torch.cuda.synchronize()
-        print(f"[FAV3] N={N_CTX}: {args.n_iters} iterations done")
+        print(f"[FAV3] N={N_CTX}: {args.n_iters} iterations done ({n_sets} rotating set(s))")
+
+
+def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
+    """Bind the FA specialization once, for ``n_sets`` rotating tensor sets.
+
+    Mirrors ``run_gluon_attention``'s launch, but hoists the argument binding and
+    specialization lookup out of the dispatch loop (see ``scripts/prepared_kernel.py``).
+    The single autotune config is read off the kernel module, so the prepared launch
+    compiles the same specialization the ordinary path would have picked.
+    """
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
+    )
+    from prepared_kernel import PreparedKernel  # noqa: E402
+
+    fa = sys.modules[_FA_MODULE]
+    cfg = fa.get_gluon_cdna_autotune_configs()[0]
+    BLOCK_M, BLOCK_N = cfg.kwargs["BLOCK_M"], cfg.kwargs["BLOCK_N"]
+
+    sets = [
+        make_inputs(args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout)
+        for _ in range(n_sets)
+    ]
+    q0, k0, _, o0, md0 = sets[0]
+    batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q0, k0, md0)
+
+    runtime_argument_sets = []
+    for q, k, v, o, md in sets:
+        strides = get_strides_from_layout(q, k, v, o, md)
+        L = torch.empty((batch, nheads_q, N_CTX), device=q.device, dtype=torch.float32)
+        runtime_argument_sets.append(
+            (q, k, v, md.sm_scale, L, o, *[s for grp in strides for s in grp])
+        )
+
+    prepared = PreparedKernel.create(
+        fa.gluon_attn_fwd.fn,
+        (nheads_q, triton.cdiv(N_CTX, BLOCK_M), batch),
+        runtime_argument_sets,
+        constexprs=dict(
+            HQ=nheads_q,
+            HK=nheads_k,
+            N_CTX=N_CTX,
+            IS_CAUSAL=False,
+            BLOCK_M=BLOCK_M,
+            BLOCK_DMODEL=head_size,
+            BLOCK_N=BLOCK_N,
+        ),
+        compiler_options=dict(
+            num_warps=cfg.num_warps,
+            waves_per_eu=cfg.kwargs["waves_per_eu"],
+            llvm_fn_attrs=cfg.kwargs["llvm_fn_attrs"],
+        ),
+    )
+    return prepared, sets
+
+
+def run_prepared_iterations(args, torch_dtype, seqlens):
+    """Prepared-launch rocprof mode: n_warmup unmeasured + n_iters measured dispatches."""
+    for N_CTX in seqlens:
+        prepared, sets = make_prepared_kernel(
+            N_CTX, args, torch_dtype, rotating_set_count(args, torch_dtype, N_CTX)
+        )
+        # Validate the pre-bound launch against the ordinary launcher before timing it,
+        # so a mis-bound argument list can never be reported as a fast kernel.
+        q, k, v, o, md = sets[0]
+        o_ref = torch.empty_like(o)
+        run_gluon_attention(q, k, v, o_ref, md)
+        o.zero_()
+        prepared(0)
+        torch.cuda.synchronize()
+        ok, max_diff, _ = _check_output(o, o_ref)
+        print(
+            f"[FAV3] N={N_CTX}: prepared vs ordinary launch "
+            f"{'✅ match' if ok else '❌ MISMATCH'} (max={max_diff:.2e})"
+        )
+        if not ok:
+            sys.exit(1)
+
+        for i in range(args.n_warmup):
+            prepared(i)
+        torch.cuda.synchronize()
+        for i in range(args.n_iters):
+            prepared(i)
+        torch.cuda.synchronize()
+        print(
+            f"[FAV3] N={N_CTX}: {args.n_warmup} warmup + {args.n_iters} prepared "
+            f"dispatches done ({prepared.slots} rotating set(s))"
+        )
 
 
 def main():
@@ -155,7 +291,10 @@ def main():
 
     # 2) Rocprof mode: cold, external timing.
     if args.rocprof:
-        run_rocprof_iterations(args, torch_dtype, seqlens)
+        if args.prepared:
+            run_prepared_iterations(args, torch_dtype, seqlens)
+        else:
+            run_rocprof_iterations(args, torch_dtype, seqlens)
         return
 
     # 3) do_bench TFLOPS sweep (non-causal).

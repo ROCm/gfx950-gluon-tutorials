@@ -543,3 +543,44 @@ FA_MODULE=fav4 python bench.py --seqlen 16320
   cache-invalidating.)
 - `ceil(N_CTX/64)` must be odd (static_assert): 16320 OK, 16384 not.
 - Traces: `/data/fav4_opt{4,5,6}_*_seqlen16320_se0_all4simd_att`.
+
+## Measurement protocol: rocprofv3 kernel time, prepared launch
+
+Reported FA numbers now come from `scripts/fa_kernel_time.py`, not from `do_bench`, so
+attention is measured the same way as the GEMM kernels
+(`scripts/run_perf_table.py:run_rocprof_trace`):
+
+```bash
+FA_MODULE=fav4 <plugin env from the recipe above> \
+python scripts/fa_kernel_time.py --seqlen 16320        # --launch prepared is the default
+```
+
+- `rocprofv3 --kernel-trace -f csv --kernel-include-regex gluon_attn_fwd`, with
+  `AMD_SERIALIZE_KERNEL=3`, averaging the **last N of 1000** dispatch durations; rows are
+  sorted by numeric `Dispatch_Id` first (per PR #50 -- a lexicographic sort puts 999 before
+  1000). TFLOPS = `compute_flops(..., causal=False) / avg_kernel_ns`.
+- **Prepared launch** (`bench.py --prepared`, using `scripts/prepared_kernel.py` from PR
+  #50): binds the specialization and the whole argument list once, then re-enters the
+  compiled launch stub, so no Python argument binding happens between dispatches. Validated
+  against the ordinary launcher every run -- bit-identical output (max diff 0.00e+00).
+- **Rotating buffers**: `bench.py` derives the set count from `--rotating-buffer-size`
+  (512 MB default, matching the GEMM bench). Necessary because a small FA shape stays
+  MALL-resident: at S=1088 one set is 71 MB and reports 667 TFLOPS, eight sets report 626.
+  Large shapes (S=16320 -> 1.07 GB) already exceed the cache with one set.
+
+**What the switch does and does not change.** At S=16320 all methods agree within 0.5%:
+`do_bench` 1243, rocprof/jit 1238, rocprof/prepared 1245 -- the kernel runs 7 ms, so the
+async queue hides the ~40 us of host binding entirely (wall/launch at S=1088: 58.01 us jit
+vs 57.98 us prepared, i.e. no gap to remove). Prepared launch is adopted for **protocol
+consistency with the GEMM path**, not for a speedup: order-balanced A/B/A/B gives prepared
+1218.5/1243.2 vs jit 1229.0/1238.5, a -0.24% mean inside the +-1.3% session noise. The
+mechanism should pay off as 1/kernel-duration, i.e. in the us-scale GEMM regime.
+
+Bigger error sources than method choice, both measured on this box:
+- **die**: GPU[0] is repeatably ~4% faster than GPU[4] at equal settings (A/B/A/B 1241/1244
+  vs 1198/1197). Same average XCD clock (1553 vs 1545 MHz) but a lower *floor* XCD
+  (1416 vs 1449) while drawing 13 W more of the 1400 W cap -- FA's wall time is set by the
+  slowest XCD.
+- **thermal/duty-cycle state**: a cool part reads high (cold 1st iter 976 -> 1256 plateau
+  as DPM ramps), so single-shot `bench.py`-style numbers sit 4-7% above steady state.
+  Alternate A/B/A/B with idle between when comparing anything under ~1.5%.
