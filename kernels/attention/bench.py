@@ -75,6 +75,22 @@ from f16_fa_gfx950_common import (
 _FA_MODULE = os.environ.get("FA_MODULE", "fav3")
 run_gluon_attention = importlib.import_module(_FA_MODULE).run_gluon_attention  # noqa: E402
 
+# Where the softmax scale is applied is a fav4 knob (SCALE_ON_Q: pre-scale Q outside
+# the loop, so VEC1's per-element fma becomes a sub). fav3 has no such parameter, so
+# forward it only when the selected kernel accepts it.
+import inspect  # noqa: E402
+
+_SCALE_ON_Q_ARG = "scale_on_q" in inspect.signature(run_gluon_attention).parameters
+_SCALE_ON_Q = True
+
+
+def launch_attention(q, k, v, o, md):
+    if _SCALE_ON_Q_ARG:
+        run_gluon_attention(q, k, v, o, md, scale_on_q=_SCALE_ON_Q)
+    else:
+        run_gluon_attention(q, k, v, o, md)
+
+
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
 name_to_torch_dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}
@@ -120,6 +136,14 @@ def parse_args():
         "--rotating-buffer-size",
     )
     p.add_argument(
+        "--scale-on-q",
+        type=int,
+        default=1,
+        choices=[0, 1],
+        help="fav4 only: 1 (default) pre-scales Q before the loop so VEC1 does a sub; "
+        "0 applies qk_scale per element inside VEC1 as an fma",
+    )
+    p.add_argument(
         "--rotating-buffer-size",
         type=int,
         default=512,
@@ -138,7 +162,7 @@ def make_inputs(B, HQ, HK, N_CTX, D, dtype, layout):
 
 def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
     q, k, v, o, md = make_inputs(B, HQ, HK, N_CTX, D, dtype, layout)
-    run_gluon_attention(q, k, v, o, md)
+    launch_attention(q, k, v, o, md)
     # sdpa_reference computes attention over the last two axes, i.e. it assumes a
     # bhsd [B, H, S, D] layout. For bshd [B, S, H, D] we must swap the H and S axes
     # before building the reference (and compare the kernel output in the same
@@ -183,11 +207,11 @@ def run_rocprof_iterations(args, torch_dtype, seqlens):
             for _ in range(n_sets)
         ]
         q, k, v, o, md = sets[0]
-        run_gluon_attention(q, k, v, o, md)  # warmup + autotune
+        launch_attention(q, k, v, o, md)  # warmup + autotune
         torch.cuda.synchronize()
         for i in range(args.n_iters):
             q, k, v, o, md = sets[i % len(sets)]
-            run_gluon_attention(q, k, v, o, md)
+            launch_attention(q, k, v, o, md)
         torch.cuda.synchronize()
         print(f"[FAV3] N={N_CTX}: {args.n_iters} iterations done ({n_sets} rotating set(s))")
 
@@ -229,6 +253,7 @@ def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
         (nheads_q, triton.cdiv(N_CTX, BLOCK_M), batch),
         runtime_argument_sets,
         constexprs=dict(
+            **({"SCALE_ON_Q": _SCALE_ON_Q} if _SCALE_ON_Q_ARG else {}),
             HQ=nheads_q,
             HK=nheads_k,
             N_CTX=N_CTX,
@@ -256,7 +281,7 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
         # so a mis-bound argument list can never be reported as a fast kernel.
         q, k, v, o, md = sets[0]
         o_ref = torch.empty_like(o)
-        run_gluon_attention(q, k, v, o_ref, md)
+        launch_attention(q, k, v, o_ref, md)
         o.zero_()
         prepared(0)
         torch.cuda.synchronize()
@@ -282,6 +307,11 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
 
 def main():
     args = parse_args()
+    global _SCALE_ON_Q
+    _SCALE_ON_Q = bool(args.scale_on_q)
+    if not _SCALE_ON_Q and not _SCALE_ON_Q_ARG:
+        print(f"Error: {_FA_MODULE} has no scale_on_q parameter")
+        sys.exit(2)
     torch_dtype = name_to_torch_dtype[args.dtype]
     seqlens = SEQLENS if args.sweep else [args.seqlen]
 
@@ -320,7 +350,7 @@ def main():
         q, k, v, o, md = make_inputs(
             args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout
         )
-        fn = lambda: run_gluon_attention(q, k, v, o, md)  # noqa: E731
+        fn = lambda: launch_attention(q, k, v, o, md)  # noqa: E731
         fn()  # trigger autotune + warm compile before timing
         torch.cuda.synchronize()
         ms = triton.testing.do_bench(fn, warmup=25, rep=100, return_mode="median")

@@ -527,15 +527,19 @@ scheduler, so it moves ops out of the region entirely and IGroupLP never sees th
 ## Run recipe (current best, stock pinned LLVM)
 
 ```bash
-HIP_VISIBLE_DEVICES=5 \                    # rocm-smi GPU[4] (shared box)
-AMDGCN_SCALARIZE_PACKED_FOPS=1 \           # required (needs the fma extension)
+HIP_VISIBLE_DEVICES=1 \                    # rocm-smi GPU[0], the fast die (ATT: use 5)
+AMDGCN_SCALARIZE_PACKED_FOPS=1 \           # fav4 ONLY -- fav3 must not set it
 LLIRSCHED_WP_SGB=1 \                       # sched_group_barrier hints
-LLIRSCHED_WP_MEMNOP=3 \                    # 24 idle cyc at each mem-stage head
+LLIRSCHED_WP_MEMNOP=2 \                    # 16 idle cyc at each mem-stage head
 DISABLE_LLVM_OPT=disable-machine-sink \    # required
 LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 FA_MODULE=fav4 python bench.py --seqlen 16320
 ```
+
+- `MEMNOP=2`, not the 3 opt6 originally chose -- re-swept after opt8 / the
+  dependency-ordered SGB / mixed-class windows / the `fneg` fix; see the retune section
+  below. `AMDGCN_SCALARIZE_PACKED_FOPS` is fav4-only now that fav3 scalarizes selectively.
 
 - `LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are read by the plugin, not by Triton, so
   they are **not** in the cache key — `rm -rf ~/.triton/cache` when changing them.
@@ -584,3 +588,368 @@ Bigger error sources than method choice, both measured on this box:
 - **thermal/duty-cycle state**: a cool part reads high (cold 1st iter 976 -> 1256 plateau
   as DPM ramps), so single-shot `bench.py`-style numbers sit 4-7% above steady state.
   Alternate A/B/A/B with idle between when comparing anything under ~1.5%.
+
+## fav3 — the over-capacity `sched_group_barrier` algorithm
+
+`declareRegionGroups` assumes the stage's VALU work FITS the mfma co-exec capacity
+(`24 cyc x M`) and spreads it so no group overflows. fav3 breaks that assumption. Its
+dot stages carry more VALU than the mfma shadows can hide:
+
+```
+fav3 QK: 476 cyc of VALU vs 384 cyc of capacity   -> minGroups 20 for 16 mfma
+fav3 PV: 496 cyc                                  -> minGroups 21 for 16 mfma
+```
+
+The balanced packer's response was to merge cheap pairs into 48-cycle groups, which the
+assembly faithfully reproduced (three windows of `12 x v_mul`, four of `6 x v_exp`).
+IGroupLP was not failing -- the *request* was infeasible.
+
+When the work does not fit, the question changes from "how do I spread it" to "which ops
+get a window, and what shape do the rest take". `declareRegionGroupsOverCap` (triggered
+automatically when `total > 24*M`; opt out with `LLIRSCHED_WP_NOOVERCAP`):
+
+1. **Non-splittable ops claim windows first** (exp2, the max3 reduction, `v_cvt_pk`,
+   permlane). Packing cannot help them, so they get first call on the capacity.
+2. **Remaining capacity buys packable coverage from the END of the stage backwards** --
+   mfmas inserted in reverse program order -- which keeps the uncovered remainder
+   contiguous and leaves it where it already sits: at the head in QK (the rescale muls),
+   in the middle in PV (the qk_scale fmas, between the max3 reduction and the exp2s).
+3. **Covered packed ops are scalarized by the plugin itself** (`scalarizePackedFP`,
+   narrow: `fmul/fadd/fsub/fma` on `<N x float>`; `fptrunc` excluded because a packed
+   convert IS one `v_cvt_pk`, `<N x half>` excluded because `v_pk_*_f16` is the natural
+   form). **Uncovered ops stay packed** -- nothing hides them either way, and one
+   `v_pk_mul_f32` retires two elements in one issue where two `v_mul_f32` need two.
+
+**So fav3 must NOT set `AMDGCN_SCALARIZE_PACKED_FOPS`** -- that pass splits every packed
+op in any block containing an mfma, including the ones this path deliberately keeps
+packed. fav4 still needs it.
+
+Slot model as specified: 1 mfma = 6 slots, unpacked op = 1, packed op = 2, exp2 = 2,
+permlane = 5.
+
+### Mixed-class windows
+
+A window is one mfma's 24-cycle shadow and may hold **several groups of different
+IGroupLP classes**: `[MFMA 1][VALU 1][TRANS 1]` asks for one mfma and then a sub and an
+exp2 behind it. fav3's PV stage ends in exactly that pair and used to spend two windows
+on 12 cycles of work. The merge step is class-agnostic too, so a VALU fragment can share
+a window with a TRANS fragment.
+
+```
+before:  V6 V10 V5 *V14 V4 T3 x9 T5 V1 T1               worst group 40 cyc
+after:   [V6]24 [V6]24 [V4]16 [V5]36 *[V14]112 [V4+T1]24 [T3]24 x10 [T1+V1+T1]20
+                                        ^^^^^^^        ^^^^^^^^^^^^
+                                    mixed class     one mfma covers exp+sub+exp
+```
+(`*` = declared with no mfma in front of it, i.e. deliberately uncovered.)
+
+PV overflow 64 -> 32 cyc, empty windows 1 -> 0. A freed window is fed back into the
+coverage budget by a fixed-point loop, though on fav3's PV there is nothing to buy: its
+unpackable work is 368 cyc of a 384 cyc capacity, so only 16 cyc (2 `v_pk_fma`) can ever
+be covered while rule 1 holds. 14 stay packed by arithmetic, not by a packing failure.
+
+**Measured** (GPU[0], kernel-time protocol): 1139.5 (balanced packer + scalarize) ->
+1158.3 (over-capacity path) -> **1165.0** (+ mixed-class windows) = **+2.2%**. fav4 is
+provably unaffected: its stages are under capacity, it never enters this path, and its
+compiled asm hashes identically before/after.
+
+## The `fneg` source-modifier bug (`valuWeight` must return 0)
+
+`fneg` and `llvm.fabs` are **not instructions** on AMDGPU: they fold into the consumer as
+source modifiers (`v_fma_f32 v0, v0, s44, -v129`). `valuWeight` counted `fneg` because it
+is an FP `UnaryOperator`, which inflates a declared group by an instruction that never
+gets emitted. IGroupLP cannot fill that group and **its pipeline solver then discards the
+schedule for the entire region**, not just that group.
+
+Found via fav4 `SCALE_ON_Q=0`, whose VEC1 computes `fma(qk, qk_scale, -m_new)`:
+
+```
+seg1 (a QK stage): MFMA 6xfma MFMA 6xfma MFMA 6xadd MFMA 6xadd MFMA 3xadd+cvt+add
+                   MFMA 5xcvt MFMA 4xcvt          <- 7 of 16 groups placed
+                   12xexp2 15xadd mov s_nop permlane 2xadd    <- no mfma at all
+                   8xMFMA                                     <- the rest dumped
+```
+9/16 windows filled, longest bare-mfma run 8. The tell: the two QK regions declared
+**39 vs 38** ops, and diffing them in the `.llir` showed the only difference was one
+`fneg` (its twin had none, and scheduled 16/16). `SCALE_ON_Q=1` has zero `fneg` in the
+whole kernel, which is why this stayed hidden. `dependsOnAny` was not at fault -- it is
+properly transitive and stops at PHIs.
+
+Neither `LLIRSCHED_WP_SGB_REORDER` (still 9/16) nor interleave mode (fixes the clustering
+at 15/16 but is slower overall) worked around it. The weight model was the fix.
+
+After: all four stages 16/16, declarations symmetric, 4725.7 -> 4634.2 cyc/iter (-1.9%),
+MFMA eff 86.7 -> 88.4%/SIMD, 1215.5 -> 1220.2 TFLOPS. fav3 1164.5 -> 1166.5.
+**Diagnostic worth remembering:** two stages that should be identical declaring different
+op counts in the `[sgb]` debug lines.
+
+## `LLIRSCHED_WP_MEMNOP` retuned: 3 -> 2
+
+opt6 picked k=3 before opt8, the dependency-ordered SGB declaration, mixed-class windows
+and the `fneg` fix. Re-swept at b1 h64 d128 sq16320 fp16, kernel-time protocol, 45 s
+cool-down, >=2 samples each:
+
+| `MEMNOP` | fav4 SOQ=0 | fav4 SOQ=1 |
+|---|---|---|
+| 0 | 1227.4 | -- |
+| 1 | 1221.6 (noisy, 0.8% spread) | -- |
+| **2** | **1234.3** (+-0.13%) | **1244.9** |
+| 3 (old default) | 1218.8 | 1239.7 |
+
+k=2 wins for **both** settings: +1.3% on SOQ=0, +0.4% on the default. Removing the nops
+entirely also beats k=3 on SOQ=0 (1227.4), but k=2 is better still. **All numbers below
+use `LLIRSCHED_WP_MEMNOP=2`.**
+
+## `SCALE_ON_Q=0` evaluated (`--scale-on-q 0`)
+
+Applying `qk_scale` per element inside VEC1 instead of pre-scaling Q costs **0.9%** at
+matched settings (1234.3 vs 1244.9) and is **more accurate**: max_err 6.10e-05 vs
+1.22e-04, since the pre-scaled path rounds `q * qk_scale` back to fp16 before the loop.
+Op-wise it is nearly a wash -- QK is a 1:1 `sub` -> `fma` swap (75 valu both), PV adds 2
+ops (one max3, one mul, to materialise the negated row max). Both builds are 256 VGPRs,
+0 AGPRs, 0 scratch, occupancy 2. Keep `SCALE_ON_Q=True` as the default; flip it only if
+the tighter numerics are worth 0.9%.
+
+## Status: gluon vs FlyDSL (2026-07-26)
+
+Same shape throughout: **B=1 HQ=64 HK=64 S=16320 D=128 fp16 non-causal**.
+
+- **TFLOPS**: GPU[0] (`HIP_VISIBLE_DEVICES=1`), `scripts/fa_kernel_time.py` -- rocprofv3
+  kernel time, prepared launch, `AMD_SERIALIZE_KERNEL=3`, 45 s idle before each run,
+  >=2 samples in both orders. Repeatability: fav3 and FlyDSL-eager <=0.1%, the two
+  lazy-rescale kernels ~0.5-1% (denser MFMA stream -> power-limited -> clock-sensitive).
+- **In-loop MFMA efficiency**: also **GPU[0]**, `att_attn_se0.json` (SE mask 0x1, all 4
+  SIMDs, dispatch iteration 8) with `att_target_cu` chosen by `scripts/att_pick_cu.py`
+  (CU1 on this die), + `scripts/process_json.py`. **Per-SIMD = 2x the per-wave number**
+  `process_json.py` prints. All rows: 126 iterations x 2048 mfma cycles per iteration, so
+  the cycle counts are directly comparable across both implementations.
+  Re-measured single-die 2026-07-26; the earlier GPU[4] traces agree to **<=0.3%** on
+  cyc/iter (4299.9 vs 4306.1, 4420.7 vs 4419.2, 4799.6 vs 4801.7, 4734.2 vs 4747.4,
+  6689.9 vs 6694.5), which retroactively validates the cross-die tables this replaces.
+- FlyDSL helpers referenced below are archived at `/data/fa_compare/`
+  (`fly_iters.py`, `fly_ktime.py`, `att_fly_se0.json`); FlyDSL checkout `/root/FlyDSL`.
+
+### 1. Eager rescale: gluon fav3 vs FlyDSL `lazy_rescale=False`
+
+| kernel | TFLOPS | cyc/iter | eff/wave | **eff/SIMD** | loop |
+|---|---:|---:|---:|---:|---:|
+| **gluon fav3** (over-cap SGB + mixed-class windows + fneg fix) | **1167.1** | **4801.7** | 42.65% | **85.3%** | 95.4% |
+| FlyDSL `dualwave_swp`, `lazy_rescale=False` | 1043.8 | 6694.5 | 30.59% | 61.2% | 97.5% |
+| | **+11.8%** | **-28.3%** | | **+24.1 pts** | |
+
+gluon is **+11.9%** on throughput and needs **28% fewer cycles per iteration**. FlyDSL's
+eager path is a correctness fallback with no scheduling attention -- it recovers part of
+the cycle deficit through clock headroom (it ran at 1820 MHz / 1218 W, being VALU-bound
+rather than power-bound, vs ~1450 MHz for ours) and still loses by 11.9%. Turning lazy
+rescale off costs FlyDSL **-16.0%** but costs gluon only **-6.2%**; our eager path
+degrades ~2.6x more gracefully, which is what the over-capacity algorithm buys.
+
+**Reproduce -- gluon fav3 TFLOPS** (note: **no** `AMDGCN_SCALARIZE_PACKED_FOPS`):
+
+```bash
+cd <repo>
+HIP_VISIBLE_DEVICES=1 FA_MODULE=fav3 \
+LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
+DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python scripts/fa_kernel_time.py --seqlen 16320 --iters 400 --last-n 200
+```
+
+**Reproduce -- gluon fav3 MFMA efficiency:**
+
+```bash
+cd <repo>/kernels/attention
+ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ \
+HIP_VISIBLE_DEVICES=5 FA_MODULE=fav3 \
+LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
+DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fav3 -- \
+  python bench.py --rocprof --seqlen 16320 --n-iters 20
+python ../../scripts/process_json.py /tmp/att_fav3/ui_output_*
+```
+
+**Reproduce -- FlyDSL eager TFLOPS and MFMA efficiency:**
+
+```bash
+cd /root/FlyDSL
+HIP_VISIBLE_DEVICES=1 python /data/fa_compare/fly_ktime.py 0 400      # TFLOPS
+
+ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ HIP_VISIBLE_DEVICES=5 \
+rocprofv3 --att -i /data/fa_compare/att_fly_se0.json -d /tmp/att_fly0 -- \
+  python /data/fa_compare/fly_iters.py --seqlen 16320 --hq 64 --batch 1 \
+    --dtype fp16 --n-iters 20 --lazy-rescale 0
+python <repo>/scripts/process_json.py /tmp/att_fly0/ui_output_*
+```
+
+The eager path is one flag on FlyDSL's builder -- `flash_attn_gfx950.py:60` takes
+`dualwave_swp_lazy_rescale` (default `True`), gating `rescale_o` vs `lazy_rescale_o` at
+line 366/440. The public wrapper exposes it as `lazy_rescale=`
+(`flash_attn_interface.py:146`).
+
+### 2. Lazy rescale: gluon fav4 (SOQ=1 / SOQ=0) vs FlyDSL default
+
+| kernel | TFLOPS | cyc/iter | eff/wave | **eff/SIMD** | loop |
+|---|---:|---:|---:|---:|---:|
+| **gluon fav4, `SCALE_ON_Q=1`** (default) | **1245.5** | **4306.1** | 47.56% | **95.1%** | 95.1% |
+| gluon fav4, `SCALE_ON_Q=0` | 1231.2 | 4419.2 | 46.34% | 92.7% | 95.2% |
+| FlyDSL `dualwave_swp`, `lazy_rescale=True` (default) | 1242.4 | 4747.5 | 43.14% | 86.3% | 96.8% |
+
+`SCALE_ON_Q=0` is the one row that needs care: it is thermally sensitive and read 1214.7
+straight after the hottest kernel with only 45 s idle, then recovered 1224.5 -> 1230.6 ->
+1231.2 over three runs at 90 s idle (it had measured 1233-1235 earlier in a cooler
+session). Treat it as ~1231 +-4 and do not read a 1% delta off a single sample.
+
+**gluon fav4 and FlyDSL tie on throughput (+0.2%) but not on cycles**: fav4 needs
+**9.2% fewer cycles per iteration** (4300 vs 4734) and is **8.8 points ahead on MFMA
+efficiency**, yet ends up level in wall time. Clock accounts for part of it, not all:
+
+- total kernel cycles, `126 x cyc_iter / loop_ratio`: fav4 ~571 k, FlyDSL ~618 k, so at
+  equal clock fav4 should be **~8% faster**; measured is +0.2%, leaving ~7.8 points to
+  explain.
+- sampled XCD clocks during each run: fav4 1420-1440 MHz at 1318-1345 W, FlyDSL-lazy
+  1492 MHz -- a **4.3%** gap, i.e. roughly half of what is needed.
+
+So **fav4's denser MFMA stream buys cycles and pays for them in clock** on a die already
+at 96% of its power cap, but the clock samples (1-2 per run, `amd-smi` at 2 s intervals)
+only cover about half the gap; the remainder is not yet accounted for. Candidates worth
+checking before quoting this as settled: sampling density, and whether the traced dispatch
+(iteration 8 of 20) sits at the same power state as the steady-state timing loop.
+The safe reading: **MFMA efficiency is the metric that tracks our scheduling work; TFLOPS
+on this board partly tracks the power budget.**
+
+**Reproduce -- gluon fav4 TFLOPS** (`--scale-on-q 1` or `0`):
+
+```bash
+cd <repo>
+HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+AMDGCN_SCALARIZE_PACKED_FOPS=1 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
+DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python scripts/fa_kernel_time.py --seqlen 16320 --iters 400 --last-n 200 --scale-on-q 1
+```
+
+**Reproduce -- gluon fav4 MFMA efficiency:**
+
+```bash
+cd <repo>/kernels/attention
+ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ \
+HIP_VISIBLE_DEVICES=5 FA_MODULE=fav4 \
+AMDGCN_SCALARIZE_PACKED_FOPS=1 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
+DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fav4 -- \
+  python bench.py --rocprof --seqlen 16320 --n-iters 20 --scale-on-q 1
+python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
+```
+
+**Reproduce -- FlyDSL lazy (default):** same two commands as FlyDSL eager above with
+`--lazy-rescale 1` / `fly_ktime.py 1 400`.
+
+### Gotchas that invalidate these measurements
+
+- **`AMDGCN_SCALARIZE_PACKED_FOPS` belongs to fav4 only.** fav3's over-capacity path
+  scalarizes selectively and needs the uncovered ops left packed.
+- **`LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are not in the Triton cache key.** Use a
+  separate `TRITON_CACHE_DIR` per configuration or `rm -rf ~/.triton/cache`, or you will
+  re-measure the previous build. (`DISABLE_LLVM_OPT` *is* cache-invalidating.)
+- **ATT can silently capture nothing if `att_target_cu` names a harvested CU** -- exit 0,
+  a `ui_output_*` directory, but a ~8-35 KB `.att` instead of 65 MB, no
+  `se*_sm*_sl*_wv*.json` wave files, and `process_json.py` dies with `'NoneType' object is
+  not iterable`. **Check the `.att` size before trusting a trace.** Root cause and fix in
+  the section below; the configs here now use `att_target_cu: 4`.
+- **The two columns therefore come from different dies** (TFLOPS GPU[0], traces GPU[4]),
+  which is sound because cycle counts are die-portable: the same kernel and settings traced
+  on GPU[4] and GPU[5] give **4299.95 vs 4295.79 cyc/iter and 47.63 vs 47.67 %/wave --
+  0.1%**, despite those dies differing ~0.6% in throughput. Cross-check on the mix: the
+  clock implied by (GPU[0] wall time, GPU[4] cycles, 16 workgroups per CU) is 1303 MHz for
+  fav4 SOQ=1, 1359 for fav3, 1405 for FlyDSL-lazy and 1654 for FlyDSL-eager -- a plausible
+  band, ordered exactly as MFMA density predicts and matching the ~1820 MHz sampled
+  directly for the VALU-bound FlyDSL-eager.
+- **Thermal state dominates sub-1.5% deltas.** A fav3 run taken 30 s after a heavy series
+  read 1130 instead of 1165 (-3%) on a kernel that otherwise repeats to 0.05%. Use
+  45-60 s idle and alternate A/B.
+- `fly_ktime.py` averages the final 250 of 400 dispatches where the gluon driver is told
+  `--last-n 200`; both are steady-state tails and the difference is immaterial (<0.1% on
+  the kernels stable enough to measure it).
+
+### Archived traces (`/data/`)
+
+| directory | what |
+|---|---|
+| `fav4_opt8_SGB_mergepack_memnop3_...` | fav4 SOQ=1, `MEMNOP=3` |
+| `fav4_opt8_SCALEONQ_false_SGB_memnop3_...` | fav4 SOQ=0 before the `fneg` fix (9/16 windows) |
+| `fav4_opt8_SCALEONQ_false_fnegfix_SGB_memnop3_...` | fav4 SOQ=0 after the fix (16/16) |
+| `fav3_overcapSGB_nopackedscalarize_memnop3_...` | fav3, chunk layout |
+| `fav3_overcapSGB_mixedclasswindows_memnop3_...` | fav3, mixed-class windows |
+
+
+## Why ATT captured nothing on GPU[0] -- a harvested CU, not a broken die
+
+Symptom: `rocprofv3 --att` on GPU[0] exited 0 and wrote a `ui_output_*` directory holding
+only `code/filenames/occupancy/realtime.json`, with a ~35 KB `.att` instead of ~65 MB and
+no wave files, so `process_json.py` failed with `'NoneType' object is not iterable`.
+**It is not a broken die and not specific to GPU[0]** -- the shipped `att_target_cu: 0`
+simply named a CU that does not exist on that die's shader array.
+
+Triage, using a fast probe (`--seqlen 1088`, ~40 s per capture, pass/fail = wave files
+present):
+
+1. **Only GPU[0] failed**, all 7 other dies captured -- so not a tool or driver problem.
+2. On GPU[0], **CU0 failed on SE0 and SE3 but captured fine on SE1 and SE2**, and
+   `att_target_cu` 1, 2, 4 all captured on SE0. So the failure is per-(SE, CU) slot, not
+   per-die. rocprofv3's logs were clean -- timestamps only, no warning.
+3. KFD topology explains the mechanism: every die reports `array_count=32` with
+   **`cu_per_simd_array=9`** but only 256 CUs enabled, i.e. **one CU per array is harvested**
+   and *which* one is a per-die yield artifact.
+4. Direct proof: a HIP kernel reading `HW_REG_HW_ID` (CU[11:8], SE[15:13]) and
+   `HW_REG_XCC_ID` per workgroup, histogrammed into a per-(XCC, SE) census of CUs that
+   actually execute waves. Every array shows exactly 8 of 9 slots, and the missing slot
+   lines up with the ATT failures:
+
+   ```
+   GPU[0] XCC0:  SE0 = 1..8 (CU0 GONE)   SE1 = 0-5,7,8   SE2 = 0-7   SE3 = 1..8 (CU0 GONE)
+   GPU[4] XCC0:  SE0 = 0-7               SE1 = 1..8      SE2 = 0-7   SE3 = 1..8
+   ```
+
+   SQTT armed on a CU that cannot run waves records only the SE-level occupancy/realtime
+   streams -- hence a small `.att` with no instruction data. rocprofv3 does not validate
+   the requested CU against the harvest mask, so it reports success.
+
+**Fix, static:** `att_target_cu: 4`, which the `att_attn*.json` configs here now use. A
+census across all 8 dies gives the union of harvested indices as **{0, 1, 2, 3, 6, 7, 8}**,
+so only **CU 4 and 5 are never harvested anywhere** on this box. (CU2 works on GPU[0] and
+GPU[4] but GPU[3] harvests it -- 4 or 5, not "some low number".) Verified capturing on
+GPU[0], GPU[3] and GPU[4].
+
+**Fix, portable:** there is *no* "use whatever CU is enabled" option in rocprofv3 --
+`att_target_cu` is a single index, `-1` aborts (exit 134), an out-of-range 15 is accepted
+and silently yields an empty trace, and the CLI default is 1 (also harvested somewhere on
+this box). So discover it: `scripts/att_pick_cu.py` runs `scripts/att_cu_census.cpp` (every
+workgroup reports its (XCC, SE, CU) via `HW_REG_HW_ID` + `HW_REG_XCC_ID`; slots that never
+appear are harvested), intersects the enabled sets over **every array the SE mask selects**,
+and rewrites a template config with a valid index. Cached per die by PCI bus id, so it costs
+one sub-second launch per machine, and it honours `HIP_VISIBLE_DEVICES`.
+
+```bash
+python scripts/att_pick_cu.py --template kernels/attention/att_attn_se0.json --out /tmp/att.json
+rocprofv3 --att -i /tmp/att.json -d /tmp/trace -- python bench.py --rocprof --seqlen 16320 --n-iters 20
+
+python scripts/att_pick_cu.py --se-mask 0x1 --print-cu   # just the index
+python scripts/att_pick_cu.py --report                   # per-array census
+```
+
+It picks per die and per mask rather than assuming: GPU[0] -> CU1 for `se_mask 0x1` but CU2
+for `0xF`, GPU[3] -> CU1, GPU[4] -> CU0. All verified capturing. Note the intersection must
+be over every *selected* array, not one: on GPU[0] the SE0 arrays harvest CU0 in XCC0,
+CU7 in XCC1 and CU8 in XCC2-7, so only the intersection is safe.
+
+**Bonus: this also re-validated the cross-die metric mixing on the fast die itself.** With
+`att_target_cu: 4`... actually with CU2, the full-shape trace of fav4 SOQ=1 on **GPU[0]**
+gives **4303.8 cyc/iter, 47.59%/wave** against **4299.95 / 47.63%** on GPU[4] -- **0.09%**.
+So the tables' TFLOPS-from-GPU[0] + cycles-from-GPU[4] mix is sound, and traces can now be
+taken on whichever die is free.

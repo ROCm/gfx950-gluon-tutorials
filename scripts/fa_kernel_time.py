@@ -117,6 +117,13 @@ def parse_args():
         help="average over the final N dispatches, matching the GEMM protocol (default: 100)",
     )
     p.add_argument(
+        "--scale-on-q",
+        type=int,
+        default=1,
+        choices=[0, 1],
+        help="fav4 only: 0 applies qk_scale per element inside VEC1 instead of pre-scaling Q",
+    )
+    p.add_argument(
         "--launch",
         choices=["jit", "prepared", "both"],
         default="prepared",
@@ -183,6 +190,8 @@ def collect(args, launch_mode, trace_root):
         str(args.rotating_sets),
         "--rotating-buffer-size",
         str(args.rotating_buffer_size),
+        "--scale-on-q",
+        str(args.scale_on_q),
     ]
     if launch_mode == "prepared":
         cmd += ["--prepared", "--n-warmup", str(args.warmup)]
