@@ -412,7 +412,7 @@ whole optimization now runs on triton's stock pinned LLVM.
 - `_s_nop(7)` (raw side-effecting `llvm.inline_asm`, since ROCDL has no `s.nop` op)
   as the first statement of every mem cluster — see opt6.
 
-## `sched_group_barrier` mode in llirSched (`LLIRSCHED_WP_SGB=1`)
+## `sched_group_barrier` declaration in llirSched (now the default)
 
 Motivation: `sched_barrier(0)` is only advisory to the machine scheduler, and we
 measured codegen consolidating a stage's last two sub-regions anyway. IGroupLP
@@ -536,36 +536,45 @@ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 FA_MODULE=fav4 python bench.py --seqlen 16320
 ```
 
-**No `LLIRSCHED_*` variable is needed to reproduce any number in this file.** The two
-that used to be load-bearing are now defaults: sched_group_barrier declaration is on
-(`LLIRSCHED_WP_NOSGB` falls back to the slower physical interleave) and mem-stage
-pacing is `k=2` (`LLIRSCHED_WP_MEMNOP=k` overrides, `0` disables). Verified: with no
-`LLIRSCHED_*` set at all, fav3 and fav4 SOQ=1/0 build **byte-identical** assembly to
-the old `LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2` recipe.
+### Environment variables
 
-The four vars above are not plugin knobs and each is load-bearing:
+Three independent things get configured here, and conflating them is the usual source of
+an unreproducible number. **Nothing in group A is part of the llir scheduler** -- they
+configure other passes or the plugin loader -- and **nothing in group B is needed to
+reproduce any number in this file.**
 
-| var | why it is required |
+**A. Required, and not scheduler knobs**
+
+| var | owned by | why it is required |
+|---|---|---|
+| `LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so` | LLVM | how an out-of-tree pass plugin gets loaded at all |
+| `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1` | Triton (`gfx950-tutorial-v1.1` pin) | keeps the TargetMachine for plugins; without it `optimize_module` runs all of O3 with no target machine and codegen regresses |
+| `DISABLE_LLVM_OPT=disable-machine-sink` | LLVM pass manager | disables **MachineSink**, which moves exp/fma out of the scheduled region (opt2 finding #2). It runs on MIR, long after any IR pass, so this is not something the scheduler can handle itself |
+| `AMDGCN_SCALARIZE_PACKED_FOPS=1` | Triton's **`ScalarizePackedFOps`** pass | a separate pass that splits packed `fmul`/`fadd`/`fma` into per-element scalars. **fav4 only.** Its stages fit the mfma windows, and the scheduler's group sizes assume one instruction per element. **fav3 must NOT set it** -- fav3's stages are over capacity, so the scheduler scalarizes selectively and needs the ops it left uncovered to stay packed |
+
+**B. llir scheduler knobs -- all optional**
+
+| var | effect |
 |---|---|
-| `LLVM_PASS_PLUGIN_PATH` | how an out-of-tree LLVM pass gets loaded at all |
-| `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1` | without it `optimize_module` runs O3 with no target machine and codegen regresses |
-| `DISABLE_LLVM_OPT=disable-machine-sink` | MachineSink moves exp/fma out of the scheduled region (opt2 finding); it runs on MIR, long after this pass, so the plugin cannot defend itself |
-| `AMDGCN_SCALARIZE_PACKED_FOPS=1` | **fav4 only.** Its fitting path assumes packed ops will be split. fav3 must *not* set it -- the over-capacity path scalarizes selectively and needs the uncovered ops left packed |
+| `LLIRSCHED_WP_NOSGB` | fall back to physically reordering + `sched.barrier(0)` pinning instead of declaring with `sched_group_barrier`. Slower; kept for A/B |
+| `LLIRSCHED_WP_MEMNOP=k` | override mem-stage head pacing. Default **2**; `0` disables |
+| `LLIRSCHED_WP_NOOVERCAP` | keep the fitting packer even when a region's VALU exceeds the mfma windows, to bisect a regression to the over-capacity path |
+| `LLIRSCHED_WP_DEBUG` | per-region model, counts, group sizes, chosen window |
 
-`MEMNOP=2` is not the 3 opt6 originally chose -- re-swept after opt8 / the
-dependency-ordered SGB / mixed-class windows / the `fneg` fix; see the retune section
-below.
+The two that used to be load-bearing are now defaults. Verified: with **no `LLIRSCHED_*`
+set at all**, fav3 and fav4 SOQ=1/0 build byte-identical assembly to the old
+`LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2` recipe. `MEMNOP`'s default of 2 is not the 3
+opt6 originally chose -- re-swept after opt8 / the dependency-ordered SGB / mixed-class
+windows / the `fneg` fix; see the retune section below. The six experiment flags that
+used to sit alongside these are gone: each had a losing alternative, so the loser was
+deleted rather than left as a flag.
 
-- The plugin exposes four knobs, none of them needed for the numbers here:
-  `LLIRSCHED_WP_NOSGB` (fall back to the physical interleave), `LLIRSCHED_WP_MEMNOP=k`
-  (override the default 2), `LLIRSCHED_WP_NOOVERCAP` (keep the fitting packer when a
-  region is over capacity, to bisect a regression) and `LLIRSCHED_WP_DEBUG`. The six
-  experiment flags that used to sit alongside them are gone -- each had a losing
-  alternative, so the loser was deleted rather than left as a flag.
-- `LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are read by the plugin, not by Triton, so
-  they are **not** in the cache key — `rm -rf ~/.triton/cache` when changing them.
-  (`DISABLE_LLVM_OPT` and `TRITON_PRE_RA_SCHED` *are* registered as
-  cache-invalidating.)
+**C. Caching.** `LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are read by the plugin, not by
+Triton, so they are **not in the Triton cache key** -- change one and you must
+`rm -rf ~/.triton/cache` or use a fresh `TRITON_CACHE_DIR`, or you will silently
+re-measure the previous build. `DISABLE_LLVM_OPT`, `AMDGCN_SCALARIZE_PACKED_FOPS` and
+`TRITON_PRE_RA_SCHED` *are* registered as cache-invalidating.
+
 - `ceil(N_CTX/64)` must be odd (static_assert): 16320 OK, 16384 not.
 - Traces: `/data/fav4_opt{4,5,6}_*_seqlen16320_se0_all4simd_att`.
 
