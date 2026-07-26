@@ -472,24 +472,28 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       Region boundaries for the co‑exec path come pre‑made: <code>ConvertWarpPipeline</code> lowers every
       warp‑pipeline stage boundary to <code>llvm.amdgcn.sched.barrier(i32 0)</code>, so a region is the span
       between two of them.</div>
-    <h3>Window size is derived, not assumed</h3>
-    <p>An MFMA opens a co‑exec window <i>shorter</i> than its matrix occupancy: a 32×32×16 (32‑cycle) MFMA exposes
-       <b>24 cycles</b>. <code>regionWindowCycles</code> reads the region's actual MFMAs via
-       <code>getMFMACycles</code> (§6) and returns <code>occupancy − 8</code>, taking the <i>shortest</i> when
-       shapes are mixed and bailing out entirely on an unmodelled one. Hardcoding 24 would over‑fill every window
-       by 3× on an FA variant built from 16×16×32 MFMAs.</p>
   </section>
 
   <section class="card" id="coexec">
     <h2><span class="num">9</span> Co‑exec model — <code>sched_group_barrier</code> <span style="font-size:13px;color:#ef4444;margin-left:6px">★ key algorithm</span></h2>
-    <p class="lede">Fill each MFMA's window with co‑issuable VALU, then <b>declare</b> the result rather than
-       reordering: <code>[MFMA 1][VALU n]</code> / <code>[MFMA 1][TRANS n]</code> groups, which
-       AMDGPUIGroupLP <i>builds</i> in the machine scheduler. <code>sched.barrier(0)</code> pinning (§7) is only
-       advisory by comparison — codegen still consolidated the last groups of a stage. Placement is not optional:
-       IGroupLP forms groups scanning <b>upward</b>, so the whole declaration must sit after every real op of the
-       region.</p>
+    <p class="lede">An MFMA occupies the matrix core for many cycles while the vector ALU sits idle beside it.
+       Those two units issue independently, so VALU work placed behind an MFMA <b>co‑executes</b> with it and costs
+       nothing — until the VALU exceeds what the MFMA covers, at which point the surplus is exposed and the matrix
+       core waits. The model's whole job is to decide which VALU goes behind which MFMA.</p>
+
+    <h3>The co‑execution window</h3>
+    <p>An MFMA's window is <i>shorter</i> than its matrix occupancy: a 32×32×16 (32‑cycle) MFMA exposes
+       <b>24 cycles</b> of co‑execution. That is the budget each MFMA offers, and it is derived per region rather
+       than assumed — <code>regionWindowCycles</code> reads the region's actual MFMAs via <code>getMFMACycles</code>
+       (§6) and returns <code>occupancy − 8</code>, taking the <i>shortest</i> when shapes are mixed and bailing out
+       entirely on an unmodelled one. Hardcoding 24 would over‑fill every window by 3× on an FA variant built from
+       16×16×32 MFMAs.</p>
+    <p>Not everything co‑executes. Transcendentals and packed math never issue alongside an MFMA
+       (<code>isNeverCoissue</code>), which is why TRANS carries its own IGroupLP mask and packed ops are counted at
+       their element cost.</p>
 
     <h3>Cost model per op</h3>
+    <p class="small">Cycles a co‑issued op consumes from its window. Six plain VALU fill a 24‑cycle window.</p>
     <table>
       <tr><th>Op</th><th>Cycles</th><th>Note</th></tr>
       <tr><td>plain VALU</td><td>4</td><td>one co‑exec slot; a 24‑cycle window holds 6</td></tr>
@@ -498,13 +502,13 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       <tr><td><code>v_permlane</code></td><td>20</td><td>cross‑lane shuffle; one window hides a permlane plus a single 4‑cycle op</td></tr>
       <tr><td><code>fneg</code>, <code>llvm.fabs</code></td><td><b>0</b></td><td>not instructions — they fold into the consumer as source modifiers</td></tr>
     </table>
-    <div class="warn"><b>The <code>fneg</code> trap.</b> <code>fneg</code> becomes a source modifier
-      (<code>v_fma_f32 v0, v0, s44, -v129</code>), so counting it inflates a declared group by an instruction that
-      never gets emitted. IGroupLP then cannot fill that group and <b>its pipeline solver discards the schedule for
-      the whole region</b> — not just that group. Observed on fav4 with <code>SCALE_ON_Q=0</code>, whose VEC1 does
-      <code>fma(qk, qk_scale, −m_new)</code>: 7 of 16 groups placed, then 8 MFMAs emitted back‑to‑back with 12
-      <code>v_exp</code> and ~20 VALU stranded outside any window. The tell was two stages that should be identical
-      declaring <b>39 vs 38</b> ops.</div>
+
+    <h3>How the schedule is expressed</h3>
+    <p>The pass does not reorder the region; it <b>declares</b> the intended pipeline as
+       <code>[MFMA 1][VALU n]</code> / <code>[MFMA 1][TRANS n]</code> groups and lets AMDGPUIGroupLP <i>build</i> it
+       in the machine scheduler. <code>sched.barrier(0)</code> pinning (§7) is only advisory by comparison — codegen
+       still consolidated the last groups of a stage. Placement is not optional: IGroupLP forms groups scanning
+       <b>upward</b>, so the whole declaration must sit after every real op of the region.</p>
 
     <h3>① The VALU fits the windows</h3>
     <p>Classify into <b>dependency‑ordered blocks</b> — VALU independent of the region's TRANS, then TRANS, then the
@@ -513,6 +517,12 @@ mfma                 <span class="cmt">; no memory since the region began → sa
        runs, which do not fit 16 windows), and one flat VALU block is unsatisfiable whenever a VALU consumes a
        TRANS — IGroupLP abandons the pipeline and leaves ISel's order. Three blocks is a topological order of the
        class dependency, so it is always satisfiable.</p>
+    <div class="note"><b>This path imposes an order: VALU → TRANS → dependent VALU.</b> Every TRANS‑independent VALU
+      is declared <i>ahead</i> of the first TRANS, even where interleaving them would be equally legal. The order is
+      always dependency‑safe, but it is a <i>choice</i>, and an empirical one — VALU‑first measured 1071 against
+      1047 TFLOPS for TRANS‑first on FAv3. A kernel whose natural order is TRANS‑first gets reordered accordingly.
+      The over‑capacity path (②) makes the opposite choice: it emits in <b>program order</b> and never reorders
+      classes, which is precisely what lets one window hold a VALU group and a TRANS group together.</div>
 
     <h3>② The VALU does <i>not</i> fit</h3>
     <p>fav3 carries 476 and 496 cycles of VALU against 384 of capacity, so no arrangement hides it and the balanced
@@ -536,12 +546,15 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     <h3>Knobs</h3>
     <table>
       <tr><th>Env var</th><th>Effect</th></tr>
-      <tr><td><code>LLIRSCHED_WP_SGB</code></td><td>declare via <code>sched_group_barrier</code> instead of physically reordering + pinning</td></tr>
+      <tr><td><code>LLIRSCHED_WP_SGB</code></td><td>declare via <code>sched_group_barrier</code> (§9) instead of physically reordering and pinning (§7)</td></tr>
       <tr><td><code>LLIRSCHED_WP_MEMNOP=k</code></td><td><code>k × s_nop 7</code> at each mem‑stage head; <b>k=2</b> measured best</td></tr>
-      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the balanced packer even when the region is over capacity</td></tr>
-      <tr><td><code>LLIRSCHED_WP_DEBUG</code></td><td>per‑region model, counts, group sizes, and the chosen window</td></tr>
-      <tr><td><code>LLIRSCHED_WP_NOCOUNTMAX</code>, <code>_NOMAX3FOLD</code>, <code>_SGB_REORDER</code>, <code>_WINDOWG</code>, <code>_NOPIN</code></td><td>opt out of individual heuristics, for attribution</td></tr>
+      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the fitting packer (①) even when the region is over capacity — for bisecting a regression to ②</td></tr>
+      <tr><td><code>LLIRSCHED_WP_DEBUG</code></td><td>per‑region model, counts, group sizes and the chosen window</td></tr>
     </table>
+    <div class="note"><b>Everything else is hardwired to the measured winner.</b> The heuristics that were once
+      env‑selectable — counting the max/min reduction, the 2:1 <code>v_maximum3</code> fold, adaptive group weight,
+      pinning the physical interleave, the legacy error‑diffusion spread, pre‑reordering before a declaration — each
+      had a losing alternative, so the loser is gone rather than left as a flag.</div>
     <div class="note"><b>Safety.</b> The whole pass is transactional — clone the function, schedule, run
       <code>verifyFunction</code>, and roll back to the pristine body on failure — so a bad schedule can never reach
       codegen. It earned its keep: a phi‑led region once rolled back an entire interleave, costing 8%, until the

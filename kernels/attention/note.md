@@ -358,8 +358,9 @@ softmax row-max reduction was never grouped and its 16 `v_maximum3` piled up
 *before* the stage's first mfma, covered by nothing: **76 cycles stranded at the PV
 head while that stage's own windows sat 92 cycles under-filled.** Counting them
 (fold-aware, so the inner max/mins that isel merges into `v_maximum3` count 0) is
-now the default: head 76 -> 0 cyc, fill 292 -> 368/384, **+1.1%**.
-`LLIRSCHED_WP_NOCOUNTMAX` / `NOMAX3FOLD` opt out.
+now the default: head 76 -> 0 cyc, fill 292 -> 368/384, **+1.1%**. (The
+`LLIRSCHED_WP_NOCOUNTMAX` / `NOMAX3FOLD` opt-outs have since been removed -- both
+behaviours are hardwired to the measured winner.)
 
 Also fixed: the reverse group-walk only closed a group at G weight, so the
 front-most partial run got no mfma ahead of it (2 x exp2 stranded at the QK head).
@@ -367,8 +368,8 @@ Now a leftover mfma is spent on it. **+0.2%.**
 
 Tried and rejected: sizing groups by the window (`G=6`) instead of `X/Y`. Bigger
 groups made codegen pile a heavier tail into the last sub-region (asm overflow
-16/20 -> 32/32 cyc) and measured **worse** (1162 vs 1174). `LLIRSCHED_WP_WINDOWG`
-opts in.
+16/20 -> 32/32 cyc) and measured **worse** (1162 vs 1174). The
+`LLIRSCHED_WP_WINDOWG` opt-in has since been removed.
 
 ### (b) LLVM `SIPreEmitPeephole` bails on TRANS, hiding packed ops from unpacking
 
@@ -541,6 +542,11 @@ FA_MODULE=fav4 python bench.py --seqlen 16320
   dependency-ordered SGB / mixed-class windows / the `fneg` fix; see the retune section
   below. `AMDGCN_SCALARIZE_PACKED_FOPS` is fav4-only now that fav3 scalarizes selectively.
 
+- The plugin exposes exactly four knobs: `LLIRSCHED_WP_SGB` (declare vs reorder),
+  `LLIRSCHED_WP_MEMNOP=k`, `LLIRSCHED_WP_NOOVERCAP` (keep the fitting packer when a
+  region is over capacity) and `LLIRSCHED_WP_DEBUG`. The six experiment flags that used
+  to sit alongside them are gone -- each had a losing alternative, so the loser was
+  deleted rather than left as a flag.
 - `LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are read by the plugin, not by Triton, so
   they are **not** in the cache key — `rm -rf ~/.triton/cache` when changing them.
   (`DISABLE_LLVM_OPT` and `TRITON_PRE_RA_SCHED` *are* registered as
@@ -675,8 +681,9 @@ seg1 (a QK stage): MFMA 6xfma MFMA 6xfma MFMA 6xadd MFMA 6xadd MFMA 3xadd+cvt+ad
 whole kernel, which is why this stayed hidden. `dependsOnAny` was not at fault -- it is
 properly transitive and stops at PHIs.
 
-Neither `LLIRSCHED_WP_SGB_REORDER` (still 9/16) nor interleave mode (fixes the clustering
-at 15/16 but is slower overall) worked around it. The weight model was the fix.
+Neither pre-reordering before the declaration (still 9/16; this was
+`LLIRSCHED_WP_SGB_REORDER`, since removed) nor interleave mode (fixes the clustering at
+15/16 but is slower overall) worked around it. The weight model was the fix.
 
 After: all four stages 16/16, declarations symmetric, 4725.7 -> 4634.2 cyc/iter (-1.9%),
 MFMA eff 86.7 -> 88.4%/SIMD, 1215.5 -> 1220.2 TFLOPS. fav3 1164.5 -> 1166.5.
