@@ -265,9 +265,135 @@ loop should reach the 90s. Remaining suspects, in order of expected value:
   arithmetic (`Bits*32/256 == Bits/8`), but the committed `.so` is a rebuild and
   no gfx950 was available to spot-check it.
 
-## 2. Backlog (not yet attempted)
+## Opt 2 — park the surplus MFMAs between the last LR and the first LW  ✅ done
 
-* Close the remaining 23% — see the three candidates at the end of §1.4.
+**in-loop MFMA efficiency 76.7% → 84.0%, +6.8% work per clock, +2.2% sustained
+TFLOPS** (the gap between those last two is the point — see §2.3).
+
+### 2.1 The change
+
+Opt 1 left ~40 MFMAs per K-step sitting in clumps at region heads (`M10`, `M28`,
+`M21`, `M27` in the §1.3 skeleton) — the scheduler's "leftover", the surplus
+compute beyond what the anchors demand cover for, which it split evenly between
+the region head and tail.
+
+Instead, put all of it **between the region's last LR and its first LW**:
+
+```cpp
+// last LR that precedes the first LW in the anchor list
+int splitIdx = -1;
+for (size_t j = 0; j < firstLW; ++j)
+  if (Anchors[j].Kind == SchedKind::LR) splitIdx = j;
+
+if (splitIdx >= 0) splitLeftover = leftover;      // all of it, at that boundary
+else               { tailLeftover = leftover/2;   // fallback: old head/tail split
+                     headLeftover = leftover - tailLeftover; }
+```
+
+Two reasons that boundary and not another:
+
+* **LDS port and FIFO.** Reads and writes share one LDS issue port and one
+  SP-to-LDS FIFO, so a `ds_write` at the head of the queue blocks the `ds_read`s
+  behind it (`docs/lds_throughput.md` §1.6). Draining the read burst before the
+  writes start keeps the two from interleaving in the FIFO.
+* **It is where the barrier is.** In an LDS-slot-recycling kernel the membar
+  barrier lands exactly at the read→write boundary (the WAR hazard on the slot),
+  and it carries an `s_waitcnt lgkmcnt(0)` that retires every outstanding
+  `ds_read`. Surplus compute placed there is what the 8-deep read burst drains
+  behind — candidate 1 from §1.4.
+
+Regions with no LR-then-LW boundary keep the old even split.
+
+### 2.2 Emitted schedule
+
+Head clumps collapse (28 → 6, 27 → 6) and ~25 MFMAs move to the boundary:
+
+```
+opt1:  M28 R1 M2 R1 M2 ... R1 M2  W1 M2 W1 M2 W1 M2 W1 M1 G1 M2 G1 M4 G1 M4 G1 M5
+opt2:  M6  R1 M2 R1 M2 ... R1 M25 W1 M1 W1 M2 W1 M2 W1 M1 G1 M2 G1 M4 G1 M4 G1 M5
+```
+
+**The surplus block needs fencing on both sides.** `insertSchedBarrier` pins an
+anchor by emitting a `sched.barrier` *after* it, which gives
+
+```
+LR(last) ; sched.barrier ; [25 surplus MFMAs] ; LW(first) ; ...
+```
+
+— the near side only. With the far side open, LLVM's machine scheduler hoists
+`LW(first)` up to just below that `sched.barrier`, over the whole block, and the
+surplus ends up *after* the first write instead of before it: exactly the
+separation the optimization exists to create, undone. So
+`scheduleMFMAWithSpacing` reports the first-LW instruction and `scheduleBB`
+fences it with `insertSchedBarrierBefore`, closing the block on both sides. The
+extra fence is compile-time only — no code is emitted.
+
+Worth knowing because the failure is invisible in the pass's own accounting:
+`LLIR_SCHED_DEBUG=1` still reports `anchors=RRRRRRRRWWWWGGGG splitIdx=7` and the
+IR is built correctly; only the emitted assembly shows it. It cost about half of
+opt2's benefit before it was caught.
+
+Counts are unchanged (256 mfma / 32 ds_read / 16 ds_write / 16 buffer_load /
+3 barriers), registers unchanged (256 VGPR + 256 AGPR, **0 spills**), LDS 65536 B.
+
+### 2.3 Result — and why TFLOPS understates it
+
+ATT, 4096x4864x8256 fp16:
+
+| | baseline | opt1 | **opt2** |
+|---|---|---|---|
+| cycles / iteration / wave | 5877 | 5343 | **4874** |
+| in-loop MFMA efficiency | 69.7% | 76.7% | **84.0%** |
+| `v_mfma` mean issue gap | 23.0 | 20.9 | **19.0** |
+| whole dispatch (cyc) | 856,144 | 785,656 | **733,548** |
+
+**17.1% fewer cycles than baseline**, 8.8% fewer than opt1.
+
+Wall clock tells a different story, because the part is on its 750 W cap.
+Sustained 12 s loops at 4096x4864x8256 fp16, three alternating runs per config,
+median:
+
+| | TFLOPS | clock | power | work / clock |
+|---|---|---|---|---|
+| opt1 | 579.4 | 1379 MHz | 750 W | 0.4202 |
+| **opt2** | **592.0** | **1319 MHz** | 750 W | **0.4488  (+6.8%)** |
+
+opt2 delivers **+2.2% TFLOPS while running 4.3% slower** — i.e. **+6.8% work per
+clock**, an independent confirmation of the ATT cycle win (+9.6% work per cycle;
+the two differ by about the run-to-run noise, which is large here: individual
+sustained samples ranged 551–608 TFLOPS).
+
+So opt2 is a real scheduling improvement that this part converts mostly into
+lower frequency rather than throughput: a denser MFMA stream draws more power,
+and at the cap that is paid in clock. On hardware that is not power-limited the
+full ~9% would be visible. The ATT number is not a TFLOPS claim here.
+
+> [!NOTE]
+> **gfx950 is unaffected.** The policy only engages when a region has an LW
+> anchor, and the gfx950 kernels fill LDS with `buffer_load_to_shared`, which
+> classifies as **GR** (`buffer.load.lds`), not LW. With no LW, `splitIdx` stays
+> −1 and the old even head/tail split is used — bit-for-bit unchanged. The one
+> exception in this repo is `intra_wave/a4w4/v0_sliceN`, which stages MXFP4
+> *scales* through LDS with a real `local_store`; its successor `v1_sliceMN`
+> does not. Not re-measured (no gfx950 available).
+
+### 2.4 What is still on the table
+
+| candidate (from §1.4) | status |
+|---|---|
+| 2. head/tail leftover clumps | **done — this optimization** |
+| 1. barriers / `lgkmcnt(0)` | largely addressed — in Region 0 the surplus now lands directly after the barrier, so the read burst drains behind 23 MFMAs |
+| 3. `amdgcnas` post-assembly peephole | open, untried on gfx942 |
+
+At 84.0% in-loop MFMA efficiency the 4-wave kernel is now within 2.5 points of
+the 8-wave `inter_wave` kernel (86.5%). The remaining 16% is worth little on
+this part — the power cap absorbs most of any further cycle win — so the more
+promising direction is reducing power per unit work rather than cycles per unit
+work.
+
+## 3. Backlog (not yet attempted)
+
+* Close the remaining 16% — see the table in §2.4.
 * `amdgcnas` post-assembly peephole on gfx942.
 * Measure the fp8/bf8/i8 CDNA3 cycle counts added to the scheduler's table on
   faith (derived, not measured). Needed before porting a8w8 to gfx942.

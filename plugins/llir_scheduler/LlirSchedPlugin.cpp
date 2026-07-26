@@ -665,17 +665,21 @@ private:
   //                       so both use the same width-proportional pairing.
   //   - 2 MFMAs drain the tail; any leftover compute (more MFMAs than the
   //   memory
-  //     ops demand cover for) is split evenly between the region's head and
-  //     tail, with an odd MFMA favoring the head.
-  static void
+  //     ops demand cover for) is parked between the last LR and the first LW,
+  //     which separates the LDS read and write streams and gives the read
+  //     burst somewhere to drain before the barrier's lgkmcnt(0). Regions with
+  //     no LR-then-LW boundary fall back to an even head/tail split.
+  // Returns the instruction that the surplus block must be pinned *before*
+  // (the region's first LW), or nullptr if the surplus was not parked there.
+  static Instruction *
   scheduleMFMAWithSpacing(SmallVectorImpl<AnchorInst> &Anchors,
                           SmallVectorImpl<Instruction *> &MFMAInsts) {
     if (Anchors.empty() || MFMAInsts.empty())
-      return;
+      return nullptr;
 
     unsigned mfmaCycles = Utils::getMFMACycles(*MFMAInsts.front());
     if (mfmaCycles == 0)
-      return;
+      return nullptr;
     // LDS bandwidth differs by ISA family (CDNA3 128 B/clk, CDNA4 256), which
     // doubles the compute cover every LDS access needs on gfx942.
     unsigned ldsBytesPerClk = Utils::getLDSBytesPerClk(*MFMAInsts.front());
@@ -714,15 +718,61 @@ private:
     unsigned needed = grBudget + numGRBeforeLR + ldsBudget + 2;
     unsigned leftover = (Total > needed) ? Total - needed : 0;
 
-    // Surplus compute (more MFMAs than the memory ops need cover for) is split
-    // evenly between the region's head and tail; an odd MFMA favors the head.
-    unsigned tailLeftover = leftover / 2;            // floor → tail
-    unsigned headLeftover = leftover - tailLeftover; // ceil → head
+    // Where to park the surplus compute (MFMAs beyond what the memory ops need
+    // cover for).
+    //
+    // Preferred: all of it between the region's *last LR and first LW*, which
+    // separates the LDS read and write streams as far apart as the region
+    // allows. Two things want that boundary specifically:
+    //
+    //   * Reads and writes share one LDS issue port and one SP-to-LDS FIFO, so
+    //     a ds_write at the head of the queue stalls the ds_reads behind it
+    //     (docs/lds_throughput.md §1.6). Draining the reads before the writes
+    //     start keeps the two from interleaving in the FIFO.
+    //   * In an LDS-slot-recycling kernel the membar barrier lands exactly
+    //     here -- the write-after-read hazard on the slot -- and it carries an
+    //     s_waitcnt lgkmcnt(0) that retires every outstanding ds_read. Surplus
+    //     compute placed before it is what the read burst drains behind.
+    //
+    // Fallback (no LR-then-LW boundary in this region): the original even
+    // head/tail split.
+    int splitIdx = -1;
+    size_t firstLW = Anchors.size();
+    {
+      for (size_t j = 0; j < Anchors.size(); ++j)
+        if (Anchors[j].Kind == SchedKind::LW) {
+          firstLW = j;
+          break;
+        }
+      for (size_t j = 0; j < firstLW; ++j)
+        if (Anchors[j].Kind == SchedKind::LR)
+          splitIdx = static_cast<int>(j); // last LR before the first LW
+    }
+
+    unsigned splitLeftover = 0, headLeftover = 0, tailLeftover = 0;
+    if (splitIdx >= 0) {
+      splitLeftover = leftover;
+    } else {
+      tailLeftover = leftover / 2;            // floor → tail
+      headLeftover = leftover - tailLeftover; // ceil → head
+    }
+
+    if (std::getenv("LLIR_SCHED_DEBUG")) {
+      errs() << "[llir] region anchors: ";
+      for (size_t j = 0; j < Anchors.size(); ++j)
+        errs() << (Anchors[j].Kind == SchedKind::LR   ? "R"
+                   : Anchors[j].Kind == SchedKind::LW ? "W"
+                   : Anchors[j].Kind == SchedKind::GR ? "G"
+                                                      : "?");
+      errs() << "  total=" << Total << " needed=" << needed
+             << " leftover=" << leftover << " splitIdx=" << splitIdx << "\n";
+    }
 
     LLVM_DEBUG(dbgs() << "  MFMA budget: total=" << Total
                       << ", needed=" << needed << ", leftover=" << leftover
                       << " (head=" << headLeftover << ", tail=" << tailLeftover
-                      << ")\n");
+                      << ", after_last_LR=" << splitLeftover
+                      << " @anchor " << splitIdx << ")\n");
 
     // The 2-MFMA tail drain plus the tail's share of the surplus. The head's
     // share is whatever stays unmoved at the front after the reverse walk.
@@ -741,22 +791,35 @@ private:
       SchedKind Kind = Anchors[idx].Kind;
 
       unsigned Count = 0;
+      // Surplus parked at the last-LR-before-first-LW boundary (see above).
+      if (static_cast<int>(idx) == splitIdx)
+        Count += splitLeftover;
       if (Kind == SchedKind::LR || Kind == SchedKind::LW) {
         // Cycle model: emit floor(balance / mfma_cycles) MFMAs, carrying the
         // remainder — cheap accesses share an MFMA, wide ones draw several.
         // Reads and writes use the same shared LDS-cycle balance.
-        Count = Utils::takeMFMAsForLDS(Anchors[idx].I, mfmaCycles,
-                                       ldsBytesPerClk, ldsAccum);
+        Count += Utils::takeMFMAsForLDS(Anchors[idx].I, mfmaCycles,
+                                        ldsBytesPerClk, ldsAccum);
       } else if (Kind == SchedKind::GR) {
         bool followedByLR = (idx + 1 < Anchors.size() &&
                              Anchors[idx + 1].Kind == SchedKind::LR);
-        Count = followedByLR ? 1 : mfmaPerGR;
+        Count += followedByLR ? 1 : mfmaPerGR;
       }
 
       [[maybe_unused]] unsigned moved =
           moveMFMAsAfter(MFMAInsts, MFMAIdx, Count, InsertPt);
       LLVM_DEBUG(MFMAPerAnchorKind[Kind] += moved);
     }
+
+    // The surplus block now sits between the last LR and the first LW, but the
+    // per-anchor sched.barriers only pin the *near* side of it (they go after
+    // each anchor). Without a pin on the far side LLVM's machine scheduler
+    // hoists the first LW up over the whole block, which puts the surplus after
+    // the first write instead of before it and undoes the separation. Report
+    // the LW so scheduleBB can fence it.
+    Instruction *PinBefore =
+        (splitIdx >= 0 && firstLW < Anchors.size()) ? Anchors[firstLW].I
+                                                    : nullptr;
 
     LLVM_DEBUG({
       dbgs() << "  MFMA insertion summary: total=" << Total
@@ -766,6 +829,8 @@ private:
       }
       dbgs() << "\n";
     });
+
+    return PinBefore;
   }
 
   // Insert an inline asm comment before the given instruction.
@@ -787,6 +852,14 @@ private:
   // and post-RA machine schedulers cannot move instructions across this anchor.
   // Mask bits name the instruction classes allowed to cross; 0 is a full
   // barrier.
+  // Same, but immediately *before* BeforeI.
+  static void insertSchedBarrierBefore(Instruction *BeforeI, uint32_t Mask) {
+    IRBuilder<> Builder(BeforeI->getContext());
+    Builder.SetInsertPoint(BeforeI);
+    Builder.CreateIntrinsic(Intrinsic::amdgcn_sched_barrier,
+                            {Builder.getInt32(Mask)});
+  }
+
   static void insertSchedBarrier(Instruction *AfterI, uint32_t Mask) {
     Instruction *Next = AfterI->getNextNode();
     if (!Next)
@@ -885,7 +958,8 @@ private:
           dbgs() << "\n";
         });
 
-        scheduleMFMAWithSpacing(Res.Anchors, Res.MFMAInsts);
+        Instruction *PinBefore =
+            scheduleMFMAWithSpacing(Res.Anchors, Res.MFMAInsts);
 
         // Pin this region's schedule with a full sched.barrier (mask 0) after
         // each memory anchor, so LLVM's pre- and post-RA machine schedulers
@@ -895,6 +969,9 @@ private:
         // is needed.
         for (const AnchorInst &A : Res.Anchors)
           insertSchedBarrier(A.I, /*Mask=*/0);
+        // Far side of the surplus block (see scheduleMFMAWithSpacing).
+        if (PinBefore)
+          insertSchedBarrierBefore(PinBefore, /*Mask=*/0);
       }
     }
     return ScheduledRegionIdx > 0;
