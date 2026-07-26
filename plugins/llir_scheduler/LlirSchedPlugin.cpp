@@ -1001,19 +1001,14 @@ static int valuWeight(const Instruction &I) {
         // the reduction contributes its real issued count (validated: 89 vs the
         // naive 164).
         //
-        // This used to be opt-in: counting them measured a regression on the older
-        // FAv3 shape (34.16% vs 35.92%) because the reduction is a serial chain and
-        // interleaving mfmas through it broke matrix-unit streaming. That no longer
-        // holds. With weight 0 the reduction is INVISIBLE to the interleave, so its
-        // ~16 v_maximum3 pile up *before* the stage's first mfma and are never
-        // covered by an mfma co-exec window at all -- measured on FAv4 opt4: 76
-        // cycles of co-exec-capable VALU stranded at the PV stage head while that
-        // stage's own windows sat 92 cycles under-filled. Counting them moves the
-        // reduction into the windows (head 76 -> 0 cyc, fill 292 -> 368 / 384) and
-        // is worth ~1.5%. Set LLIRSCHED_WP_NOCOUNTMAX to restore the old behavior.
-        bool CountMax = std::getenv("LLIRSCHED_WP_NOCOUNTMAX") == nullptr;
+        // Counting them is worth ~1.5%: with weight 0 the reduction is INVISIBLE to
+        // the interleave, so its ~16 v_maximum3 pile up *before* the stage's first
+        // mfma and no window ever covers them (measured on FAv4: 76 cycles of
+        // co-exec-capable VALU stranded at the PV stage head while that stage's own
+        // windows sat 92 cycles under-filled; counting moves head 76 -> 0 cyc and
+        // fill 292 -> 368 / 384).
         if (N.contains("maxnum") || N.contains("minnum") ||
-            (CountMax && (N.contains("maximum") || N.contains("minimum"))) ||
+            N.contains("maximum") || N.contains("minimum") ||
             N.contains("fmuladd") || N.contains("fma."))
           return I.getType()->isVectorTy() ? 2 : 1;
         // llvm.fabs is NOT counted, for the same reason as fneg below: it becomes a
@@ -1493,8 +1488,7 @@ static bool declareRegionGroups(Instruction *Begin, Instruction *End,
   SmallPtrSet<const Instruction *, 32> RegionInsts, Max3Folded;
   for (auto It = Begin->getIterator(); It != ItEnd; ++It)
     RegionInsts.insert(&*It);
-  if (std::getenv("LLIRSCHED_WP_NOMAX3FOLD") == nullptr)
-    computeMax3Folds(Begin, ItEnd, RegionInsts, Max3Folded);
+  computeMax3Folds(Begin, ItEnd, RegionInsts, Max3Folded);
 
   // Collect the region's co-issuable ops as maximal RUNS of a single IGroupLP
   // class, in program order.
@@ -1820,8 +1814,7 @@ static void interleaveRegion(Instruction *Begin, Instruction *End,
   //    rather than 2x. Without the fold the interleave over-reserves window space
   //    for ops that vanish at isel. LLIRSCHED_WP_NOMAX3FOLD restores naive counting.
   SmallPtrSet<const Instruction *, 32> Max3Folded;
-  if (std::getenv("LLIRSCHED_WP_NOMAX3FOLD") == nullptr)
-    computeMax3Folds(Begin, ItEnd, RegionInsts, Max3Folded);
+  computeMax3Folds(Begin, ItEnd, RegionInsts, Max3Folded);
   for (auto It = Begin->getIterator(); It != ItEnd; ++It) {
     if (Max3Folded.count(&*It))
       continue;
@@ -1854,33 +1847,28 @@ static void interleaveRegion(Instruction *Begin, Instruction *End,
   //    steady-state regions -- scheduleRegions calls it solely for INDEPENDENT
   //    mfma/valu spans, and GEMM has none (its epilogue valu all depend on the
   //    region's mfmas -> "DEPENDENT -> skip"), so this path never touches GEMM.
-  //
-  //    LLIRSCHED_WP_ERRDIFF opts back into the legacy error-diffusion spread
-  //    (reserve 6 for the tail, then distribute the other Y-1 mfmas over the
-  //    remaining X-6 weight by Bresenham round(k*(X-6)/(Y-1)) so ALL Y mfmas get
-  //    placed and the running mfma:weight ratio tracks (X-6)/(Y-1)) -- A/B only.
+
   SmallVector<Instruction *, 32> GroupStart; // reverse: last group first
   int vi = N - 1;
-  if (!std::getenv("LLIRSCHED_WP_ERRDIFF")) {
+  {
     // Group weight per mfma. Default 6 (REVERSE-6, tuned for VALU-heavy stages
     // like FA's PV: X=105 for 16 mfma -- surplus valu front-load as a prologue).
     // When the region is VALU-light (X < 6*Y, e.g. FA's QK stage: X=51 for 16
     // mfma) a fixed 6 strands (Y - X/6) mfmas in a front cluster, so shrink the
     // group weight to ~X/Y (>=1) and spread ALL Y mfmas -- interleave the whole
     // region regardless of how little valu it carries (mfma/valu already verified
-    // independent by the caller). LLIRSCHED_WP_NOSPREAD pins the old fixed-6.
+    // independent by the caller).
     // Group weight per mfma. Weight 6 == the full 24-cyc co-exec window (a plain
     // valu is weight 1 == 4 cyc; exp/permlane weight 2 == 8 cyc). For a VALU-light
     // region (X < 6*Y) use the smaller X/Y so all Y mfmas get company instead of
     // (Y - X/6) of them clustering bare at the region front.
     //
-    // Window-sized groups (G = 6 everywhere) were measured WORSE here (1162 vs
-    // 1174 TFLOPS on FAv4 @16320): the bigger groups leave fewer, larger runs, and
-    // the backend's relocation of pure valu (see below) then piles a heavier tail
-    // into the last sub-region -- asm window overflow went 16/20 -> 32/32 cyc for
-    // QK/PV. LLIRSCHED_WP_WINDOWG opts into the G=6 behavior.
+    // Window-sized groups (G = 6 everywhere) measured WORSE (1162 vs 1174 TFLOPS on
+    // FAv4 @16320): bigger groups leave fewer, larger runs, and the backend's
+    // relocation of pure valu then piles a heavier tail into the last sub-region --
+    // asm window overflow went 16/20 -> 32/32 cyc for QK/PV.
     int G = 6;
-    if (X < 6 * Y && !std::getenv("LLIRSCHED_WP_WINDOWG")) {
+    if (X < 6 * Y) {
       G = X / Y;
       if (G < 1)
         G = 1;
@@ -1900,29 +1888,6 @@ static void interleaveRegion(Instruction *Begin, Instruction *End,
     // the walk consumed every valu, giving Valus[0]).
     if (acc > 0 && (int)GroupStart.size() < Y)
       GroupStart.push_back(Valus[vi + 1]);
-  } else {
-    int Acc = 0;
-    // Phase 1: the tail -- accumulate 6 weight, place the last mfma.
-    for (; vi >= 0; --vi) {
-      Acc += Weights[vi];
-      if (Acc >= 6) {
-        GroupStart.push_back(Valus[vi]);
-        --vi;
-        break;
-      }
-    }
-    // Phase 2: distribute the remaining Y-1 mfmas over the remaining X-6 weight.
-    // (X-6 not the actual tail weight: the resulting front-stranding measured
-    // better than front_cluster=0 here -- see notes.)
-    int PostTail = 0, K = 1; // K = index (1..Y-1) of the next non-tail mfma
-    for (; vi >= 0 && (int)GroupStart.size() < Y; --vi) {
-      PostTail += Weights[vi];
-      int Boundary = (K * (X - 6) + (Y - 1) / 2) / (Y - 1); // round(K*(X-6)/(Y-1))
-      if (PostTail >= Boundary) {
-        GroupStart.push_back(Valus[vi]);
-        ++K;
-      }
-    }
   }
 
   // 4. Place mfmas. mfmas[Y-1] before GroupStart[0] (last group), mfmas[Y-2]
@@ -1948,7 +1913,7 @@ static void interleaveRegion(Instruction *Begin, Instruction *End,
   //    scheduler cannot re-cluster the mfmas (which it does otherwise, undoing
   //    the interleave). One barrier per mfma locks each [mfma][valu-group] pair.
   //    Env-toggle (LLIRSCHED_WP_PIN=0 disables) to A/B the pinning.
-  if (pin && !std::getenv("LLIRSCHED_WP_NOPIN"))
+  if (pin)
     for (Instruction *M : Mfmas)
       insertSchedBarrierAfter(M);
 }
@@ -2106,11 +2071,6 @@ static bool scheduleRegions(Function &F) {
           // Pure declaration: do NOT physically reorder. The plugin only
           // *computes* the interleave (group sizes) and hands it to IGroupLP as
           // sched_group_barrier hints, which then builds the schedule itself.
-          // LLIRSCHED_WP_SGB_REORDER additionally runs the physical interleave
-          // first (unpinned) to hand IGroupLP a feasible starting order -- needed
-          // when the stage is valu-led, but not when the source is mfma-led.
-          if (std::getenv("LLIRSCHED_WP_SGB_REORDER"))
-            interleaveRegion(B, E, /*pin=*/false);
           // syncID must be unique per region so IGroupLP solves each stage's
           // pipeline independently (FlyDSL uses one syncID per cluster too).
           if (declareRegionGroups(B, E, ++SyncID)) {
