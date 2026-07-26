@@ -1130,6 +1130,8 @@ static int regionWindowCycles(Instruction *Begin, BasicBlock::iterator End) {
     return 0;
   return std::max<int>(4, (int)MinCycles - kMFMANonOverlap);
 }
+// Mem-stage head pacing: 2 x `s_nop 7` measured best on both FA kernels.
+static constexpr int kDefaultMemNops = 2;
 // v_permlane is a cross-lane shuffle: model it as a fat 20-cycle VALU.
 static constexpr int kPermlaneCycles = 20;
 // One 4-cycle VALU op per co-exec slot: 24 cycles / 4 = 6 slots per mfma.
@@ -1991,9 +1993,12 @@ static bool insertMemRegionNops(Function &F, int count) {
 // coarse) and regions missing mfma or valu. Returns true if anything changed.
 static bool scheduleRegions(Function &F) {
   const bool Dbg = std::getenv("LLIRSCHED_WP_DEBUG") != nullptr;
-  // Declare the schedule via sched_group_barrier (IGroupLP) instead of physically
-  // reordering + sched_barrier(0) pinning. See declareRegionGroups().
-  const bool SGB = std::getenv("LLIRSCHED_WP_SGB") != nullptr;
+  // Declare the schedule via sched_group_barrier (IGroupLP) rather than physically
+  // reordering + sched_barrier(0) pinning. This is the DEFAULT: pinning is only
+  // advisory, and codegen was measured still consolidating a stage's last groups
+  // despite it, so the declaration is the stronger form. LLIRSCHED_WP_NOSGB falls
+  // back to the physical interleave (slower; kept for A/B).
+  const bool SGB = std::getenv("LLIRSCHED_WP_NOSGB") == nullptr;
   // Region: mfma-bearing regions seen (the denominator worth reporting).
   // SyncID: identifies a *declared* region to IGroupLP. Keep it independent of how
   // many spans were skipped, so adding a skip reason cannot renumber the
@@ -2085,9 +2090,14 @@ static bool scheduleRegions(Function &F) {
       }
     }
   }
-  if (const char *nopEnv = std::getenv("LLIRSCHED_WP_MEMNOP")) {
-    int k = atoi(nopEnv);
-    if (insertMemRegionNops(F, k)) {
+  // Mem-stage head pacing, on by default at the measured optimum. k=2 won on both
+  // kernels (SOQ=0: 1234.3 vs 1227.4 at k=0 and 1218.8 at k=3; SOQ=1: 1244.9 vs
+  // 1239.7 at k=3). LLIRSCHED_WP_MEMNOP=k overrides, and k=0 disables it.
+  {
+    int k = kDefaultMemNops;
+    if (const char *nopEnv = std::getenv("LLIRSCHED_WP_MEMNOP"))
+      k = atoi(nopEnv);
+    if (k > 0 && insertMemRegionNops(F, k)) {
       Changed = true;
       if (Dbg)
         errs() << "[wp] inserted " << k << " x s_nop 7 at each mem-region head\n";

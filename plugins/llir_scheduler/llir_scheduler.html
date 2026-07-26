@@ -544,11 +544,15 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       packed are arithmetic, not a packing failure.</div>
 
     <h3>Knobs</h3>
+    <p class="small"><b>None of these is needed to reproduce the numbers below</b> — the two that used to be are now
+       defaults. With no <code>LLIRSCHED_*</code> set, the pass declares via
+       <code>sched_group_barrier</code> and paces mem stages with 2 <code>s_nop</code>, which builds byte‑identical
+       assembly to the old explicit recipe.</p>
     <table>
       <tr><th>Env var</th><th>Effect</th></tr>
-      <tr><td><code>LLIRSCHED_WP_SGB</code></td><td>declare via <code>sched_group_barrier</code> (§9) instead of physically reordering and pinning (§7)</td></tr>
-      <tr><td><code>LLIRSCHED_WP_MEMNOP=k</code></td><td><code>k × s_nop 7</code> at each mem‑stage head; <b>k=2</b> measured best</td></tr>
-      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the fitting packer (①) even when the region is over capacity — for bisecting a regression to ②</td></tr>
+      <tr><td><code>LLIRSCHED_WP_NOSGB</code></td><td>fall back to physically reordering + pinning (§7) instead of declaring (§9) — slower, kept for A/B</td></tr>
+      <tr><td><code>LLIRSCHED_WP_MEMNOP=k</code></td><td>override the mem‑stage pacing; default <b>2</b>, <code>0</code> disables</td></tr>
+      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the fitting packer (①) even over capacity — for bisecting a regression to ②</td></tr>
       <tr><td><code>LLIRSCHED_WP_DEBUG</code></td><td>per‑region model, counts, group sizes and the chosen window</td></tr>
     </table>
     <div class="note"><b>Everything else is hardwired to the measured winner.</b> The heuristics that were once
