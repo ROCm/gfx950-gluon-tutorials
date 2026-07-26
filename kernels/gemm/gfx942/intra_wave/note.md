@@ -181,7 +181,7 @@ Worth stating explicitly, because it means the port is small:
   re-clustering the MFMAs afterwards — without it the interleave would be undone
   later in codegen, which is the failure mode §0 is showing today.
 
-### 1.3 Plan
+### 1.3 Plan (as written before implementing; kept for the record)
 
 **Step 1 — teach `getMFMACycles` the CDNA3 shapes.** Add to `kFixedCycles`:
 
@@ -273,10 +273,97 @@ should move from 69.7% toward the 90s.
 7. TFLOPS last, at matched clock, medians — it is the noisiest signal, not the
    diagnostic.
 
-### 1.4 Risks
+### 1.4 Result — implemented, +5-8% TFLOPS, MFMA efficiency 69.7% -> 76.9%
 
-* **Register pressure (main risk).** The kernel is at exactly 256 VGPR + 256
-  AGPR with 0 spills. Interleaving MFMAs with loads extends live ranges; if the
+Implemented in `plugins/llir_scheduler/LlirSchedPlugin.cpp` and rebuilt
+(`libLlirSched.so`, LLVM `850a2b1b`). Two changes:
+
+1. **Instruction table** — added the CDNA3 shapes with an explicit derivation
+   (`cycles = flop / flop_per_clk_per_SIMD`), and a comment about the naming
+   trap. The f16/bf16 rows are measured; the fp8/bf8/i8 rows are derived from
+   the same rule and marked as not yet measured.
+2. **Throughput model** — `getLDSCoverCycles` no longer hardcodes `Bits / 8`.
+   It is now `Bits * 32 / LDSBytesPerClk`, where `32 = 64 lanes x 4 SIMDs / 8`
+   and `LDSBytesPerClk` is **128 on CDNA3, 256 on CDNA4**. A `ds_read_b128`
+   therefore costs 16 cycles of cover on gfx950 and **32 on gfx942**.
+
+   For CDNA4 the new expression is *arithmetically identical* to the old one
+   (`Bits * 32 / 256 == Bits / 8` for every width), so gfx950 scheduling is
+   bit-for-bit unchanged. That was the design constraint.
+
+The ISA family is derived from the MFMA opcode, because at `OptimizerLast`
+Triton has set no `target-cpu` on the function and the module triple is a bare
+`amdgcn-amd-amdhsa` — the opcode is the only arch signal available. Triton's
+`MfmaGroup` picks a distinct shape per family for every dtype, so this is
+unambiguous in practice; `LLIR_SCHED_LDS_BYTES_PER_CLK` overrides it.
+
+**Go/no-go:** `sched.barrier` in the emitted LLIR went **0 -> 65**, for fp16
+(`mfma.f32.16x16x16f16`) and bf16 (`mfma.f32.16x16x16bf16.1k`) alike.
+
+**The schedule now matches the model.** Loop skeleton before and after
+(M=mfma, R=ds_read, W=ds_write, G=buffer_load, B=barrier, w=s_waitcnt):
+
+```
+before:  w B R4 M1 R4 M3 w B M1 R3 M1 w W1 w W2 w W1 G2 M1 G2 W4 M1 G4 M23 R1 M1
+         R1 M46 R1 M1 R1 M1 R1 w B W4 G3 W4 G5 M72 R3 M7 R3 M65 R3 M12 ...
+
+after:   w M1 B1 M1 R1 M10 R1 M2 R1 M2 R1 M2 R1 M2 R1 M2 R1 M2 R1 M2 w B M1 w W1
+         M1 w W1 M2 W1 M2 w W1 M1 G1 M2 G1 M4 G1 M4 G1 M5 R1 M28 R1 M2 R1 M2 ...
+```
+
+Each `ds_read` now draws **2 MFMAs** (32 cycles of LDS occupancy / 16 per MFMA)
+and each `buffer_load` **4** (64 / 16) — exactly the constants above, so the
+emitted spacing is direct evidence the cost model is being applied. The clumps
+(`R4`, `W4`, `G5`, `M72`) are gone.
+
+**Codegen unchanged** — 256 VGPR + 256 AGPR, **0 spills**, 65536 B LDS, and the
+loop instruction mix is still exactly 256/32/16/16, i.e. a pure reorder. The
+register-pressure risk in §1.5 did not materialise.
+
+**Throughput** (median of 3, `--reps 3`):
+
+| K | fp16 base | fp16 +llir | | bf16 base | bf16 +llir | | torch fp16 |
+|---|---|---|---|---|---|---|---|
+| 2112 | 532 | **561** | +5.5% | 564 | **595** | +5.4% | 583 |
+| 4160 | 572 | **602** | +5.2% | 599 | **625** | +4.5% | 624 |
+| 8256 | 528 | **573** | +8.4% | 551 | **591** | +7.1% | 570 |
+| 16448 | 579 | **605** | +4.5% | 604 | **633** | +4.7% | 588 |
+
+With the scheduler the 4-wave kernel now **beats hipBLASLt at K=8256 and
+K=16448** in both dtypes, where before it trailed at every shape.
+
+**ATT re-measurement** (4096x4864x8256 fp16, same method as §0):
+
+| | baseline | +llir |
+|---|---|---|
+| cycles / iteration / wave | 5877 | **5327** (-9.4%) |
+| in-loop MFMA efficiency | 69.7% | **76.9%** |
+| `v_mfma` mean issue gap | 23.0 | **20.9** |
+| `v_mfma` median issue gap | 16.0 | 16.0 |
+
+The three move consistently (16/20.9 = 76.6% ≈ 76.9%), which is the same
+cross-check as §0.
+
+**Still 23% idle.** The predicted budget (§1.3 step 4, `Bits/4` column) said the
+memory ops need only 63% of the MFMA stream as cover, so a well-scheduled loop
+should get much closer to 90%. The remainder is most likely the three barriers:
+the pass spaces memory ops against compute, but it does not move work across the
+`s_waitcnt lgkmcnt(0)` that each `ttg.barrier` drags in, and the skeleton above
+still shows `w B` pairs with only 1-2 MFMAs adjacent. Next steps to test, in
+order of expected value:
+
+1. `amdgcnas` post-assembly peephole on top (it interleaves MFMA with the scalar
+   ops that `llirSched` structurally cannot reach).
+2. Look at whether the region head/tail leftover split (`M10`, `M28` runs)
+   should instead be distributed — those are ~40 MFMAs per K-step sitting in
+   clumps.
+3. The barrier itself: a finer `lgkmcnt(N)` instead of `lgkmcnt(0)` would let
+   LDS traffic stay in flight across it. That is a Triton membar change.
+
+### 1.5 Risks
+
+* **Register pressure (was the main risk; did not materialise).** The kernel is
+  at exactly 256 VGPR + 256 AGPR with 0 spills, and stayed there. Interleaving MFMAs with loads extends live ranges; if the
   pass causes any spill the win is gone. Mitigation if it happens: the pass only
   reorders within a region, so reducing `headLeftover`/`tailLeftover` (keeping
   more MFMAs clustered at the region head) trades interleave quality for
@@ -291,7 +378,10 @@ should move from 69.7% toward the 90s.
 
 ## 2. Backlog (not yet attempted)
 
+* Close the remaining 23% — see the three candidates at the end of §1.4.
 * `amdgcnas` post-assembly peephole on gfx942.
+* Measure the fp8/bf8/i8 CDNA3 cycle counts added to the scheduler's table on
+  faith (derived, not measured). Needed before porting a8w8 to gfx942.
 * Epilogue: currently stores from the mfma layout (`buffer_store_dwordx2`).
   Converting to a blocked layout would give `dwordx4` but needs LDS scratch,
   and LDS is full — would require freeing a slot first.

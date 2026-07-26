@@ -84,6 +84,10 @@ def _driver_main(argv):
 
     # the 4-wave kernel needs the force-agpr hint before it compiles
     os.environ.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
+    # the LLIR-scheduler plugin resolves LLVM symbols from libtriton at dlopen
+    # time, so libtriton has to be in the global symbol scope (see bench.py)
+    if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+        sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     import torch
     import triton
 

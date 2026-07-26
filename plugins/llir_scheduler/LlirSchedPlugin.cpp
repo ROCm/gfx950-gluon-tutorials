@@ -27,6 +27,8 @@
 // triton-mi450 PR #73 (the sched.barrier variant). Self-contained: depends only
 // on LLVM headers. Load into Triton via LLVM_PASS_PLUGIN_PATH; it auto-inserts
 // at the OptimizerLast extension point of make_llir's optimize_module O3 run.
+#include <cstdlib>
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -79,6 +81,21 @@ enum class SchedKind { MFMA, GR, LR, LW, Other };
 
 // LDS resides in address space 3 on AMDGPU.
 constexpr unsigned kLDSAddressSpace = 3;
+
+// ISA family. Needed only for the LDS throughput constant below -- MFMA cycle
+// counts are per-shape and come from the instruction table itself.
+enum class IsaFamily { CDNA3, CDNA4 };
+
+// Bytes of LDS serviced per clock, per CU.
+//   CDNA3 (gfx908 / gfx90a / gfx942): 128 B/clk
+//   CDNA4 (gfx950):                   256 B/clk
+// A `ds_*_b128` moves 64 lanes x 16 B = 1024 B, so with all four SIMDs issuing
+// one, LDS takes 4096 B / (B per clk) cycles to service them: 16 cycles on
+// CDNA4, 32 on CDNA3. That factor of two is why this constant has to be
+// ISA-dependent -- reusing the CDNA4 value on gfx942 under-spaces every LDS
+// access by 2x. See docs/lds_throughput.md for the CDNA4 derivation.
+constexpr unsigned kLDSBytesPerClkCDNA3 = 128;
+constexpr unsigned kLDSBytesPerClkCDNA4 = 256;
 
 // Structures used for region analysis/scheduling
 struct AnchorInst {
@@ -202,13 +219,48 @@ unsigned getMFMACycles(const Instruction &I) {
   }
 
   // Fixed-cost MFMAs.
+  //
+  // Cycles = flop_per_instruction / flop_per_clk_per_SIMD. CDNA3 and CDNA4 both
+  // retire 512 flop/clk/SIMD for f16/bf16 and 1024 for fp8/bf8/i8, so a CDNA3
+  // 16x16x16 f16 (2*16*16*16 = 8192 flop) is 8192/512 = 16 cycles. CDNA4
+  // doubled K per instruction at the same cycle count, which is why its rows
+  // carry the same cycles for twice the K.
+  //
+  // NAMING TRAP: CDNA4 spells the type with a separating dot
+  // ("mfma.f32.16x16x32.f16"); the CDNA3 legacy ops do not
+  // ("mfma.f32.16x16x16f16"), and CDNA3 bf16 additionally carries a ".1k"
+  // suffix. A CDNA3 row written by analogy with a CDNA4 row silently fails to
+  // match, and the failure mode is no diagnostic and no speedup. Names checked
+  // against IntrinsicsAMDGPU.h.
+  //
+  // The ISA tag picks the LDS bandwidth constant only. Matching is by
+  // substring; the CDNA3 and CDNA4 shape names are mutually non-overlapping, so
+  // neither family's opcode can reach the other's row.
   static constexpr struct {
     StringRef Name;
     unsigned Cycles;
   } kFixedCycles[] = {
-      {"mfma.f32.16x16x32.f16", 16},  {"mfma.f32.16x16x32.bf16", 16},
-      {"mfma.i32.16x16x64.i8", 16},   {"mfma.f32.32x32x16.f16", 32},
-      {"mfma.f32.32x32x16.bf16", 32}, {"mfma.i32.32x32x32.i8", 32},
+      // --- CDNA4 (gfx950) ---
+      {"mfma.f32.16x16x32.f16", 16},
+      {"mfma.f32.16x16x32.bf16", 16},
+      {"mfma.i32.16x16x64.i8", 16},
+      {"mfma.f32.32x32x16.f16", 32},
+      {"mfma.f32.32x32x16.bf16", 32},
+      {"mfma.i32.32x32x32.i8", 32},
+      // --- CDNA3 (gfx942) f16 / bf16 -- 16 cycles measured, see
+      //     kernels/gemm/gfx942/intra_wave/note.md
+      {"mfma.f32.16x16x16f16", 16},
+      {"mfma.f32.16x16x16bf16.1k", 16},
+      {"mfma.f32.32x32x8f16", 32},
+      {"mfma.f32.32x32x8bf16.1k", 32},
+      // --- CDNA3 (gfx942) fp8 / bf8 / i8 -- derived from the flop rule above,
+      //     NOT yet measured on hardware.
+      {"mfma.f32.16x16x32.fp8", 16},
+      {"mfma.f32.16x16x32.bf8", 16},
+      {"mfma.f32.32x32x16.fp8", 32},
+      {"mfma.f32.32x32x16.bf8", 32},
+      {"mfma.i32.16x16x32.i8", 16},
+      {"mfma.i32.32x32x16.i8", 32},
   };
   for (const auto &Entry : kFixedCycles)
     if (Name.contains(Entry.Name))
@@ -217,6 +269,46 @@ unsigned getMFMACycles(const Instruction &I) {
   // Unknown / unmodeled shape: the scheduler bails on this region and leaves
   // it to the default LLVM schedulers (such kernels are not perf-critical).
   return 0;
+}
+
+// ISA family implied by an MFMA's shape. The pass runs at OptimizerLast, where
+// Triton has put no "target-cpu" on the function and the module triple is a
+// bare amdgcn-amd-amdhsa, so the opcode is the arch signal actually available.
+// Triton's MfmaGroup picks a different shape per family for each dtype, so this
+// is unambiguous in practice; LLIR_SCHED_LDS_BYTES_PER_CLK overrides it.
+IsaFamily getMFMAIsaFamily(const Instruction &I) {
+  if (!isMFMAorWMMA(I))
+    return IsaFamily::CDNA4;
+  const auto *CI = cast<CallInst>(&I);
+  const Function *Callee = CI->getCalledFunction();
+  if (!Callee)
+    return IsaFamily::CDNA4;
+  StringRef Name = Callee->getName();
+  // Scaled f8f6f4 shapes are CDNA4-only.
+  if (Name.contains("mfma.scale."))
+    return IsaFamily::CDNA4;
+  static constexpr StringRef kCDNA3Shapes[] = {
+      "mfma.f32.16x16x16f16",     "mfma.f32.16x16x16bf16.1k",
+      "mfma.f32.32x32x8f16",      "mfma.f32.32x32x8bf16.1k",
+      "mfma.f32.16x16x32.fp8",    "mfma.f32.16x16x32.bf8",
+      "mfma.f32.32x32x16.fp8",    "mfma.f32.32x32x16.bf8",
+      "mfma.i32.16x16x32.i8",     "mfma.i32.32x32x16.i8",
+  };
+  for (StringRef S : kCDNA3Shapes)
+    if (Name.contains(S))
+      return IsaFamily::CDNA3;
+  return IsaFamily::CDNA4;
+}
+
+// LDS bytes/clk for a region, from its MFMA shape, with an env override.
+unsigned getLDSBytesPerClk(const Instruction &MFMAI) {
+  if (const char *Env = std::getenv("LLIR_SCHED_LDS_BYTES_PER_CLK")) {
+    unsigned V = 0;
+    if (!StringRef(Env).getAsInteger(10, V) && V != 0)
+      return V;
+  }
+  return getMFMAIsaFamily(MFMAI) == IsaFamily::CDNA3 ? kLDSBytesPerClkCDNA3
+                                                     : kLDSBytesPerClkCDNA4;
 }
 
 // Width in bits of the value moved by an LDS-access anchor.
@@ -230,11 +322,25 @@ unsigned getLDSAccessBits(const Instruction *I) {
   return 0;
 }
 
-// LDS instruction throughput during steady state, which is proportional to
-// the access bits.
-unsigned getLDSCoverCycles(const Instruction *I, unsigned MFMACycles) {
+// Steady-state LDS occupancy of one access, in cycles.
+//
+// One instruction moves (Bits/8) bytes per lane x 64 lanes, and all four SIMDs
+// of the CU contend for the same LDS, so the CU must service
+//   4 * 64 * Bits/8 = Bits * 32 bytes
+// at LDSBytesPerClk. Hence cycles = Bits * 32 / LDSBytesPerClk, which is the
+// per-SIMD issue interval the region has to cover with compute:
+//
+//   ds_read_b128, CDNA4 (256 B/clk): 128 * 32 / 256 = 16 cycles
+//   ds_read_b128, CDNA3 (128 B/clk): 128 * 32 / 128 = 32 cycles
+//
+// The CDNA4 result is identical to the Bits/8 this used to hardcode, so gfx950
+// scheduling is bit-for-bit unchanged.
+unsigned getLDSCoverCycles(const Instruction *I, unsigned MFMACycles,
+                           unsigned LDSBytesPerClk) {
   unsigned Bits = getLDSAccessBits(I);
-  return Bits ? (Bits / 8) : MFMACycles;
+  if (!Bits)
+    return MFMACycles;
+  return std::max(1u, Bits * 32u / LDSBytesPerClk);
 }
 
 // MFMAs to emit at this LDS access under a throughput model: reads and writes
@@ -242,8 +348,8 @@ unsigned getLDSCoverCycles(const Instruction *I, unsigned MFMACycles) {
 // the region's accesses and emit floor(balance / MFMACycles) MFMAs here,
 // keeping the remainder for the next access.
 unsigned takeMFMAsForLDS(const Instruction *I, unsigned MFMACycles,
-                         unsigned &AccumCycles) {
-  AccumCycles += getLDSCoverCycles(I, MFMACycles);
+                         unsigned LDSBytesPerClk, unsigned &AccumCycles) {
+  AccumCycles += getLDSCoverCycles(I, MFMACycles, LDSBytesPerClk);
   unsigned N = AccumCycles / MFMACycles; // floor; carry the remainder
   AccumCycles -= N * MFMACycles;
   return N;
@@ -570,6 +676,9 @@ private:
     unsigned mfmaCycles = Utils::getMFMACycles(*MFMAInsts.front());
     if (mfmaCycles == 0)
       return;
+    // LDS bandwidth differs by ISA family (CDNA3 128 B/clk, CDNA4 256), which
+    // doubles the compute cover every LDS access needs on gfx942.
+    unsigned ldsBytesPerClk = Utils::getLDSBytesPerClk(*MFMAInsts.front());
     // A global load occupies the global-load path for ~64 cycles, so it needs
     // 64 cycles of MFMA cover — ceil(64 / mfma_cycles) MFMAs (4 for a 16-cycle
     // MFMA, 2 for 32-cycle). Same throughput basis as the LDS-access pairing.
@@ -590,7 +699,8 @@ private:
           numGRBeforeLR++;
       } else if (Anchors[j].Kind == SchedKind::LR ||
                  Anchors[j].Kind == SchedKind::LW) {
-        totalLDSCycles += Utils::getLDSCoverCycles(Anchors[j].I, mfmaCycles);
+        totalLDSCycles +=
+            Utils::getLDSCoverCycles(Anchors[j].I, mfmaCycles, ldsBytesPerClk);
       }
     }
     unsigned ldsBudget = totalLDSCycles / mfmaCycles;
@@ -635,7 +745,8 @@ private:
         // Cycle model: emit floor(balance / mfma_cycles) MFMAs, carrying the
         // remainder — cheap accesses share an MFMA, wide ones draw several.
         // Reads and writes use the same shared LDS-cycle balance.
-        Count = Utils::takeMFMAsForLDS(Anchors[idx].I, mfmaCycles, ldsAccum);
+        Count = Utils::takeMFMAsForLDS(Anchors[idx].I, mfmaCycles,
+                                       ldsBytesPerClk, ldsAccum);
       } else if (Kind == SchedKind::GR) {
         bool followedByLR = (idx + 1 < Anchors.size() &&
                              Anchors[idx + 1].Kind == SchedKind::LR);
