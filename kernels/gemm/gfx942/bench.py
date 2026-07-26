@@ -51,6 +51,13 @@ import statistics
 import subprocess
 import sys
 
+# The out-of-tree LLIR scheduler is an LLVM pass plugin; it resolves LLVM symbols
+# from libtriton at dlopen time, which needs libtriton in the *global* symbol
+# scope. CPython loads C-extensions RTLD_LOCAL, so opt in before importing
+# triton. Only takes effect when the plugin is actually in use.
+if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+
 # The 4-wave kernel needs the force-agpr RA hint (amdgpu-agpr-alloc=256) before
 # it compiles; harmless for the 8-wave kernel, which pins agpr-alloc=0,0 itself.
 os.environ.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
