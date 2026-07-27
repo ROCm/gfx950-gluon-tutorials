@@ -984,3 +984,68 @@ CU7 in XCC1 and CU8 in XCC2-7, so only the intersection is safe.
 gives **4303.8 cyc/iter, 47.59%/wave** against **4299.95 / 47.63%** on GPU[4] -- **0.09%**.
 So the tables' TFLOPS-from-GPU[0] + cycles-from-GPU[4] mix is sound, and traces can now be
 taken on whichever die is free.
+
+## MFMA operand reuse — the SP XDL srcA/srcB read-suppression feature (verified, not adopted)
+
+gfx950 SP tracks 8 VGPR addresses per operand side tied to its XDL buffer; a matching,
+non-dirty entry suppresses the VGPR read. With fp16 4-VGPR operands that is **2 entries per
+side**. The feature is a **CAC (dynamic power)** optimization, not a throughput one, and it is
+controlled entirely by the order in which MFMAs are emitted.
+
+Sharing an operand and sharing an accumulator are **mutually exclusive**: for
+`D[m,n] += Σ_k A[m,k]·B[k,n]`, holding an operand fixed forces the output tile to change, and
+holding the output tile fixed (k-inner) forces both operands to change. So a shape can exploit
+one or the other, never both. For **16x16** the accumulator side wins — its 4-VGPR Matrix C/D
+can be kept in the XDL accumulator flops and have both the read *and* the write killed, which
+is worth ~2x the operand side, and k-inner already produces it for free. For **32x32** that
+path does not exist (C/D is 16 VGPRs, too wide), so the operand side is all that is available.
+
+MFMA emission order lives in Triton, not in Gluon: the `b/m/n/k` rep nest in
+`third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp`. It is k-innermost. Walking
+`n` innermost instead holds `operandA[{b,m,k}]` fixed across the `n` run. Measured with a
+temporary `AMDGCN_MFMA_N_INNER` gate there (default branch byte-identical), GPU[0], seqlen
+16320 fp16, each configuration at its own `LLIRSCHED_WP_MEMNOP` optimum:
+
+| | suppressed | cyc/iter | mfma eff /SIMD | sclk | power | kernel time |
+|---|---|---|---|---|---|---|
+| **fav4** k-inner, MEMNOP=2 | 0/128 (0%) | 4298.4 | 95.3% | 1435.7 MHz | 1399.7 W | 1243.0 TF |
+| **fav4** n-inner, MEMNOP=3 | 40/128 (31%) | 4285.4 (−0.30%) | 95.6% | 1446.7 MHz (+0.77%) | 1399.7 W | 1246.1 TF (+0.25%) |
+| **fav3** k-inner, MEMNOP=2 | 0/64 (0%) | 4806.0 | 85.2% | 1485.6 MHz | 1396.3 W | 1168.5 TF |
+| **fav3** n-inner, MEMNOP=2 | 20/64 (31%) | 4797.1 (−0.19%) | 85.4% | 1496.3 MHz (+0.72%) | 1394.8 W | ~1171.8 TF |
+
+**Conclusion: the effect is real and reproducible but limited, so the tree keeps k-inner.**
+Power is pinned at the cap in all four runs, so the saving appears as **clock, not watts** —
++0.77% and +0.72% on two kernels with very different schedules, spill behaviour and starting
+suppression. Throughput follows at ~+0.25%, i.e. sub-1%, which does not justify a lowering
+change that also costs GEMM `a16w16` v9 1.6% (1416.9 -> 1394.9 TF, VGPRs 498 -> 508, a VGPR
+pressure effect that no retune recovers). 31% is the *optimum* for these kernels, not a
+partial result: srcA is all-distinct in every stage, so only srcB is reusable (62.5% of srcB
+reads, weighted over QK's 2-tile and PV's 4-tile runs) without the 2x2 register blocking that
+GFXIPARCH-1379's own example uses. Both kernels land on exactly the same 0% -> 31%.
+
+Details worth keeping:
+
+- **`mfma efficiency` from `process_json.py` is derived from the cycle count** (mfma count x
+  32 / loop cycles). It is the reciprocal of cycles and is *not* independent evidence about
+  interleave quality — do not read it as one.
+- **Extra stall cycles raise the clock**, because idle waves burn no power. An early version of
+  this comparison ran n-inner on k-inner's MEMNOP and read the resulting +1.9% clock as a power
+  win; it was ~100 cycles/iter of barrier wait. Never compare clocks across builds with
+  different cycle counts.
+- **The reorder does not perturb the schedule.** fav4 asm inventory is identical (573 instrs,
+  same classes per stage, same `s_nop`/`s_waitcnt` counts), the QK class interleave is
+  byte-identical, and VGPRs go *down* 256 -> 248 with no spills. The llir scheduler counts
+  classes and is indifferent to register identity, exactly as expected.
+- **Mem-stage pacing is order-sensitive on fav4 but not fav3.** fav4's MEMNOP optimum flips
+  2 -> 3 (n-inner: 4447.5 / 4313.4 / 4400.9 / **4285.4** / 4295.5 for MEMNOP 0-4; k-inner is
+  4298.4 at 2 and 4394.4 at 3). fav3 stays at 2 for both. Per-stage attribution from raw ATT
+  records localized this — and it must **include the `s_barrier` records**, which hold
+  ~440-540 cyc/iter that instruction-level attribution drops entirely.
+- **Count suppression from the ATT dynamic stream, not from the asm.** Deriving the loop body
+  from the `This Inner Loop Header` comment plus a `.LBB0_<n-1>` latch guess over-collects on
+  fav3 (144 mfma instead of the true 64 that `process_json`'s back-edge detection finds), which
+  first produced a bogus "fav3 starts at 12%". Walking a wave's executed instructions has no
+  loop-structure heuristic to get wrong.
+- **FlyDSL already emits the n-inner order**, and gets 62.5% of srcB / 31% overall for free;
+  gluon k-inner gets 0%. Its accumulator adjacency costs it nothing, since the 16x16-only C/D
+  kill was never available at 32x32. Both implementations leave srcA entirely unexploited.
