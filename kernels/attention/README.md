@@ -106,7 +106,10 @@ A dot cluster of 16 MFMAs therefore has **16 × 24 = 384 cycles** to spend.
 > The 32-cycle interval is derived from the public ISA as above. The per-class issue costs are
 > the cost model the scheduler uses and that these kernels were measured against; the
 > microarchitectural reasons behind them are not in the public document, so they are stated
-> here as behaviour rather than mechanism.
+> here as behaviour rather than mechanism. You do not have to take them on faith either — an
+> ATT instruction trace timestamps every issue, so the cost of each class, and whether a given
+> op landed inside a shadow or outside it, can be read straight off a trace of your own kernel
+> ([`note.md`](note.md) has the recipe).
 
 The packed-math row has a consequence worth pausing on, because it is counter-intuitive.
 `v_pk_mul` retires two elements in one issue slot, so it is *exactly* what you want for work
@@ -154,8 +157,11 @@ markedly harder question.
 That distinction is exactly how the scheduler is built. The
 [llirSched](../../plugins/llir_scheduler/llir_scheduler.html) plugin classifies every region
 and routes it: `mfma` + `mem` to the throughput model, `mfma` + VALU to the co-execution model
-of §6. Regions mixing all three are future work — an intra-wave FA kernel would need them, and
-the two models would have to be reconciled rather than selected between.
+of §6. Regions mixing all three do not arise here, and on gfx950 they should not: §1 showed that
+putting VALU and memory in one wave wastes shadow cycles, so an FA kernel has no reason to
+build such a region. It is a question for future parts, where a different issue rule could make
+a three-category region worth scheduling — at which point the two models would have to be
+reconciled rather than selected between.
 
 ## 4. Designing the loop
 
@@ -164,11 +170,11 @@ the grid is `(HQ, ceil(S/BLOCK_M), B)`. Per tile there are eight things to do.
 
 ![the eight per-tile operations and their dependencies](images/tile_deps.svg)
 
-Run them in dependency order and the matrix core idles through every copy and every LDS read.
-The fix is the standard one — software-pipeline the loop so that the memory for a *future* tile
-overlaps the matrix work of the current one.
+Run them in dependency order and the matrix core idles through every copy and every LDS read,
+and the memory pipe idles through all the math. The fix is the standard one — software-pipeline
+the loop so that the memory for a *future* tile overlaps the matrix work of the current one.
 
-![the four stages of each iteration, marching diagonally over time](images/pipeline.svg)
+![four pipeline stages; each column is one loop iteration](images/pipeline.svg)
 
 Read the diagonal: at any moment the wave is working on four different tiles at once. The
 copy of tile *j+3*, the LDS reads of *j+2*, the first MFMA chain of *j+1*, and the second MFMA
@@ -207,6 +213,9 @@ sets what each wave has to hold.
 
 ![the two MFMA chains and the tile shapes one wave works on](images/tile_shapes.svg)
 
+Each count below is one of those shapes divided by the 64 lanes of a wave, and halved again for
+fp16 since two elements share a register.
+
 | tile | shape, dtype | VGPRs / lane | buffer |
 |---|---|---:|---|
 | `Q` | 32 × 128 fp16 | 32×128 / 64 / 2 = **32** | live-in; loaded once, never reloaded |
@@ -232,73 +241,105 @@ around, not to reduce loop overhead.
 
 ## 5. `fav3` → `fav4`: getting under the budget
 
-`fav3` applies the rescale unconditionally — every iteration multiplies `acc` by `alpha`, 64
-`v_mul` per tile straight into `dot1`'s budget. `fav4` keeps the identical pipeline and removes
-them. That is the whole difference between the two kernels, and it is worth **+6.7%**
-(1167 → 1245 TFLOPS) plus a qualitative change in what the compiler has to do (§6).
+Start by pricing the softmax against §2's budget. Each Gluon op below expands to a fixed number
+of machine instructions per wave per tile — the score tile is 32 × 64 over 64 lanes, so 32
+registers, and the accumulator is 32 × 128, so 64:
 
-**Lazy rescaling.** Softmax is shift-invariant, so the running max does not have to be *tight*;
-it only has to keep `exp2`'s argument in range. `fav4` lets it **lag**: the max is bumped, and
-`acc` rescaled, only when a tile's max exceeds the running max by more than a log2 threshold of
-8 — a 256× safety margin, trivially inside fp32's range. When the max is stable, which is the
-common case after the first few tiles, `p` is allowed to rise as high as 256 and the correction
-is skipped entirely. `acc` and `l` are carried in the same lagging frame, so the result is
-unchanged.
+| Gluon op | instructions | class | cycles | cluster |
+|---|---:|---|---:|---|
+| row max | 16 × `v_max3` | VALU | 64 | PV |
+| subtract the max | 32 × `v_fma` | VALU | 128 | PV |
+| `exp2` | 32 × `v_exp` | TRANS | **256** | PV |
+| row sum | 32 × `v_add` | VALU | 128 | QK |
+| downcast `p` to fp16 | 16 × `v_cvt_pk` | VALU | 64 | QK |
+| rescale the accumulator | 64 × `v_mul` | VALU | **256** | QK |
+
+Two items dominate, and they are the two that scale with a *whole tile* rather than with a row:
+the `exp2` burst and the accumulator rescale. Totalled per cluster against the 384 cycles each
+one has to spend:
+
+![the softmax priced against the shadow, before and after](images/budget_progression.svg)
+
+These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
+backend adds address arithmetic, and `fav3`'s scheduler leaves some work packed, which halves
+its instruction count — so §7's ceilings are computed from the compiled inventory rather than
+from this table. The shape of the argument is the same either way.
+
+**`fav3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
+issued in the open and lands directly on the loop's cycle count. Note this is a budget
+statement, not a scheduling one: no ordering of these instructions can help, because there are
+simply more cycles of vector work than there is shadow to hide it in.
+
+**Lazy rescaling** is what removes the larger of the two. Softmax is shift-invariant, so the
+running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fav4`
+lets it **lag**: the max is bumped, and `acc` rescaled, only when a tile's max exceeds the
+running max by more than a log2 threshold of 8 — a 256× safety margin, trivially inside fp32's
+range. When the max is stable, which is the common case after the first few tiles, `p` is
+allowed to rise as high as 256 and the correction is skipped entirely. `acc` and `l` are carried
+in the same lagging frame, so the result is unchanged.
 
 Skipping needs a branch, and the useful granularity is the wave: each wave owns 32 rows and can
 decide independently. `gl.warp_predicate` expresses exactly that — it lowers to
 `s_and_saveexec` + `s_cbranch_execz`, with no cross-wave reduction and no barrier. Rows that did
 not advance carry `alpha == 1`, so even an unskipped multiply is a no-op for them.
 
-### Four design rules the final kernel embodies
+That empties the QK cluster to 192 of 384 — and leaves PV untouched at 448. The kernel is now
+badly unbalanced rather than uniformly over, which is a better problem but not yet a solved one.
+Closing it is the second design rule below.
 
-Getting from a working lazy-rescale kernel to the committed one was worth a further **+7.5%**
-(1158 → 1245), spread over half a dozen steps that are all the same idea seen from different
-angles. Rather than a version-by-version journey, they are more useful as rules — each one a
-consequence of §2:
+### Design rules the final kernel embodies
 
 | rule | why the hardware demands it |
 |---|---|
-| **Nothing that branches may lead a dot cluster.** The rescale's `warp_predicate` was moved out of `VEC2` into the `mem2` cluster, and the `p`→fp16 cast hoisted to the top of `VEC2`. | The matrix core stalls on control flow. A branch's latency should overlap memory, not stand in front of an MFMA chain. `dot1` now begins `[sum + cast] + QK MFMA` with nothing branching ahead of it. |
-| **Balance the two dot clusters' budgets.** The score tile is sliced along N and the `sub`+`exp2` for 3/8 of the slices is computed in the *other* cluster. | One cluster overflowing while the other has slack wastes shadow. After the rescale moved out, `VEC1` had roughly twice `VEC2`'s work. |
-| **Rebalancing must not cost data movement.** `reshape` → `permute` → `split` on an MFMA-layout tensor is a pure re-interpretation: every slice keeps the same layout, so the split partitions each lane's own registers and emits **no instructions at all**. `assert_trivial=True` makes the compiler prove that at build time and fail the compile otherwise. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable — and it is a Gluon-level technique worth knowing well beyond attention. |
-| **Move per-element work out of the loop when the math allows.** `qk_scale` is folded into `Q` once before the loop, turning a per-score `fma(qk, scale, −m)` into a plain `sub`. | 64 elements per tile per wave, every tile. Kept as the `SCALE_ON_Q` constexpr: `--scale-on-q 0` restores the fma, costing ~0.9% but slightly *more* accurate, since pre-scaling rounds `q·scale` back to fp16 before the loop. |
-
-A fifth rule belongs to the scheduler rather than the kernel: **pace the mem clusters.** A
-couple of `s_nop`s at the head of each mem cluster shift that wave's LDS burst slightly later so
-it does not collide with the other wave's. It is on by default at the measured optimum.
+| **Keep control flow out of the dot clusters.** The rescale's `warp_predicate` block lives in the `mem2` cluster, not in `VEC2` where the arithmetic belongs. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster is issued *before* the first MFMA — the matrix core waits on it. Moving the block to a mem cluster puts that cost against memory latency instead, and lets `dot1` start with the QK MFMA. |
+| **Balance the two dot clusters.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 304 and QK to 336. | 192 against 448 wastes the whole of QK's slack while PV pays for the overflow. Only the totals matter, and both are made of the same elementwise work, so it can be moved. |
+| **Rebalancing must cost nothing.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions at all**. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable, and it is a Gluon technique worth knowing well beyond attention. (`reshape` → `permute` → `split` with `assert_trivial=True` compiles to the identical code and was what this kernel used first; `slice` says it in one line.) |
 
 ## 6. Making the compiler co-operate
 
-Everything above is about *having* independent vector work beside each MFMA. Actually issuing it
-there is the compiler's job, and by §3 the dot clusters are intra-wave regions, so it needs
-help. The out-of-tree **llirSched** plugin computes which vector ops belong behind which MFMA
-and *declares* that schedule with `sched_group_barrier`, which AMDGPU's IGroupLP then builds in
-the machine scheduler.
+The budget in §5 says the work *fits*. Getting it actually issued inside the shadow is the
+compiler's job, and by §3 the dot clusters are intra-wave regions, so it needs help in three
+places.
 
-Measured from the compiled kernels, here is what the two are asking of the 384-cycle budget:
+**Keep the vector work in its region.** `MachineSink` runs on MIR, long after any IR pass, and
+happily moves `exp2` and `fma` toward their consumers *across* an `s_barrier` — a barrier is
+`IntrNoMem`, so it is not a code-motion fence for pure ALU ops. Ops that leave a dot cluster are
+ops the scheduler never gets to place, and the measured cost of letting it happen is about
+3.5%. Hence `DISABLE_LLVM_OPT=disable-machine-sink`.
 
-![co-execution budget of each dot cluster in fav3 and fav4](images/coexec_budget.svg)
+**Choose packed or scalar per instruction.** §2's rule — packed f32 cannot go in the shadow, but
+retires two elements per issue when it is outside — makes this a genuine decision rather than a
+preference, and the two kernels want opposite answers.
 
-**`fav4` fits.** 348 and 340 cycles of 384. Every op can be given a window slot, so the
-scheduler's job is simply to spread the work evenly — and because packed math cannot co-execute
-at all (§2), every packed op must first be split into per-element scalars. That is what
-`AMDGCN_SCALARIZE_PACKED_FOPS=1` does, and why `fav4` requires it.
+`fav4` fits its budget, so every op should get a slot, so nothing should stay packed:
+`AMDGCN_SCALARIZE_PACKED_FOPS=1` splits packed `fmul`/`fadd`/`fma` into per-element scalars and
+the scheduler places them all. `fav3` does *not* fit, so the ops that will be left outside
+should stay packed and halve their issue cost — a blanket split would double exactly the work
+that failed to get a slot. **`fav3` must therefore not set that variable.**
 
-**`fav3` does not.** Its eager rescale adds 64 `v_mul` to `dot1`, and its PV cluster fills the
-window exactly with `exp2` alone. There the scheduler answers a different question — not *how do
-I spread this*, but *what gets a slot and what shape should the rest take*:
+Worth appreciating that the backend already does the easy half of this by itself:
+LLVM's `SIPreEmitPeephole` breaks a packed op back into scalars when it finds one sitting in an
+MFMA's shadow, precisely because it cannot co-execute there. The pass gets the local decision
+right on its own; what it cannot see is the *budget*, which is what decides whether an op should
+have been given a slot in the first place.
 
-- ops that **cannot** be packed (`v_max3`, `v_exp`) are covered first, since packing is not an
-  option for them anyway;
-- whatever window is left goes to packable ops, **split into scalars** so they can use it;
-- everything still uncovered stays **packed**, because one `v_pk_mul` retires two elements in a
-  single issue slot and it is going to be exposed either way.
+**Place the rest deliberately.** The out-of-tree **llirSched** plugin does that. It classifies
+each region (§3), and for a dot cluster it walks the vector ops against the MFMA windows and
+*declares* the resulting assignment with `sched_group_barrier`, which AMDGPU's IGroupLP then
+builds in the machine scheduler. When the region fits it spreads the work evenly; when it does
+not, it covers the ops that cannot be packed first, spends what window is left on packable ops
+split into scalars, and leaves the remainder packed. That over-capacity path is what makes
+`fav3` land at 85.3% rather than the 75.9% it measures with no plugin at all. The algorithm,
+the region classifier and the cost model are documented in
+[`llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html).
 
-Which is why **`fav3` must not set `AMDGCN_SCALARIZE_PACKED_FOPS`** — a blanket split would
-double the issue cost of exactly the work that failed to get a slot. The asymmetry is the
-sharpest statement of what lazy rescaling bought: `fav4` removed enough vector work from the
-matrix core's shadow that scheduling became a packing problem instead of a triage problem.
+Two more compiler-side settings are load-bearing and easy to miss:
+`LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`, without which `optimize_module` runs all of O3 with no
+target machine and codegen regresses; and the kernel's own
+`llvm_fn_attrs amdgpu-agpr-alloc="0,0"`, which pins accumulators to VGPRs — with the 2×-unrolled
+loop the default AGPR placement puts `v_accvgpr` moves on the critical path, worth ~50 TFLOPS.
+The full list, with which component owns each variable and which are cache-invalidating, is in
+[`note.md`](note.md).
 
 ## 7. Results
 
@@ -307,7 +348,7 @@ matrix core's shadow that scheduling became a packing problem instead of a triag
 per SIMD. Every row does the same 2048 MFMA cycles of work per loop body, so the columns are
 comparable across implementations.
 
-| kernel | TFLOPS | cyc/iter | MFMA eff / SIMD | ceiling from §6 |
+| kernel | TFLOPS | cyc/iter | MFMA eff / SIMD | ceiling from §5 |
 |---|---:|---:|---:|---:|
 | **`fav4`** (`SCALE_ON_Q=1`) | **1245** | **4306** | **95.1%** | **100%** |
 | `fav4`, `--scale-on-q 0` | 1231 | 4419 | 92.7% | 100% |
@@ -316,7 +357,7 @@ comparable across implementations.
 | *ROCm/FlyDSL, lazy rescale* | *1242* | *4747* | *86.3%* | |
 | *ROCm/FlyDSL, eager rescale* | *1044* | *6695* | *61.2%* | |
 
-**The ceilings come straight from §6's budget**, and they are what make the efficiency column
+**The ceilings come straight from §5's budget**, and they are what make the efficiency column
 readable. `fav4`'s demand fits inside the window, so nothing is exposed and its ceiling is
 100%; it reaches 95.1%. `fav3` has 4 × 48 = 192 exposed cycles per loop body against 2048 of
 MFMA, so its ceiling is 2048/2240 = **91.4%**; it reaches 85.3%.
@@ -372,10 +413,17 @@ backwards: **`AMDGCN_SCALARIZE_PACKED_FOPS=1` is for `fav4` only — `fav3` must
 (§6 explains why).
 
 **Scope.** Both kernels are reduced to the single most-performant path: non-causal, head dim
-128, fp16/bf16, `bhsd`/`bshd`, MHA/GQA/MQA, and a K length that is a multiple of `BLOCK_N`=64
-with an odd number of tiles (a `static_assert` checks it — 16320 is fine, 16384 is not). Causal
-masking, ragged tails, other head dims and the wide autotune space were removed to keep the
-code readable; see the provenance note below.
+128, fp16/bf16, `bhsd`/`bshd`, MHA/GQA/MQA, and a K length that is a multiple of `BLOCK_N`=64.
+Causal masking, ragged tails, other head dims and the wide autotune space were removed to keep
+the code readable; see the provenance note below.
+
+`N_CTX` is a `gl.constexpr`, so each sequence length is a separate compile. The 2×-unrolled loop
+covers tiles `[0, n_blocks-3)`; when that count is odd `fav4` emits one more tile after the loop
+under a constexpr `ODD_TAIL` guard, which is what lets an even `n_blocks` such as 16384 build at
+all. The guard costs nothing when it is false — 16320 compiles to a byte-identical opcode
+stream — and when it is true the extra tile runs unpipelined, showing up as about half a point
+of epilogue (2.4% → 2.9%) with the in-loop MFMA efficiency unchanged at 95.4%. `fav3` still
+carries the original `static_assert` instead, so it builds only for an odd `n_blocks`.
 
 ## 9. Where to go deeper
 

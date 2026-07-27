@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .p    { font-size: 12px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .seg  { font-size: 10.5px; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .over { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .win  { fill: none; stroke: #767676; stroke-width: 1.4; }
+  </style>
+
+  <text class="h" x="8" y="16">Each dot cluster has 16 MFMA x 24 = 384 cycles of shadow. What the softmax asks of it:</text>
+
+  <!-- scale: 384 cyc -> 340 px, bars start at x=150 -->
+  <line x1="490" y1="30" x2="490" y2="356" stroke="#767676" stroke-width="1" stroke-dasharray="3 3"/>
+  <text class="lbl" x="490" y="28" text-anchor="middle">384</text>
+
+  <!-- panel 1 -->
+  <text class="p"   x="8" y="52">fav3</text>
+  <text class="lbl" x="8" y="68">rescale</text>
+  <text class="lbl" x="8" y="82">every tile</text>
+
+  <text class="lbl" x="98" y="60" text-anchor="end">QK</text>
+  <rect x="150" y="44" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="59" text-anchor="middle">cvt 64</text>
+  <rect x="206.7" y="44" width="113.3" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="263" y="59" text-anchor="middle">sum 128</text>
+  <rect x="320" y="44" width="226.7" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="433" y="59" text-anchor="middle">rescale 256</text>
+  <rect class="win" x="150" y="44" width="340" height="22"/>
+  <text class="over" x="556" y="59">448 / 384</text>
+
+  <text class="lbl" x="98" y="92" text-anchor="end">PV</text>
+  <rect x="150" y="76" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="91" text-anchor="middle">max 64</text>
+  <rect x="206.7" y="76" width="113.3" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="263" y="91" text-anchor="middle">fma 128</text>
+  <rect x="320" y="76" width="226.7" height="22" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="433" y="91" text-anchor="middle">exp 256</text>
+  <rect class="win" x="150" y="76" width="340" height="22"/>
+  <text class="over" x="556" y="91">448 / 384</text>
+  <text class="note" x="150" y="116">Both clusters over capacity. Whatever will not fit is issued in the open, and costs cycles.</text>
+
+  <!-- panel 2 -->
+  <text class="p"   x="8" y="164">fav4</text>
+  <text class="lbl" x="8" y="180">lazy</text>
+  <text class="lbl" x="8" y="194">rescale</text>
+
+  <text class="lbl" x="98" y="172" text-anchor="end">QK</text>
+  <rect x="150" y="156" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="171" text-anchor="middle">cvt 64</text>
+  <rect x="206.7" y="156" width="113.3" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="263" y="171" text-anchor="middle">sum 128</text>
+  <rect class="win" x="150" y="156" width="340" height="22"/>
+  <text class="ok" x="556" y="171">192 / 384</text>
+
+  <text class="lbl" x="98" y="204" text-anchor="end">PV</text>
+  <rect x="150" y="188" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="203" text-anchor="middle">max 64</text>
+  <rect x="206.7" y="188" width="113.3" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="263" y="203" text-anchor="middle">fma 128</text>
+  <rect x="320" y="188" width="226.7" height="22" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="433" y="203" text-anchor="middle">exp 256</text>
+  <rect class="win" x="150" y="188" width="340" height="22"/>
+  <text class="over" x="556" y="203">448 / 384</text>
+  <text class="note" x="150" y="228">Dropping the rescale empties QK, but PV is untouched and still over. Badly unbalanced.</text>
+
+  <!-- panel 3 -->
+  <text class="p"   x="8" y="276">fav4</text>
+  <text class="lbl" x="8" y="292">after</text>
+  <text class="lbl" x="8" y="306">balancing</text>
+
+  <text class="lbl" x="98" y="284" text-anchor="end">QK</text>
+  <rect x="150" y="268" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="283" text-anchor="middle">cvt 64</text>
+  <rect x="206.7" y="268" width="113.3" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="263" y="283" text-anchor="middle">sum 128</text>
+  <rect x="320" y="268" width="42.5" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="341" y="283" text-anchor="middle">fma</text>
+  <rect x="362.5" y="268" width="85" height="22" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="405" y="283" text-anchor="middle">exp 3/8</text>
+  <rect class="win" x="150" y="268" width="340" height="22"/>
+  <text class="ok" x="556" y="283">336 / 384</text>
+
+  <text class="lbl" x="98" y="316" text-anchor="end">PV</text>
+  <rect x="150" y="300" width="56.7" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="178" y="315" text-anchor="middle">max 64</text>
+  <rect x="206.7" y="300" width="70.8" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="242" y="315" text-anchor="middle">fma 80</text>
+  <rect x="277.5" y="300" width="141.7" height="22" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="348" y="315" text-anchor="middle">exp 5/8 = 160</text>
+  <rect class="win" x="150" y="300" width="340" height="22"/>
+  <text class="ok" x="556" y="315">304 / 384</text>
+  <text class="note" x="150" y="340">Moving 3/8 of the subtract and exp2 across brings both inside, with room to spare.</text>
+
+  <g transform="translate(150,364)">
+    <rect x="0"   y="0" width="12" height="12" fill="#cfe0f7" stroke="#3b7dd8"/><text class="note" x="18" y="10">VALU, 4 cyc each</text>
+    <rect x="130" y="0" width="12" height="12" fill="#ded3f5" stroke="#7a5ac9"/><text class="note" x="148" y="10">TRANS, 8 cyc each</text>
+    <rect x="270" y="0" width="12" height="12" fill="#f7d2cf" stroke="#c8443c"/><text class="note" x="288" y="10">the accumulator rescale — 64 VALU</text>
+  </g>
+</svg>

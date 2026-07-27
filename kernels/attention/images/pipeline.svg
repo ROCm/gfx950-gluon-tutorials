@@ -2,45 +2,53 @@
   <style>
     .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
     .lbl  { font-size: 11.5px; fill: #767676; }
-    .in   { font-size: 10.5px; fill: #1a1a1a; }
+    .st   { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 10px; fill: #1a1a1a; }
     .note { font-size: 11.5px; fill: #767676; }
-    .steady { fill: none; stroke: #c8443c; stroke-width: 2; }
-    .sl   { font-size: 11.5px; fill: #c8443c; }
+    .body { fill: none; stroke: #c8443c; stroke-width: 2; }
+    .bl   { font-size: 11.5px; fill: #c8443c; }
+    .diag { fill: none; stroke: #3b7dd8; stroke-width: 1.6; stroke-dasharray: 4 3; }
+    .dl   { font-size: 11px; fill: #3b7dd8; }
   </style>
 
-  <text class="h" x="8" y="16">Software-pipelining the tile: each iteration's four stages march diagonally</text>
+  <text class="h" x="8" y="16">Four pipeline stages. Each column is one loop iteration; the tile index says how far ahead that stage runs.</text>
 
-  <text class="lbl" x="120" y="40">t = 0</text>
-  <text class="lbl" x="242" y="40">1</text>
-  <text class="lbl" x="364" y="40">2</text>
-  <text class="lbl" x="486" y="40">3</text>
-  <text class="lbl" x="608" y="40">4</text>
+  <text class="lbl" x="150" y="42" text-anchor="middle">iteration i</text>
+  <text class="lbl" x="292" y="42" text-anchor="middle">i + 1</text>
+  <text class="lbl" x="434" y="42" text-anchor="middle">i + 2</text>
+  <text class="lbl" x="576" y="42" text-anchor="middle">i + 3</text>
 
-  <text class="lbl" x="8" y="66">iter 0</text>
-  <rect x="112" y="50" width="112" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="168" y="67" text-anchor="middle">ACK</text>
-  <rect x="234" y="50" width="112" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="290" y="67" text-anchor="middle">LRK · ACV</text>
-  <rect x="356" y="50" width="112" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="412" y="67" text-anchor="middle">DOT1 · VEC1</text>
-  <rect x="478" y="50" width="112" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="534" y="67" text-anchor="middle">LRV·VEC2·DOT2</text>
+  <text class="st" x="8" y="68">stage 0</text>
+  <rect x="88"  y="50" width="124" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="150" y="66" text-anchor="middle">ACK [ i+3 ]</text>
+  <rect x="230" y="50" width="124" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="292" y="66" text-anchor="middle">ACK [ i+4 ]</text>
+  <rect x="372" y="50" width="124" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="434" y="66" text-anchor="middle">ACK [ i+5 ]</text>
+  <rect x="514" y="50" width="124" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="576" y="66" text-anchor="middle">ACK [ i+6 ]</text>
 
-  <text class="lbl" x="8" y="98">iter 1</text>
-  <rect x="234" y="82" width="112" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="290" y="99" text-anchor="middle">ACK</text>
-  <rect x="356" y="82" width="112" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="412" y="99" text-anchor="middle">LRK · ACV</text>
-  <rect x="478" y="82" width="112" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="534" y="99" text-anchor="middle">DOT1 · VEC1</text>
-  <rect x="600" y="82" width="112" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="656" y="99" text-anchor="middle">LRV·VEC2·DOT2</text>
+  <text class="st" x="8" y="106">stage 1</text>
+  <rect x="88"  y="88" width="124" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="150" y="104" text-anchor="middle">ACV · LRK [ i+2 ]</text>
+  <rect x="230" y="88" width="124" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="292" y="104" text-anchor="middle">ACV · LRK [ i+3 ]</text>
+  <rect x="372" y="88" width="124" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="434" y="104" text-anchor="middle">ACV · LRK [ i+4 ]</text>
+  <rect x="514" y="88" width="124" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="576" y="104" text-anchor="middle">ACV · LRK [ i+5 ]</text>
 
-  <text class="lbl" x="8" y="130">iter 2</text>
-  <rect x="356" y="114" width="112" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="412" y="131" text-anchor="middle">ACK</text>
-  <rect x="478" y="114" width="112" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="534" y="131" text-anchor="middle">LRK · ACV</text>
-  <rect x="600" y="114" width="112" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="656" y="131" text-anchor="middle">DOT1 · VEC1</text>
+  <text class="st" x="8" y="144">stage 2</text>
+  <rect x="88"  y="126" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="150" y="142" text-anchor="middle">DOT1 · VEC1 [ i+1 ]</text>
+  <rect x="230" y="126" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="292" y="142" text-anchor="middle">DOT1 · VEC1 [ i+2 ]</text>
+  <rect x="372" y="126" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="434" y="142" text-anchor="middle">DOT1 · VEC1 [ i+3 ]</text>
+  <rect x="514" y="126" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="576" y="142" text-anchor="middle">DOT1 · VEC1 [ i+4 ]</text>
 
-  <text class="lbl" x="8" y="162">iter 3</text>
-  <rect x="478" y="146" width="112" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="534" y="163" text-anchor="middle">ACK</text>
-  <rect x="600" y="146" width="112" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="656" y="163" text-anchor="middle">LRK · ACV</text>
+  <text class="st" x="8" y="182">stage 3</text>
+  <rect x="88"  y="164" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="150" y="180" text-anchor="middle">VEC2 · LRV · DOT2 [ i ]</text>
+  <rect x="230" y="164" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="292" y="180" text-anchor="middle">VEC2 · LRV · DOT2 [ i+1 ]</text>
+  <rect x="372" y="164" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="434" y="180" text-anchor="middle">VEC2 · LRV · DOT2 [ i+2 ]</text>
+  <rect x="514" y="164" width="124" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="576" y="180" text-anchor="middle">VEC2 · LRV · DOT2 [ i+3 ]</text>
 
-  <rect class="steady" x="472" y="44" width="124" height="134"/>
-  <text class="sl" x="404" y="196">the loop body is one vertical slice</text>
+  <rect class="body" x="82" y="44" width="136" height="150"/>
+  <text class="bl" x="82" y="210">one loop iteration</text>
 
-  <text class="note" x="8" y="226">At t = 3 the wave runs LRV·VEC2·DOT2 of tile j, DOT1·VEC1 of tile j+1, LRK·ACV of tile j+2 and ACK of tile j+3</text>
-  <text class="note" x="8" y="244">— four different tiles in flight, which is what lets the copies of a future tile overlap the matrix work of this one.</text>
-  <text class="note" x="8" y="270">The cost is that everything is skewed: an op's tile index tells you how far ahead of the current tile it runs.</text>
+  <path class="diag" d="M 212,62 L 224,62 L 224,100 L 366,100 L 366,138 L 508,138 L 508,176 L 644,176"/>
+  <text class="dl" x="652" y="176">tile i+3</text>
+
+  <text class="note" x="8" y="242">Down a column: in one iteration the wave copies tile i+3, reads tile i+2 out of LDS, runs the QK chain of tile</text>
+  <text class="note" x="8" y="258">i+1 and the PV chain of tile i. Four tiles are in flight, so a future tile's memory overlaps this tile's math.</text>
+  <text class="note" x="8" y="284">Along the dashed path: a single tile descends one stage per iteration, taking four to cross the pipeline.</text>
 </svg>
