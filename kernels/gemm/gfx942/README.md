@@ -139,6 +139,23 @@ cd tools
 python run_att.py inter_wave --K 8256 --out att_inter_wave
 ```
 
+### Sustained timing
+
+[`tools/bench_prepared.py`](tools/bench_prepared.py) is the low-overhead timing path. It reuses the
+tutorial's generic `scripts/prepared_kernel.py` to compile once and pre-bind every argument, so
+`rocprofv3 --kernel-trace` sees back-to-back dispatches with no Python binding in the gap. It
+rotates tensor sets so no dispatch reads its predecessor's cache-resident operands, and averages
+the **last** 100 of 1000 dispatches, by which point the clock has settled under the 750 W cap.
+
+It verifies the kernel's output before reporting any timing. The Triton cache key does not include
+`TRITON_KERNEL_OVERRIDE`, so a hand-edited kernel from an ablation run can otherwise persist in
+`~/.triton/cache` and every number will silently describe the wrong build.
+
+```bash
+python bench_prepared.py --gpus all      # sweep every GPU, report the fastest
+python bench_prepared.py --gpus 3 --dtype bf16
+```
+
 Point ATTViewer at the `ui_output_agent_*_dispatch_*` directory it produces.
 Two things the traces settle:
 
@@ -337,6 +354,7 @@ kernels/gemm/gfx942/
   inter_wave/matmul_kernel.py   8-wave kernel  (+ README.md)
   tools/layout_check.py         CDNA3 LDS bank-conflict model + layout sweep
   tools/run_att.py              rocprofv3 --att capture, verifies the ui_* dir
+  tools/bench_prepared.py       prepared-launch rocprofv3 timing, multi-GPU sweep
 ```
 
 `get_pids` (XCD remap + `GROUP_SIZE_M` swizzle) is reused unchanged from the
