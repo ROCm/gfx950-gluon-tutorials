@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 330" width="780" height="330" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .lbl  { font-size: 13px; fill: #767676; }
+    .seg  { font-size: 11px; fill: #1a1a1a; }
+    .kern { font-size: 13px; font-weight: 600; fill: #767676; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .win  { fill: none; stroke: #767676; stroke-width: 1.4; }
+    .tick { stroke: #767676; stroke-width: 1; }
+  </style>
+
+  <text class="kern" x="8" y="18">Co-execution budget per dot cluster: 16 MFMA x 24-cycle window = 384 cycles</text>
+
+  <!-- window scale: 384 cyc maps to 400 px -->
+  <g transform="translate(120,34)">
+    <line class="tick" x1="0" y1="8" x2="0" y2="212"/>
+    <line class="tick" x1="400" y1="8" x2="400" y2="212"/>
+    <text class="lbl" x="0" y="6" text-anchor="middle">0</text>
+    <text class="lbl" x="400" y="6" text-anchor="middle">384 cyc</text>
+  </g>
+
+  <!-- fav4 QK -->
+  <text class="kern" x="8" y="62">fav4</text>
+  <text class="lbl"  x="8" y="80">QK</text>
+  <g transform="translate(120,50)">
+    <rect x="0"     y="0" width="262.5" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="262.5" y="0" width="100.0" height="26" fill="#ded3f5" stroke="#7a5ac9"/>
+    <rect class="win" x="0" y="0" width="400" height="26"/>
+    <text class="seg" x="131" y="17" text-anchor="middle">63 VALU = 252</text>
+    <text class="seg" x="312" y="17" text-anchor="middle">12 TRANS = 96</text>
+    <text class="note" x="412" y="17">348 / 384 — fits</text>
+  </g>
+
+  <!-- fav4 PV -->
+  <text class="lbl" x="8" y="112">PV</text>
+  <g transform="translate(120,82)">
+    <rect x="0"     y="0" width="179.2" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="179.2" y="0" width="175.0" height="26" fill="#ded3f5" stroke="#7a5ac9"/>
+    <rect class="win" x="0" y="0" width="400" height="26"/>
+    <text class="seg" x="90"  y="17" text-anchor="middle">43 VALU = 172</text>
+    <text class="seg" x="267" y="17" text-anchor="middle">21 TRANS = 168</text>
+    <text class="note" x="412" y="17">340 / 384 — fits</text>
+  </g>
+  <text class="note" x="120" y="129">ceiling 100% — nothing is left outside the shadow</text>
+
+  <!-- fav3 QK -->
+  <text class="kern" x="8" y="172">fav3</text>
+  <text class="lbl"  x="8" y="190">QK</text>
+  <g transform="translate(120,160)">
+    <rect x="0" y="0" width="379.2" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect class="win" x="0" y="0" width="400" height="26"/>
+    <text class="seg" x="190" y="17" text-anchor="middle">91 VALU = 364</text>
+    <rect x="414" y="0" width="50" height="26" fill="#f7d2cf" stroke="#c8443c"/>
+    <text class="seg" x="439" y="17" text-anchor="middle">48</text>
+    <text class="note" x="472" y="17">12 packed, exposed</text>
+  </g>
+
+  <!-- fav3 PV -->
+  <text class="lbl" x="8" y="222">PV</text>
+  <g transform="translate(120,192)">
+    <rect x="0"     y="0" width="125.0" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="125.0" y="0" width="275.0" height="26" fill="#ded3f5" stroke="#7a5ac9"/>
+    <rect class="win" x="0" y="0" width="400" height="26"/>
+    <text class="seg" x="62"  y="17" text-anchor="middle">30 = 120</text>
+    <text class="seg" x="262" y="17" text-anchor="middle">33 TRANS = 264</text>
+    <rect x="414" y="0" width="50" height="26" fill="#f7d2cf" stroke="#c8443c"/>
+    <text class="seg" x="439" y="17" text-anchor="middle">48</text>
+    <text class="note" x="472" y="17">12 packed, exposed</text>
+  </g>
+  <text class="note" x="120" y="239">384 / 384 — exactly full. ceiling 91.4%: 4 x 48 = 192 exposed cycles per loop body</text>
+
+  <!-- legend -->
+  <g transform="translate(120,268)">
+    <rect x="0"   y="0" width="13" height="13" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <text class="note" x="19" y="11">VALU, 4 cyc</text>
+    <rect x="105" y="0" width="13" height="13" fill="#ded3f5" stroke="#7a5ac9"/>
+    <text class="note" x="124" y="11">TRANS, 8 cyc</text>
+    <rect x="215" y="0" width="13" height="13" fill="#f7d2cf" stroke="#c8443c"/>
+    <text class="note" x="234" y="11">packed f32 — cannot co-execute at all</text>
+  </g>
+  <text class="note" x="120" y="303">Inside the box is free. Outside it adds directly to the loop's cycle count.</text>
+</svg>
