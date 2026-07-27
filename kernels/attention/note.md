@@ -517,7 +517,7 @@ at exactly 256 VGPRs — check `vgpr_spill_count` afterwards.
 
 | component | required? | measured if removed |
 |---|---|---|
-| `AMDGCN_SCALARIZE_PACKED_FOPS=1` (incl. the fma extension) | **yes** | `v_pk_fma` survives, PV 344/384 -> ~1174; no scalarize at all -> ~1160 |
+| `AMDGCN_SCALARIZE_PACKED_FOPS=1` (incl. the fma extension) | *was yes, now **no*** | `v_pk_fma` survives, PV 344/384 -> ~1174; no scalarize at all -> ~1160. **Superseded** -- see the group-size fix at the end of this file; neither kernel needs the pass now |
 | llir scheduler + `LLIRSCHED_WP_SGB=1` | **yes** | ~1132, 75.9%/SIMD, QK/PV overflow 88/92 cyc |
 | `DISABLE_LLVM_OPT=disable-machine-sink` | **yes** | PV's `fma 32`/`exp 16` migrate into mem2, PV windows 368 -> 112/384, **~1140 (-3.5%)** |
 | the `SIPreEmitPeephole` TRANS patch | **no** | identical inventory and perf — superseded by scalarize-fma |
@@ -529,7 +529,6 @@ scheduler, so it moves ops out of the region entirely and IGroupLP never sees th
 
 ```bash
 HIP_VISIBLE_DEVICES=1 \                    # rocm-smi GPU[0], the fast die (ATT: use 5)
-AMDGCN_SCALARIZE_PACKED_FOPS=1 \           # fav4 ONLY -- fav3 must not set it
 DISABLE_LLVM_OPT=disable-machine-sink \    # required
 LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
@@ -550,7 +549,6 @@ reproduce any number in this file.**
 | `LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so` | LLVM | how an out-of-tree pass plugin gets loaded at all |
 | `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1` | Triton (`gfx950-tutorial-v1.1` pin) | keeps the TargetMachine for plugins; without it `optimize_module` runs all of O3 with no target machine and codegen regresses |
 | `DISABLE_LLVM_OPT=disable-machine-sink` | LLVM pass manager | disables **MachineSink**, which moves exp/fma out of the scheduled region (opt2 finding #2). It runs on MIR, long after any IR pass, so this is not something the scheduler can handle itself |
-| `AMDGCN_SCALARIZE_PACKED_FOPS=1` | Triton's **`ScalarizePackedFOps`** pass | a separate pass that splits packed `fmul`/`fadd`/`fma` into per-element scalars. **fav4 only.** Its stages fit the mfma windows, and the scheduler's group sizes assume one instruction per element. **fav3 must NOT set it** -- fav3's stages are over capacity, so the scheduler scalarizes selectively and needs the ops it left uncovered to stay packed |
 
 **B. llir scheduler knobs -- all optional**
 
@@ -883,8 +881,10 @@ python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
 
 ### Gotchas that invalidate these measurements
 
-- **`AMDGCN_SCALARIZE_PACKED_FOPS` belongs to fav4 only.** fav3's over-capacity path
-  scalarizes selectively and needs the uncovered ops left packed.
+- **`AMDGCN_SCALARIZE_PACKED_FOPS` no longer applies to either kernel** (group-size fix at the
+  end of this file). It used to be required for fav4 and forbidden for fav3. Every recipe and
+  number recorded *above* this line was measured with it set for fav4, and those recipes still
+  reproduce those numbers -- the pass still exists, it is just no longer needed.
 - **`LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are not in the Triton cache key.** Use a
   separate `TRITON_CACHE_DIR` per configuration or `rm -rf ~/.triton/cache`, or you will
   re-measure the previous build. (`DISABLE_LLVM_OPT` *is* cache-invalidating.)
@@ -1049,3 +1049,56 @@ Details worth keeping:
 - **FlyDSL already emits the n-inner order**, and gets 62.5% of srcB / 31% overall for free;
   gluon k-inner gets 0%. Its accumulator adjacency costs it nothing, since the 16x16-only C/D
   kill was never available at 32x32. Both implementations leave srcA entirely unexploited.
+
+## Unifying the packed/scalar flow: declare group sizes in instructions
+
+`sched_group_barrier`'s size operand is a count of **instructions**. The fitting path was pushing
+one 4-cycle entry per **element**, so a packed op contributed two entries and a 24-cycle window
+declared six VALU where only three instructions existed. IGroupLP cannot fill such a group, and an
+unfillable group makes its pipeline solver abandon the region -- the same failure the miscounted
+`fneg` produced. Pushing one entry per instruction priced by its weight is what the TRANS branch
+beside it always did (one entry of 8), and what `declareRegionGroupsOverCap` always did for its
+Chunks. So this is the fitting path being brought into line with the path next to it, not a new
+mechanism.
+
+The point is that **neither kernel needs `AMDGCN_SCALARIZE_PACKED_FOPS` now.** Both start from
+packed math, the declaration is satisfiable either way, and `SIPreEmitPeephole` splits whatever
+lands in an MFMA shadow. fav3 never set the variable -- its over-capacity path already reasoned in
+instructions -- and fav4 no longer has to, so there is no longer an environment variable that has
+to agree with which kernel is being compiled.
+
+Measured on GPU[0], seqlen 16320 fp16, both correct against torch SDPA:
+
+| | cyc/iter | mfma eff /SIMD | ceiling | TFLOPS | spills |
+|---|---:|---:|---:|---:|---:|
+| fav3 (byte-identical asm to before) | 4803.5 | 85.3% | 91.4% | 1169 | 9 |
+| fav4 | 4373.2 | 93.7% | 100% | 1241 | 2 |
+| fav4 SCALE_ON_Q=0 | 4438.0 | 92.3% | 100% | 1220 | -- |
+
+fav4 gives up **1.6% of cycles and 0.3% of throughput** against the old force-everything-scalar
+build (4304.6 / 95.2% / 1245). Its loop still reaches the 100% ceiling with no packed op left in
+it, so the loss is not coverage but **fill accuracy**: a count is a faithful cycle budget only when
+the class is uniform-cost, and a VALU group holding both 4-cycle scalars and 8-cycle packed ops can
+be satisfied by a cheap triple or an expensive one. TRANS never has this problem -- every
+transcendental costs 8.
+
+Two alternatives were measured and rejected:
+
+- **Leave the declaration in elements and rely on the peephole.** 4719.6 cyc, 86.8%, 16 packed ops
+  stranded outside the shadow, ceiling 97%. Costs 9.8% because most of the region's pipeline is
+  abandoned, not because of the stranded ops.
+- **Scalarize inside the plugin**, after the over-capacity hand-off, so the covered ops are split
+  before the declaration is emitted. 4412.0 cyc, 92.8% -- worse than the one-line change and
+  thirty lines instead of one. Note the hand-off ordering is essential either way: the dispatch to
+  `declareRegionGroupsOverCap` happens *inside* `declareRegionGroups` after run collection, so
+  anything done at the top of that function also hits fav3 and destroys its packed remainder
+  (measured: ceiling 91.4% -> 85.6%, 0 packed left).
+
+fav4 also picks up 2 VGPR spills (`private_segment_fixed_size` 0 -> 12), all outside the loop:
+without the global Triton pass the prologue and drain keep their packed ops, which shifts pressure
+there. No scratch traffic in the loop body.
+
+**Measurement note.** fav3's asm is byte-identical, which makes it a free control for thermal
+drift, and it earned its keep here: a mid-session batch read fav3 at 1136.7 against its usual
+1168.5, i.e. the whole batch was ~2.7% low. After a 200 s cool-down fav3 read 1169.1 and 1169.6
+either side of fav4's 1241.5. Bracket any TFLOPS measurement with an unchanged binary.

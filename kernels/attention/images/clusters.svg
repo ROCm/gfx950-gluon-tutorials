@@ -11,22 +11,22 @@
   <g transform="translate(8,44)">
     <rect x="0"   y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
     <text class="lbl" x="86" y="-8" text-anchor="middle">dot1</text>
-    <rect x="10"  y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="86" y="28" text-anchor="middle">DOT1 [ j+1 ]   QK MFMA</text>
+    <rect x="10"  y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="86" y="28" text-anchor="middle">DOT1 [ j+1 ]</text>
     <rect x="10"  y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="86" y="60" text-anchor="middle">VEC2 [ j ]</text>
 
     <rect x="188" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
     <text class="lbl" x="274" y="-8" text-anchor="middle">mem1</text>
-    <rect x="198" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="274" y="28" text-anchor="middle">LRV [ j ]   V from LDS</text>
+    <rect x="198" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="274" y="28" text-anchor="middle">LRV [ j ]</text>
     <rect x="198" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="274" y="60" text-anchor="middle">ACK [ j+3 ]</text>
 
     <rect x="376" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
     <text class="lbl" x="462" y="-8" text-anchor="middle">dot2</text>
-    <rect x="386" y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="462" y="28" text-anchor="middle">DOT2 [ j ]   PV MFMA</text>
+    <rect x="386" y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="462" y="28" text-anchor="middle">DOT2 [ j ]</text>
     <rect x="386" y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="462" y="60" text-anchor="middle">VEC1 [ j+1 ]</text>
 
     <rect x="564" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
     <text class="lbl" x="650" y="-8" text-anchor="middle">mem2</text>
-    <rect x="574" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="650" y="28" text-anchor="middle">LRK [ j+2 ]   K from LDS</text>
+    <rect x="574" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="650" y="28" text-anchor="middle">LRK [ j+2 ]</text>
     <rect x="574" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="650" y="60" text-anchor="middle">ACV [ j+2 ]</text>
   </g>
 

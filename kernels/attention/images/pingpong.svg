@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 230" width="760" height="230" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 254" width="760" height="254" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
   <style>
     .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
     .lbl  { font-size: 12px; fill: #767676; }
@@ -10,34 +10,34 @@
 
   <text class="h" x="8" y="16">Two waves per SIMD, one cluster apart</text>
 
-  <line class="bar" x1="248" y1="26" x2="248" y2="176"/>
-  <line class="bar" x1="418" y1="26" x2="418" y2="176"/>
-  <line class="bar" x1="588" y1="26" x2="588" y2="176"/>
+  <line class="bar" x1="248" y1="26" x2="248" y2="196"/>
+  <line class="bar" x1="418" y1="26" x2="418" y2="196"/>
+  <line class="bar" x1="588" y1="26" x2="588" y2="196"/>
 
   <text class="lbl" x="8" y="56">wave 0</text>
   <g transform="translate(80,34)">
     <text class="cn" x="82"  y="8" text-anchor="middle">dot1</text>
-    <rect x="8"   y="12" width="148" height="20" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="82"  y="26" text-anchor="middle">DOT1 [j+1] · VEC2 [j]</text>
+    <rect x="8"   y="12" width="148" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="82"  y="31" text-anchor="middle">DOT1 [j+1] · VEC2 [j]</text>
     <text class="cn" x="252" y="8" text-anchor="middle">mem1</text>
-    <rect x="178" y="12" width="148" height="20" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="252" y="26" text-anchor="middle">LRV [j] · ACK [j+3]</text>
+    <rect x="178" y="12" width="148" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="252" y="31" text-anchor="middle">LRV [j] · ACK [j+3]</text>
     <text class="cn" x="422" y="8" text-anchor="middle">dot2</text>
-    <rect x="348" y="12" width="148" height="20" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="422" y="26" text-anchor="middle">DOT2 [j] · VEC1 [j+1]</text>
+    <rect x="348" y="12" width="148" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="422" y="31" text-anchor="middle">DOT2 [j] · VEC1 [j+1]</text>
     <text class="cn" x="592" y="8" text-anchor="middle">mem2</text>
-    <rect x="518" y="12" width="148" height="20" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="592" y="26" text-anchor="middle">LRK [j+2] · ACV [j+2]</text>
+    <rect x="518" y="12" width="148" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="592" y="31" text-anchor="middle">LRK [j+2] · ACV [j+2]</text>
   </g>
 
-  <text class="lbl" x="8" y="126">wave 1</text>
-  <g transform="translate(80,104)">
+  <text class="lbl" x="8" y="140">wave 1</text>
+  <g transform="translate(80,116)">
     <text class="cn" x="82"  y="8" text-anchor="middle">mem1</text>
-    <rect x="8"   y="12" width="148" height="20" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="82"  y="26" text-anchor="middle">LRV [j] · ACK [j+3]</text>
+    <rect x="8"   y="12" width="148" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="82"  y="31" text-anchor="middle">LRV [j] · ACK [j+3]</text>
     <text class="cn" x="252" y="8" text-anchor="middle">dot2</text>
-    <rect x="178" y="12" width="148" height="20" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="252" y="26" text-anchor="middle">DOT2 [j] · VEC1 [j+1]</text>
+    <rect x="178" y="12" width="148" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="252" y="31" text-anchor="middle">DOT2 [j] · VEC1 [j+1]</text>
     <text class="cn" x="422" y="8" text-anchor="middle">mem2</text>
-    <rect x="348" y="12" width="148" height="20" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="422" y="26" text-anchor="middle">LRK [j+2] · ACV [j+2]</text>
+    <rect x="348" y="12" width="148" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="422" y="31" text-anchor="middle">LRK [j+2] · ACV [j+2]</text>
     <text class="cn" x="592" y="8" text-anchor="middle">dot1</text>
-    <rect x="518" y="12" width="148" height="20" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="592" y="26" text-anchor="middle">DOT1 [j+1] · VEC2 [j]</text>
+    <rect x="518" y="12" width="148" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="592" y="31" text-anchor="middle">DOT1 [j+1] · VEC2 [j]</text>
   </g>
 
-  <text class="note" x="8" y="192">In every column one wave is in a dot cluster and the other is in a mem cluster — the arrangement §1 asked for.</text>
-  <text class="note" x="8" y="214">`warp_pipeline_stage` marks the clusters; each boundary lowers to an `s_barrier` that keeps the two waves one apart.</text>
+  <text class="note" x="8" y="216">In every column one wave is in a dot cluster and the other is in a mem cluster — the arrangement §1 asked for.</text>
+  <text class="note" x="8" y="238">`warp_pipeline_stage` marks the clusters; each boundary lowers to an `s_barrier` that keeps the two waves one apart.</text>
 </svg>

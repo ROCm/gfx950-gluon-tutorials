@@ -281,11 +281,37 @@ in the same lagging frame, so the result is unchanged.
 Skipping needs a branch, and the useful granularity is the wave: each wave owns 32 rows and can
 decide independently. `gl.warp_predicate` expresses exactly that — it lowers to
 `s_and_saveexec` + `s_cbranch_execz`, with no cross-wave reduction and no barrier. Rows that did
-not advance carry `alpha == 1`, so even an unskipped multiply is a no-op for them.
+not advance carry `alpha == 1`, which leaves their values unchanged — but the multiply still
+issues and still costs its four cycles, which is exactly why the skip has to be a real branch
+rather than a multiply by one.
 
 That empties the QK cluster to 192 of 384 — and leaves PV untouched at 448. The kernel is now
-badly unbalanced rather than uniformly over, which is a better problem but not yet a solved one.
-Closing it is the second design rule below.
+badly unbalanced rather than uniformly over: 192 cycles of QK shadow go unused while PV pays 64
+cycles for its overflow.
+
+**Balancing them is the final piece.** Only the totals matter, so move work from PV to QK until
+both fit. The candidates are the three elementwise items in `VEC1` — the row max, the subtract,
+and the `exp2` — and the row max is not one of them: it is a *reduction*, so the whole tile has
+to be reduced before `m_new` exists, and it is what the subtract depends on.
+
+That leaves the subtract and the `exp2`, and **they have to move as a pair.** Moving the `exp2`
+alone was tried first, and it fails in an instructive way: the subtract stays in PV while its
+only consumer is now in the other cluster, so `MachineSink` pulls it out of PV altogether (§6) —
+the work leaves the cluster it was supposed to leave, but lands in a mem stage rather than in QK.
+Moving both instead lets the **raw** slice be carried across and subtracted where it is
+exponentiated, so the subtract is born in the cluster that uses it and there is nothing for the
+sinker to move.
+
+So the score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed
+in `dot1` instead: 12 of the 32 `fma` and 12 of the 32 `exp2`, which is 48 + 96 = 144 cycles
+leaving PV and arriving in QK. PV lands at 304 and QK at 336 — both inside 384 and within 32
+cycles of each other.
+
+The fraction was found by bisection rather than derived. Moving a quarter left PV still
+oversubscribed at 468 cycles against 384, while QK had 80 cycles idle and two windows with
+nothing in them at all; moving a half over-corrected the other way. Three eighths sits between
+them, which is why the tile is sliced into eighths and not halves — the slicing granularity
+exists to make the ratio adjustable.
 
 ### Design rules the final kernel embodies
 
@@ -293,7 +319,7 @@ Closing it is the second design rule below.
 |---|---|
 | **Keep control flow out of the dot clusters.** The rescale's `warp_predicate` block lives in the `mem2` cluster, not in `VEC2` where the arithmetic belongs. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster is issued *before* the first MFMA — the matrix core waits on it. Moving the block to a mem cluster puts that cost against memory latency instead, and lets `dot1` start with the QK MFMA. |
 | **Balance the two dot clusters.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 304 and QK to 336. | 192 against 448 wastes the whole of QK's slack while PV pays for the overflow. Only the totals matter, and both are made of the same elementwise work, so it can be moved. |
-| **Rebalancing must cost nothing.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions at all**. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable, and it is a Gluon technique worth knowing well beyond attention. (`reshape` → `permute` → `split` with `assert_trivial=True` compiles to the identical code and was what this kernel used first; `slice` says it in one line.) |
+| **Rebalancing must cost nothing.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions at all**. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable, and it is a Gluon technique worth knowing well beyond attention. |
 
 ## 6. Making the compiler co-operate
 
@@ -301,45 +327,97 @@ The budget in §5 says the work *fits*. Getting it actually issued inside the sh
 compiler's job, and by §3 the dot clusters are intra-wave regions, so it needs help in three
 places.
 
-**Keep the vector work in its region.** `MachineSink` runs on MIR, long after any IR pass, and
-happily moves `exp2` and `fma` toward their consumers *across* an `s_barrier` — a barrier is
-`IntrNoMem`, so it is not a code-motion fence for pure ALU ops. Ops that leave a dot cluster are
-ops the scheduler never gets to place, and the measured cost of letting it happen is about
-3.5%. Hence `DISABLE_LLVM_OPT=disable-machine-sink`.
+### Keeping each op in the cluster it was assigned to
 
-**Choose packed or scalar per instruction.** §2's rule — packed f32 cannot go in the shadow, but
-retires two elements per issue when it is outside — makes this a genuine decision rather than a
-preference, and the two kernels want opposite answers.
+§5's whole argument is an assignment of vector ops to clusters — this `exp2` belongs beside the
+PV MFMA, that subtract beside the QK MFMA. `MachineSink` runs on MIR, long after any IR pass,
+and undoes it: it moves an op toward its consumer, and since `VEC1` of one tile feeds `VEC2` of
+the next, "toward its consumer" means *out of its cluster and into the following one*. An
+`s_barrier` is no obstacle — it is `IntrNoMem`, so it is not a code-motion fence for pure ALU
+ops, and a chain-free `fsub` has no dependency edge on it at all.
 
-`fav4` fits its budget, so every op should get a slot, so nothing should stay packed:
-`AMDGCN_SCALARIZE_PACKED_FOPS=1` splits packed `fmul`/`fadd`/`fma` into per-element scalars and
-the scheduler places them all. `fav3` does *not* fit, so the ops that will be left outside
-should stay packed and halve their issue cost — a blanket split would double exactly the work
-that failed to get a slot. **`fav3` must therefore not set that variable.**
+The result is a cluster that was carefully balanced arriving at the scheduler with its work
+somewhere else. Measured, letting it happen costs about 3.5% and moves PV's occupancy from
+368 to 112 of 384. Hence `DISABLE_LLVM_OPT=disable-machine-sink`. Note this is not a scheduling
+decision being overridden — it is a placement decision being *preserved* so that scheduling has
+something to work with.
 
-Worth appreciating that the backend already does the easy half of this by itself:
-LLVM's `SIPreEmitPeephole` breaks a packed op back into scalars when it finds one sitting in an
-MFMA's shadow, precisely because it cannot co-execute there. The pass gets the local decision
-right on its own; what it cannot see is the *budget*, which is what decides whether an op should
-have been given a slot in the first place.
+### Packed or scalar: whose job is it?
 
-**Place the rest deliberately.** The out-of-tree **llirSched** plugin does that. It classifies
-each region (§3), and for a dot cluster it walks the vector ops against the MFMA windows and
-*declares* the resulting assignment with `sched_group_barrier`, which AMDGPU's IGroupLP then
-builds in the machine scheduler. When the region fits it spreads the work evenly; when it does
-not, it covers the ops that cannot be packed first, spends what window is left on packable ops
-split into scalars, and leaves the remainder packed. That over-capacity path is what makes
-`fav3` land at 85.3% rather than the 75.9% it measures with no plugin at all. The algorithm,
-the region classifier and the cost model are documented in
+§2's rule makes this a real decision. A packed op cannot go in the shadow, but retires two
+elements per issue when it is outside. So the ideal is precise: **work that will be covered
+should be scalar, and work that will be left over should be packed** — and which is which is not
+known until the assignment is done.
+
+Both kernels therefore start from **packed** math, which is what Gluon emits anyway, and the
+decision is made where the budget is known. `fav3` has genuine leftovers: its over-capacity path
+splits only the ops it managed to cover and leaves the remainder packed, halving their issue cost
+since they are going to be exposed either way. `fav4` has no leftovers, so everything it declares
+gets covered and everything gets split.
+
+The mechanism that performs the split is LLVM's `SIPreEmitPeephole`, which finds a packed op
+sitting in an MFMA's shadow, recognizes that it cannot co-execute there, and breaks it into
+scalars. That is the correct local decision made at the only point where the answer is known —
+after scheduling has decided what sits where.
+
+For this to work the declaration has to be *satisfiable*, and that is the subtle part.
+`sched_group_barrier` takes a class and a **count of instructions**. If the scheduler declares
+its groups in *elements* — treating a packed op as the two scalars it will become — then a
+24-cycle window asks for six VALU instructions where only three exist. IGroupLP cannot fill the
+group, and an unfillable group makes its pipeline solver abandon the whole region, leaving ISel's
+order for all 16 MFMAs. Measured, that costs **9.8%**: 4719.6 cyc/iter against 4297.5, with 16
+packed ops stranded outside the shadow.
+
+Declaring in instructions instead — one entry per op priced by its weight, which is how a TRANS
+op was always handled — makes it satisfiable, and the peephole then unpacks every one:
+
+| fav4 | cyc/iter | MFMA eff / SIMD | packed left in loop | ceiling |
+|---|---:|---:|---:|---:|
+| declare in instructions (current) | **4373.2** | **93.7%** | 0 | 100% |
+| declare in elements, rely on the peephole | 4719.6 | 86.8% | 16 | 97% |
+
+There is a residual worth knowing about, because it generalizes to any declared schedule. The
+current form still gives up about 1.6% against forcing every op scalar before the scheduler ever
+sees it. The loop reaches its 100% ceiling with nothing packed left in it, so the loss is not
+coverage — it is fill accuracy. **A count is a faithful cycle budget only when the class is
+uniform-cost.** A VALU group holding both 4-cycle scalars and 8-cycle packed ops can be satisfied
+by a cheap triple or an expensive one, and the realized fill drifts. TRANS never has this problem
+because every transcendental costs 8.
+
+That residual is the price of having one flow instead of two. Earlier revisions used Triton's
+`ScalarizePackedFOps` pass to force `fav4` scalar before scheduling, which recovered the 1.6% but
+required an environment variable that had to agree with which kernel was being compiled — and had
+to be *off* for `fav3`, whose leftovers must stay packed. Neither kernel needs it now.
+
+### Declaring the interleave
+
+The out-of-tree **llirSched** plugin does the assignment itself. It classifies each region (§3),
+and for a dot cluster it walks the vector ops against the MFMA windows, then *declares* the
+result with `sched_group_barrier` — a sequence of "N instructions of this class, then M of that"
+which AMDGPU's IGroupLP builds in the machine scheduler. When the region fits it spreads the work
+evenly; when it does not, it covers the ops that cannot be packed first, spends what window is
+left on packable ops split into scalars, and leaves the remainder packed. That over-capacity path
+is what puts `fav3` at 85.3% instead of the 75.9% it measures with no plugin at all.
+
+Declaring rather than reordering is the load-bearing choice, and `sched_barrier` is the
+alternative that does not work:
+
+- **It is advisory.** `sched_barrier(0)` asks the machine scheduler not to move instructions
+  across a point; it does not oblige it. We measured codegen consolidating a stage's last two
+  sub-regions anyway. `sched_group_barrier` does not ask the scheduler to preserve an order — it
+  tells IGroupLP to *construct* one.
+- **It does not fence what we care about.** A barrier is a chain node, so it orders memory
+  operations. Chain-free arithmetic — a pure `fsub` — has no edge to it and drifts across freely.
+  This is the same property that lets `MachineSink` move `exp2` over an `s_barrier` above.
+- **Pinning an order throws away the scheduler's knowledge.** The fallback path physically
+  reorders the IR and pins it; it is kept only for A/B, and it is slower, because a fixed order
+  cannot respond to the latencies and register pressure the scheduler can see.
+
+One detail worth knowing if you read the plugin: the declaration has to be emitted **after**
+every real instruction of the region, because IGroupLP forms its groups scanning upward. A
+declaration at the top of a region yields empty groups and silently does nothing. The algorithm,
+the region classifier and the cost model are in
 [`llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html).
-
-Two more compiler-side settings are load-bearing and easy to miss:
-`LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`, without which `optimize_module` runs all of O3 with no
-target machine and codegen regresses; and the kernel's own
-`llvm_fn_attrs amdgpu-agpr-alloc="0,0"`, which pins accumulators to VGPRs — with the 2×-unrolled
-loop the default AGPR placement puts `v_accvgpr` moves on the critical path, worth ~50 TFLOPS.
-The full list, with which component owns each variable and which are cache-invalidating, is in
-[`note.md`](note.md).
 
 ## 7. Results
 
@@ -350,22 +428,23 @@ comparable across implementations.
 
 | kernel | TFLOPS | cyc/iter | MFMA eff / SIMD | ceiling from §5 |
 |---|---:|---:|---:|---:|
-| **`fav4`** (`SCALE_ON_Q=1`) | **1245** | **4306** | **95.1%** | **100%** |
-| `fav4`, `--scale-on-q 0` | 1231 | 4419 | 92.7% | 100% |
-| `fav3` | 1167 | 4802 | 85.3% | **91.4%** |
+| **`fav4`** (`SCALE_ON_Q=1`) | **1241** | **4373** | **93.7%** | **100%** |
+| `fav4`, `--scale-on-q 0` | 1220 | 4438 | 92.3% | 100% |
+| `fav3` | 1169 | 4804 | 85.3% | **91.4%** |
 | `fav3`, no scheduling plugin | 1127 | — | — | 91.4% |
 | *ROCm/FlyDSL, lazy rescale* | *1242* | *4747* | *86.3%* | |
 | *ROCm/FlyDSL, eager rescale* | *1044* | *6695* | *61.2%* | |
 
 **The ceilings come straight from §5's budget**, and they are what make the efficiency column
 readable. `fav4`'s demand fits inside the window, so nothing is exposed and its ceiling is
-100%; it reaches 95.1%. `fav3` has 4 × 48 = 192 exposed cycles per loop body against 2048 of
+100%; it reaches 93.7%. `fav3` has 4 × 48 = 192 exposed cycles per loop body against 2048 of
 MFMA, so its ceiling is 2048/2240 = **91.4%**; it reaches 85.3%.
 
-That reframes the comparison. The two kernels are 9.8 points apart in efficiency, but their
-*ceilings* are 8.6 points apart — so almost the whole gap is the exposed packed work that
-`fav3`'s budget cannot absorb, not the scheduler doing a worse job on it. Each kernel is within
-about 5–6 points of its own ceiling, and that remainder is barrier and pacing overhead.
+That reframes the comparison. The two kernels are 8.4 points apart in efficiency and their
+*ceilings* are 8.6 points apart — so the entire gap is the exposed packed work `fav3`'s budget
+cannot absorb, and neither scheduler is doing a worse job than the other. Each lands about 6
+points short of its own ceiling, and that remainder is barrier and pacing overhead, the same for
+both.
 
 Three things worth reading off the table.
 
@@ -406,11 +485,10 @@ FA_MODULE=fav4 python ../../scripts/fa_kernel_time.py --seqlen 16320
 Pick the kernel with `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`. Defaults are
 `B=1, HQ=HK=64 (MHA), D=128, fp16, bhsd`, non-causal.
 
-Both need the scheduling plugin loaded and two other passes configured. The exact variables,
-which component owns each, and which are cache-invalidating are tabulated under **Environment
-variables** in [`note.md`](note.md). One asymmetry bears repeating because it is easy to get
-backwards: **`AMDGCN_SCALARIZE_PACKED_FOPS=1` is for `fav4` only — `fav3` must not set it**
-(§6 explains why).
+Both need the scheduling plugin loaded and one other pass disabled, and **both take the same
+environment** — there is no longer a variable that has to agree with which kernel is being built
+(§6). The exact variables, which component owns each, and which are cache-invalidating are
+tabulated under **Environment variables** in [`note.md`](note.md).
 
 **Scope.** Both kernels are reduced to the single most-performant path: non-causal, head dim
 128, fp16/bf16, `bhsd`/`bshd`, MHA/GQA/MQA, and a K length that is a multiple of `BLOCK_N`=64.
