@@ -1565,11 +1565,19 @@ static bool declareRegionGroups(Instruction *Begin, Instruction *End,
         if (Function *F = CI->getCalledFunction())
           isPermlane = F->getName().contains("permlane");
       int idx = dependsOnAny(&I, transSet) ? 2 : 0;
+      // ONE entry per instruction, priced by its weight -- the same convention the
+      // TRANS branch above uses (one entry of 8) and the same one
+      // declareRegionGroupsOverCap uses for its Chunks. It matters because the entry
+      // count becomes the sched_group_barrier group SIZE, and that size is a count of
+      // INSTRUCTIONS. Pushing one 4-cycle entry per ELEMENT instead would declare 6
+      // where a window holds 3 packed ops; IGroupLP cannot fill the group and its
+      // solver then abandons the whole region's pipeline. With instruction counts the
+      // declaration is satisfiable as emitted, and SIPreEmitPeephole splits whatever
+      // ends up in a shadow -- so no kernel needs Triton's ScalarizePackedFOps.
       if (isPermlane)
         runs[idx].cyc.push_back(kPermlaneCycles);
       else
-        for (int k = 0; k < w; ++k)
-          runs[idx].cyc.push_back(4);
+        runs[idx].cyc.push_back(4 * w);
     }
   }
   // Drop empty blocks so they cost no groups.
