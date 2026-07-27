@@ -61,12 +61,11 @@ both at once. Half the shadow is wasted.
 Now three categories are live at the same time, which needs **three waves per SIMD**: one in
 the mem stage, one in the VALU stage, one in the MFMA stage.
 
-That is reachable — `num_warps=4` puts one wave of a workgroup on each SIMD, so three resident
-workgroups per CU give three waves per SIMD. But each workgroup then carries its own `Q` and
-its own accumulator (§4.3: 96 VGPRs of live-in before any working set), which triples the part
-of the register budget that cannot be shared. And `s_barrier` synchronizes *within* a
-workgroup, so there is no primitive to keep waves from three different workgroups in the phase
-relationship the pipeline depends on.
+![three waves per SIMD, drawn from three different workgroups](images/three_waves.svg)
+
+It is reachable, and the pairing works — the memory and the VALU do come from different waves. It
+is the *third* wave that is the problem, because it has to come from a different workgroup, and
+nothing can keep three workgroups in step.
 
 ### In the dot stage, with the MFMA
 
@@ -174,12 +173,17 @@ Run them in dependency order and the matrix core idles through every copy and ev
 and the memory pipe idles through all the math. The fix is the standard one — software-pipeline
 the loop so that the memory for a *future* tile overlaps the matrix work of the current one.
 
-![four pipeline stages; each column is one loop iteration](images/pipeline.svg)
+![the four stages, filling and draining](images/pipeline.svg)
 
-Read the diagonal: at any moment the wave is working on four different tiles at once. The
-copy of tile *j+3*, the LDS reads of *j+2*, the first MFMA chain of *j+1*, and the second MFMA
-chain of *j* all happen in the same time step. That vertical slice **is** the loop body, and
-the tile index attached to each operation says how far ahead of the current tile it runs.
+Each row is a pipeline stage and each column one loop iteration. Read down a column and the wave
+is working on **four different tiles at once**: copying tile *j+3* into LDS, reading tile *j+2*
+back out, running the QK chain of *j+1* and the PV chain of *j*. That column is the loop body,
+and each op's tile index says how far ahead of the current tile that stage runs.
+
+The two ends are the cost of the arrangement. Three columns at the start have stages with no tile
+to work on yet, and three at the end are finishing tiles with no copies left to issue; both are
+straight-line code outside the loop, which is why a trace reports them separately as the prologue
+and epilogue. A four-stage pipeline costs three of each.
 
 §1 then fixes how the slice is subdivided: every group must pair matrix work with memory so
 that a wave in one kind of group always faces a wave in the other. Four clusters do it.
@@ -193,13 +197,28 @@ barrier. With `waves_per_eu=2` the two waves on a SIMD run **one cluster apart**
 
 ### 4.2 How the softmax is split
 
-The softmax is cut into two groups that land in *different* dot clusters, so that neither
-cluster has to hide all of it and both MFMA chains have independent vector work beside them:
+The softmax is cut into two groups that land in *different* dot clusters, so that neither cluster
+has to hide all of it and both MFMA chains have independent vector work beside them. Where the cut
+can go is not a free choice — the softmax is a single dependency chain:
+
+![the softmax dependency chain and where it can be cut](images/softmax_dag.svg)
 
 | | work | lands in |
 |---|---|---|
 | **VEC1** | the new row max, then `fma` (subtract the max) and `exp2` on the score tile | `dot2`, beside the PV MFMA |
 | **VEC2** | the row sum, the downcast of `p` to fp16 for the next PV MFMA, and the accumulator rescale | `dot1`, beside the QK MFMA |
+
+Two properties of that chain decide everything about the balance. The row max is a **reduction**,
+so nothing downstream of it exists until the entire tile has been reduced — it cannot be moved,
+and the subtract depends on it. And both consumers of `exp2`, the row sum and the downcast, sit on
+the far side of the cut. So the chain admits one natural cut point, after `exp2`, and the split
+above is that cut applied to the whole tile.
+
+What makes the balance tunable is that the tile is a set of independent **column slices**, and each
+slice can be cut in a different place. A slice cut after `exp2` leaves its subtract and exponential
+in VEC1; a slice cut *before* the subtract is carried across raw and has both computed in VEC2.
+§5 tunes how many slices go each way — which is balancing two clusters without ever breaking the
+chain.
 
 The consequence to hold on to while reading the code: `VEC1` runs in `dot2` on tile *j+1* while
 the PV MFMA there is still working on tile *j*, so the `p` it produces is consumed a full turn
@@ -245,20 +264,26 @@ Start by pricing the softmax against §2's budget. Each Gluon op below expands t
 of machine instructions per wave per tile — the score tile is 32 × 64 over 64 lanes, so 32
 registers, and the accumulator is 32 × 128, so 64:
 
-| Gluon op | instructions | class | cycles | cluster |
-|---|---:|---|---:|---|
-| row max | 16 × `v_max3` | VALU | 64 | PV |
-| subtract the max | 32 × `v_fma` | VALU | 128 | PV |
-| `exp2` | 32 × `v_exp` | TRANS | **256** | PV |
-| row sum | 32 × `v_add` | VALU | 128 | QK |
-| downcast `p` to fp16 | 16 × `v_cvt_pk` | VALU | 64 | QK |
-| rescale the accumulator | 64 × `v_mul` | VALU | **256** | QK |
+| Gluon op | instructions | class | cycles | packed | cluster |
+|---|---:|---|---:|---:|---|
+| row max | 16 × `v_max3` | VALU | 64 | — | PV |
+| subtract the max | 32 × `v_fma` | VALU | 128 | 16 × `v_pk_fma` = **64** | PV |
+| `exp2` | 32 × `v_exp` | TRANS | **256** | — | PV |
+| row sum | 32 × `v_add` | VALU | 128 | 16 × `v_pk_add` = **64** | QK |
+| downcast `p` to fp16 | 16 × `v_cvt_pk` | VALU | 64 | already packed | QK |
+| rescale the accumulator | 64 × `v_mul` | VALU | **256** | 32 × `v_pk_mul` = **128** | QK |
+
+The packed column is the same work at half the issue cost — and it is a trap here, because a packed
+op cannot go in an MFMA's shadow at all (§2). Halving the cost only helps for work that was never
+going to be hidden, which is why the column matters for `fav3` and not for `fav4`, and why §6 has
+to decide the two forms per instruction rather than globally. Read the cycles column as the price
+of work you intend to hide.
 
 Two items dominate, and they are the two that scale with a *whole tile* rather than with a row:
 the `exp2` burst and the accumulator rescale. Totalled per cluster against the 384 cycles each
 one has to spend:
 
-![the softmax priced against the shadow, before and after](images/budget_progression.svg)
+![fav3's softmax priced against the shadow](images/budget_fav3.svg)
 
 These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
 backend adds address arithmetic, and `fav3`'s scheduler leaves some work packed, which halves
@@ -295,23 +320,35 @@ and the `exp2` — and the row max is not one of them: it is a *reduction*, so t
 to be reduced before `m_new` exists, and it is what the subtract depends on.
 
 That leaves the subtract and the `exp2`, and **they have to move as a pair.** Moving the `exp2`
-alone was tried first, and it fails in an instructive way: the subtract stays in PV while its
-only consumer is now in the other cluster, so `MachineSink` pulls it out of PV altogether (§6) —
-the work leaves the cluster it was supposed to leave, but lands in a mem stage rather than in QK.
-Moving both instead lets the **raw** slice be carried across and subtracted where it is
-exponentiated, so the subtract is born in the cluster that uses it and there is nothing for the
-sinker to move.
+alone was tried first, and it fails in an instructive way. The subtract stays behind in PV while
+its only consumer is now in the other cluster, and something then drags it out of PV into a mem
+stage — the work leaves the cluster it was meant to leave, but does not arrive in QK either.
 
-So the score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed
-in `dot1` instead: 12 of the 32 `fma` and 12 of the 32 `exp2`, which is 48 + 96 = 144 cycles
-leaving PV and arriving in QK. PV lands at 304 and QK at 336 — both inside 384 and within 32
-cycles of each other.
+The something is **ISel's pre-RA list scheduler**, not `MachineSink`, which is worth being precise
+about because `MachineSink` is already disabled (§6) and disabling it does not help. ISel's *first*
+MIR dump already shows 16 of the 32 subtracts sitting in the mem region, before `MachineSink` ever
+runs; re-running the same IR with `-pre-RA-sched=linearize` keeps all of them in the dot stage. The
+underlying reason is the one from §6's third bullet: a pure `fsub` has no chain edge, so neither
+`s_barrier` nor `sched.barrier` orders it, and a scheduler that sees its consumer downstream is
+free to move it there.
 
-The fraction was found by bisection rather than derived. Moving a quarter left PV still
-oversubscribed at 468 cycles against 384, while QK had 80 cycles idle and two windows with
-nothing in them at all; moving a half over-corrected the other way. Three eighths sits between
-them, which is why the tile is sliced into eighths and not halves — the slicing granularity
-exists to make the ratio adjustable.
+Moving both ops instead removes the opportunity. The **raw** slice is carried across and subtracted
+where it is exponentiated, so the subtract is born in the cluster that consumes it and there is
+nothing left downstream to be pulled toward.
+
+So the score tile is sliced along N and the subtract + `exp2` for some fraction of the slices is
+computed in `dot1` instead. The fraction was found by bisection, not derived — and from here the
+numbers are the **compiled** ones rather than the table's, because the margins are what the decision
+turns on and the backend's own address arithmetic is part of them. Measured, the two clusters start
+at 204 and 484 rather than the table's 192 and 448:
+
+![sweeping the fraction moved from PV to QK](images/budget_balance.svg)
+
+A half overshoots — QK goes over while PV is left with slack, the same imbalance with the sides
+swapped. A quarter does not move enough: PV is still over, and QK is still holding cycles it could
+have taken. **Three eighths** puts both inside with the two clusters within 8 cycles of each other,
+and that is why the tile is sliced into eighths rather than halves — the granularity exists to make
+the ratio adjustable.
 
 ### Design rules the final kernel embodies
 
@@ -360,11 +397,15 @@ correct local decision, made at the one point where the answer is known, after s
 settled what sits where.
 
 What the scheduler has to get right for that to work is the **unit** it declares in.
-`sched_group_barrier` takes a class and a count of *instructions*, so a window holding three
-packed ops must be declared as three, not as the six elements they will become. Declared in
-instructions the group is satisfiable whether or not the ops are still packed, and the peephole
-takes care of the rest. This is also why one kernel no longer needs a different environment from
-the other: nothing upstream has to normalize the packing first.
+`sched_group_barrier` takes a class and a count of *instructions*, so a window holding three packed
+ops must be declared as three, not as the six elements they will become. Declared in instructions
+the group is satisfiable whether or not the ops are still packed, and the peephole takes care of
+the rest:
+
+![a declared group of packed ops becoming issued scalars](images/packed_formation.svg)
+
+Which is also why one kernel no longer needs a different environment from the other: nothing
+upstream has to normalize the packing first.
 
 ### Declaring the interleave
 

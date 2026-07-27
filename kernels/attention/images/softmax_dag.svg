@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 260" width="760" height="260" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .grp  { font-size: 12px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .cnt  { font-size: 10px; fill: #767676; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .e    { stroke: #909090; stroke-width: 1.3; fill: none; marker-end: url(#a); }
+    .cut  { stroke: #c8443c; stroke-width: 1.6; stroke-dasharray: 5 4; }
+    .cl   { font-size: 11px; fill: #c8443c; }
+    .reg  { fill: none; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#909090"/>
+    </marker>
+  </defs>
+
+  <text class="h" x="8" y="16">The softmax is one dependency chain. The split has to cut it somewhere.</text>
+
+  <rect class="reg" x="26"  y="34" width="330" height="112"/>
+  <text class="grp" x="34" y="30">VEC1  —  PV cluster</text>
+  <rect class="reg" x="404" y="34" width="330" height="112"/>
+  <text class="grp" x="412" y="30">VEC2  —  QK cluster</text>
+
+  <rect x="40"  y="48" width="96" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in"  x="88" y="61" text-anchor="middle">row max</text>
+  <text class="cnt" x="88" y="71" text-anchor="middle">16 x max3</text>
+
+  <rect x="164" y="48" width="96" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in"  x="212" y="61" text-anchor="middle">subtract</text>
+  <text class="cnt" x="212" y="71" text-anchor="middle">32 x fma</text>
+
+  <rect x="164" y="100" width="96" height="26" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="in"  x="212" y="113" text-anchor="middle">exp2</text>
+  <text class="cnt" x="212" y="123" text-anchor="middle">32 x exp</text>
+
+  <rect x="418" y="48" width="96" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in"  x="466" y="61" text-anchor="middle">row sum</text>
+  <text class="cnt" x="466" y="71" text-anchor="middle">32 x add</text>
+
+  <rect x="418" y="100" width="96" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in"  x="466" y="113" text-anchor="middle">downcast</text>
+  <text class="cnt" x="466" y="123" text-anchor="middle">16 x cvt_pk</text>
+
+  <rect x="558" y="74" width="96" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in"  x="606" y="87" text-anchor="middle">rescale acc</text>
+  <text class="cnt" x="606" y="97" text-anchor="middle">64 x mul</text>
+
+  <path class="e" d="M 136,61  L 160,61"/>
+  <path class="e" d="M 212,74  L 212,96"/>
+  <path class="e" d="M 260,113 C 330,113 350,61 414,61"/>
+  <path class="e" d="M 260,113 L 414,113"/>
+  <path class="e" d="M 88,74 C 88,150 300,160 560,96"/>
+
+  <line class="cut" x1="380" y1="34" x2="380" y2="146"/>
+  <text class="cl" x="380" y="160" text-anchor="middle">the cut</text>
+
+  <text class="note" x="8" y="192">Reading it: the row max is a reduction, so nothing downstream exists until the whole tile is reduced —</text>
+  <text class="note" x="8" y="208">it cannot move. The subtract needs it; exp2 needs the subtract; both the sum and the downcast need exp2.</text>
+  <text class="note" x="8" y="224">So the chain admits exactly one clean cut, after exp2, and the only freedom left is how many of the tile's</text>
+  <text class="note" x="8" y="240">column slices are cut there rather than earlier — which is what the balancing in §5 tunes.</text>
+</svg>

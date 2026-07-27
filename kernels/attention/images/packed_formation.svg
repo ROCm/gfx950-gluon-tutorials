@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .st   { font-size: 12px; font-weight: 600; fill: #1a1a1a; }
+    .in   { font-size: 10px; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .bad  { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .win  { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+  </style>
+
+  <text class="h" x="8" y="16">How a declared group becomes issued code. One MFMA's shadow holds 24 cycles = 6 slots.</text>
+
+  <!-- step 1 -->
+  <text class="st" x="8" y="52">1</text>
+  <text class="note" x="24" y="52">declared: 3 packed ops per shadow, each standing for 2 elements</text>
+  <g transform="translate(24,60)">
+    <rect x="0"   y="0" width="70" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="35"  y="15" text-anchor="middle">MFMA</text>
+    <rect x="74"  y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="102" y="15" text-anchor="middle">pk</text>
+    <rect x="132" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="160" y="15" text-anchor="middle">pk</text>
+    <rect x="190" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="218" y="15" text-anchor="middle">pk</text>
+    <rect class="win" x="74" y="0" width="172" height="22"/>
+    <rect x="250" y="0" width="70" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="285" y="15" text-anchor="middle">MFMA</text>
+    <rect x="324" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="352" y="15" text-anchor="middle">pk</text>
+    <rect x="382" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="410" y="15" text-anchor="middle">pk</text>
+    <rect x="440" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="468" y="15" text-anchor="middle">pk</text>
+    <rect class="win" x="324" y="0" width="172" height="22"/>
+  </g>
+  <text class="note" x="24" y="102">The count matches what exists, so IGroupLP can build it.</text>
+
+  <!-- step 2 -->
+  <text class="st" x="8" y="140">2</text>
+  <text class="note" x="24" y="140">but a packed op cannot co-execute — as issued, none of them is actually hidden</text>
+  <g transform="translate(24,148)">
+    <rect x="0"   y="0" width="70" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="35"  y="15" text-anchor="middle">MFMA</text>
+    <rect x="74"  y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="102" y="15" text-anchor="middle">pk</text>
+    <rect x="132" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="160" y="15" text-anchor="middle">pk</text>
+    <rect x="190" y="0" width="56" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="218" y="15" text-anchor="middle">pk</text>
+    <rect class="win" x="74" y="0" width="172" height="22"/>
+    <text class="bad" x="256" y="15">each one pushes the next MFMA out</text>
+  </g>
+
+  <!-- step 3 -->
+  <text class="st" x="8" y="228">3</text>
+  <text class="note" x="24" y="228">SIPreEmitPeephole splits exactly the ones sitting in a shadow — 3 packed become 6 scalars</text>
+  <g transform="translate(24,236)">
+    <rect x="0"   y="0" width="70" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="35"  y="15" text-anchor="middle">MFMA</text>
+    <rect x="74"  y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="103" y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="132" y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="161" y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="190" y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect x="219" y="0" width="28" height="22" fill="#cfe0f7" stroke="#3b7dd8"/>
+    <rect class="win" x="74" y="0" width="173" height="22"/>
+    <rect x="250" y="0" width="70" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="285" y="15" text-anchor="middle">MFMA</text>
+    <text class="ok" x="330" y="15">6 x 4 cyc = 24 — the shadow is exactly full</text>
+  </g>
+  <text class="note" x="24" y="286">Any packed op that did *not* land in a shadow is left alone, which is what fav3 wants: it is</text>
+  <text class="note" x="24" y="302">going to be exposed either way, and packed it costs one issue slot instead of two.</text>
+  <g transform="translate(24,312)">
+    <rect x="0"   y="0" width="12" height="12" fill="#f7d2cf" stroke="#c8443c"/><text class="note" x="18" y="10">packed, 2 elements</text>
+    <rect x="150" y="0" width="12" height="12" fill="#cfe0f7" stroke="#3b7dd8"/><text class="note" x="168" y="10">scalar, 1 element, 4 cyc</text>
+  </g>
+</svg>
