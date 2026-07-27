@@ -1,61 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" width="760" height="250" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
   <style>
-    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
-    .row  { font-size: 11px; fill: #767676; }
-    .cell { font-size: 9.5px; fill: #1a1a1a; }
-    .ph   { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .h   { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .row { font-size: 11px; fill: #767676; }
+    .ops { font-size: 8px; fill: #1a1a1a; }
+    .tid { font-size: 8.5px; fill: #767676; }
+    .ph  { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .reg { stroke: #b9b9b9; stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
     .body { fill: none; stroke: #c8443c; stroke-width: 2; }
-    .bl   { font-size: 11px; fill: #c8443c; }
-    .reg  { stroke: #b9b9b9; stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
+    .bl  { font-size: 11px; fill: #c8443c; }
+    .note { font-size: 11px; fill: #767676; }
   </style>
 
-  <text class="h" x="8" y="16">The four stages, filling and draining</text>
-
-  <rect class="reg" x="130" y="36" width="200" height="150"/>
-  <rect class="reg" x="332" y="36" width="200" height="150"/>
-  <rect class="reg" x="534" y="36" width="200" height="150"/>
-  <text class="ph" x="230" y="32" text-anchor="middle">prologue</text>
-  <text class="ph" x="432" y="32" text-anchor="middle">main loop</text>
-  <text class="ph" x="634" y="32" text-anchor="middle">drain</text>
-
-  <text class="row" x="8" y="58">stage 0</text>
-  <text class="row" x="8" y="94">stage 1</text>
-  <text class="row" x="8" y="130">stage 2</text>
-  <text class="row" x="8" y="166">stage 3</text>
-
-  <!-- prologue -->
-  <rect x="136" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="167" y="59" text-anchor="middle">ACK[0]</text>
-  <rect x="202" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="233" y="59" text-anchor="middle">ACK[1]</text>
-  <rect x="268" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="299" y="59" text-anchor="middle">ACK[2]</text>
-  <rect x="202" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="233" y="95" text-anchor="middle">LRK[0]</text>
-  <rect x="268" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="299" y="95" text-anchor="middle">LRK[1]</text>
-  <rect x="268" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="299" y="131" text-anchor="middle">DOT1[0]</text>
-
-  <!-- main loop -->
-  <rect x="338" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="369" y="59" text-anchor="middle">ACK[3]</text>
-  <rect x="404" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="435" y="59" text-anchor="middle">ACK[4]</text>
-  <rect x="470" y="44" width="62" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="cell" x="501" y="59" text-anchor="middle">ACK[5]</text>
-  <rect x="338" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="369" y="95" text-anchor="middle">LRK[2]</text>
-  <rect x="404" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="435" y="95" text-anchor="middle">LRK[3]</text>
-  <rect x="470" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="501" y="95" text-anchor="middle">LRK[4]</text>
-  <rect x="338" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="369" y="131" text-anchor="middle">DOT1[1]</text>
-  <rect x="404" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="435" y="131" text-anchor="middle">DOT1[2]</text>
-  <rect x="470" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="501" y="131" text-anchor="middle">DOT1[3]</text>
-  <rect x="338" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="369" y="167" text-anchor="middle">DOT2[0]</text>
-  <rect x="404" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="435" y="167" text-anchor="middle">DOT2[1]</text>
-  <rect x="470" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="501" y="167" text-anchor="middle">DOT2[2]</text>
-
-  <!-- drain -->
-  <rect x="540" y="80" width="62" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="cell" x="571" y="95" text-anchor="middle">LRK[5]</text>
-  <rect x="540" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="571" y="131" text-anchor="middle">DOT1[4]</text>
-  <rect x="606" y="116" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="637" y="131" text-anchor="middle">DOT1[5]</text>
-  <rect x="540" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="571" y="167" text-anchor="middle">DOT2[3]</text>
-  <rect x="606" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="637" y="167" text-anchor="middle">DOT2[4]</text>
-  <rect x="672" y="152" width="62" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="cell" x="703" y="167" text-anchor="middle">DOT2[5]</text>
-
-  <rect class="body" x="332" y="38" width="72" height="146"/>
-  <text class="bl" x="332" y="200">one iteration</text>
-
-  <text class="row" x="8" y="228">stage 0 = ACK · stage 1 = ACV, LRK · stage 2 = DOT1, VEC1 · stage 3 = VEC2, LRV, DOT2</text>
-  <text class="row" x="8" y="244">(one op per stage shown; the tile index is the tile that stage is working on)</text>
+  <text class="h" x="8" y="16">The four stages, filling and draining. [n] is the tile that stage is working on.</text>
+  <rect class="reg" x="99" y="38" width="226" height="154"/><text class="ph" x="212.0" y="34" text-anchor="middle">prologue</text>
+  <rect class="reg" x="318" y="38" width="226" height="154"/><text class="ph" x="431.0" y="34" text-anchor="middle">main loop</text>
+  <rect class="reg" x="537" y="38" width="221" height="154"/><text class="ph" x="647.0" y="34" text-anchor="middle">drain</text>
+  <text class="row" x="8" y="65">stage 0</text>
+  <text class="row" x="8" y="101">stage 1</text>
+  <text class="row" x="8" y="137">stage 2</text>
+  <text class="row" x="8" y="173">stage 3</text>
+  <rect x="104" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="139.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="139.0" y="71" text-anchor="middle">[0]</text>
+  <rect x="177" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="212.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="212.0" y="71" text-anchor="middle">[1]</text>
+  <rect x="250" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="285.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="285.0" y="71" text-anchor="middle">[2]</text>
+  <rect x="323" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="358.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="358.0" y="71" text-anchor="middle">[3]</text>
+  <rect x="396" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="431.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="431.0" y="71" text-anchor="middle">[4]</text>
+  <rect x="469" y="46" width="70" height="30" fill="#f7e0c6" stroke="#d9822b"/><text class="ops" x="504.0" y="59" text-anchor="middle">ACK</text><text class="tid" x="504.0" y="71" text-anchor="middle">[5]</text>
+  <rect x="177" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="212.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="212.0" y="107" text-anchor="middle">[0]</text>
+  <rect x="250" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="285.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="285.0" y="107" text-anchor="middle">[1]</text>
+  <rect x="323" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="358.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="358.0" y="107" text-anchor="middle">[2]</text>
+  <rect x="396" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="431.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="431.0" y="107" text-anchor="middle">[3]</text>
+  <rect x="469" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="504.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="504.0" y="107" text-anchor="middle">[4]</text>
+  <rect x="542" y="82" width="70" height="30" fill="#f7eec6" stroke="#d4a72c"/><text class="ops" x="577.0" y="95" text-anchor="middle">ACV LRK</text><text class="tid" x="577.0" y="107" text-anchor="middle">[5]</text>
+  <rect x="250" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="285.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="285.0" y="143" text-anchor="middle">[0]</text>
+  <rect x="323" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="358.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="358.0" y="143" text-anchor="middle">[1]</text>
+  <rect x="396" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="431.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="431.0" y="143" text-anchor="middle">[2]</text>
+  <rect x="469" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="504.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="504.0" y="143" text-anchor="middle">[3]</text>
+  <rect x="542" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="577.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="577.0" y="143" text-anchor="middle">[4]</text>
+  <rect x="615" y="118" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="650.0" y="131" text-anchor="middle">DOT1 VEC1</text><text class="tid" x="650.0" y="143" text-anchor="middle">[5]</text>
+  <rect x="323" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="358.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="358.0" y="179" text-anchor="middle">[0]</text>
+  <rect x="396" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="431.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="431.0" y="179" text-anchor="middle">[1]</text>
+  <rect x="469" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="504.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="504.0" y="179" text-anchor="middle">[2]</text>
+  <rect x="542" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="577.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="577.0" y="179" text-anchor="middle">[3]</text>
+  <rect x="615" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="650.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="650.0" y="179" text-anchor="middle">[4]</text>
+  <rect x="688" y="154" width="70" height="30" fill="#cde8d3" stroke="#4c9a5a"/><text class="ops" x="723.0" y="167" text-anchor="middle">VEC2 LRV DOT2</text><text class="tid" x="723.0" y="179" text-anchor="middle">[5]</text>
+  <rect class="body" x="318" y="40" width="80" height="150"/>
+  <text class="bl" x="318" y="206">one iteration</text>
+  <text class="note" x="8" y="240">Three columns at each end are the pipe filling and emptying — straight-line code outside the loop.</text>
 </svg>

@@ -407,6 +407,12 @@ the rest:
 Which is also why one kernel no longer needs a different environment from the other: nothing
 upstream has to normalize the packing first.
 
+The third panel is a detail that belongs to the kernel rather than the compiler. A packed op
+cannot follow an MFMA back to back, so the *first* uncovered packed op in a cluster pays a hazard
+on top of being exposed. Ordering the uncovered work ahead of the cluster's first MFMA removes
+that stall — same instructions, same count, only the order differs. Nothing in the toolchain will
+do it for you, because only the kernel knows which work was never going to be covered.
+
 ### Declaring the interleave
 
 The out-of-tree **llirSched** plugin does the assignment itself. It classifies each region (§3),
