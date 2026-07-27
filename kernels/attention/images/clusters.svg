@@ -1,79 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 400" width="780" height="400" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" width="760" height="200" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
   <style>
-    .h    { font-size: 13px; font-weight: 600; fill: #767676; }
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
     .lbl  { font-size: 12px; fill: #767676; }
     .in   { font-size: 11px; fill: #1a1a1a; }
     .note { font-size: 11.5px; fill: #767676; }
-    .ax   { stroke: #767676; stroke-width: 1; }
-    .dep  { stroke: #767676; stroke-width: 1.2; fill: none; marker-end: url(#a); }
   </style>
-  <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#767676"/>
-    </marker>
-  </defs>
 
-  <!-- left: the eight ops of one tile -->
-  <text class="h" x="8" y="18">One tile's work</text>
-  <g transform="translate(8,28)">
-    <rect x="0" y="0"   width="128" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="64" y="15" text-anchor="middle">ACK  global -&gt; LDS</text>
-    <rect x="0" y="30"  width="128" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="64" y="45" text-anchor="middle">LRK  LDS -&gt; reg</text>
-    <rect x="0" y="60"  width="128" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="64" y="75" text-anchor="middle">DOT1  Q·Kᵀ</text>
-    <rect x="0" y="90"  width="128" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="64" y="105" text-anchor="middle">VEC1  max, exp2</text>
-    <rect x="0" y="120" width="128" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="64" y="135" text-anchor="middle">VEC2  sum, cvt</text>
-    <rect x="0" y="150" width="128" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="64" y="165" text-anchor="middle">ACV  global -&gt; LDS</text>
-    <rect x="0" y="180" width="128" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="64" y="195" text-anchor="middle">LRV  LDS -&gt; reg</text>
-    <rect x="0" y="210" width="128" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="64" y="225" text-anchor="middle">DOT2  P·V</text>
+  <text class="h" x="8" y="16">The slice, split into four clusters — each pairs matrix work with memory for a future tile</text>
+
+  <g transform="translate(8,44)">
+    <rect x="0"   y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="86" y="-8" text-anchor="middle">dot1</text>
+    <rect x="10"  y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="86" y="28" text-anchor="middle">DOT1 [ j+1 ]   QK MFMA</text>
+    <rect x="10"  y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="86" y="60" text-anchor="middle">VEC2 [ j ]</text>
+
+    <rect x="188" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="274" y="-8" text-anchor="middle">mem1</text>
+    <rect x="198" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="274" y="28" text-anchor="middle">LRV [ j ]   V from LDS</text>
+    <rect x="198" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="274" y="60" text-anchor="middle">ACK [ j+3 ]</text>
+
+    <rect x="376" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="462" y="-8" text-anchor="middle">dot2</text>
+    <rect x="386" y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="462" y="28" text-anchor="middle">DOT2 [ j ]   PV MFMA</text>
+    <rect x="386" y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="462" y="60" text-anchor="middle">VEC1 [ j+1 ]</text>
+
+    <rect x="564" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="650" y="-8" text-anchor="middle">mem2</text>
+    <rect x="574" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="650" y="28" text-anchor="middle">LRK [ j+2 ]   K from LDS</text>
+    <rect x="574" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="650" y="60" text-anchor="middle">ACV [ j+2 ]</text>
   </g>
 
-  <path class="dep" d="M 145,45 C 175,45 175,120 190,120"/>
-  <text class="note" x="152" y="250">assign to stages</text>
-
-  <!-- right: the four clusters -->
-  <text class="h" x="270" y="18">Four clusters: every dot cluster faces memory for a future tile</text>
-  <g transform="translate(270,28)">
-    <!-- cluster boxes -->
-    <rect x="0"   y="0" width="118" height="86" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
-    <text class="lbl" x="59" y="-4" text-anchor="middle">dot1</text>
-    <rect x="8"  y="8"  width="102" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="59" y="23" text-anchor="middle">DOT1 [ j+1 ]</text>
-    <rect x="8"  y="38" width="102" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="59" y="53" text-anchor="middle">VEC2 [ j ]</text>
-
-    <rect x="128" y="0" width="118" height="86" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
-    <text class="lbl" x="187" y="-4" text-anchor="middle">mem1</text>
-    <rect x="136" y="8"  width="102" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="187" y="23" text-anchor="middle">LRV [ j ]</text>
-    <rect x="136" y="38" width="102" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="187" y="53" text-anchor="middle">ACK [ j+3 ]</text>
-
-    <rect x="256" y="0" width="118" height="86" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
-    <text class="lbl" x="315" y="-4" text-anchor="middle">dot2</text>
-    <rect x="264" y="8"  width="102" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="315" y="23" text-anchor="middle">DOT2 [ j ]</text>
-    <rect x="264" y="38" width="102" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="315" y="53" text-anchor="middle">VEC1 [ j+1 ]</text>
-
-    <rect x="384" y="0" width="118" height="86" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
-    <text class="lbl" x="443" y="-4" text-anchor="middle">mem2</text>
-    <rect x="392" y="8"  width="102" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="443" y="23" text-anchor="middle">LRK [ j+2 ]</text>
-    <rect x="392" y="38" width="102" height="22" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="443" y="53" text-anchor="middle">ACV [ j+2 ]</text>
-
-    <text class="note" x="0" y="104">Tile indices matter: VEC1[j+1] in dot2 produces the p that</text>
-    <text class="note" x="0" y="120">VEC2[j+1] and DOT2[j+1] consume a cluster-pair later — the</text>
-    <text class="note" x="0" y="136">software pipeline is skewed by one iteration.</text>
-  </g>
-
-  <!-- ping-pong: two waves offset by one cluster -->
-  <text class="h" x="8" y="290">Two waves per SIMD, offset by one cluster: a dot cluster always faces a mem cluster</text>
-  <g transform="translate(8,300)">
-    <text class="lbl" x="0" y="21">wave 0</text>
-    <rect x="58"  y="6" width="120" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="118" y="21" text-anchor="middle">dot1</text>
-    <rect x="178" y="6" width="120" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="238" y="21" text-anchor="middle">mem1</text>
-    <rect x="298" y="6" width="120" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="358" y="21" text-anchor="middle">dot2</text>
-    <rect x="418" y="6" width="120" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="478" y="21" text-anchor="middle">mem2</text>
-
-    <text class="lbl" x="0" y="49">wave 1</text>
-    <rect x="58"  y="34" width="120" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="118" y="49" text-anchor="middle">mem1</text>
-    <rect x="178" y="34" width="120" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="238" y="49" text-anchor="middle">dot2</text>
-    <rect x="298" y="34" width="120" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="358" y="49" text-anchor="middle">mem2</text>
-    <rect x="418" y="34" width="120" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="478" y="49" text-anchor="middle">dot1</text>
-    <text class="note" x="552" y="35">`s_barrier` at every</text>
-    <text class="note" x="552" y="49">cluster boundary</text>
-  </g>
-  <text class="note" x="66" y="378">In every column one wave issues MFMA and the other issues memory, so they can share a cycle.</text>
+  <text class="note" x="8" y="156">dot and mem alternate, so whichever cluster a wave is in, the other wave is in the opposite kind.</text>
+  <text class="note" x="8" y="178">VEC1[j+1] in dot2 produces the p that VEC2[j+1] and DOT2[j+1] consume a full turn later.</text>
 </svg>

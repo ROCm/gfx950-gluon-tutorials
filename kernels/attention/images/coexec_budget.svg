@@ -8,7 +8,7 @@
     .tick { stroke: #767676; stroke-width: 1; }
   </style>
 
-  <text class="kern" x="8" y="18">Co-execution budget per dot cluster: 16 MFMA x 24-cycle window = 384 cycles</text>
+  <text class="kern" x="8" y="18">Issue slots a dot cluster can spend: 16 MFMA x 24 cycles = 384 cycles</text>
 
   <!-- window scale: 384 cyc maps to 400 px -->
   <g transform="translate(120,34)">

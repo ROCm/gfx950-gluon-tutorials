@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 230" width="760" height="230" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .op   { font-size: 15px; fill: #767676; }
+    .nm   { font-size: 12px; font-weight: 600; fill: #1a1a1a; }
+    .dim  { font-size: 10.5px; fill: #767676; }
+    .note { font-size: 11.5px; fill: #767676; }
+  </style>
+
+  <text class="h" x="8" y="16">What one wave holds: 32 of the 256 rows, so every tile is a 32-row slice over 64 lanes</text>
+
+  <!-- DOT1: Q (32x128) x K (128x64) -> QK (32x64) -->
+  <text class="nm" x="8" y="66">DOT1</text>
+  <rect x="60"  y="46" width="120" height="34" fill="#e6e6e6" stroke="#767676"/>
+  <text class="nm"  x="120" y="62" text-anchor="middle">Q</text>
+  <text class="dim" x="120" y="75" text-anchor="middle">32 x 128</text>
+  <text class="op"  x="192" y="68" text-anchor="middle">x</text>
+  <rect x="204" y="38" width="60" height="50" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="nm"  x="234" y="58" text-anchor="middle">Kᵀ</text>
+  <text class="dim" x="234" y="72" text-anchor="middle">128 x 64</text>
+  <text class="op"  x="278" y="68" text-anchor="middle">=</text>
+  <rect x="292" y="50" width="64" height="28" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="nm"  x="324" y="63" text-anchor="middle">QK</text>
+  <text class="dim" x="324" y="74" text-anchor="middle">32 x 64</text>
+
+  <!-- DOT2: P (32x64) x V (64x128) -> O (32x128) -->
+  <text class="nm" x="8" y="152">DOT2</text>
+  <rect x="60"  y="136" width="64" height="28" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="nm"  x="92" y="149" text-anchor="middle">P</text>
+  <text class="dim" x="92" y="160" text-anchor="middle">32 x 64</text>
+  <text class="op"  x="140" y="154" text-anchor="middle">x</text>
+  <rect x="154" y="124" width="110" height="52" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="nm"  x="209" y="146" text-anchor="middle">V</text>
+  <text class="dim" x="209" y="160" text-anchor="middle">64 x 128</text>
+  <text class="op"  x="278" y="154" text-anchor="middle">=</text>
+  <rect x="292" y="132" width="120" height="34" fill="#e6e6e6" stroke="#767676"/>
+  <text class="nm"  x="352" y="148" text-anchor="middle">acc (O)</text>
+  <text class="dim" x="352" y="161" text-anchor="middle">32 x 128</text>
+
+  <text class="note" x="440" y="60">Q and acc are grey: both are live for the</text>
+  <text class="note" x="440" y="78">whole loop. Q is loaded once and never</text>
+  <text class="note" x="440" y="96">changes; acc is the running output.</text>
+  <text class="note" x="440" y="132">K and V stream through LDS a tile at a</text>
+  <text class="note" x="440" y="150">time. QK / P is the score tile the softmax</text>
+  <text class="note" x="440" y="168">works on, and it is the only thing that</text>
+  <text class="note" x="440" y="186">passes between the two MFMA chains.</text>
+
+  <text class="note" x="8" y="216">Every count in the table below is one of these shapes divided by the 64 lanes of a wave, halved again for fp16.</text>
+</svg>
