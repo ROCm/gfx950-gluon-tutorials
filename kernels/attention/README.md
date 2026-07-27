@@ -337,17 +337,16 @@ the next, "toward its consumer" means *out of its cluster and into the following
 ops, and a chain-free `fsub` has no dependency edge on it at all.
 
 The result is a cluster that was carefully balanced arriving at the scheduler with its work
-somewhere else. Measured, letting it happen costs about 3.5% and moves PV's occupancy from
-368 to 112 of 384. Hence `DISABLE_LLVM_OPT=disable-machine-sink`. Note this is not a scheduling
-decision being overridden — it is a placement decision being *preserved* so that scheduling has
-something to work with.
+somewhere else, and most of a cluster's shadow left empty. Hence
+`DISABLE_LLVM_OPT=disable-machine-sink`. Note this is not a scheduling decision being overridden —
+it is a placement decision being *preserved* so that scheduling has something to work with.
 
 ### Packed or scalar: whose job is it?
 
 §2's rule makes this a real decision. A packed op cannot go in the shadow, but retires two
-elements per issue when it is outside. So the ideal is precise: **work that will be covered
-should be scalar, and work that will be left over should be packed** — and which is which is not
-known until the assignment is done.
+elements per issue when it is outside. So the ideal is precise: **work that will be covered should
+be scalar, and work that will be left over should be packed** — and which is which is not known
+until the assignment is done.
 
 Both kernels therefore start from **packed** math, which is what Gluon emits anyway, and the
 decision is made where the budget is known. `fav3` has genuine leftovers: its over-capacity path
@@ -355,39 +354,17 @@ splits only the ops it managed to cover and leaves the remainder packed, halving
 since they are going to be exposed either way. `fav4` has no leftovers, so everything it declares
 gets covered and everything gets split.
 
-The mechanism that performs the split is LLVM's `SIPreEmitPeephole`, which finds a packed op
-sitting in an MFMA's shadow, recognizes that it cannot co-execute there, and breaks it into
-scalars. That is the correct local decision made at the only point where the answer is known —
-after scheduling has decided what sits where.
+The split itself is performed by LLVM's `SIPreEmitPeephole`, which finds a packed op sitting in an
+MFMA's shadow, recognizes that it cannot co-execute there, and breaks it into scalars — the
+correct local decision, made at the one point where the answer is known, after scheduling has
+settled what sits where.
 
-For this to work the declaration has to be *satisfiable*, and that is the subtle part.
-`sched_group_barrier` takes a class and a **count of instructions**. If the scheduler declares
-its groups in *elements* — treating a packed op as the two scalars it will become — then a
-24-cycle window asks for six VALU instructions where only three exist. IGroupLP cannot fill the
-group, and an unfillable group makes its pipeline solver abandon the whole region, leaving ISel's
-order for all 16 MFMAs. Measured, that costs **9.8%**: 4719.6 cyc/iter against 4297.5, with 16
-packed ops stranded outside the shadow.
-
-Declaring in instructions instead — one entry per op priced by its weight, which is how a TRANS
-op was always handled — makes it satisfiable, and the peephole then unpacks every one:
-
-| fav4 | cyc/iter | MFMA eff / SIMD | packed left in loop | ceiling |
-|---|---:|---:|---:|---:|
-| declare in instructions (current) | **4373.2** | **93.7%** | 0 | 100% |
-| declare in elements, rely on the peephole | 4719.6 | 86.8% | 16 | 97% |
-
-There is a residual worth knowing about, because it generalizes to any declared schedule. The
-current form still gives up about 1.6% against forcing every op scalar before the scheduler ever
-sees it. The loop reaches its 100% ceiling with nothing packed left in it, so the loss is not
-coverage — it is fill accuracy. **A count is a faithful cycle budget only when the class is
-uniform-cost.** A VALU group holding both 4-cycle scalars and 8-cycle packed ops can be satisfied
-by a cheap triple or an expensive one, and the realized fill drifts. TRANS never has this problem
-because every transcendental costs 8.
-
-That residual is the price of having one flow instead of two. Earlier revisions used Triton's
-`ScalarizePackedFOps` pass to force `fav4` scalar before scheduling, which recovered the 1.6% but
-required an environment variable that had to agree with which kernel was being compiled — and had
-to be *off* for `fav3`, whose leftovers must stay packed. Neither kernel needs it now.
+What the scheduler has to get right for that to work is the **unit** it declares in.
+`sched_group_barrier` takes a class and a count of *instructions*, so a window holding three
+packed ops must be declared as three, not as the six elements they will become. Declared in
+instructions the group is satisfiable whether or not the ops are still packed, and the peephole
+takes care of the rest. This is also why one kernel no longer needs a different environment from
+the other: nothing upstream has to normalize the packing first.
 
 ### Declaring the interleave
 
@@ -396,8 +373,8 @@ and for a dot cluster it walks the vector ops against the MFMA windows, then *de
 result with `sched_group_barrier` — a sequence of "N instructions of this class, then M of that"
 which AMDGPU's IGroupLP builds in the machine scheduler. When the region fits it spreads the work
 evenly; when it does not, it covers the ops that cannot be packed first, spends what window is
-left on packable ops split into scalars, and leaves the remainder packed. That over-capacity path
-is what puts `fav3` at 85.3% instead of the 75.9% it measures with no plugin at all.
+left on packable ops split into scalars, and leaves the remainder packed — which is what gets
+`fav3` close to its 91.4% ceiling despite being over capacity in both clusters.
 
 Declaring rather than reordering is the load-bearing choice, and `sched_barrier` is the
 alternative that does not work:
@@ -409,9 +386,10 @@ alternative that does not work:
 - **It does not fence what we care about.** A barrier is a chain node, so it orders memory
   operations. Chain-free arithmetic — a pure `fsub` — has no edge to it and drifts across freely.
   This is the same property that lets `MachineSink` move `exp2` over an `s_barrier` above.
-- **Pinning an order throws away the scheduler's knowledge.** The fallback path physically
-  reorders the IR and pins it; it is kept only for A/B, and it is slower, because a fixed order
-  cannot respond to the latencies and register pressure the scheduler can see.
+- **Pinning an order throws away the scheduler's knowledge.** Physically reordering the IR and
+  fencing it fixes one order for good, and a fixed order cannot respond to the latencies and
+  register pressure the machine scheduler can see. Declaring says *what* the pipeline should look
+  like and leaves the scheduler to choose which instruction fills each slot.
 
 One detail worth knowing if you read the plugin: the declaration has to be emitted **after**
 every real instruction of the region, because IGroupLP forms its groups scanning upward. A
