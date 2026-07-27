@@ -18,7 +18,8 @@ MFMA chain depends on. So:
 That question generates this entire document. Answering it needs the SIMD's issue rules (§1),
 gives a cycle budget to spend (§2), places attention in the GEMM tutorial's taxonomy (§3), and
 then determines the loop structure (§4), the difference between the two kernels (§5), and what
-the compiler has to do for them (§6).
+the compiler has to do for them (§6). §7 is an appendix for one conflict too subtle to belong in
+the main line.
 
 This assumes you know the flash-attention algorithm — the streaming softmax that carries a
 running max `m`, a running sum `l` and an unnormalized accumulator `acc`, and rebases them with
@@ -444,7 +445,57 @@ declaration at the top of a region yields empty groups and silently does nothing
 the region classifier and the cost model are in
 [`llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html).
 
-## 7. Results
+## 7. Advanced: the LDS burst and the head of a dot cluster
+
+Two settings in these kernels are worth about a percent each and are easy to mistake for tuning
+noise. They are not — they attack the same hardware conflict from opposite ends, and the numbers
+behave the way the explanation predicts.
+
+By §1's design, a wave in a dot cluster always faces a wave in a mem cluster, and its VALU shares
+each cycle with that wave's `ds_read`. That pairing is the whole point. But not every VALU is
+equally cheap to pair: a **3-source** op needs more register-file read ports in its cycle than a
+1- or 2-source one, and an LDS return needs the register file too. Where the two coincide, they
+contend.
+
+The dot clusters put their 3-source work exactly where the collision is worst. Read the head of a
+compiled PV cluster and the first two MFMA shadows are filled entirely with `v_maximum3` — the row
+max is first in dependency order, so the scheduler has nowhere else to put it — and with
+`SCALE_ON_Q` off, the subtract that follows is an `fma`, also 3-source.
+
+![the LDS burst meeting the head of a dot cluster, and the two fixes](images/lds_conflict.svg)
+
+**`MEMNOP` moves the burst.** A couple of `s_nop`s at the head of each mem cluster delay that
+wave's `ds_read`s just enough that they arrive past the `max3` block and land on the `exp2` and
+sum work instead, which is 1- and 2-source. The kernel is unchanged; only the phase relationship
+between the two waves moves. `MEMNOP=2` is the optimum for both kernels at either `SCALE_ON_Q`
+setting — and the sweep is not smooth, which is what you would expect from a phase effect rather
+than a quantity.
+
+**`SCALE_ON_Q` removes the ops.** Folding `qk_scale` into `Q` before the loop turns every
+`fma(qk, qk_scale, −m_new)` into a plain `sub`, so those stop competing for the register file at
+all. It is visible in a count of 3-source VALU in `fav4`'s loop body: **98 with the fold off, 34
+with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
+34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
+
+Measured at seqlen 16320 on GPU[0], TFLOPS and in-loop MFMA efficiency per SIMD:
+
+| | `fav3` | `fav4` |
+|---|---|---|
+| no `s_nop`, no fold | 1165 / 83.9% | 1223 / 89.5% |
+| `MEMNOP=2` | 1169 / 85.3% | 1233 / 92.4% |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1177 / 86.2%** | **1243 / 93.8%** |
+
+Each step is worth well under a percent of throughput, and together about 1% on `fav3` and 1.6% on
+`fav4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
+same op count leaving the same cluster in both, so a mechanism tied to that op count should pay the
+same, and it does. The efficiency column moves further than the throughput column for the reason
+§8 gives — a denser MFMA stream costs clock on a power-capped part.
+
+`SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
+goes from 3.05e-05 to 1.22e-04. Both are far inside the 1e-3 tolerance, and `--scale-on-q 0`
+restores the tighter numerics on either kernel.
+
+## 8. Results
 
 `B=1, HQ=HK=64, D=128, S=16320, fp16`, non-causal, MI355X, `rocm-smi` GPU[0]. TFLOPS from
 `rocprofv3` kernel time with a prepared launch; MFMA efficiency from an ATT instruction trace,
@@ -489,7 +540,7 @@ clock. Judge a scheduling change by cycles; judge a kernel by both.
 −6.7% here — because `fav3`'s over-capacity handling in §6 recovers most of it. A scheduler can
 compensate for vector work it cannot hide, but not completely.
 
-## 8. Files, and how to run
+## 9. Files, and how to run
 
 | file | what it is |
 |---|---|
@@ -544,7 +595,7 @@ all of them in that unpipelined block rather than in the loop, which is why the 
 count and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
 immediately ahead of a dot cluster, which is what §5's first design rule exists to prevent.
 
-## 9. Where to go deeper
+## 10. Where to go deeper
 
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
