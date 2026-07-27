@@ -526,6 +526,101 @@ At 89.0% the 4-wave kernel has now passed the 8-wave `inter_wave` kernel's
 86.5%. Re-running opt1-3 against `inter_wave` is probably the highest-value next
 step — it has the same prologue pattern.
 
+## Opt 4 — the vmcnt conservatism: root-caused, fix rejected  ❌ not landed
+
+Chased the conservative `vmcnt` from Opt 3 §3.5 to its source. The cause is
+found and is worth reporting upstream, but **the fix makes this kernel 1.1%
+slower and was not kept.**
+
+### 4.1 Root cause: it is self-inflicted, not an LLVM loop-analysis limit
+
+`TRITON_FORCE_MFMA_AGPR=1` makes Triton do **two** things
+(`python/src/llvm.cc:349`):
+
+1. the kernel passes `llvm_fn_attrs="amdgpu-agpr-alloc=256"` — reserves the AGPRs
+2. Triton sets the **global** LLVM option `amdgpu-mfma-vgpr-form=false`
+
+Only (1) is needed for the accumulators. (2) additionally pushes the
+**global-staging registers** out of AGPRs into VGPRs, and that is what makes
+`SIInsertWaitcnts` conservative:
+
+```
+vgpr-form=true  (LLVM default)   buffer_load_dwordx4 a[64:67]
+                                 s_waitcnt vmcnt(12)/(10)/(9)  at all 4 regions
+vgpr-form=false (Triton)         buffer_load_dwordx4 v[88:91]
+                                 s_waitcnt vmcnt(3)/(1)/(0)    at region 0 only
+```
+
+`vmcnt(0)` drains all 16 in-flight `buffer_load`s where retiring the oldest 4
+would do (theoretical minimum `vmcnt(15)/(13)/(12)`; LLVM's default
+`(12)/(10)/(9)` is within 3 of it).
+
+**Minimal reproducer, no Triton required** — same IR, same LLVM, one flag apart,
+with **byte-identical `lgkmcnt`**; only `vmcnt` degrades:
+
+```bash
+llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -O3 kernel.ll -o good.s
+llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -O3 -amdgpu-mfma-vgpr-form=false kernel.ll -o bad.s
+```
+
+Found without rebuilding LLVM: the `llc` shipped with the Triton LLVM pin is the
+same commit built *with assertions*, so it can be run directly on Triton's
+emitted IR. It produced the correct waits, which located the problem in Triton's
+codegen configuration rather than in the pass.
+
+### 4.2 The fix works — and is a net loss here
+
+Dropping the env var and carrying `amdgpu-agpr-alloc=256` unconditionally in
+`llvm_fn_attrs` leaves register allocation **identical** (intra_wave 512 VGPR /
+256 AGPR / 0 spills / 1 wave per SIMD; inter_wave 236 / 0 / 0 / 2 waves per
+SIMD) and produces the precise waits. Alternating ATT captures, two samples
+each, 4096x4864x8256 fp16:
+
+| | cyc/iter | MFMA eff | `vmcnt` count | `vmcnt` total | `vmcnt` **max** |
+|---|---|---|---|---|---|
+| opt3 (conservative) | 4647, 4650 | 88.1% | 159 | 4384, 5896 | **996, 1276** |
+| opt4 (precise) | 4698, 4698 | 87.2% | 527 | 2108 | **4** |
+
+The stall is genuinely eliminated — max 1276 → 4 cycles, total halved. But
+**cycles per iteration get 1.1% worse**, reproducibly (two identical samples per
+config). Precise waits cost 368 extra `s_waitcnt` instructions in the measured
+window; at ~4 cycles of issue each that is ~1500 cycles, and the remaining
+difference is most likely the loss of a secondary effect: `vmcnt(0)` empties the
+TCP queue once per iteration, so the following 16 `buffer_load`s issue into a
+drained queue instead of one that still holds 9-12 requests.
+
+`do_bench` had said the same thing earlier (~1-2% slower) and was wrongly
+dismissed as clock noise. The two agree.
+
+> [!WARNING]
+> An earlier version of this section claimed opt4 was a win. That was measured
+> on a mis-captured trace: `tools/run_att.py` was still forcing
+> `TRITON_FORCE_MFMA_AGPR=1` internally at the time, so the "opt4" capture was
+> really a second sample of opt3. The giveaway is the `vmcnt` instruction count
+> in the traced window — 159 for the conservative build, 527 for the precise
+> one. Worth checking that number on any future capture.
+
+### 4.3 What to do with it
+
+* **Kernel: keep opt3.** `TRITON_FORCE_MFMA_AGPR=1` stays required.
+* **Upstream: file it.** A register-form flag should not cost waitcnt precision
+  for unrelated staging registers, regardless of whether this particular kernel
+  benefits. Suggested report:
+  * **Title:** `[AMDGPU] -amdgpu-mfma-vgpr-form=false causes over-conservative vmcnt in SIInsertWaitcnts`
+  * **Repro:** the two `llc` invocations above, on a GEMM loop with 16 in-flight
+    `buffer_load_dwordx4` feeding `ds_write_b128` one iteration later.
+  * **Observed / expected:** `vmcnt(3)/(1)/(0)` at one region vs
+    `vmcnt(12)/(10)/(9)` at each of four; `lgkmcnt` identical.
+  * **Impact:** drains a 16-deep load queue built to hide HBM latency; measured
+    max stall 1276 cycles per iteration on MI300X.
+  * **Not root-caused inside the pass.** `toVMEMID` is the identity (no score
+    aliasing), and the loop-header score brackets lose precision in *both*
+    configurations (13 vs 12 distinct scores of 16), so the bracket merge alone
+    does not explain it. The discriminator is the VGPR-vs-AGPR placement of the
+    staging registers.
+  * Artifacts staged in `/data/att_gfx942_intra_wave_..._opt4_rejected/` and the
+    `.ll` / `.s` triple.
+
 ## 3. Backlog (not yet attempted)
 
 * Close the remaining 11% — see the table in §3.6.
