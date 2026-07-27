@@ -508,9 +508,12 @@ HBM latency. With that stall gone, `vmcnt(0)`'s max gap is **168 cycles**. Still
 only 0.2% of the window today, but the mechanism is now live and will grow as
 the remaining sync cost comes down.
 
-Fixing it needs a MachineIR-level change, which the LLIR plugin cannot reach
-(it runs at `OptimizerLast`, long before waitcnt insertion). The realistic lever
-is a post-assembly rewrite in the `amdgcnas` style.
+> [!NOTE]
+> This section originally concluded that fixing it "needs a MachineIR-level
+> change, which the LLIR plugin cannot reach". That was wrong. The cause is a
+> preheader/loop-body ordering mismatch that a single `gl.barrier()` in the
+> prologue removes — see §5. The `vmcnt(15)/(13)/(12)` predicted here is
+> exactly what that fix produces.
 
 ### 3.6 What is still on the table
 
@@ -518,7 +521,7 @@ is a post-assembly rewrite in the `amdgcnas` style.
 |---|---|
 | barrier count | **done** — 3 → 2, the minimum for this slot schedule |
 | `ds_write` 10.2% | at the CDNA3 LDS port limit (32 cyc = 4 SIMD x 1024 B / 128 B per clk); only reducible by writing less to LDS |
-| `vmcnt` conservatism | open — see §3.5, needs a post-assembly pass |
+| `vmcnt` conservatism | **done** — see §5, one prologue barrier; perf-neutral but removes the latent drain |
 | `s_barrier` 2.9% | 2 barriers is the minimum given the loop-carried WAR/RAW on each slot |
 | `amdgcnas` peephole | open, untried on gfx942 |
 
@@ -526,13 +529,19 @@ At 89.0% the 4-wave kernel has now passed the 8-wave `inter_wave` kernel's
 86.5%. Re-running opt1-3 against `inter_wave` is probably the highest-value next
 step — it has the same prologue pattern.
 
-## Opt 4 — the vmcnt conservatism: root-caused, fix rejected  ❌ not landed
+## Opt 4 — the vmcnt conservatism, first attempt: register form  ❌ not landed
 
-Chased the conservative `vmcnt` from Opt 3 §3.5 to its source. The cause is
-found and is worth reporting upstream, but **the fix makes this kernel 1.1%
-slower and was not kept.**
+First attempt at the conservative `vmcnt` from Opt 3 §3.5.
 
-### 4.1 Root cause: it is self-inflicted, not an LLVM loop-analysis limit
+> [!IMPORTANT]
+> **This section identifies a trigger, not the cause.** Flipping
+> `amdgpu-mfma-vgpr-form` does change the emitted waits, but it is not why they
+> are conservative, and there is no LLVM bug here to report. The actual root
+> cause — and a fix that costs one prologue barrier instead of the whole
+> register-allocation strategy — is in §5. Kept for the reasoning trail and
+> because the `llc` reproducer technique below is reusable.
+
+### 4.1 What it looked like: self-inflicted, not an LLVM loop-analysis limit
 
 `TRITON_FORCE_MFMA_AGPR=1` makes Triton do **two** things
 (`python/src/llvm.cc:349`):
@@ -603,23 +612,118 @@ dismissed as clock noise. The two agree.
 ### 4.3 What to do with it
 
 * **Kernel: keep opt3.** `TRITON_FORCE_MFMA_AGPR=1` stays required.
-* **Upstream: file it.** A register-form flag should not cost waitcnt precision
-  for unrelated staging registers, regardless of whether this particular kernel
-  benefits. Suggested report:
-  * **Title:** `[AMDGPU] -amdgpu-mfma-vgpr-form=false causes over-conservative vmcnt in SIInsertWaitcnts`
-  * **Repro:** the two `llc` invocations above, on a GEMM loop with 16 in-flight
-    `buffer_load_dwordx4` feeding `ds_write_b128` one iteration later.
-  * **Observed / expected:** `vmcnt(3)/(1)/(0)` at one region vs
-    `vmcnt(12)/(10)/(9)` at each of four; `lgkmcnt` identical.
-  * **Impact:** drains a 16-deep load queue built to hide HBM latency; measured
-    max stall 1276 cycles per iteration on MI300X.
-  * **Not root-caused inside the pass.** `toVMEMID` is the identity (no score
-    aliasing), and the loop-header score brackets lose precision in *both*
-    configurations (13 vs 12 distinct scores of 16), so the bracket merge alone
-    does not explain it. The discriminator is the VGPR-vs-AGPR placement of the
-    staging registers.
-  * Artifacts staged in `/data/att_gfx942_intra_wave_..._opt4_rejected/` and the
-    `.ll` / `.s` triple.
+* **Do not file upstream.** The follow-up in §5 shows `SIInsertWaitcnts` is
+  emitting the minimal *safe* wait for the bracket it is handed; the register
+  form only perturbs an input to that bracket. Artifacts (`.ll` / `.s` triple)
+  stay in `/data/att_gfx942_intra_wave_..._opt4_rejected/` as the reproducer for
+  §5's analysis.
+
+## Opt 5 — the real root cause: preheader load order  ✅ landed (perf-neutral)
+
+The conservative `vmcnt` is a **preheader/loop-body ordering mismatch**, and
+neither LLVM nor the register form is at fault.
+
+### 5.1 The mechanism
+
+`SIInsertWaitcnts` joins the loop's two incoming paths with
+`WaitcntBrackets::mergeScore` (`SIInsertWaitcnts.cpp:2698`):
+
+```cpp
+unsigned MyShifted    = Score      <= M.OldLB   ? 0 : Score      + M.MyShift;
+unsigned OtherShifted = OtherScore <= M.OtherLB ? 0 : OtherScore + M.OtherShift;
+Score = std::max(MyShifted, OtherShifted);
+```
+
+Both brackets are right-aligned to a common upper bound and merged per register
+with `max`. Higher score = younger, and `wait = UB - score`, so `max` is the
+*stronger* wait — correct and necessary, because on the preheader path the
+register really does have that many younger loads outstanding.
+
+The damage is what the two paths disagree about. The 16 loop-carried
+`buffer_load`s, by preheader position of body-load #1…#16:
+
+| | preheader position of body load #1…#16 | rotation |
+|---|---|---|
+| AGPR staging (opt4) | `3,4,5,…,15,0,1,2` | 3 |
+| VGPR staging (opt3, shipped) | `12,13,14,15,0,1,…,11` | **12** |
+
+Rotation 3 keeps `max(rank_body, rank_pre)` monotone for loads #1–#13, so ages
+survive. Rotation 12 gives the **four oldest** loads preheader ranks 13–16, so
+`max` promotes them to the top of the bracket — the oldest in-flight load is
+scored as the youngest, and `wait = UB - score` collapses.
+
+The model `merged = max(rank_body, rank_pre)` reproduces the pass's printed
+brackets exactly (constant −1 UB offset) and every emitted wait in both builds:
+
+| `ds_write` src | merged score | predicted | emitted |
+|---|---|---|---|
+| `a[64:67]` (oldest) | 3 | `vmcnt(12)` | `vmcnt(12)` |
+| `a[68:71]` | 5 | `vmcnt(10)` | `vmcnt(10)` |
+| `a[60:63]` | 6 | `vmcnt(9)` | `vmcnt(9)` |
+| `v[88:91]` (oldest) | 12 | `vmcnt(3)` | `vmcnt(3)` |
+| `v[92:95]` | 14 | `vmcnt(1)` | `vmcnt(1)` |
+| `v[84:87]` | 15 | `vmcnt(0)` | `vmcnt(0)` |
+
+The rotation is introduced by the **MachineScheduler**, not by Triton: the
+emitted LLVM IR issues the loads in identical order in the preheader and the
+body (`%78,%80,%82,%84 / %87… / %95… / %103…`). The scheduler sinks the first
+tile's four loads to the end of the preheader.
+
+### 5.2 The change
+
+Gluon exposes no `sched.barrier`, but `s_barrier` has unmodeled side effects, so
+`ScheduleDAGInstrs` chains memory ops to it — it fences the MachineScheduler.
+One barrier between the first and second prologue load is enough:
+
+```python
+gB_left = buffer_load(ptr=b_base, offsets=b_left_offsets)
+gl.barrier()                       # pin prologue load order == loop-body order
+gA_top = buffer_load(ptr=a_base, offsets=a_top_offsets)
+gA_bot = buffer_load(ptr=a_base, offsets=a_bot_offsets)
+gB_right = buffer_load(ptr=b_base, offsets=b_right_offsets)
+```
+
+| | preheader→body permutation | in-loop `vmcnt` waits |
+|---|---|---|
+| opt3 | `[12,13,14,15,0,…,11]` | `3, 1, 0` — region 0 only |
+| **opt5** | `[0,1,2,…,15]` identity | `15, 13, 12` — **all 4 regions** |
+
+That is exactly the `vmcnt(15)/(13)/(12)` optimum predicted in §3.5, and better
+than LLVM's own AGPR-form output of `12/10/9`. Register allocation is unchanged
+(512 VGPR / 256 AGPR / 0 spills), and the loop keeps opt3's 2 barriers and 1
+`lgkmcnt(0)`. Cost: +1 prologue barrier, +9 in-loop `s_waitcnt`.
+
+### 5.3 Result — the stall is eliminated, the cycles are a wash
+
+Alternating ATT captures, 3 samples each, 4096×4864×8256 fp16, 90 s cooldowns:
+
+| | cyc/iter | median | MFMA eff | `vmcnt` n | `vmcnt` sum | `vmcnt` **max** | `s_barrier` sum |
+|---|---|---|---|---|---|---|---|
+| opt3 | 4618.7, 4621.7, 4638.0 | **4621.7** | 88.3–88.7% | 3 | 6096–10084 | **4–560** | 43040–43988 |
+| opt5 | 4616.1, 4621.5, 4621.9 | **4621.5** | 88.6–88.7% | 12 | 24384 | **4** | 37092–38440 |
+
+Medians differ by 0.2 cycles — **perf-neutral**. The stall is genuinely gone:
+every `vmcnt` in opt5 is a pure 4-cycle issue slot, deterministically, whereas
+opt3's varies with memory timing (max 4 in one sample, 560 in another). The
+barrier stall also drops ~13%. Those gains are cancelled by the 9 extra
+`s_waitcnt` issue slots (24384 vs ~8000 cycles on the `vmcnt` line).
+
+All 8 shape/dtype combos correct, still ahead of hipBLASLt.
+
+### 5.4 Why land a neutral change
+
+* It removes a **latent** hazard, not a live one. Today `vmcnt(0)` mostly hides
+  behind the barrier and `lgkmcnt` stalls; as those come down there would not be
+  enough region-0 MFMA to cover HBM latency, and the drain would become the
+  binding constraint.
+* It stops the kernel depending on a **scheduler accident**. Whether the waits
+  are `12/10/9` or `3/1/0` currently turns on how far the MachineScheduler
+  happens to rotate the preheader (3 vs 12). The barrier makes it invariant.
+* It makes the `vmcnt` cost deterministic and bounded rather than
+  memory-timing-dependent.
+
+The counter-argument is real: 9 extra in-loop instructions for zero measured
+gain. If the loop is ever re-tuned toward instruction-issue limits, re-measure.
 
 ## 3. Backlog (not yet attempted)
 
