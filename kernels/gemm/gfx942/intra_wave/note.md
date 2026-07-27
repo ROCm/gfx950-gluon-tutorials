@@ -725,6 +725,92 @@ All 8 shape/dtype combos correct, still ahead of hipBLASLt.
 The counter-argument is real: 9 extra in-loop instructions for zero measured
 gain. If the loop is ever re-tuned toward instruction-issue limits, re-measure.
 
+## 6. `ds_write` ablation — where the last 11% is, and why it stays
+
+Assembly-level ablation: dump the `.amdgcn`, delete the 16 `ds_write_b128` from
+the loop body, reassemble via `TRITON_KERNEL_OVERRIDE`. Everything else is held
+constant — same register allocation, same occupancy, same 256 MFMA / 32
+`ds_read` / 16 `buffer_load` / 2 `s_barrier`, same 12 `s_waitcnt vmcnt`. The
+result is numerically wrong (LDS is never refilled); this is a timing probe.
+
+| | cyc/iter | in-loop MFMA eff | loop instrs |
+|---|---|---|---|
+| opt5 (full) | 4621.5 | 88.63% | 357 |
+| `ds_write` removed | 4255.0 | **96.26%** | 341 |
+| delta | **−366.5 (−7.9%)** | **+7.63 pts** | −16 |
+
+Time attribution inside the loop:
+
+| | opt5 (full) | ablated |
+|---|---|---|
+| mfma | 77.71% | 87.73% |
+| **`ds_write_b128`** | **10.62%** | — |
+| `ds_read_b128` | 4.55% | 5.03% |
+| `buffer_load_dwordx4` | 1.96% | 2.25% |
+| `s_waitcnt` | 1.92% | 2.09% |
+| `s_barrier` | 1.59% | 1.10% |
+
+So `ds_write` is **~two thirds of all remaining inefficiency**. Two details:
+
+* Gross cost is 486.7 cyc/iter ÷ 16 = **30.4 cycles per `ds_write_b128`**, which
+  confirms the 32-cycle LDS-port model in §3.6 (4 SIMD × 1024 B ÷ 128 B/clk).
+  Net saving is only 22.9 per write, so ~3/4 of it is on the critical path.
+* `s_barrier` cost drops 37% as a side effect — part of the 10.62% is really
+  "`ds_write` plus the synchronisation it forces".
+
+**This is the limit of the intra_wave design on MI300.** A `ds_write_b128`
+takes ~20 cycles to issue (4 for the address, 16 for the data), and a
+`v_mfma_f32_16x16x16_f16` covers only 16 — one MFMA cannot hide one `ds_write`.
+16 × 20 = 320 unhideable cycles per iteration, against the 366.5 measured. Going
+further means writing *less* to LDS (e.g. feeding one MFMA operand from
+registers instead of round-tripping A through LDS), which is a different
+pipeline, not a tuning knob.
+
+> [!WARNING]
+> TFLOPS is useless for this comparison. The ablated build ran at **1.266 GHz vs
+> 1.387** — 8.7% slower clock, because a denser MFMA stream draws more power at
+> the 750 W cap — so it measured *slower* by median wall-clock (626.2 vs 638.5)
+> despite executing 7.9% fewer cycles. An isolated first measurement caught a
+> cool run and read 677.2 vs 631.5, overstating the case in the other direction.
+
+## 7. Final measurement
+
+`tools/bench_prepared.py`: prepared launch (compile once, pre-bind arguments,
+enter the launch stub directly), 3 rotating tensor sets, 1000 dispatches, mean
+of the **last 100**, timed with `rocprofv3 --kernel-trace`.
+
+Three alternating-order sweeps over all 8 GPUs, per-GPU median TFLOPS
+(4096×4864×8256 fp16):
+
+| GPU | 0 | 1 | 2 | **3** | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| median | 610.4 | 602.1 | 615.7 | **618.1** | 615.9 | 603.6 | 612.2 | 594.3 |
+
+**GPU 3 is fastest and is the reference device from here on.** Read the ranking
+carefully: the top four (3, 4, 2, 6) are within 1% and reorder between sweeps;
+only the bottom is solid — GPUs 7, 1 and 5 are slow in all three orderings,
+which looks like real device variation. Total spread 4.0%.
+
+Final state, GPU 3, dedicated runs:
+
+| | TFLOPS | µs/dispatch | in-loop MFMA eff | cyc/iter | clock |
+|---|---|---|---|---|---|
+| fp16 | 616.1 | 533.97 | **88.43%** | 4631.9 | 1.425 GHz |
+| bf16 | **652.1** | 504.47 | — | — | — |
+
+Trace: `/data/att_gfx942_intra_wave_4096x4864x8256_fp16_final_gpu3/`.
+
+> [!CAUTION]
+> **The Triton cache key does not include `TRITON_KERNEL_OVERRIDE`.** The
+> hand-edited `ds_write`-ablated kernel from §6 persisted in `~/.triton/cache`
+> and silently poisoned a full 8-GPU sweep *and* an ATT capture — both reported
+> the ablated build as if it were the shipped kernel (~630-649 TFLOPS instead of
+> ~610-620). The tell was `instrs=341` instead of 357 in the ATT decode.
+> `bench_prepared.py` now verifies the kernel output against a torch reference
+> *before* timing and aborts if it fails. Always `rm -rf ~/.triton/cache` after
+> any override run, and check loop instruction counts on every capture — this is
+> the same class of mis-capture as the opt4 trace in §4.
+
 ## 3. Backlog (not yet attempted)
 
 * Close the remaining 11% — see the table in §3.6.
