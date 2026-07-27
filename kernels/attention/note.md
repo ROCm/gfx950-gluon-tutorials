@@ -1102,3 +1102,39 @@ there. No scratch traffic in the loop body.
 drift, and it earned its keep here: a mid-session batch read fav3 at 1136.7 against its usual
 1168.5, i.e. the whole batch was ~2.7% low. After a 200 s cool-down fav3 read 1169.1 and 1169.6
 either side of fav4's 1241.5. Bracket any TFLOPS measurement with an unchanged binary.
+
+## mem-stage pacing x scale-on-Q matrix (2026-07-27, GPU[0], unified plugin)
+
+Three settings, both kernels, seqlen 16320 fp16. `LLIRSCHED_WP_MEMNOP` controls the `s_nop`s at
+each mem-cluster head; **fav3 has no `SCALE_ON_Q`** -- it always applies `qk_scale` per score
+element, so it is inherently the SOQ=0 form and setting 3 does not exist for it.
+
+| setting | | fav3 | fav4 |
+|---|---|---|---|
+| 1 | SOQ=0, no `s_nop` (`MEMNOP=0`) | 1165.0 TF / 4882.1 cyc / 83.9% | 1222.8 TF / 4577.2 cyc / 89.5% |
+| 2 | SOQ=0, `MEMNOP=2` | **1168.8** TF / 4802.0 cyc / 85.3% | 1233.1 TF / 4434.5 cyc / 92.4% |
+| 3 | SOQ=1, `MEMNOP=2` | n/a | **1242.6** TF / 4368.7 cyc / 93.8% |
+
+What the pacing is worth on its own (setting 1 -> 2): fav3 **-1.6% cycles**, +1.4 pts, +0.3% TF;
+fav4 **-3.1% cycles**, +2.9 pts, +0.8% TF. It helps fav4 about twice as much as fav3, which fits
+the mechanism -- fav3's dot clusters are over capacity, so its mem clusters are less often the
+thing the other wave is waiting on.
+
+Scale-on-Q on top (2 -> 3, fav4): **-1.5% cycles**, +1.4 pts, +0.8% TF. Together the two are worth
+**-4.6% cycles and +1.6% TFLOPS** on fav4.
+
+**`MEMNOP=2` is the optimum in all three configurations**, which is the current default. Full
+sweep, cyc/iter:
+
+| `MEMNOP` | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| fav3 | 4882.1 | 4828.1 | **4802.0** | 4818.5 | 4814.6 |
+| fav4 SOQ=0 | 4577.2 | 4538.2 | **4434.5** | 4523.1 | 4444.0 |
+| fav4 SOQ=1 | 4422.9 | 4467.1 | **4368.7** | 4524.9 | 4483.8 |
+
+Note the sweep is not monotonic and not smooth -- 4 beats 3 in two of the three rows. Pacing is a
+phase relationship between two waves' LDS bursts, not a quantity, so bisecting it does not work;
+sweep the small range.
+
+TFLOPS were bracketed by an unchanged fav3 `MEMNOP=2` build before and after, reading 1168.8 and
+1168.9, so the box was stable across the batch (see the drift incident recorded above).
