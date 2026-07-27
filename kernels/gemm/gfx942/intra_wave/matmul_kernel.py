@@ -227,6 +227,19 @@ def a16w16_intra_wave_gfx942(
     smemB_right.store(gB_right)
 
     gB_left = buffer_load(ptr=b_base, offsets=b_left_offsets)
+
+    ## Pin the prologue's global-load order to the order the loop body consumes
+    ## them in.  Without this the MachineScheduler sinks B_left's four loads to
+    ## the end of the prologue, so the preheader issues the 16 loop-carried
+    ## loads rotated by 12 relative to the loop body.  SIInsertWaitcnts joins
+    ## the two paths with a per-register `max` of the two age scores, and under
+    ## that rotation the four *oldest* in-flight loads inherit the scores of the
+    ## four youngest -- collapsing region 0's waits from vmcnt(15)/(13)/(12) to
+    ## vmcnt(3)/(1)/(0), i.e. draining the whole 16-deep queue built to hide HBM
+    ## latency.  s_barrier has unmodeled side effects, so it fences the
+    ## scheduler; Gluon exposes no sched.barrier.  See note.md Opt 5.
+    gl.barrier()
+
     gA_top = buffer_load(ptr=a_base, offsets=a_top_offsets)
     gA_bot = buffer_load(ptr=a_base, offsets=a_bot_offsets)
     gB_right = buffer_load(ptr=b_base, offsets=b_right_offsets)
