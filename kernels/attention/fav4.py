@@ -69,6 +69,7 @@ import triton.language as tl
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
 from triton.experimental.gluon.language.amd import AMDMFMALayout, warp_pipeline_stage
+from triton.experimental.gluon.language.amd import slice as amd_slice
 from triton.experimental.gluon.language.amd.cdna4 import async_copy as cdna4_async
 from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
 from triton.experimental.gluon.language._layouts import (
@@ -204,10 +205,9 @@ def _split_halves(x):
     the compile if the conversion would need real work). Same idea as
     split_subtile() in the upstream mxfp_fa_gfx1250 Gluon example.
     """
-    layout: gl.constexpr = x.type.layout
-    a0, a1 = x.reshape([x.shape[0], 2, x.shape[1] // 2]).permute(0, 2, 1).split()
-    a0 = gl.convert_layout(a0, layout, assert_trivial=True)
-    a1 = gl.convert_layout(a1, layout, assert_trivial=True)
+    half: gl.constexpr = x.shape[1] // 2
+    a0 = amd_slice(x, [x.shape[0], half], [0, 0])
+    a1 = amd_slice(x, [x.shape[0], half], [0, half])
     return a0, a1
 
 
@@ -461,11 +461,11 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # (n_blocks=256) is NOT. Computed from constexpr N_CTX/BLOCK_N (block_end
     # itself is a runtime value here).
     NUM_BLOCKS: gl.constexpr = (N_CTX + BLOCK_N - 1) // BLOCK_N
-    gl.static_assert(
-        (NUM_BLOCKS - 3) % 2 == 0,
-        "N_CTX must give an odd n_blocks = (N_CTX + BLOCK_N - 1)//BLOCK_N so the "
-        "2x-unrolled main loop needs no odd-tail tile",
-    )
+    # When (n_blocks-3) is odd the 2x-unrolled loop leaves one tile over. It is
+    # always an "even" tile (LDS slots cur=0/next=1) and it is always tile n-4,
+    # so the drain below needs no change -- it already keys its slots off
+    # (index - block_start) % BUF_DEPTH at runtime.
+    ODD_TAIL: gl.constexpr = (NUM_BLOCKS - 3) % 2 == 1
 
     # Fixed async-copy offset (intra-tile pattern) computed once; each tile loads
     # from a base pointer advanced by a constant step, so the offset never changes.
@@ -572,7 +572,26 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
             cdna4_async.commit_group()
             acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # opt3: rescale for next DOT1, overlapped w/ mem latency
 
-    # (odd-tail tile removed; the static_assert above guarantees it is never needed)
+    # -- Odd tail tile (constexpr; only when n_blocks is even) -------------
+    if ODD_TAIL:
+        block_n = block_start + main_loop_pairs * 2
+        with warp_pipeline_stage("dot1"):
+            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem1"):
+            v_dot = cdna4_async.load_shared_relaxed(v_smem.index(0), v_dot_layout)   # LRV
+            cdna4_async.buffer_load_to_shared(kt_smem.index(1), k_base + (block_n + 3) * kt_step, kt_off)   # ACK
+            cdna4_async.commit_group()
+        with warp_pipeline_stage("dot2"):
+            acc = mfma_cdna4(p_dot, v_dot, acc)   # dot_pv
+            m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_run, qk_scale, SCALE_ON_Q)   # VEC1
+        cdna4_async.wait_group(WAIT_LOOP - 1)
+        with warp_pipeline_stage("mem2"):
+            kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)   # LRK
+            cdna4_async.buffer_load_to_shared(v_smem.index(0), v_base + (block_n + 2) * v_step, v_off)   # ACV
+            cdna4_async.commit_group()
+            acc, l_i = rescale_lazy(acc, l_i, alpha_c)   # rescale for the drain's first DOT1
 
     # -- Drain (last 3 output tiles, no OOB global prefetch) ---------------
     # After the loop: outputs [.., n-4] done; K[0..n-1] and V[0..n-2] in LDS
