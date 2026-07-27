@@ -418,12 +418,27 @@ Causal masking, ragged tails, other head dims and the wide autotune space were r
 the code readable; see the provenance note below.
 
 `N_CTX` is a `gl.constexpr`, so each sequence length is a separate compile. The 2×-unrolled loop
-covers tiles `[0, n_blocks-3)`; when that count is odd `fav4` emits one more tile after the loop
-under a constexpr `ODD_TAIL` guard, which is what lets an even `n_blocks` such as 16384 build at
-all. The guard costs nothing when it is false — 16320 compiles to a byte-identical opcode
-stream — and when it is true the extra tile runs unpipelined, showing up as about half a point
-of epilogue (2.4% → 2.9%) with the in-loop MFMA efficiency unchanged at 95.4%. `fav3` still
-carries the original `static_assert` instead, so it builds only for an odd `n_blocks`.
+covers tiles `[0, n_blocks-3)`; when that count is odd, both kernels emit one more tile after the
+loop under a constexpr `ODD_TAIL` guard, which is what lets an even `n_blocks` such as 16384
+build at all. The tail is always tile `n-4` and always an "even" tile, so the drain needs no
+change — it already derives its LDS slots from `(index - block_start) % BUF_DEPTH` at runtime.
+
+The guard costs nothing when it is false: 16320 compiles to a byte-identical opcode stream in
+both kernels. When it is true the extra tile runs unpipelined, so it lands in the epilogue
+rather than the loop:
+
+| | cyc/iter | MFMA eff / SIMD | epilogue | VGPR spills |
+|---|---:|---:|---:|---:|
+| `fav4` S=16320 | 4299.3 | 95.3% | 2.38% | 0 |
+| `fav4` S=16384 | 4293.7 | 95.4% | 2.89% | 0 |
+| `fav3` S=16320 | 4802.8 | 85.3% | 3.07% | 9 |
+| `fav3` S=16384 | 4799.6 | 85.3% | 3.92% | 20 |
+
+The in-loop numbers are unchanged in both — the tail buys its way in entirely out of the
+epilogue. `fav3` does pay for it in registers: the tail's live ranges push spills from 9 to 20,
+all of them in that unpipelined block rather than in the loop, which is why the loop's cycle
+count and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
+immediately ahead of a dot cluster, which is what §5's first design rule exists to prevent.
 
 ## 9. Where to go deeper
 
