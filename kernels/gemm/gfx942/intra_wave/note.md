@@ -385,15 +385,150 @@ full ~9% would be visible. The ATT number is not a TFLOPS claim here.
 | 1. barriers / `lgkmcnt(0)` | largely addressed — in Region 0 the surplus now lands directly after the barrier, so the read burst drains behind 23 MFMAs |
 | 3. `amdgcnas` post-assembly peephole | open, untried on gfx942 |
 
-At 84.0% in-loop MFMA efficiency the 4-wave kernel is now within 2.5 points of
-the 8-wave `inter_wave` kernel (86.5%). The remaining 16% is worth little on
-this part — the power cap absorbs most of any further cycle win — so the more
-promising direction is reducing power per unit work rather than cycles per unit
-work.
+At 84.0% the 4-wave kernel is within 2.5 points of the 8-wave `inter_wave`
+kernel (86.5%). Opt 3 closes the gap and passes it.
+
+## Opt 3 — drain the prologue's LDS reads before the loop  ✅ done
+
+**in-loop MFMA efficiency 84.0% → 89.0%, +9.4% work per clock, and the 4-wave
+kernel now beats hipBLASLt on every shape and dtype.** One line of kernel code.
+
+### 3.1 The finding: a first-iteration hazard paid on every iteration
+
+The loop carried **3 `s_barrier` + 3 `s_waitcnt lgkmcnt(0)`** per K-step, and the
+`lgkmcnt(0)`s cost 5.8% of all issue slots (mean 94 cycles, max 260). Hand-running
+membar over the loop body's LDS order predicts only **2** barriers:
+
+```
+op0 LR A_bot | op1 LW B_left | op2 LR B_right | op3 LW A_top
+op4 LR B_left | op5 LW A_bot | op6 LR A_top  | op7 LW B_right
+```
+
+* before `op0` — loop-carried RAW on A_bot (`op5` writes it)
+* before `op4` — RAW on B_left (`op1` writes it)
+
+The third came from the **prologue**. It ends with
+
+```python
+b_left = smemB_left.load(dotOpLayoutB)
+a_top  = smemA_top.load(dotOpLayoutA)
+```
+
+and those reads are still pending in membar's `BlockInfo` at the loop header.
+That set is joined into the loop-body input, where it collides with `op1
+LW B_left` as a **WAR hazard that can only occur on the first iteration**.
+membar resolves it the only way its algorithm allows — a barrier inside the loop
+body — so every K-step pays for a one-time condition.
+
+Confirmed by construction: adding two explicit `gl.barrier()` at the points the
+hazard analysis says are sufficient still left 3 barriers, because the prologue
+hazard is independent of both. Draining the prologue instead fixes it.
+
+### 3.2 The change
+
+```python
+b_left = smemB_left.load(dotOpLayoutB)
+a_top  = smemA_top.load(dotOpLayoutA)
+
+gl.barrier()      # <-- close the prologue's pending LDS reads
+
+for k in range(0, iterMax - 2):
+```
+
+One barrier in the prologue (paid once) removes one from every K-step.
+
+### 3.3 The waits go fine-grained
+
+With the redundant barrier gone, the loop's sync profile changes character
+completely — `SIInsertWaitcnts` can finally do its job:
+
+| | opt2 | opt3 |
+|---|---|---|
+| `s_barrier` | 3 | **2** |
+| `s_waitcnt lgkmcnt(0)` | 3 | **1** |
+| `s_waitcnt lgkmcnt(N>0)` | 0 | **9** — `lgkm9`, `lgkm12`, `lgkm13`, `lgkm14` |
+
+The blanket drains are replaced by precise dependency waits. Those are what one
+would *expect* to see before the consuming MFMAs; they were absent before only
+because the barrier's full drain had already retired everything. Measured cost
+of all 479 of them in the ATT window: **median 4 cycles, max 4** — free.
+
+Instruction counts, registers (256 VGPR + 256 AGPR, **0 spills**) and LDS are
+unchanged.
+
+### 3.4 Result
+
+ATT, 4096x4864x8256 fp16:
+
+| | baseline | opt1 | opt2 | **opt3** |
+|---|---|---|---|---|
+| cycles / iteration / wave | 5877 | 5343 | 4874 | **4601** |
+| in-loop MFMA efficiency | 69.7% | 76.7% | 84.0% | **89.0%** |
+| whole dispatch (cyc) | 856,144 | 785,656 | 733,548 | **701,952** |
+
+**21.7% fewer cycles than baseline.** Where the issue slots went:
+
+| | opt2 | opt3 |
+|---|---|---|
+| `v_mfma` | 73.1% | **77.5%** |
+| `ds_write` | 10.6% | 10.2% |
+| `s_waitcnt lgkmcnt(0)` | **5.8%** | **0.1%** |
+| `s_barrier` | 2.3% | 2.9% (fewer, but mean 37 → 65 cyc) |
+| `s_waitcnt lgkmcnt(N>0)` | – | 0.8% |
+| total sync | **8.7%** | **4.3%** |
+
+Sustained 12 s loops, 3 alternating runs per config, both pinned at 750 W:
+
+| | TFLOPS | clock | work / clock |
+|---|---|---|---|
+| opt2 | 584.6 | 1348 MHz | 0.4313 |
+| **opt3** | **605.3** | **1283 MHz** | **0.4718  (+9.4%)** |
+
+`do_bench` median of 3 — **ahead of hipBLASLt everywhere**, which the 4-wave
+kernel never was before:
+
+| K | fp16 | torch | | bf16 | torch |
+|---|---|---|---|---|---|
+| 2112 | **582** | 572 | +1.9% | **613** | 610 |
+| 4160 | **629** | 615 | +2.4% | **666** | 646 |
+| 8256 | **588** | 563 | +4.4% | **660** | 622 |
+| 16448 | **616** | 575 | +7.1% | **666** | 614 |
+
+### 3.5 It exposed the vmcnt conservatism, as predicted
+
+`SIInsertWaitcnts` emits `vmcnt(3)/(1)/(0)` before region 0's `ds_write`s. The
+correct values are `vmcnt(15)/(13)/(12)`: those writes consume GR#1–#4, the
+*oldest* 4 of 16 loads in flight, so GR#5–#16 could stay outstanding. The pass
+counts only region 0's own 4 loads and loses the rest across the back edge.
+(Not a forced flag — Triton never sets `amdgpu-waitcnt-load-forcezero`.)
+
+Before opt3 this measured as free (`vmcnt(0)`: max gap **4 cycles**) — but only
+because the `lgkmcnt(0)` stall immediately before it was already covering the
+HBM latency. With that stall gone, `vmcnt(0)`'s max gap is **168 cycles**. Still
+only 0.2% of the window today, but the mechanism is now live and will grow as
+the remaining sync cost comes down.
+
+Fixing it needs a MachineIR-level change, which the LLIR plugin cannot reach
+(it runs at `OptimizerLast`, long before waitcnt insertion). The realistic lever
+is a post-assembly rewrite in the `amdgcnas` style.
+
+### 3.6 What is still on the table
+
+| candidate | status |
+|---|---|
+| barrier count | **done** — 3 → 2, the minimum for this slot schedule |
+| `ds_write` 10.2% | at the CDNA3 LDS port limit (32 cyc = 4 SIMD x 1024 B / 128 B per clk); only reducible by writing less to LDS |
+| `vmcnt` conservatism | open — see §3.5, needs a post-assembly pass |
+| `s_barrier` 2.9% | 2 barriers is the minimum given the loop-carried WAR/RAW on each slot |
+| `amdgcnas` peephole | open, untried on gfx942 |
+
+At 89.0% the 4-wave kernel has now passed the 8-wave `inter_wave` kernel's
+86.5%. Re-running opt1-3 against `inter_wave` is probably the highest-value next
+step — it has the same prologue pattern.
 
 ## 3. Backlog (not yet attempted)
 
-* Close the remaining 16% — see the table in §2.4.
+* Close the remaining 11% — see the table in §3.6.
 * `amdgcnas` post-assembly peephole on gfx942.
 * Measure the fp8/bf8/i8 CDNA3 cycle counts added to the scheduler's table on
   faith (derived, not measured). Needed before porting a8w8 to gfx942.

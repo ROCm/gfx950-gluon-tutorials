@@ -236,6 +236,20 @@ def a16w16_intra_wave_gfx942(
     b_left = smemB_left.load(dotOpLayoutB)
     a_top = smemA_top.load(dotOpLayoutA)
 
+    ## Close the prologue's pending LDS reads before entering the loop.
+    ##
+    ## Without this, `b_left`/`a_top` above are still outstanding in membar's
+    ## BlockInfo at the loop header. That set is joined into the loop-body
+    ## input, where it collides with region 0's `smemB_left.store` as a WAR
+    ## hazard -- one that can only occur on the *first* iteration. membar
+    ## resolves it the only way it can, by planting a barrier inside the loop
+    ## body, so every iteration pays for a one-time condition.
+    ##
+    ## Draining here costs one barrier in the prologue and removes one from
+    ## every K-step: 3 barriers/iteration -> 2, and 3 `s_waitcnt lgkmcnt(0)`
+    ## -> 1. See note.md Opt 3.
+    gl.barrier()
+
     ## ------------------------------------------------------------------
     ## Main loop: four regions, each one DOT + one LR + one LW + one GR.
     ## ------------------------------------------------------------------
