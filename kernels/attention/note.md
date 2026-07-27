@@ -1106,29 +1106,32 @@ either side of fav4's 1241.5. Bracket any TFLOPS measurement with an unchanged b
 ## mem-stage pacing x scale-on-Q matrix (2026-07-27, GPU[0], unified plugin)
 
 Three settings, both kernels, seqlen 16320 fp16. `LLIRSCHED_WP_MEMNOP` controls the `s_nop`s at
-each mem-cluster head; **fav3 has no `SCALE_ON_Q`** -- it always applies `qk_scale` per score
-element, so it is inherently the SOQ=0 form and setting 3 does not exist for it.
+each mem-cluster head. fav3 had no `SCALE_ON_Q` when this was first run; it has one now (see
+below), so all three settings exist for both kernels.
 
 | setting | | fav3 | fav4 |
 |---|---|---|---|
 | 1 | SOQ=0, no `s_nop` (`MEMNOP=0`) | 1165.0 TF / 4882.1 cyc / 83.9% | 1222.8 TF / 4577.2 cyc / 89.5% |
-| 2 | SOQ=0, `MEMNOP=2` | **1168.8** TF / 4802.0 cyc / 85.3% | 1233.1 TF / 4434.5 cyc / 92.4% |
-| 3 | SOQ=1, `MEMNOP=2` | n/a | **1242.6** TF / 4368.7 cyc / 93.8% |
+| 2 | SOQ=0, `MEMNOP=2` | 1168.8 TF / 4802.0 cyc / 85.3% | 1233.1 TF / 4434.5 cyc / 92.4% |
+| 3 | SOQ=1, `MEMNOP=2` | **1176.6** TF / 4752.2 cyc / 86.2% | **1242.6** TF / 4368.7 cyc / 93.8% |
 
 What the pacing is worth on its own (setting 1 -> 2): fav3 **-1.6% cycles**, +1.4 pts, +0.3% TF;
 fav4 **-3.1% cycles**, +2.9 pts, +0.8% TF. It helps fav4 about twice as much as fav3, which fits
 the mechanism -- fav3's dot clusters are over capacity, so its mem clusters are less often the
 thing the other wave is waiting on.
 
-Scale-on-Q on top (2 -> 3, fav4): **-1.5% cycles**, +1.4 pts, +0.8% TF. Together the two are worth
-**-4.6% cycles and +1.6% TFLOPS** on fav4.
+Scale-on-Q on top (2 -> 3): fav4 **-1.5% cycles**, +1.4 pts, +0.8% TF; fav3 **-1.0% cycles**,
++0.9 pts, +0.8% TF. Together the two are worth **-4.6% cycles / +1.6% TF** on fav4 and
+**-2.7% cycles / +1.0% TF** on fav3. Both kernels gain about the same 0.8% from scale-on-Q, which
+is what you would expect -- it removes the same per-element multiply from the same cluster in both.
 
 **`MEMNOP=2` is the optimum in all three configurations**, which is the current default. Full
 sweep, cyc/iter:
 
 | `MEMNOP` | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
-| fav3 | 4882.1 | 4828.1 | **4802.0** | 4818.5 | 4814.6 |
+| fav3 SOQ=0 | 4882.1 | 4828.1 | **4802.0** | 4818.5 | 4814.6 |
+| fav3 SOQ=1 | 4823.8 | 4783.5 | **4752.2** | 4761.6 | 4765.7 |
 | fav4 SOQ=0 | 4577.2 | 4538.2 | **4434.5** | 4523.1 | 4444.0 |
 | fav4 SOQ=1 | 4422.9 | 4467.1 | **4368.7** | 4524.9 | 4483.8 |
 
@@ -1138,3 +1141,22 @@ sweep the small range.
 
 TFLOPS were bracketed by an unchanged fav3 `MEMNOP=2` build before and after, reading 1168.8 and
 1168.9, so the box was stable across the batch (see the drift incident recorded above).
+
+### `SCALE_ON_Q` added to fav3
+
+Mirrors fav4: `qk_scale` is folded into `Q` once before the loop, so VEC1's row max needs no scale
+multiply and its `fma(qk, qk_scale, -m_new)` collapses to a plain subtract. `qk_scale`'s definition
+had to be hoisted above the `Q` load, which is where it now sits. Default `True`, matching fav4 --
+**so fav3's default build changes**, from 4802.0 cyc / 85.3% to 4752.2 / 86.2%.
+
+- `SCALE_ON_Q=False` compiles to a **byte-identical opcode stream** to fav3 before the change, so
+  the branch costs nothing when it is off.
+- Accuracy follows fav4's tradeoff exactly: max error 3.05e-05 -> 1.22e-04 from the extra fp16
+  rounding of Q, both far inside the 1e-3 tolerance.
+- Spills improve slightly, 9 -> 8.
+- The **ceiling does not move**: 192 exposed cycles either way, so 91.4%. SOQ=1 shifts 8 cycles of
+  QK demand into a slightly different shape (PV 384 -> 392 demand, 12 packed -> 10) without
+  changing what is left outside the shadow. The gain is fill quality, not coverage.
+- TFLOPS measured interleaved with an unchanged SOQ=0 control: control 1166.5 / 1168.1,
+  SOQ=1 1177.4 / 1175.7. An earlier batch had to be discarded because its two controls disagreed
+  by 1.3%.

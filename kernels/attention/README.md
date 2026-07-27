@@ -455,7 +455,8 @@ comparable across implementations.
 |---|---:|---:|---:|---:|
 | **`fav4`** (`SCALE_ON_Q=1`) | **1241** | **4373** | **93.7%** | **100%** |
 | `fav4`, `--scale-on-q 0` | 1220 | 4438 | 92.3% | 100% |
-| `fav3` | 1169 | 4804 | 85.3% | **91.4%** |
+| **`fav3`** (`SCALE_ON_Q=1`) | **1177** | **4752** | **86.2%** | **91.4%** |
+| `fav3`, `--scale-on-q 0` | 1167 | 4802 | 85.3% | 91.4% |
 | `fav3`, no scheduling plugin | 1127 | — | — | 91.4% |
 | *ROCm/FlyDSL, lazy rescale* | *1242* | *4747* | *86.3%* | |
 | *ROCm/FlyDSL, eager rescale* | *1044* | *6695* | *61.2%* | |
@@ -463,13 +464,13 @@ comparable across implementations.
 **The ceilings come straight from §5's budget**, and they are what make the efficiency column
 readable. `fav4`'s demand fits inside the window, so nothing is exposed and its ceiling is
 100%; it reaches 93.7%. `fav3` has 4 × 48 = 192 exposed cycles per loop body against 2048 of
-MFMA, so its ceiling is 2048/2240 = **91.4%**; it reaches 85.3%.
+MFMA, so its ceiling is 2048/2240 = **91.4%**; it reaches 86.2%.
 
-That reframes the comparison. The two kernels are 8.4 points apart in efficiency and their
-*ceilings* are 8.6 points apart — so the entire gap is the exposed packed work `fav3`'s budget
-cannot absorb, and neither scheduler is doing a worse job than the other. Each lands about 6
-points short of its own ceiling, and that remainder is barrier and pacing overhead, the same for
-both.
+That reframes the comparison. The two kernels are 7.5 points apart in efficiency while their
+*ceilings* are 8.6 points apart — so the whole of the gap, and a little more, is the exposed packed
+work `fav3`'s budget cannot absorb. `fav3` is in fact slightly *closer* to its own ceiling than
+`fav4` is to 100% (5.2 points against 6.3), which is worth knowing before reading its lower number
+as a worse schedule. What is left in both cases is barrier and pacing overhead.
 
 Three things worth reading off the table.
 
