@@ -552,6 +552,20 @@ Neither shape is *the* answer — that one flatters us, this one flatters them. 
 does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
 the scheduler actually controls. `note.md` works the comparison through in full.
 
+**The launch geometry is identical on both sides**, which is worth checking before trusting any
+of the above — a difference in grid or occupancy would confound the whole table. FlyDSL builds its
+grid as `(NUM_HEADS_Q, ceil(S/BLOCK_M), batch)` from `BLOCK_M=256`, `BLOCK_N=64`, 8 waves per
+workgroup, 32 rows per wave and `waves_per_eu=2` — the same three axes in the same order, and the
+same numbers, as ours. At this shape both launch `(8, 32, 32)` = 8192 workgroups of 8 waves, one
+workgroup resident per CU, 256 at a time, 32 rounds with no tail imbalance. So the differences in
+the table are what happens inside the loop, and power — not how the work was handed out.
+
+Neither side remaps workgroups across XCDs here, though for different reasons. FlyDSL's GEMM and
+MoE kernels do (`xcd_remap_bx_by`, behind an `xcd_swizzle` knob) but its attention kernels do not.
+Ours calls `remap_xcd` on the head index — and at `HQ=8` against 8 XCDs that map is exactly the
+identity, so it does nothing at this shape. It *is* active at `B=1, HQ=64`, which is one more
+reason the two shapes are not interchangeable.
+
 One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
 `(n_blocks − 3)` is odd and both kernels run the `ODD_TAIL` path (§9) — one unpipelined tile in the
 drain. FlyDSL has no such constraint.

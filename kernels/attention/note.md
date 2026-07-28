@@ -1291,3 +1291,42 @@ headline numbers.**
 
 The plugin stack is worth **+10.0%** on fav4 (1197.6 -> 1318.0) and **+8.9%** on fav3
 (1140.9 -> 1242.6) here, against +10.9% / +6.8% at B=1 S=16384 fp16.
+
+### Launch geometry and XCD remapping: gluon vs FlyDSL
+
+Checked because a grid or occupancy difference would confound the §8 table. It does not: FlyDSL's
+`build_flash_attn_dualwave_swp_module` launches `(NUM_HEADS_Q, ceil(S/BLOCK_M), batch)` --
+`flash_attn_gfx950.py:785` -- and `_make_dualwave_swp_traits` sets `block_m = 256`, `block_n = 64`,
+`num_waves = 8`, `rows_per_wave = 32`, `waves_per_eu = 2`, with a comment that the geometry
+"follow[s] the gfx950 dual-wave 8-wave CTA". Every one of those matches ours.
+
+| | gluon fav3/fav4 | FlyDSL |
+|---|---|---|
+| grid | `(HQ, ceil(S/BLOCK_M), B)` | `(NUM_HEADS_Q, ceil(S/BLOCK_M), batch)` |
+| BLOCK_M / BLOCK_N | 256 / 64 | 256 / 64 |
+| waves per workgroup | 8 | 8 |
+| rows per wave | 32 | 32 |
+| waves_per_eu | 2 | 2 |
+
+So at B=32 S=8192 H=8 both launch `(8, 32, 32)` = 8192 workgroups, one resident per CU, 256 at a
+time, 32 rounds, no tail imbalance.
+
+**XCD remapping: FlyDSL's attention kernels have none.** Its GEMM and MoE kernels do
+(`xcd_remap_bx_by` from `kernels/common/mma/mfma_preshuffle_pipeline.py`, behind an `xcd_swizzle`
+parameter), but nothing in `kernels/attention/` uses it -- the only "remap" hits there are a
+paged-attention loop reversal and a sigma remap for K DMA slots, both unrelated.
+
+Ours *does*: `remap_xcd(off_h_q, HQ)` in both kernels, which un-round-robins the **head** axis so
+consecutive heads land on the same XCD. Note what it is keyed on -- `GRID_MN = HQ`, not the whole
+grid -- so its behaviour depends entirely on the head count:
+
+    HQ=64:  [0, 8, 16, 24, 32, 40, 48, 56, 1, 9, 17, 25, ...]   active
+    HQ=8:   [0, 1, 2, 3, 4, 5, 6, 7]                            identity, does nothing
+
+**At the §8 shape (HQ=8, 8 XCDs) our remap is the identity**, so neither kernel remaps and the
+comparison is clean. At B=1 HQ=64 ours is active and theirs is not -- one more reason those two
+shapes are not interchangeable, alongside the power-cap difference.
+
+Two loose ends this leaves: the remap is keyed on `HQ` alone, so for a GQA/MQA shape with few
+query heads it silently does nothing, and the M-block and batch axes are never remapped at all.
+Whether either is worth exploiting is untested.
