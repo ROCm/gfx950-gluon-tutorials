@@ -75,7 +75,7 @@ the comparable microarch metric**.
    respects the softmax dependency chain. Interleaving valu+exp on every MFMA
    *loses* (over-constrains). Order matters: valu-first 1071, exp-first 1047.
    - Split math: pretend 1 exp = 2 valu; `K1=⌈(V+2E)/M⌉`, `K2=⌈K1/2⌉`,
-     `g0=round(V/K1)`, `g1=M−g0`. (M16 V54 E33 → 8/4/7/9.)
+     `g0=round(V/K1)`, `g1=M-g0`. (M16 V54 E33 → 8/4/7/9.)
 
 **Per-stage optimal ceiling** (proof, 24-cyc window): DOT1 86.5%, DOT2 83.7%.
 DOT2 is the tighter stage — its 33 `v_exp` (8 cyc, never-co-issue) cap it.
@@ -203,7 +203,7 @@ dot1 stage. 36.6 → 36.8%.
 ## opt2 — interleave DOT1 mfma with sum+cvt (negative, but surfaced 3 real bugs)
 
 Reversed dot1 so `sc_vec2` runs **before** `compute_dot1_qk`, to let the llir
-scheduler interleave the QK mfma with the sum/cvt VALU. **−8%** — the reversal puts
+scheduler interleave the QK mfma with the sum/cvt VALU. **-8%** — the reversal puts
 the `warp_predicate` *branch* ahead of the QK mfma, exposing three backend issues:
 
 1. **block-placement out-of-lining.** `MachineBlockPlacement` laid the cold rescale
@@ -283,7 +283,7 @@ GEMM: correct, within run-to-run noise. `TRITON_WP_NO_WRAP_DRAIN` opts out.
 
 **Dead end:** `TRITON_WP_WRAP_BOTTOM` (move the wrap-around barrier to the loop
 bottom) also drains once, but it reverts the top-barrier prototype (`fc55d65df`) and
-costs **−1%** — and it was never needed; the hard drain alone yields the layout above.
+costs **-1%** — and it was never needed; the hard drain alone yields the layout above.
 
 ## Run recipe (opt3)
 
@@ -1009,9 +1009,9 @@ temporary `AMDGCN_MFMA_N_INNER` gate there (default branch byte-identical), GPU[
 | | suppressed | cyc/iter | mfma eff /SIMD | sclk | power | kernel time |
 |---|---|---|---|---|---|---|
 | **fav4** k-inner, MEMNOP=2 | 0/128 (0%) | 4298.4 | 95.3% | 1435.7 MHz | 1399.7 W | 1243.0 TF |
-| **fav4** n-inner, MEMNOP=3 | 40/128 (31%) | 4285.4 (−0.30%) | 95.6% | 1446.7 MHz (+0.77%) | 1399.7 W | 1246.1 TF (+0.25%) |
+| **fav4** n-inner, MEMNOP=3 | 40/128 (31%) | 4285.4 (-0.30%) | 95.6% | 1446.7 MHz (+0.77%) | 1399.7 W | 1246.1 TF (+0.25%) |
 | **fav3** k-inner, MEMNOP=2 | 0/64 (0%) | 4806.0 | 85.2% | 1485.6 MHz | 1396.3 W | 1168.5 TF |
-| **fav3** n-inner, MEMNOP=2 | 20/64 (31%) | 4797.1 (−0.19%) | 85.4% | 1496.3 MHz (+0.72%) | 1394.8 W | ~1171.8 TF |
+| **fav3** n-inner, MEMNOP=2 | 20/64 (31%) | 4797.1 (-0.19%) | 85.4% | 1496.3 MHz (+0.72%) | 1394.8 W | ~1171.8 TF |
 
 **Conclusion: the effect is real and reproducible but limited, so the tree keeps k-inner.**
 Power is pinned at the cap in all four runs, so the saving appears as **clock, not watts** —
@@ -1393,3 +1393,155 @@ all of them in that unpipelined block rather than in the loop, which is why the 
 and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
 immediately ahead of a dot cluster, which is what the README's first design rule exists to
 prevent.
+
+## What in-loop MFMA efficiency is actually worth: TFLOPS = f(eff) (2026-07-28)
+
+Every number in this file ranks builds by **in-loop MFMA efficiency per SIMD**, on the argument
+that it is the one quantity the scheduler controls and the one that is stable across shapes and
+dtypes. That argument is only useful if efficiency converts into throughput at a known rate. This
+section measures the conversion, end to end, and it is not 1:1 in either of the two ways one might
+guess.
+
+### Method: sweep efficiency by deleting VALU
+
+Adding VALU to a saturated kernel is not possible without a free VGPR, and at 256/256 allocated
+there is none (a rotating-destination filler faults). So the sweep runs the other way. Start from
+`fav4` on **stock LLVM + `disable-machine-sink`** -- 76.2% efficiency, the low end -- and delete an
+evenly spaced fraction of the in-loop dot-cluster VALU, 0 to 100% in steps of 5%. The kernel stops
+computing attention, but the MFMA count per iteration, the loop trip count and the memory traffic
+are all untouched, so TFLOPS remains a fair measure of the same work.
+
+`scripts/ablate_valu.py` does the rewriting, installed through
+`knobs.runtime.add_stages_inspection_hook` (`FA_ABLATE_VALU=frac FA_ABLATE_FRAC=f`). It also forces
+the `warp_predicate` rescale block to skip, so that one cold path is constant across the sweep --
+an earlier attempt without this measured a kernel that had started running rescale *every*
+iteration, and produced two wrong explanations before the artifact was found. B=32 S=8192 H=8 D=128
+bf16, GPU[0], `fa_kernel_time.py` for throughput and one ATT pass per point for efficiency.
+
+| frac | eff /SIMD | TFLOPS | | frac | eff /SIMD | TFLOPS |
+|---:|---:|---:|---|---:|---:|---:|
+| 0 | 76.3% | 1240.3 | | 0.55 | 94.1% | 1445.0 |
+| 0.05 | 78.2% | 1272.0 | | 0.60 | 93.6% | 1445.8 |
+| 0.10 | 79.2% | 1284.5 | | 0.65 | 94.6% | 1461.6 |
+| 0.15 | 81.7% | 1359.6 | | 0.70 | 95.0% | 1473.1 |
+| 0.20 | 83.4% | 1331.6 | | 0.75 | 98.1% | 1492.8 |
+| 0.25 | 83.9% | 1345.2 | | 0.80 | 97.4% | 1497.9 |
+| 0.30 | 85.9% | 1364.1 | | 0.85 | 98.1% | 1509.6 |
+| 0.35 | 87.6% | 1391.5 | | 0.90 | 97.3% | 1515.7 |
+| 0.40 | 89.4% | 1393.8 | | 0.95 | 99.5% | 1537.0 |
+| 0.45 | 90.4% | 1408.2 | | 1.00 | 101.1% | 1553.5 |
+| 0.50 | 92.2% | 1424.5 | | | | |
+
+Deleting all of it reaches **101.1%**, which is the ATT accounting's own bias at saturation -- read
+it as 100% and as a ~1% systematic overshoot on every efficiency number in this file. The largest
+inversion between adjacent steps is 0.8 points (0.85 -> 0.90), so a single point is good to about
+±1 efficiency point and ±10 TFLOPS.
+
+![TFLOPS against in-loop MFMA efficiency](images/eff_tflops_curve.svg)
+
+### The function is a line with a large positive intercept
+
+    TFLOPS = 11.67 * eff + 362.3          R2 = 0.977      (eff in %, 76 <= eff <= 101)
+
+The Amdahl form `TFLOPS = eff / (0.04664 + 1.888e-4 * eff)` fits identically well (R2 = 0.975), so
+over a 25-point span the two are indistinguishable and the line is the one to use. What matters is
+the **elasticity, 0.74 - 0.76**: a 1% *relative* gain in in-loop efficiency buys 0.75% TFLOPS. End
+to end, +32.5% efficiency bought +25.3% throughput -- the traced loop got 1.325x shorter while the
+kernel got 1.255x faster.
+
+That 5% is time outside the steady-state loop window ATT traces, and it is mostly *not* fixed
+per-dispatch cost. Doubling the sequence length halves any fixed share:
+
+| S | TFLOPS @76.3% | TFLOPS @101.1% | ratio |
+|---|---:|---:|---:|
+| 8192 | 1237.9 | 1553.7 | 1.255 |
+| 16384 | 1250.7 | 1580.3 | 1.264 |
+
+Pure fixed overhead predicts the ratio moves to 1.284; it moved to 1.264, so prologue, drain and
+launch account for at most a third of the gap. The rest scales *with* the loop and is invisible to
+a single-SIMD window -- per-workgroup pipeline fill, barrier waits, and memory latency that stops
+being hidden as the loop tightens.
+
+### The clock does not move along the sweep -- and that is an artifact of the method
+
+The natural hypothesis is that a denser MFMA stream draws more power and gives clock back. Polling
+`sclk` and board power during five of the sweep's own runs says it does not:
+
+| frac | eff | TFLOPS | sclk | power |
+|---:|---:|---:|---:|---:|
+| 0 | 76.3% | 1247.0 | 1730.6 MHz | 1331.2 W |
+| 0.25 | 83.9% | 1346.7 | 1717.3 MHz | 1323.3 W |
+| 0.50 | 92.2% | 1431.4 | 1692.3 MHz | 1331.5 W |
+| 0.65 | 94.6% | 1465.2 | 1710.1 MHz | 1328.0 W |
+| 1.00 | 101.1% | 1561.1 | 1726.0 MHz | 1331.2 W |
+
+Flat to ±1.1% with no trend, at a power that is *not* the cap (the same poller reads 1396.5 W at
+B=1 S=16384, which is the cap -- see the shape comparison above). **The reason is that this method
+moves two power terms in opposite directions**: each step issues more MFMA per second and much less
+VALU per second. At `frac=0.65` the build issues 11% more MFMA/s than tuned `fav4` while retaining
+only 35% of its dot-cluster VALU, and the two land at the same board power. So the sweep isolates
+the *cycle* effect cleanly, which is what it was for -- but it cannot say anything about the clock
+cost of a real optimization, which holds the VALU count fixed.
+
+### Where the real kernels fall
+
+Three kernels that compute correct attention, measured in one session with the identical protocol
+at the same shape:
+
+| kernel | eff /SIMD | TFLOPS | sclk | power | TF/GHz | vs. line | vs. line/GHz |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `fav4` stock LLVM + no-sink | 76.2% | 1235.5 | 1738.1 MHz | 1341.1 W | 710.8 | -1.3% | -1.8% |
+| ROCm/FlyDSL `63eb891` | 84.7% | 1325.9 | 1657.4 MHz | 1335.9 W | 800.0 | -1.8% | +1.8% |
+| gluon `fav4` tuned | 94.5% | 1323.6 | 1565.8 MHz | 1316.0 W | 845.3 | **-9.7%** | -1.5% |
+
+**In raw TFLOPS the tuned kernel is 9.7% below the ablation line**, while the other two sit on it.
+The deviation is not noise and it is not the kernels being different: it tracks the clock. Dividing
+each point by its own measured `sclk` puts all three on one line, and tightens the ablation fit at
+the same time:
+
+    TFLOPS/GHz = 7.362 * eff + 162.6      R2 = 0.997      (the 5 clock-instrumented points)
+
+with the three real kernels at -1.8%, +1.8% and -1.5% of it. So **cycles per unit work is a
+function of in-loop MFMA efficiency alone, to about ±2%, across independently written kernels** --
+FlyDSL included, which shares none of our codegen. Its +1.8% is the loop-share difference already
+noted above (94.1% of its time in the loop against our 88.3%), i.e. exactly the non-loop term the
+intercept represents.
+
+That decomposition closes the fav4-vs-FlyDSL dead heat exactly:
+
+    cycles  845.3 / 800.0  = 1.0567     (+5.7%, not the +11.6% the raw efficiency ratio suggests)
+    clock   1565.8 / 1657.4 = 0.9447    (-5.5%)
+    product                  0.9983     measured 1323.6 / 1325.9 = 0.9983
+
+### What this means for the rest of this file
+
+1. **In-loop MFMA efficiency is a sound ranking metric for cycles.** The map from efficiency to
+   cycles-per-unit-work is universal within ±2%, so a build that measures better really is issuing
+   less.
+2. **It over-predicts throughput twice.** The intercept eats ~25% of any relative gain (non-loop
+   time), and a denser stream at fixed work gives clock back on top of that. The efficiency ratio
+   is an upper bound on the speedup, not an estimate of it.
+3. **A scheduling win cannot be evaluated without its clock.** Our +11.6% efficiency over FlyDSL is
+   worth +5.7% in cycles and -5.5% in clock. This is why the two are a dead heat here and why the
+   ranking flips at B=1, and it is the quantitative form of the point the shape comparison above
+   makes qualitatively.
+4. The headline `fav4` stock -> tuned gain of 68.5% -> 94.5% efficiency is a real 1197.6 -> 1318.0,
+   not the ~1650 that proportionality would imply. Both statements are in the README; only the
+   second one is misleading.
+
+### Reproducing
+
+```bash
+# one point of the sweep: efficiency by ATT, throughput by kernel time
+FA_ABLATE_VALU=frac FA_ABLATE_FRAC=0.65 HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+  DISABLE_LLVM_OPT=disable-machine-sink \
+  python ../../scripts/fa_kernel_time.py --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 \
+    --iters 2000 --last-n 100 --scale-on-q 1
+
+# FA_ABLATE_DUMP=<dir> keeps the rewritten assembly; modes: dot | loop | all | frac
+```
+
+`ablate_valu.py` rewrites the assembly between Triton's compile stages, so `bench.py` must skip its
+prepared-vs-ordinary launcher agreement check under `FA_ABLATE_VALU` -- the ablated kernel returns
+NaN, and NaN != NaN. Both changes are in the tree. Clock and power come from a 100 ms `rocm-smi`
+poll during the timed run, averaged over the last three quarters of the samples above 900 W.
