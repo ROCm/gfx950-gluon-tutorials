@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 924" width="760" height="924" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 940" width="760" height="940" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
 <style>.ax{stroke:#767676;stroke-width:1}.gr{stroke:#ececec;stroke-width:1}.t{font-size:10.5px;fill:#767676}.h{font-size:12.5px;font-weight:600;fill:#1a1a1a}.n{font-size:10.5px;fill:#767676}.lg{font-size:10.5px}.k{font-size:10.5px;fill:#767676}</style>
-<text class="h" x="8" y="20">1 &#160;Same efficiency axis, two ways of moving along it</text>
+<text class="h" x="8" y="20">1 &#160;Same efficiency axis, three kernels, two ways of moving along it</text>
 <text class="n" x="76" y="36">Grey: VALU deleted (work shrinks). Green/purple: the identical instruction stream re-scheduled. B=32 S=8192 H=8 bf16, GPU[0].</text>
 <line class="gr" x1="76" y1="256.0" x2="740" y2="256.0"/>
 <text class="t" x="69" y="259.5" text-anchor="end">1200</text>
@@ -12,197 +12,237 @@
 <text class="t" x="69" y="100.5" text-anchor="end">1500</text>
 <line class="gr" x1="76" y1="44.0" x2="740" y2="44.0"/>
 <text class="t" x="69" y="47.5" text-anchor="end">1600</text>
-<line class="gr" x1="140.3" y1="44" x2="140.3" y2="256"/>
-<text class="t" x="140.3" y="272" text-anchor="middle">75</text>
-<line class="gr" x1="247.4" y1="44" x2="247.4" y2="256"/>
-<text class="t" x="247.4" y="272" text-anchor="middle">80</text>
-<line class="gr" x1="354.5" y1="44" x2="354.5" y2="256"/>
-<text class="t" x="354.5" y="272" text-anchor="middle">85</text>
-<line class="gr" x1="461.5" y1="44" x2="461.5" y2="256"/>
-<text class="t" x="461.5" y="272" text-anchor="middle">90</text>
-<line class="gr" x1="568.6" y1="44" x2="568.6" y2="256"/>
-<text class="t" x="568.6" y="272" text-anchor="middle">95</text>
-<line class="gr" x1="675.7" y1="44" x2="675.7" y2="256"/>
-<text class="t" x="675.7" y="272" text-anchor="middle">100</text>
+<line class="gr" x1="147.8" y1="44" x2="147.8" y2="256"/>
+<text class="t" x="147.8" y="272" text-anchor="middle">70</text>
+<line class="gr" x1="237.5" y1="44" x2="237.5" y2="256"/>
+<text class="t" x="237.5" y="272" text-anchor="middle">75</text>
+<line class="gr" x1="327.2" y1="44" x2="327.2" y2="256"/>
+<text class="t" x="327.2" y="272" text-anchor="middle">80</text>
+<line class="gr" x1="417.0" y1="44" x2="417.0" y2="256"/>
+<text class="t" x="417.0" y="272" text-anchor="middle">85</text>
+<line class="gr" x1="506.7" y1="44" x2="506.7" y2="256"/>
+<text class="t" x="506.7" y="272" text-anchor="middle">90</text>
+<line class="gr" x1="596.4" y1="44" x2="596.4" y2="256"/>
+<text class="t" x="596.4" y="272" text-anchor="middle">95</text>
+<line class="gr" x1="686.2" y1="44" x2="686.2" y2="256"/>
+<text class="t" x="686.2" y="272" text-anchor="middle">100</text>
 <line class="ax" x1="76" y1="256" x2="740" y2="256"/>
 <line class="ax" x1="76" y1="44" x2="76" y2="256"/>
 <text class="t" x="408" y="292" text-anchor="middle">in-loop MFMA efficiency, per SIMD (%)</text>
 <text class="t" transform="translate(17,150) rotate(-90)" text-anchor="middle">TFLOPS</text>
-<path fill="none" stroke="#b9b9b9" stroke-width="1.6"  d="M76.0,254.6 L740.0,62.9"/>
-<text class="lg" x="418.7" y="147.7" fill="#b9b9b9">deleting VALU: 11.7/point</text>
-<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,244.6 L740.0,168.3"/>
-<text class="lg" x="225.9" y="219.4" fill="#2f7d43">re-scheduling: 4.6/point</text>
-<line x1="166.0" y1="234.2" x2="166.0" y2="237.2" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="166.0" cy="237.2" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="178.0" y="241.2" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.4% off the line</text>
-<line x1="348.0" y1="213.3" x2="348.0" y2="189.3" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="348.0" cy="189.3" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
-<text class="lg" x="336.0" y="193.3" fill="#d4820a" text-anchor="end">FlyDSL  +3.5% off the line</text>
-<line x1="560.1" y1="188.9" x2="560.1" y2="189.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="560.1" cy="189.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="548.1" y="193.9" fill="#2f7d43" text-anchor="end">fav4 best  -0.1% off the line</text>
-<circle cx="168.1" cy="234.6" r="3.0" fill="#b9b9b9"/>
-<circle cx="208.8" cy="217.8" r="3.0" fill="#b9b9b9"/>
-<circle cx="230.2" cy="211.2" r="3.0" fill="#b9b9b9"/>
-<circle cx="283.8" cy="171.4" r="3.0" fill="#b9b9b9"/>
-<circle cx="320.2" cy="186.3" r="3.0" fill="#b9b9b9"/>
-<circle cx="330.9" cy="179.0" r="3.0" fill="#b9b9b9"/>
-<circle cx="373.7" cy="169.0" r="3.0" fill="#b9b9b9"/>
-<circle cx="410.1" cy="154.5" r="3.0" fill="#b9b9b9"/>
-<circle cx="448.7" cy="153.3" r="3.0" fill="#b9b9b9"/>
-<circle cx="470.1" cy="145.7" r="3.0" fill="#b9b9b9"/>
-<circle cx="508.7" cy="137.0" r="3.0" fill="#b9b9b9"/>
-<circle cx="538.7" cy="125.7" r="3.0" fill="#b9b9b9"/>
-<circle cx="549.4" cy="126.1" r="3.0" fill="#b9b9b9"/>
-<circle cx="560.1" cy="117.4" r="3.0" fill="#b9b9b9"/>
-<circle cx="568.6" cy="111.3" r="3.0" fill="#b9b9b9"/>
-<circle cx="617.9" cy="88.7" r="3.0" fill="#b9b9b9"/>
-<circle cx="620.1" cy="98.1" r="3.0" fill="#b9b9b9"/>
-<circle cx="635.0" cy="100.8" r="3.0" fill="#b9b9b9"/>
-<circle cx="635.0" cy="91.9" r="3.0" fill="#b9b9b9"/>
-<circle cx="665.0" cy="77.4" r="3.0" fill="#b9b9b9"/>
-<circle cx="699.3" cy="68.6" r="3.0" fill="#b9b9b9"/>
-<rect x="250.4" y="221.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="221.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="221.8" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="252.5" y="221.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="263.2" y="219.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="286.8" y="217.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="308.2" y="215.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="368.2" y="206.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="441.0" y="198.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="443.2" y="198.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="556.7" y="186.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="132.6" y="235.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="136.9" y="234.5" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="141.1" y="233.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="217.7" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="217.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="261.1" y="217.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<path fill="none" stroke="#b9b9b9" stroke-width="1.6"  d="M76.0,291.7 L740.0,62.9"/>
+<text class="lg" x="470.8" y="147.7" fill="#b9b9b9">deleting VALU: 11.7/point</text>
+<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,259.4 L740.0,168.3"/>
+<text class="lg" x="309.3" y="219.4" fill="#2f7d43">re-scheduling: 4.6/point</text>
+<path fill="none" stroke="#d4820a" stroke-width="1.6" stroke-dasharray="4 3" d="M76.0,248.7 L740.0,133.3"/>
+<text class="lg" x="165.7" y="225.1" fill="#d4820a">FlyDSL: 5.9/point</text>
+<line x1="259.0" y1="234.2" x2="259.0" y2="237.2" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="259.0" cy="237.2" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
+<text class="lg" x="271.0" y="241.2" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.4% off the line</text>
+<line x1="379.3" y1="217.7" x2="379.3" y2="195.8" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="379.3" cy="195.8" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="367.3" y="199.8" fill="#d4820a" text-anchor="end">FlyDSL  +3.3% off the line</text>
+<line x1="589.3" y1="188.9" x2="589.3" y2="189.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="589.3" cy="189.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="577.3" y="193.9" fill="#2f7d43" text-anchor="end">fav4 best  -0.1% off the line</text>
+<circle cx="260.8" cy="234.6" r="3.0" fill="#b9b9b9"/>
+<circle cx="294.9" cy="217.8" r="3.0" fill="#b9b9b9"/>
+<circle cx="312.9" cy="211.2" r="3.0" fill="#b9b9b9"/>
+<circle cx="357.8" cy="171.4" r="3.0" fill="#b9b9b9"/>
+<circle cx="388.3" cy="186.3" r="3.0" fill="#b9b9b9"/>
+<circle cx="397.2" cy="179.0" r="3.0" fill="#b9b9b9"/>
+<circle cx="433.1" cy="169.0" r="3.0" fill="#b9b9b9"/>
+<circle cx="463.6" cy="154.5" r="3.0" fill="#b9b9b9"/>
+<circle cx="495.9" cy="153.3" r="3.0" fill="#b9b9b9"/>
+<circle cx="513.9" cy="145.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="546.2" cy="137.0" r="3.0" fill="#b9b9b9"/>
+<circle cx="571.3" cy="125.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="580.3" cy="126.1" r="3.0" fill="#b9b9b9"/>
+<circle cx="589.3" cy="117.4" r="3.0" fill="#b9b9b9"/>
+<circle cx="596.4" cy="111.3" r="3.0" fill="#b9b9b9"/>
+<circle cx="637.7" cy="88.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="639.5" cy="98.1" r="3.0" fill="#b9b9b9"/>
+<circle cx="652.1" cy="100.8" r="3.0" fill="#b9b9b9"/>
+<circle cx="652.1" cy="91.9" r="3.0" fill="#b9b9b9"/>
+<circle cx="677.2" cy="77.4" r="3.0" fill="#b9b9b9"/>
+<circle cx="705.9" cy="68.6" r="3.0" fill="#b9b9b9"/>
+<rect x="329.2" y="221.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="221.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="221.8" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="331.0" y="221.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="340.0" y="219.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="359.7" y="217.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="377.7" y="215.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="427.9" y="206.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="488.9" y="198.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="490.7" y="198.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="585.9" y="186.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="230.5" y="235.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="234.1" y="234.5" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="237.7" y="233.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="217.7" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="217.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="338.2" y="217.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="115.7" y="238.0" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="135.4" y="231.2" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="192.8" y="229.1" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="262.8" y="211.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="304.1" y="204.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="375.9" y="192.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <text class="h" x="8" y="332">2 &#160;Per GHz, both collapse onto one line — the cycle law does not care how</text>
 <text class="n" x="76" y="348">Independent fits agree to 0.5% in slope: 7.36 (deleting) vs 7.33 (re-scheduling).</text>
 <line class="gr" x1="76" y1="568.0" x2="740" y2="568.0"/>
-<text class="t" x="69" y="571.5" text-anchor="end">700</text>
-<line class="gr" x1="76" y1="515.0" x2="740" y2="515.0"/>
-<text class="t" x="69" y="518.5" text-anchor="end">750</text>
-<line class="gr" x1="76" y1="462.0" x2="740" y2="462.0"/>
-<text class="t" x="69" y="465.5" text-anchor="end">800</text>
-<line class="gr" x1="76" y1="409.0" x2="740" y2="409.0"/>
-<text class="t" x="69" y="412.5" text-anchor="end">850</text>
+<text class="t" x="69" y="571.5" text-anchor="end">620</text>
+<line class="gr" x1="76" y1="537.7" x2="740" y2="537.7"/>
+<text class="t" x="69" y="541.2" text-anchor="end">660</text>
+<line class="gr" x1="76" y1="507.4" x2="740" y2="507.4"/>
+<text class="t" x="69" y="510.9" text-anchor="end">700</text>
+<line class="gr" x1="76" y1="477.1" x2="740" y2="477.1"/>
+<text class="t" x="69" y="480.6" text-anchor="end">740</text>
+<line class="gr" x1="76" y1="446.9" x2="740" y2="446.9"/>
+<text class="t" x="69" y="450.4" text-anchor="end">780</text>
+<line class="gr" x1="76" y1="416.6" x2="740" y2="416.6"/>
+<text class="t" x="69" y="420.1" text-anchor="end">820</text>
+<line class="gr" x1="76" y1="386.3" x2="740" y2="386.3"/>
+<text class="t" x="69" y="389.8" text-anchor="end">860</text>
 <line class="gr" x1="76" y1="356.0" x2="740" y2="356.0"/>
 <text class="t" x="69" y="359.5" text-anchor="end">900</text>
-<line class="gr" x1="140.3" y1="356" x2="140.3" y2="568"/>
-<text class="t" x="140.3" y="584" text-anchor="middle">75</text>
-<line class="gr" x1="247.4" y1="356" x2="247.4" y2="568"/>
-<text class="t" x="247.4" y="584" text-anchor="middle">80</text>
-<line class="gr" x1="354.5" y1="356" x2="354.5" y2="568"/>
-<text class="t" x="354.5" y="584" text-anchor="middle">85</text>
-<line class="gr" x1="461.5" y1="356" x2="461.5" y2="568"/>
-<text class="t" x="461.5" y="584" text-anchor="middle">90</text>
-<line class="gr" x1="568.6" y1="356" x2="568.6" y2="568"/>
-<text class="t" x="568.6" y="584" text-anchor="middle">95</text>
-<line class="gr" x1="675.7" y1="356" x2="675.7" y2="568"/>
-<text class="t" x="675.7" y="584" text-anchor="middle">100</text>
+<line class="gr" x1="147.8" y1="356" x2="147.8" y2="568"/>
+<text class="t" x="147.8" y="584" text-anchor="middle">70</text>
+<line class="gr" x1="237.5" y1="356" x2="237.5" y2="568"/>
+<text class="t" x="237.5" y="584" text-anchor="middle">75</text>
+<line class="gr" x1="327.2" y1="356" x2="327.2" y2="568"/>
+<text class="t" x="327.2" y="584" text-anchor="middle">80</text>
+<line class="gr" x1="417.0" y1="356" x2="417.0" y2="568"/>
+<text class="t" x="417.0" y="584" text-anchor="middle">85</text>
+<line class="gr" x1="506.7" y1="356" x2="506.7" y2="568"/>
+<text class="t" x="506.7" y="584" text-anchor="middle">90</text>
+<line class="gr" x1="596.4" y1="356" x2="596.4" y2="568"/>
+<text class="t" x="596.4" y="584" text-anchor="middle">95</text>
+<line class="gr" x1="686.2" y1="356" x2="686.2" y2="568"/>
+<text class="t" x="686.2" y="584" text-anchor="middle">100</text>
 <line class="ax" x1="76" y1="568" x2="740" y2="568"/>
 <line class="ax" x1="76" y1="356" x2="76" y2="568"/>
 <text class="t" x="408" y="604" text-anchor="middle">in-loop MFMA efficiency, per SIMD (%)</text>
 <text class="t" transform="translate(17,462) rotate(-90)" text-anchor="middle">TFLOPS per GHz</text>
-<path fill="none" stroke="#b9b9b9" stroke-width="1.6" stroke-dasharray="5 3" d="M76.0,575.8 L740.0,333.9"/>
-<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,590.9 L740.0,350.1"/>
-<text class="lg" x="461.5" y="443.1" fill="#2f7d43">7.33·eff + 151</text>
-<line x1="166.0" y1="558.3" x2="166.0" y2="556.5" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="166.0" cy="556.5" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="178.0" y="560.5" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  +0.2% off the line</text>
-<line x1="348.0" y1="492.3" x2="348.0" y2="462.0" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="348.0" cy="462.0" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
-<text class="lg" x="336.0" y="466.0" fill="#d4820a" text-anchor="end">FlyDSL  +3.7% off the line</text>
-<line x1="560.1" y1="415.4" x2="560.1" y2="412.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="560.1" cy="412.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="548.1" y="416.9" fill="#2f7d43" text-anchor="end">fav4 best  +0.3% off the line</text>
-<circle cx="168.1" cy="546.2" r="3.0" fill="#b9b9b9"/>
-<circle cx="330.9" cy="478.8" r="3.0" fill="#b9b9b9"/>
-<circle cx="508.7" cy="413.4" r="3.0" fill="#b9b9b9"/>
-<circle cx="560.1" cy="401.8" r="3.0" fill="#b9b9b9"/>
-<circle cx="699.3" cy="351.3" r="3.0" fill="#b9b9b9"/>
-<rect x="250.4" y="520.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="523.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="520.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="252.5" y="520.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="263.2" y="527.0" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="286.8" y="507.7" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="308.2" y="498.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="368.2" y="478.1" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="441.0" y="450.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="443.2" y="448.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="556.7" y="409.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="132.6" y="558.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="136.9" y="557.9" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="141.1" y="555.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="533.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="532.9" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="261.1" y="530.9" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<path fill="none" stroke="#b9b9b9" stroke-width="1.6" stroke-dasharray="5 3" d="M76.0,546.4 L740.0,340.2"/>
+<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,557.1 L740.0,351.8"/>
+<text class="lg" x="506.7" y="415.9" fill="#2f7d43">7.33·eff + 151</text>
+<path fill="none" stroke="#d4820a" stroke-width="1.6" stroke-dasharray="4 3" d="M76.0,557.8 L740.0,326.5"/>
+<text class="lg" x="147.8" y="524.8" fill="#d4820a">FlyDSL, same line</text>
+<line x1="259.0" y1="500.5" x2="259.0" y2="499.2" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="259.0" cy="499.2" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
+<text class="lg" x="271.0" y="503.2" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  +0.2% off the line</text>
+<line x1="379.3" y1="463.3" x2="379.3" y2="448.2" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="379.3" cy="448.2" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="367.3" y="452.2" fill="#d4820a" text-anchor="end">FlyDSL  +2.6% off the line</text>
+<line x1="589.3" y1="398.4" x2="589.3" y2="396.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="589.3" cy="396.7" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="577.3" y="400.7" fill="#2f7d43" text-anchor="end">fav4 best  +0.3% off the line</text>
+<circle cx="260.8" cy="491.9" r="3.0" fill="#b9b9b9"/>
+<circle cx="397.2" cy="443.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="546.2" cy="397.0" r="3.0" fill="#b9b9b9"/>
+<circle cx="589.3" cy="388.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="705.9" cy="352.6" r="3.0" fill="#b9b9b9"/>
+<rect x="329.2" y="472.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="474.7" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="472.8" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="331.0" y="472.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="340.0" y="477.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="359.7" y="463.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="377.7" y="456.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="427.9" y="442.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="488.9" y="422.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="490.7" y="421.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="585.9" y="393.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="230.5" y="499.6" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="234.1" y="499.2" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="237.7" y="497.5" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="481.8" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="481.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="338.2" y="480.0" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="115.7" y="539.6" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="135.4" y="533.7" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="192.8" y="506.3" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="262.8" y="491.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="304.1" y="479.0" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="375.9" y="444.8" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <text class="h" x="8" y="644">3 &#160;And here is the difference: at fixed work, efficiency costs clock</text>
 <text class="n" x="76" y="660">Deleting VALU leaves the clock flat (grey). Re-scheduling the same stream denser gives back ~10 MHz per efficiency point.</text>
 <line class="gr" x1="76" y1="880.0" x2="740" y2="880.0"/>
 <text class="t" x="69" y="883.5" text-anchor="end">1550</text>
-<line class="gr" x1="76" y1="837.6" x2="740" y2="837.6"/>
-<text class="t" x="69" y="841.1" text-anchor="end">1600</text>
-<line class="gr" x1="76" y1="795.2" x2="740" y2="795.2"/>
-<text class="t" x="69" y="798.7" text-anchor="end">1650</text>
-<line class="gr" x1="76" y1="752.8" x2="740" y2="752.8"/>
-<text class="t" x="69" y="756.3" text-anchor="end">1700</text>
-<line class="gr" x1="76" y1="710.4" x2="740" y2="710.4"/>
-<text class="t" x="69" y="713.9" text-anchor="end">1750</text>
+<line class="gr" x1="76" y1="849.7" x2="740" y2="849.7"/>
+<text class="t" x="69" y="853.2" text-anchor="end">1600</text>
+<line class="gr" x1="76" y1="819.4" x2="740" y2="819.4"/>
+<text class="t" x="69" y="822.9" text-anchor="end">1650</text>
+<line class="gr" x1="76" y1="789.1" x2="740" y2="789.1"/>
+<text class="t" x="69" y="792.6" text-anchor="end">1700</text>
+<line class="gr" x1="76" y1="758.9" x2="740" y2="758.9"/>
+<text class="t" x="69" y="762.4" text-anchor="end">1750</text>
+<line class="gr" x1="76" y1="728.6" x2="740" y2="728.6"/>
+<text class="t" x="69" y="732.1" text-anchor="end">1800</text>
+<line class="gr" x1="76" y1="698.3" x2="740" y2="698.3"/>
+<text class="t" x="69" y="701.8" text-anchor="end">1850</text>
 <line class="gr" x1="76" y1="668.0" x2="740" y2="668.0"/>
-<text class="t" x="69" y="671.5" text-anchor="end">1800</text>
-<line class="gr" x1="140.3" y1="668" x2="140.3" y2="880"/>
-<text class="t" x="140.3" y="896" text-anchor="middle">75</text>
-<line class="gr" x1="247.4" y1="668" x2="247.4" y2="880"/>
-<text class="t" x="247.4" y="896" text-anchor="middle">80</text>
-<line class="gr" x1="354.5" y1="668" x2="354.5" y2="880"/>
-<text class="t" x="354.5" y="896" text-anchor="middle">85</text>
-<line class="gr" x1="461.5" y1="668" x2="461.5" y2="880"/>
-<text class="t" x="461.5" y="896" text-anchor="middle">90</text>
-<line class="gr" x1="568.6" y1="668" x2="568.6" y2="880"/>
-<text class="t" x="568.6" y="896" text-anchor="middle">95</text>
-<line class="gr" x1="675.7" y1="668" x2="675.7" y2="880"/>
-<text class="t" x="675.7" y="896" text-anchor="middle">100</text>
+<text class="t" x="69" y="671.5" text-anchor="end">1900</text>
+<line class="gr" x1="147.8" y1="668" x2="147.8" y2="880"/>
+<text class="t" x="147.8" y="896" text-anchor="middle">70</text>
+<line class="gr" x1="237.5" y1="668" x2="237.5" y2="880"/>
+<text class="t" x="237.5" y="896" text-anchor="middle">75</text>
+<line class="gr" x1="327.2" y1="668" x2="327.2" y2="880"/>
+<text class="t" x="327.2" y="896" text-anchor="middle">80</text>
+<line class="gr" x1="417.0" y1="668" x2="417.0" y2="880"/>
+<text class="t" x="417.0" y="896" text-anchor="middle">85</text>
+<line class="gr" x1="506.7" y1="668" x2="506.7" y2="880"/>
+<text class="t" x="506.7" y="896" text-anchor="middle">90</text>
+<line class="gr" x1="596.4" y1="668" x2="596.4" y2="880"/>
+<text class="t" x="596.4" y="896" text-anchor="middle">95</text>
+<line class="gr" x1="686.2" y1="668" x2="686.2" y2="880"/>
+<text class="t" x="686.2" y="896" text-anchor="middle">100</text>
 <line class="ax" x1="76" y1="880" x2="740" y2="880"/>
 <line class="ax" x1="76" y1="668" x2="76" y2="880"/>
 <text class="t" x="408" y="916" text-anchor="middle">in-loop MFMA efficiency, per SIMD (%)</text>
 <text class="t" transform="translate(17,774) rotate(-90)" text-anchor="middle">sclk (MHz)</text>
-<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,678.5 L740.0,936.2"/>
-<text class="lg" x="225.9" y="728.7" fill="#2f7d43">-9.8 MHz per point (R²=0.91)</text>
-<line x1="166.0" y1="713.4" x2="166.0" y2="720.5" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="166.0" cy="720.5" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="178.0" y="724.5" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.5% off the line</text>
-<line x1="348.0" y1="784.1" x2="348.0" y2="788.9" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="348.0" cy="788.9" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
-<text class="lg" x="336.0" y="792.9" fill="#d4820a" text-anchor="end">FlyDSL  -0.3% off the line</text>
-<line x1="560.1" y1="866.4" x2="560.1" y2="867.0" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
-<circle cx="560.1" cy="867.0" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="548.1" y="871.0" fill="#2f7d43" text-anchor="end">fav4 best  -0.0% off the line</text>
-<circle cx="168.1" cy="726.9" r="3.0" fill="#b9b9b9"/>
-<circle cx="330.9" cy="738.1" r="3.0" fill="#b9b9b9"/>
-<circle cx="508.7" cy="759.3" r="3.0" fill="#b9b9b9"/>
-<circle cx="560.1" cy="744.2" r="3.0" fill="#b9b9b9"/>
-<circle cx="699.3" cy="730.8" r="3.0" fill="#b9b9b9"/>
-<rect x="250.4" y="751.8" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="745.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="250.4" y="751.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="252.5" y="752.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="263.2" y="735.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="286.8" y="766.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="308.2" y="777.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="368.2" y="795.5" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="441.0" y="823.1" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="443.2" y="827.0" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="556.7" y="863.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
-<rect x="132.6" y="710.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="136.9" y="709.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="141.1" y="711.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="719.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="256.8" y="719.6" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<rect x="261.1" y="723.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<g transform="translate(76,916)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize</text><circle cx="509" cy="-4" r="5.2" fill="none" stroke="#767676" stroke-width="1.6"/><text class="k" x="520" y="0">unmodified kernel</text></g>
+<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,700.4 L740.0,920.2"/>
+<text class="lg" x="363.1" y="787.5" fill="#2f7d43">-9.8 MHz per point (R²=0.91)</text>
+<path fill="none" stroke="#d4820a" stroke-width="1.6" stroke-dasharray="4 3" d="M76.0,664.3 L740.0,944.3"/>
+<text class="lg" x="165.7" y="694.1" fill="#d4820a">FlyDSL</text>
+<line x1="259.0" y1="761.0" x2="259.0" y2="766.1" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="259.0" cy="766.1" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
+<text class="lg" x="271.0" y="770.1" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.5% off the line</text>
+<line x1="379.3" y1="800.8" x2="379.3" y2="796.5" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="379.3" cy="796.5" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="367.3" y="800.5" fill="#d4820a" text-anchor="end">FlyDSL  +0.4% off the line</text>
+<line x1="589.3" y1="870.3" x2="589.3" y2="870.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="589.3" cy="870.7" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="577.3" y="874.7" fill="#2f7d43" text-anchor="end">fav4 best  -0.0% off the line</text>
+<circle cx="260.8" cy="770.6" r="3.0" fill="#b9b9b9"/>
+<circle cx="397.2" cy="778.7" r="3.0" fill="#b9b9b9"/>
+<circle cx="546.2" cy="793.8" r="3.0" fill="#b9b9b9"/>
+<circle cx="589.3" cy="783.0" r="3.0" fill="#b9b9b9"/>
+<circle cx="705.9" cy="773.4" r="3.0" fill="#b9b9b9"/>
+<rect x="329.2" y="787.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="783.0" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="329.2" y="787.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="331.0" y="787.7" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="340.0" y="775.6" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="359.7" y="797.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="377.7" y="805.9" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="427.9" y="818.7" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="488.9" y="838.4" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="490.7" y="841.2" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="585.9" y="867.3" width="6.8" height="6.8" fill="#2f7d43" stroke="#fff" stroke-width="0.8"/>
+<rect x="230.5" y="757.9" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="234.1" y="757.1" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="237.7" y="758.6" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="764.2" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="334.6" y="764.4" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="338.2" y="767.1" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
+<rect x="115.7" y="676.7" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="135.4" y="678.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="192.8" y="734.0" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="262.8" y="735.5" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="304.1" y="748.8" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<rect x="375.9" y="793.1" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<g transform="translate(76,932)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize</text><circle cx="509" cy="-4" r="5.2" fill="none" stroke="#767676" stroke-width="1.6"/><text class="k" x="520" y="0">unmodified kernel</text><rect x="0" y="8" width="6.8" height="6.8" fill="#d4820a"/><text class="k" x="13" y="15">re-scheduled, FlyDSL assembly</text></g>
 </svg>

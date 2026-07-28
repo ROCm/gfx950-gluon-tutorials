@@ -1728,3 +1728,162 @@ python ../../scripts/sched_valu.py dump.amdgcn --report
 rewrite to the k-th MFMA-bearing sub-region, which is how the illegal-schedule bugs above
 were localised. Always read the `✅ match` line: an unnoticed NaN here does not look like a
 failure, it looks like a 15% speedup.
+
+## FlyDSL from modified assembly: why it wins at lower MFMA efficiency (2026-07-28)
+
+FlyDSL is the one point that sits off the cycle law -- +2.6% above it -- and it is also the
+kernel that ties `fav4` while measuring 11 efficiency points lower. Both facts want the same
+experiment: apply the re-scheduling sweep to **FlyDSL's own assembly** and see what its curve
+looks like from the inside.
+
+### Getting a modified FlyDSL kernel to run
+
+FlyDSL has no assembly stage to hook. It goes MLIR -> LLVM IR -> code object entirely inside
+`mlir-opt`'s `gpu-module-to-binary`, with no file in between and no `-save-temps`. Two
+properties of that pass make an interception possible anyway:
+
+1. `format=isa` stops at the ISA text and parks it in an `assembly = "..."` attribute --
+   which is how FlyDSL's own `FLYDSL_DUMP_IR=1` produces its `21_final_isa.s`.
+2. The `gpu.binary` it otherwise emits holds a **bare HSA code object** (`\7FELF...`), not a
+   clang offload bundle, as an escaped string attribute.
+
+So `scripts/fly_sched.py` runs the pre-binary pipeline, takes the ISA off a clone with
+`format=isa`, rewrites it with `sched_valu`, assembles it with
+`clang -x assembler -target amdgcn-amd-amdhsa -mcpu=gfx950`, then runs the real binary pass
+and **substitutes the code object inside the resulting `gpu.binary`**. `patch()` installs
+this in place of `MlirCompiler.compile`, so FlyDSL itself is unmodified and any entry point
+picks it up. `FLY_SCHED_VALU=<f>` is the knob.
+
+Two controls make the harness trustworthy:
+
+- **At `f = 0` the assembled object is byte-identical to FlyDSL's own** (22768 bytes, same
+  SHA). The round trip through `format=isa` and back through the assembler is exact, so the
+  baseline of the sweep is not a re-compilation artifact.
+- Every point validates against torch (`max_err` ~1.1e-03 for all of them).
+
+One trap cost a whole first sweep: **FlyDSL caches the finished code object on disk and
+nothing about the rewrite is in its cache key**, so the second run replays the first one's
+binary. The first sweep taken with this harness reported `f=0` and `f=1.0` as 82.9%/1316 and
+83.0%/1318 -- one kernel measured twice, which reads exactly like "re-scheduling changes
+nothing". `patch()` now appends the fraction to `FLYDSL_RUNTIME_CACHE_DIR`.
+
+### FlyDSL's schedule is already the top of its own curve
+
+| `f` | eff /SIMD | TFLOPS | sclk | power | TF/GHz |
+|---:|---:|---:|---:|---:|---:|
+| 0 (its own) | **82.9%** | **1313.6** | 1687.9 MHz | 1337.1 W | 778.2 |
+| +1.0 spread | 78.9% | 1290.9 | 1761.0 MHz | 1348.3 W | 733.0 |
+| -0.2 | 76.6% | 1277.8 | 1783.0 MHz | 1345.2 W | 716.7 |
+| -0.4 | 72.7% | 1244.4 | 1785.5 MHz | 1347.8 W | 696.9 |
+| -0.6 | 68.4% | 1227.6 | 1880.0 MHz | 1349.7 W | 653.0 |
+| -1.0 | 69.5% | 1240.4 | 1877.2 MHz | 1354.7 W | 660.8 |
+
+**Both directions lose.** Spreading -- the transform that does nothing to our kernels --
+costs FlyDSL 4.0 efficiency points and 1.7% throughput, because its shadows are already
+better packed than the even spread I would impose: **zero bare MFMA shadows out of 64**
+(3 VALU in 22 of them, 5 in 23, 6 in 13), against 20 bare out of 64 for `fav4`
+stock+scalarize. And every one of its in-loop VALU is movable by `sched_valu`'s test -- 67 of
+67, 69 of 69, against 9 of 75 for two of our four regions -- meaning **none of its
+dot-region VALU depends on that region's own MFMAs**. Its software pipelining is cleaner
+than ours, not sloppier.
+
+So the first conclusion is a negative one that matters: **FlyDSL's lower MFMA efficiency is
+not a scheduling defect.** There is no VALU placement in this transform's search space that
+improves it. (The sweep bounds the downward slope and locates FlyDSL at the top of it; it
+cannot prove no better schedule exists, only that even spreading and clumping are worse.)
+
+![FlyDSL's sweep against ours](images/eff_tflops_scheduling.svg)
+
+Its curve also lands on the laws the gluon sweep produced, point by point: every FlyDSL
+measurement is **+0.1% to +2.6%** of the gluon per-GHz line and **+0.3% to +3.6%** of the
+gluon clock line. Its own fits are `8.25*eff + 89` per GHz and `-12.5` MHz per point, steeper
+than our `7.33*eff + 151` and `-9.8`, but with six points over fourteen efficiency points
+that difference is not resolved. **The same two laws describe both kernels.**
+
+### Where FlyDSL's extra cycles go, and what it gets for them
+
+Matched ATT measurements, same session and tool, B=32 S=8192 H=8 bf16:
+
+| | `fav4` tuned | FlyDSL | |
+|---|---:|---:|---|
+| MFMA per iteration | 64 | 64 | identical work |
+| `ds_read` per iteration | 96 | 96 | identical |
+| barriers per iteration | 8 | 8 | identical |
+| **VALU per iteration** | **313** | **274** | FlyDSL 12.5% fewer |
+| all instructions | 539 | 493 | FlyDSL 8.5% fewer |
+| `s_nop` cycles per iteration | 14 | 48 | +34 |
+| `s_setprio` per iteration | 0 | 4 | |
+| bare MFMA shadows | 20 / 64 | **0 / 64** | |
+| **cycles per iteration** | **4332.9** | **4900.3** | FlyDSL 13.1% more |
+| eff /SIMD | 94.5% | 83.6% | 82.9-83.6% across ATT runs |
+| loop / prologue / epilogue | 88.3 / 5.4 / 6.3% | **94.1 / 2.2 / 3.7%** | |
+| sclk | 1565.3 MHz | 1687.9 MHz | FlyDSL +7.8% |
+
+FlyDSL issues **fewer** instructions and packs its MFMA shadows **better**, and still takes
+**567 more cycles** per iteration. So those cycles are not instruction issue -- they are
+waiting. `s_nop` accounts for 34 of them. The rest is consistent with what its own build
+flags say it is doing: `dualwave_swp_enable_stagger` and `dualwave_swp_setprio` (4
+`s_setprio` per iteration where we have none) deliberately offset and arbitrate the two waves
+so they stay out of each other's way. That attribution is inference from the flags and the
+instruction counts, not a measurement of the stall reason.
+
+What it buys is measured, though, and it is two things:
+
+1. **Clock, +7.8%.** And this is not a FlyDSL trick: 1687.9 MHz is within **0.4%** of what
+   our own `sclk(eff)` line predicts for 82.9%. A lower MFMA density draws less energy per
+   cycle, and at this shape the governor hands the difference back as frequency to anybody,
+   in any kernel, at that density.
+2. **A cheap prologue and drain, +6.5%.** Its fill/drain is 5.95% of the dispatch against our
+   11.65% -- a four-stage software pipeline that costs half of ours to start and stop.
+
+Against those, our 13.1% cycle advantage. Composing all three on whole-kernel time per loop
+iteration:
+
+    fav4    4332.9 / 0.8834 = 4904.8 cycles  @ 1565.3 MHz = 3.133 us
+    FlyDSL  4900.3 / 0.9405 = 5210.3 cycles  @ 1687.9 MHz = 3.087 us   (1.5% ahead)
+
+and the measurement is a tie to 0.1% (1324.7 vs 1325.9). The 1.5% residual is inside the
+run-to-run clock spread: the *byte-identical* FlyDSL binary measured 1657.4 MHz in one
+session and 1687.9 MHz in another (1.9% apart), and substituting the lower reading flips the
+sign of the prediction. So the decomposition accounts for the tie to within the resolution of
+the clock measurement, and no term is missing -- but it cannot say which kernel is "really"
+ahead by tenths of a percent, and neither can the benchmark.
+
+### The answer to the question
+
+**FlyDSL does not get more throughput at lower MFMA efficiency. It buys clock and pipeline
+overhead with cycles, and at this shape the trade is worth exactly what our cycles are
+worth.** In detail:
+
+- MFMA efficiency is a ratio, and the two kernels optimise different terms of it. Ours
+  minimises the denominator inside the loop; FlyDSL accepts a bigger denominator in exchange
+  for a smaller prologue/drain and a lower power density.
+- Its efficiency is not recoverable by scheduling -- its shadows are already full and its
+  pipelining is cleaner than ours. Its cycles go to deliberate inter-wave pacing.
+- Its clock advantage is fully explained by our own `sclk(eff)` line, so there is nothing
+  kernel-specific in it. **Any** schedule at 83% efficiency on this part gets that clock;
+  that is what makes the trade viable.
+- Both kernels sit at the top of their own re-scheduling curve, so neither has intra-loop
+  scheduling left. The gap that is actually open is the **prologue/drain**: 11.65% of our
+  dispatch against 5.95% of theirs, worth about 6% and untouched by anything in this file.
+
+That last point is the actionable one. At `4.6` TFLOPS per efficiency point we have ~5
+efficiency points left, worth ~23 TFLOPS; halving our fill/drain to FlyDSL's would be worth
+about 80.
+
+### Reproducing
+
+```bash
+# byte-identity control, then a swept point
+FLY_SCHED_VALU=0    HIP_VISIBLE_DEVICES=1 python scripts/fly_sched.py --selftest
+FLY_SCHED_VALU=-0.4 HIP_VISIBLE_DEVICES=1 python scripts/fly_kernel_time.py \
+  --batch 32 --seqlen 8192 --hq 8 --d 128 --dtype bf16 --iters 2000 --last-n 100
+
+# movability / shadow report for FlyDSL's own ISA
+FLYDSL_DUMP_IR=1 FLYDSL_DUMP_DIR=/tmp/flydump python -c "..."   # see fly_sched.py docstring
+python scripts/fly_sched.py /tmp/flydump/*/21_final_isa.s --report
+```
+
+`FLY_SCHED_DUMP=<prefix>` writes `.orig.s`, `.sched.s`, `.hsaco` and `.stock.hsaco` -- compare
+the last two to re-check the `f=0` byte identity. FlyDSL's `att_flydsl_fa.json` sets
+`att_target_cu: 0`, which captures nothing on a die that harvests CU0; use 1.
