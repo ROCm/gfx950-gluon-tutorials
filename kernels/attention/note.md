@@ -1993,9 +1993,25 @@ reproduces all 17 points:
 |---|---:|---:|
 | 17 points, both kernels, one constant | **1.1%** | 2.9% |
 
-**That is the whole difference.** There is one clock law, one cycle law, and one number that
-separates the two kernels: `fav4` spends 35458 cycles per workgroup filling and draining its
-pipeline where FlyDSL spends 19221.
+**That is the whole difference** -- but note what it does and does not say. `fav4` still
+needs fewer cycles *in total*: its loop advantage is 35179 cycles and its fill/drain penalty
+16225, so it comes out **5.9% ahead on total cycles per workgroup** (304087 against 323041).
+Fill/drain gives back only 46% of what the schedule wins. What erases the remainder is the
+clock, 7.3% lower, which is the power consequence of that same density:
+
+| per workgroup, cycles | `fav4` tuned | FlyDSL | `fav4` vs FlyDSL |
+|---|---:|---:|---:|
+| loop, 62 iterations | 268638 | 303817 | **-35179  (-11.6%)** |
+| prologue + epilogue | 35449 | 19223 | +16225  (+84.4%) |
+| **total** | **304087** | **323041** | **-18954  (-5.9%)** |
+| sclk | 1565.3 MHz | 1687.9 MHz | -7.3% |
+| time = cycles / clock | | | **+1.5%** |
+
+and the +1.5% is inside the clock spread -- at FlyDSL's other reading of 1657.4 MHz the same
+cycle counts put `fav4` 0.3% ahead. Because fill/drain is fixed per workgroup, `fav4`'s
+total-cycle advantage widens with sequence length: -5.9% at S=8192 (62 iterations), -8.7% at
+S=16384, -10.1% at S=32768. That is the same amortization that flips the ranking between
+shapes.
 
 ### The answer to the question
 
@@ -2009,12 +2025,19 @@ efficiency for any reason internal to the loop.** In detail:
 - The clock it gives up in exchange is not a kernel property. It is `sclk(eff)` -- one line
   through both kernels -- and it is a *consequence* of the denser instruction sequence, via
   the power controller, not an independent variable.
-- What FlyDSL actually beats us on is **fill and drain**: 19221 cycles per workgroup against
-  our 35458. That is the entire gap, it is worth about 6% of the dispatch, and nothing in
-  this file touches it.
+- What FlyDSL beats us on is **fill and drain**: 19223 cycles per workgroup against our
+  35449, a 1.84x gap. It is not, however, "the whole gap" -- `fav4` is still 5.9% ahead on
+  total cycles, and fill/drain claws back under half of the loop advantage. The clock does
+  the rest.
 
-At `4.6` TFLOPS per efficiency point we have ~5 efficiency points left, worth ~23 TFLOPS.
-Closing the fill/drain gap to FlyDSL's is worth about **80**. That is where the next win is.
+Two leads, and the second one needs its own experiment before being believed. We have ~5
+efficiency points left at `4.6` TFLOPS a point, worth ~23 TFLOPS. Closing the fill/drain gap
+removes 16225 of 304087 cycles, 5.3%, which on cycles alone would be ~70 TFLOPS -- **but the
+model says part of that comes back as clock**, because cutting fixed cycles at constant work
+raises the dispatch-average issue duty from 83.5% to 88.7% and the controller responds to
+average power, not to in-loop efficiency. The sweeps cannot say how much: `fixed` was
+constant in every one of them, so the fitted `sclk(eff)` never saw it move. Varying the
+prologue depth and re-measuring the clock is the experiment that would settle it.
 
 ### Reproducing
 
