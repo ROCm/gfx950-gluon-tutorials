@@ -1624,24 +1624,33 @@ build extends the low end to 74.8%.
 
 ![Pure scheduling against the removal sweep](images/eff_tflops_scheduling.svg)
 
-The two shipping kernels are circled in all three panels. `fav4 best` is the `f = 0` anchor
-of the llirSched sweep, so it sits on every line by construction (-0.1%, +0.3%, -0.0%) and
-is marked only to show where on the axis the kernel we ship actually lives. **FlyDSL is the
-interesting one**, because nothing about it was used to build these lines:
+Three unmodified kernels are circled in all three panels -- measured, not re-scheduled, each
+with the same driver at the same shape. Below, measured against what the sweep's own fit
+predicts at that kernel's efficiency:
 
-| against | prediction at 84.7% | FlyDSL | |
-|---|---:|---:|---:|
-| raw TFLOPS | 1280.5 | 1325.9 | **+3.5%** |
-| TFLOPS per GHz | 771.4 | 800.0 | **+3.7%** |
-| sclk | 1663.1 MHz | 1657.4 MHz | **-0.3%** |
+| kernel | eff /SIMD | raw TFLOPS | per GHz | sclk (MHz) |
+|---|---:|---:|---:|---:|
+| `fav4` stock LLVM + no-sink | 76.2% | 1235.5 / 1241.0 (**-0.4%**) | 710.8 / 709.2 (**+0.2%**) | 1738.1 / 1746.4 (**-0.5%**) |
+| ROCm/FlyDSL `63eb891` | 84.7% | 1325.9 / 1280.5 (**+3.5%**) | 800.0 / 771.4 (**+3.7%**) | 1657.4 / 1663.1 (**-0.3%**) |
+| gluon `fav4` tuned | 94.6% | 1324.7 / 1326.5 (**-0.1%**) | 846.3 / 844.0 (**+0.3%**) | 1565.3 / 1566.0 (**-0.0%**) |
 
-So the **clock law generalises across kernels** -- FlyDSL's clock is within 6 MHz of what a
-sweep of our own schedules predicts for its efficiency, which says `sclk(eff)` is the
-hardware's response to MFMA density rather than a property of our codegen. What FlyDSL beats
-the line on is cycles-per-unit-work at equal efficiency: +3.7%, which is the non-loop term,
-and it is the loop-share difference already measured above (94.1% of its time in the loop
-against our 88.3%). Its 84.7% is a *lower* number than our 94.6% for a reason unrelated to
-either -- it issues fewer, cheaper instructions per tile.
+`fav4` tuned is the `f = 0` anchor of the llirSched sweep, so it sits on every line by
+construction; it is circled only to show where on the axis the kernel we ship lives. The
+other two rows are independent. **`fav4` stock + no-sink is a different instruction stream
+entirely** -- no plugin, no `scalarize`, so a different opcode mix and a different count from
+anything in the sweep -- and it lands within **0.5% on all three lines**. FlyDSL shares none
+of our codegen and lands within **0.3% of the clock line**.
+
+So the **clock law generalises across kernels**: `sclk(eff)` is the hardware's response to
+MFMA density, not a property of our codegen or of the particular schedules the sweep walked
+through. Two independently built kernels agree with it to under half a percent.
+
+The cycle law generalises less far, and the exception is informative. FlyDSL is +3.7% above
+the per-GHz line at its efficiency, which is the non-loop term -- the loop-share difference
+already measured above (94.1% of its time in the loop against our 88.3%). Our own two builds,
+which share that loop structure, are on the line to 0.3%. And FlyDSL's 84.7% is a lower
+number than our 94.6% for a reason neither law covers: it issues fewer, cheaper instructions
+per tile, which is also what earns it the clock.
 
 ### The result: the same cycle law, a completely different payoff
 
