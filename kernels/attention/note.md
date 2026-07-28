@@ -2183,3 +2183,110 @@ python scripts/fly_sched.py /tmp/flydump/*/21_final_isa.s --report
 `FLY_SCHED_DUMP=<prefix>` writes `.orig.s`, `.sched.s`, `.hsaco` and `.stock.hsaco` -- compare
 the last two to re-check the `f=0` byte identity. FlyDSL's `att_flydsl_fa.json` sets
 `att_target_cu: 0`, which captures nothing on a die that harvests CU0; use 1.
+
+## 3.26 Prologue and epilogue: same pipeline, 1.84x the cost (2026-07-28)
+
+3.25.6 measured the fill/drain gap -- 35449 cycles per workgroup against FlyDSL's 19223 --
+without saying where it goes. Both kernels run the same four-stage software pipeline over
+the same tile shape, so they should be doing the same work outside the loop. **They are**,
+and that makes the comparison a clean one: the difference is not work, it is how the work is
+synchronised.
+
+The numbers come from the same ATT traces as 3.25.9 -- `code.json` rows outside the loop's
+index range, normalised per wave (divide the aggregate by the 256 traced waves rather than
+by the hitcount, since fill/drain instructions can execute more than once).
+
+### 3.26.1 The work is the same
+
+| per wave | `fav4` tuned | FlyDSL | |
+|---|---:|---:|---|
+| **prologue** | | | |
+| MFMA | 16 | 16 | **identical** |
+| VALU | 363 | 320 | |
+| LDS read | 40 | 16 | |
+| **LDS write** | **8** | **0** | |
+| VMEM load | 18 | 16 | |
+| **epilogue** | | | |
+| MFMA | 112 | 112 | **identical** |
+| VALU | 607 | 781 | FlyDSL more: its rescale is fully deferred here |
+| LDS read | 177 | 176 | **identical** |
+| **LDS write** | **17** | **0** | |
+| VMEM store | 10 | 8 | |
+
+The MFMA counts match exactly in both phases -- 16 to fill, 112 to drain -- which is the
+strongest evidence that the two pipelines are the same depth and shape. The epilogue LDS
+reads match to one instruction. FlyDSL issues *more* epilogue VALU (781 against 607) because
+its lazy rescale runs entirely there, and it costs the same cycles (4934 against 4901), so
+deferring the rescale out of the loop is free.
+
+### 3.26.2 The difference is synchronisation
+
+| cycles per wave | `fav4` tuned | FlyDSL | delta |
+|---|---:|---:|---:|
+| prologue: `s_barrier` + `s_waitcnt` | **5879** (30 instrs) | 3032 (6 instrs) | **+2847** |
+| epilogue: `s_barrier` + `s_waitcnt` | **6489** (84 instrs) | 2174 (22 instrs) | **+4315** |
+| `ds_write` (the staged LDS path) | 1345 (25 instrs) | 0 | **+1345** |
+| everything else | 16778 | 15993 | +785 |
+| total attributed | 30502 | 21199 | +9303 |
+| (ATT phase durations) | 35449 | 19223 | +16226 |
+
+**`fav4` issues 84 `s_waitcnt` outside the loop against FlyDSL's 11, and 30 barriers against
+17.** That is a 7.6x difference in wait points, and it accounts for **+7162 cycles, 44% of the
+whole fill/drain gap**. The staged LDS path adds another 1345, taking the two together to
+52%. (The per-instruction attribution covers 72% of `fav4`'s prologue duration and 98% of its
+epilogue; the balance is time the trace charges to no instruction, so read the deltas rather
+than the absolute totals.)
+
+### 3.26.3 The hot spots, by instruction
+
+| phase | idx | cycles/wave | instruction |
+|---|---:|---:|---|
+| pro | 194 | **3512** | `s_waitcnt vmcnt(0)` |
+| pro | 350 | 799 | `s_barrier` |
+| pro | 133 | 624 | `global_load_dwordx4 v[4:7], v[16:17], off offset:192` |
+| epi | 2482 | 768 | `s_barrier` |
+| epi | 2491 | 604 | `s_waitcnt vmcnt(0)` |
+| epi | 2441 | 528 | `global_store_dwordx4 v[34:35], v[0:3], off` |
+| epi | 1395 | 454 | `s_waitcnt vmcnt(0)` |
+| epi | 2312 | 431 | `s_waitcnt vmcnt(0)` |
+
+**One instruction, the `s_waitcnt vmcnt(0)` at prologue index 194, costs 3512 cycles per
+wave** -- 21% of the entire 16429-cycle prologue and 10% of the whole fill/drain budget. It
+drains *every* outstanding VMEM operation before the pipeline starts. FlyDSL's whole prologue
+contains three `s_waitcnt` totalling 2353.
+
+### 3.26.4 The LDS staging path
+
+`fav4` fills and drains LDS two different ways; FlyDSL uses only one:
+
+| whole kernel | `fav4` | FlyDSL |
+|---|---:|---:|
+| `buffer_load ... lds` (direct-to-LDS DMA) | 24 | 24 |
+| `ds_write` (VGPR-staged) | **25** | **0** |
+
+Both use the DMA path for the loop's K/V streaming. But `fav4` additionally stages through
+VGPRs in the prologue (8 `ds_write_b128` after `global_load_dwordx4`) and, more expensively,
+in the epilogue, where 16 `ds_write_b128` in four groups of four (indices 2283-2374, 82-136
+cycles each) do a cross-wave exchange of the output tile through LDS. FlyDSL has no
+`ds_write` anywhere in the kernel. That path costs cycles directly, and indirectly: every
+staged write needs its own `s_waitcnt` for the load that fed it and a barrier before the
+reader, which is where a good part of the 84-against-11 waitcnt count comes from.
+
+### 3.26.5 What to do
+
+Two changes, both bounded by measurement rather than estimated:
+
+1. **Cut the wait points outside the loop.** 84 `s_waitcnt` and 30 barriers for work the
+   loop does with 8 and 8. The loop got the attention -- llirSched only ever touches the loop
+   body -- and the fill/drain was left to whatever the backend emitted. The single
+   `vmcnt(0)` at prologue index 194 is worth 3512 cycles per wave on its own; splitting it
+   into counted waits that release the pipeline as each load lands is the obvious first move.
+2. **Drop the VGPR-staged LDS path** in favour of the `buffer_load ... lds` DMA the kernel
+   already uses elsewhere, in the prologue (8 writes) and especially the epilogue output
+   exchange (16 writes). Worth 1345 cycles directly plus the waits it forces.
+
+Together these bound at roughly **8500 of the 16226-cycle gap**. Note the caveat from
+3.25.10, though: cutting fixed cycles at constant work raises the dispatch-average issue duty
+and the controller answers with less clock, so the throughput gain will be smaller than the
+cycle gain. How much smaller is not measurable from any sweep in this file, because every one
+of them held the fill/drain constant.
