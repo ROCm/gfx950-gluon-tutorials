@@ -2290,3 +2290,116 @@ Together these bound at roughly **8500 of the 16226-cycle gap**. Note the caveat
 and the controller answers with less clock, so the throughput gain will be smaller than the
 cycle gain. How much smaller is not measurable from any sweep in this file, because every one
 of them held the fill/drain constant.
+
+### 3.26.6 Trying it: counted waits instead of the blanket drain (measured)
+
+`relax_vmcnt()` in `sched_valu.py` replaces a blanket `s_waitcnt vmcnt(0)` with the loosest
+legal counted wait in front of each consumer. All eight prologue loads are
+`global_load_dwordx4`, so their returns are in order and `vmcnt(N)` guarantees the first
+(8 - N) have landed; the pass tracks which load each live register came from and emits
+`vmcnt(7) ... vmcnt(0)` at the eight consumer groups, restoring a full drain at the end of
+the region so nothing the blanket wait covered is left uncovered. `FA_RELAX_VMCNT=1`.
+
+(First attempt returned max_err 3.69: the walk stopped at the first `s_barrier` and the
+final drain went in at the wrong place, so the last two loads' consumers ran unwaited. The
+lesson is the same one as 3.25.7 -- an assembly edit that looks right and validates on a
+small shape is not evidence; only the reference comparison is.)
+
+| per workgroup | baseline | counted waits | |
+|---|---:|---:|---|
+| prologue | 16428.8 | **13972.4** | **-2456, -15.0%** |
+| loop (62 iterations) | 268638.4 | 269531.0 | +893 |
+| epilogue | 19019.8 | 18726.5 | -293 |
+| total cycles | 304086.9 | 302229.9 | -1857, -0.61% |
+| eff /SIMD | 94.5% | 94.2% | |
+| TFLOPS (back to back) | 1323.7 | 1321.7 | -0.15% |
+| sclk | 1566.8 MHz | 1563.4 MHz | -0.2% |
+
+**The transform does what it claims and the throughput does not move.** The prologue is 15%
+shorter, correctness is bit-identical (`max_err 9.77e-04`), and the dispatch is 0.15% slower
+-- inside the noise, and inside the 1.1% error of the model that would have predicted +0.6%.
+The clock is not the explanation this time: it moved 0.2%, and power 0.1%.
+
+So the answer to "is the 3512-cycle wait recoverable by better wait placement" is **yes,
+about 70% of it, and it is worth nothing measurable**, because the prologue is 5.4% of the
+dispatch and 2456 cycles is 0.8% of it. Cutting fixed cycles only pays at a size the
+benchmark can resolve, which means the structural changes below, not wait placement.
+
+Worth noting for its own sake: LLVM emitted a blanket `vmcnt(0)` where a counted chain was
+legal. Whether that is a missed optimisation in `SIInsertWaitcnts` or deliberate conservatism
+about load 6 writing `v[16:19]` while loads 1-4 use `v[16:17]` as their address is a separate
+question, not investigated.
+
+### 3.26.7 Why the prologue has `ds_write` at all
+
+`.loc` attribution puts all eight prologue `ds_write_b128` on **`fav4.py:391`**, which is
+`q_smem.store(q)`, and puts the 3512-cycle `vmcnt(0)` on **`fav4.py:390`**, the line above:
+
+```python
+if SCALE_ON_Q:
+    q = (q.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)   # 390
+q_smem.store(q)                                                # 391
+q_dot = q_smem.load(q_dot_layout)                              # 392
+```
+
+The instructions immediately after the wait are `v_and_b32 0xffff0000` / `v_lshlrev_b32 16`
+-- the bf16-to-f32 unpack of `q.to(gl.float32)`. So both costs have **one root cause: opt5
+scales Q in registers.** That forces the Q tile through VGPRs -- global load, wait for all of
+it, unpack, scale, repack, `ds_write` -- where the only thing LDS is actually needed for is
+the *layout change* from the global blocked layout to `q_dot_layout`, the MFMA operand layout.
+FlyDSL needs the same layout change and gets it with `buffer_load ... lds`, a direct
+global-to-LDS DMA, which is why it has no `ds_write` and only three prologue waits.
+
+**The fix is to move the scale to after the LDS read.** `q_dot` is loaded once at line 392 and
+held in registers as the MFMA A operand for every iteration, so scaling it there is equally
+"once, outside the loop", and the numerics are the same operations in the same order
+(load bf16 -> f32 -> multiply -> bf16). Q's load then has no register dependency and can be
+the DMA. That removes the 8 `ds_write`, the 8 `global_load` into VGPRs, and the blanket wait
+-- and it does not have to give up opt5, which is what the current placement costs.
+
+### 3.26.8 FlyDSL's output store: `dwordx4` too, transposed in registers
+
+**FlyDSL is not storing `dwordx2`.** It issues exactly eight `buffer_store_dwordx4`, the same
+width and count as our eight `global_store_dwordx4`, with no `ds_write` anywhere. The
+difference is where the layout gets fixed.
+
+Note the shape of it: all eight of FlyDSL's stores read **the same registers, `v[0:3]`**, from
+the same address register `v42`, at offsets 0, 32, 64 ... 224, and they are ~27 instructions
+apart. It rebuilds the payload in registers between stores. Those 27 instructions are:
+
+```
+buffer_store_dwordx4 v[0:3], v42, s[8:11], 0 offen
+v_cvt_pk_bf16_f32 v0, v40, v41     |  pack 8 f32 accumulators
+v_cvt_pk_bf16_f32 v3, v34, v35     |  into 4 dwords of bf16
+v_cvt_pk_bf16_f32 v1, v38, v39     |
+v_cvt_pk_bf16_f32 v2, v36, v37     |
+v_mov_b32 v34, v0 ; v_mov_b32 v35, v0 ; s_nop 1 ; v_permlane32_swap_b32 v34, v35
+v_mov_b32 v34, v1 ; v_mov_b32 v36, v1 ; s_nop 1 ; v_permlane32_swap_b32 v34, v36
+v_mov_b32 v34, v2 ; v_mov_b32 v37, v2 ; s_nop 1 ; v_permlane32_swap_b32 v34, v37
+v_mov_b32 v37, v3 ; v_mov_b32 v38, v3 ; s_nop 1 ; v_permlane32_swap_b32 v37, v38
+v_cndmask_b32 v0, v34, v0, vcc     |  select per lane: low half keeps its own
+v_cndmask_b32 v1, v37, v1, vcc     |  value, high half takes the swapped one
+v_cndmask_b32 v2, v2, v35, vcc     |
+v_cndmask_b32 v3, v3, v36, vcc     |
+buffer_store_dwordx4 v[0:3], v42, s[8:11], 0 offen offset:32
+```
+
+`v_permlane32_swap_b32` exchanges the low 32 lanes of one VGPR with the high 32 lanes of
+another, and the `v_cndmask` picks which copy each lane keeps. Together they are a **32-lane
+transpose in the register file** -- exactly the exchange the 32x32 MFMA output layout needs to
+make each lane hold four *contiguous* dwords, and exactly what our epilogue uses LDS for.
+About 24 instructions and ~130 cycles per store, eight times.
+
+Ours is `gl.convert_layout(acc, blocked_layout)` at **`fav4.py:644`**, and Gluon lowers that
+to an LDS round trip: 16 `ds_write_b128` plus the matching reads, and on that one source line
+**8 `s_barrier` and 9 `s_waitcnt`** -- the largest single identifiable block in the epilogue.
+So both kernels reach `dwordx4`; we pay a shared-memory round trip and its synchronisation
+for a permutation FlyDSL does in registers.
+
+The primitive is not missing from our stack: `v_permlane32_swap_b32` already appears **in our
+loop**, emitted for the row-max reduction across the two half-waves, complete with the
+`s_nop 1` hazard guard. What is missing is `convert_layout` choosing it for this
+mma-to-blocked case. Two ways at it: pick a `blocked_layout` for the store that is reachable
+from the mma layout by a lane swap alone, or teach the conversion to use the cross-lane path
+when the permutation is within a wave. Either removes 16 `ds_write`, 8 barriers and 9 waits
+from the drain -- and unlike 3.26.6, that is large enough for the benchmark to see.

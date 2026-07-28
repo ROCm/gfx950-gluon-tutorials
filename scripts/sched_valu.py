@@ -495,6 +495,71 @@ def schedule(lines, lo, hi, frac):
     return out, moved
 
 
+def relax_vmcnt(lines, lo, hi):
+    """Replace a blanket `s_waitcnt vmcnt(0)` with counted waits placed at each consumer.
+
+    A `vmcnt(0)` drains every outstanding VMEM load before anything may proceed. When the
+    loads are all the same type their returns are in order, so `vmcnt(N)` guarantees the
+    first (issued - N) have landed, and the consumers of the earlier loads can start while
+    the later ones are still in flight. This walks forward from the wait, tracks which load
+    each live register came from, and emits the loosest legal count in front of each
+    consumer -- then restores a full drain at the end of the region, so nothing that used to
+    be covered by the blanket wait is left uncovered.
+
+    Used on the prologue, where `fav4` spends 3512 cycles per wave on one such wait: the Q
+    tile, which `SCALE_ON_Q` must have in registers before it can be scaled and stored to
+    LDS.
+    """
+    ins = [i for i in range(lo, hi) if opcode(lines[i])]
+    loads = [i for i in ins
+             if opcode(lines[i]).startswith(("global_load", "buffer_load", "flat_load"))
+             and "lds" not in lines[i].split(";")[0]]
+    waits = [i for i in ins if opcode(lines[i]) == "s_waitcnt" and "vmcnt(0)" in lines[i]]
+    if not loads or not waits:
+        return lines, (0, 0)
+    pre = {}                                   # line -> text to insert before it
+    moved = 0
+    for w in waits:
+        before = [k for k in loads if k < w]
+        if len(before) < 2:
+            continue
+        owner = {}
+        for n, k in enumerate(before):
+            for r in defs_uses(lines[k])[0]:
+                owner[r] = n
+        ind = re.match(r"\s*", lines[w]).group(0) or "\t"
+        waited, last = -1, len(before) - 1
+        for i in ins:
+            if i <= w:
+                continue
+            wr, rd = defs_uses(lines[i])
+            need = max((owner[r] for r in rd if r in owner), default=-1)
+            if need > waited:
+                waited = need
+                pre.setdefault(i, []).append(f"{ind}s_waitcnt vmcnt({last - need})")
+            for r in wr:
+                owner.pop(r, None)
+            if waited >= last:
+                break
+        if waited < 0:                          # nothing consumed: leave it alone
+            continue
+        if waited < last:
+            # some of the loads are not read in this region; the blanket wait covered them,
+            # so put the drain back at the end rather than dropping it
+            pre.setdefault(ins[-1], []).append(f"{ind}s_waitcnt vmcnt(0)")
+        lines = list(lines)
+        lines[w] = None
+        moved += 1
+    out, added = [], 0
+    for i, l in enumerate(lines):
+        for extra in pre.get(i, ()):
+            out.append(extra)
+            added += 1
+        if l is not None:
+            out.append(l)
+    return out, (moved, added)
+
+
 def strip_pacing(lines, lo, hi, drop=("s_nop",)):
     """Delete scalar pacing instructions from the loop, re-inserting only the `s_nop` the
     architecture actually requires.
@@ -570,11 +635,17 @@ def _loop_bounds(lines):
 def rewrite(text, frac):
     lines = text.split("\n")
     b = _loop_bounds(lines)
-    if b is None or frac == 0:
+    if b is None:
         return text, (0, 0)
+    relaxed = 0
+    if os.environ.get("FA_RELAX_VMCNT"):
+        lines, (nw, relaxed) = relax_vmcnt(lines, 0, b[0])
+        b = _loop_bounds(lines)
+    if frac == 0:
+        return "\n".join(lines), (0, relaxed)
     _NOPS[0] = 0
     out, moved = schedule(lines, b[0], b[1], frac)
-    return "\n".join(out), (moved, _NOPS[0])
+    return "\n".join(out), (moved, _NOPS[0] + relaxed)
 
 
 def get_key():
