@@ -1545,3 +1545,155 @@ FA_ABLATE_VALU=frac FA_ABLATE_FRAC=0.65 HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
 prepared-vs-ordinary launcher agreement check under `FA_ABLATE_VALU` -- the ablated kernel returns
 NaN, and NaN != NaN. Both changes are in the tree. Clock and power come from a 100 ms `rocm-smi`
 poll during the timed run, averaged over the last three quarters of the samples above 900 W.
+
+## The same sweep by scheduling alone: efficiency does cost clock (2026-07-28)
+
+The removal sweep above changes in-loop MFMA efficiency by deleting VALU, which is a
+confound: a build that issues 60% fewer VALU per second draws less power, so the governor
+grants it more clock, and the reported clock is flat for a reason that has nothing to do
+with scheduling. This section repeats the measurement with the **instruction stream held
+byte-for-byte constant** -- same opcodes, same count, same registers, same arithmetic -- and
+only the *placement* of the in-loop VALU varied. It reaches the opposite conclusion about
+the clock, and the same one about the cycles.
+
+### Method: re-schedule, don't delete
+
+`scripts/sched_valu.py` (`FA_SCHED_VALU=<f>`, -1.0 to 1.0) rewrites the final assembly with
+a greedy list schedule over the dependence DAG of each barrier-delimited sub-region. MFMA
+order is never touched. Positive `f` spreads the region's VALU evenly across its MFMA
+shadows; negative `f` crowds them into the earliest shadow each can reach, leaving the
+later MFMAs bare. The order is always topological, so **the kernel still computes correct
+attention at every point** -- every measurement below was taken from a build that reported
+`✅ match  (max=9.77e-04)`, bit-identical to the untouched build's error. That check is the
+experiment's control; the removal sweep had no equivalent.
+
+Three things had to be right before the schedules were legal, and each was found by a
+kernel that returned NaN while being provably correctly *ordered*:
+
+1. **`v_permlane32_swap_b32 v96, v97` writes both operands.** Reading it as "writes v96,
+   reads v97" loses a dependence and lets a consumer of v97 be hoisted above it. Any
+   opcode not on an explicit known-destination list is now treated as reading *and*
+   writing every register it names.
+2. **MFMA hazards are software-enforced**, and the compiler satisfies them partly with
+   `s_nop` and partly by leaving independent VALU in the gap. Drain that gap and the
+   schedule is still correctly ordered but illegal. The pass now restores the distance with
+   `s_nop` where a reorder shortened it.
+3. **So is the transcendental forwarding hazard** --
+   `GCNSubtarget::hasTransForwardingHazard()` is `HasGFX940Insts`, one wait state, so
+   gfx950 has it. `v_exp_f32 v115, v66` followed immediately by a consumer of v115 is
+   illegal, and evening out the shadows put exactly that pair together.
+
+Distances are counted in **wait states, one per instruction**, as
+`SIInstrInfo::getNumWaitStates` does, and capped at the architectural requirement
+(`MaxWaitStates` = 19 for SMFMA 32x32, 1 for TRANS). Getting the units wrong -- counting
+cycles, MFMA = 32 and VALU = 4 -- made the repair preserve distances of several hundred and
+pad them with `s_nop` chains: in-loop efficiency fell from 80.8% to **32.8%** and TFLOPS to
+797. With the right units the repair costs 10-31 `s_nop` per loop and nothing else; no VALU
+or MFMA is added or removed at any point on the sweep.
+
+### Spreading does nothing; clumping is the direction with range
+
+Evening out the intra-wave shadow balance on the stock+scalarize build moves efficiency by
+**0.2 points** (80.8% -> 80.6%) and TFLOPS not at all, even though it cuts bare shadows
+from 20 to 10 and over-capacity ones from 33 to 19. That is the dual-wave ping-pong
+asserting itself: two waves share the SIMD, so a wave's MFMA shadows are filled largely by
+the *other* wave's VALU, and the intra-wave balance is not what the issue port sees. It is
+also why `AMDGCN_SCALARIZE_PACKED_FOPS=1` alone is worth 68.5% -> 80.8% while the remaining
+climb to 94.5% needs the mem-stage pacing and cross-region placement that llirSched does.
+
+Clumping works, and clumping the **llirSched build** works best, because that is the
+schedule with something to undo:
+
+| build | `f` | eff /SIMD | TFLOPS | sclk | power | TF/GHz |
+|---|---:|---:|---:|---:|---:|---:|
+| llirSched | 0 | 94.6% | 1324.7 | 1565.3 MHz | 1318.4 W | 846.3 |
+| llirSched | -0.1 | 89.3% | 1301.9 | 1608.5 MHz | 1322.1 W | 809.4 |
+| llirSched | -0.2 | 89.2% | 1302.6 | 1613.1 MHz | 1327.2 W | 807.5 |
+| llirSched | -0.3 | 85.8% | 1286.2 | 1645.6 MHz | 1334.4 W | 781.6 |
+| llirSched | -0.4 | 83.0% | 1270.4 | 1666.7 MHz | 1335.0 W | 762.2 |
+| llirSched | -0.5 | 82.0% | 1266.2 | 1680.0 MHz | 1340.5 W | 753.7 |
+| llirSched | -0.6 | 80.9% | 1262.6 | 1716.8 MHz | 1339.0 W | 735.4 |
+| llirSched | -0.7 | 80.3% | 1258.6 | 1697.2 MHz | 1343.3 W | 741.6 |
+| stock+scalarize | 0 | 80.8% | 1266.6 | 1730.8 MHz | 1328.7 W | 731.8 |
+| stock+scalarize | -0.4 | 75.0% | 1234.2 | 1747.3 MHz | 1347.4 W | 706.3 |
+| stock+scalarize | -1.0 | 74.8% | 1232.5 | 1746.0 MHz | 1344.5 W | 705.9 |
+
+Beyond `f = -0.6` the llirSched build saturates at ~80.3% -- the dependences will not let
+the VALU crowd any further -- so the useful span is 80.3% to 94.6%, and the stock+scalarize
+build extends the low end to 74.8%.
+
+![Pure scheduling against the removal sweep](images/eff_tflops_scheduling.svg)
+
+### The result: the same cycle law, a completely different payoff
+
+    re-scheduling   TFLOPS =  4.65 * eff + 887.0     R2 = 0.991   (17 points)
+    deleting VALU   TFLOPS = 11.67 * eff + 362.3     R2 = 0.977   (21 points)
+
+**A point of in-loop MFMA efficiency is worth 4.6 TFLOPS when you schedule for it and 11.7
+when you delete work to get it.** In elasticity: 80.3% -> 94.6% is +17.8% efficiency for
++5.3% throughput, so `dlnT/dlneff` = **0.31**, against 0.75 for the removal sweep. The
+removal sweep overstated the value of a scheduling win by 2.4x, exactly as suspected.
+
+The reason is in the third panel, and it is the effect the removal method could not see:
+
+    sclk = -9.80 * eff + 2493.5     MHz,  R2 = 0.91
+
+**Roughly 10 MHz of clock per point of efficiency**, at a board power that barely moves
+(1318-1347 W across the whole sweep, and *falling* as efficiency rises: 1343 W at 80.3%,
+1318 W at 94.6%). A denser MFMA stream costs more energy per cycle, so the governor holds
+the same power envelope by taking cycles away. The decomposition over the full span closes
+exactly:
+
+    cycles   846.3 / 741.6   = 1.1412    (+14.1%)
+    clock   1565.3 / 1697.2  = 0.9223    ( -7.8%)
+    product                    1.0525    measured 1324.7 / 1258.6 = 1.0525
+
+And the cycle law is confirmed to be independent of the method. Fitting TFLOPS/GHz against
+efficiency on these 17 re-scheduled points gives
+
+    TFLOPS/GHz = 7.327 * eff + 150.8     R2 = 0.973
+
+against `7.362 * eff + 162.6` from the removal sweep -- **slopes agreeing to 0.5%**, and
+every one of the 17 points within 1.0-3.5% of the removal-derived line. Two experiments that
+share no mechanism agree that cycles-per-unit-work is a function of in-loop MFMA efficiency
+alone. What they disagree about is the clock, and the re-scheduling number is the one that
+applies to a scheduling change.
+
+### What this changes
+
+1. **The payoff for a scheduling win is `4.6 * Δeff` TFLOPS at this shape, not `11.7`.**
+   Both figures are measured; only the first one answers "what do I get for improving the
+   schedule".
+2. **Combining the two laws gives the closed form**, and it has a knee:
+
+        TFLOPS(eff) = (7.33*eff + 151) * (2.4935 - 0.0098*eff) = -0.0718*eff^2 + 16.80*eff + 376
+
+   The marginal value of an efficiency point falls from 5.3 TFLOPS at 80% to **3.2 TFLOPS at
+   94.6%**, and extrapolating to a perfect 100% predicts only ~1338 TFLOPS.
+3. **So intra-loop scheduling is close to exhausted on this kernel at this shape.** The
+   remaining 5.4 efficiency points are worth about 17 TFLOPS. Getting past that means
+   spending less energy per unit of work -- fewer or cheaper instructions, less register
+   traffic -- not packing the existing ones tighter. This is the same conclusion the
+   fav4-vs-FlyDSL comparison reached from one data point, now with a slope attached.
+4. It also explains why FlyDSL, at 84.7% efficiency, ties a kernel at 94.5%: on this curve
+   those two differ by 10 points of efficiency, which at 4.6 TFLOPS a point is +46, and
+   FlyDSL's cheaper instruction stream buys back more than that in clock.
+
+### Reproducing
+
+```bash
+# one point: `f` negative clumps, positive spreads, 0 leaves the assembly alone
+FA_SCHED_VALU=-0.3 HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+  DISABLE_LLVM_OPT=disable-machine-sink \
+  LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
+  LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+  python bench.py --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 --scale-on-q 1
+
+# movability analysis for one assembly file, no rewrite
+python ../../scripts/sched_valu.py dump.amdgcn --report
+```
+
+`FA_SCHED_DUMP=<prefix>` writes the before/after assembly; `FA_SCHED_ONLY=k` restricts the
+rewrite to the k-th MFMA-bearing sub-region, which is how the illegal-schedule bugs above
+were localised. Always read the `✅ match` line: an unnoticed NaN here does not look like a
+failure, it looks like a 15% speedup.

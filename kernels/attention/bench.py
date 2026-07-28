@@ -67,6 +67,17 @@ if os.environ.get("FA_ABLATE_VALU"):
 
     knobs.runtime.add_stages_inspection_hook = ablate_valu.inspect_stages_hook
 
+# VALU rescheduling (scripts/sched_valu.py): re-balance the loop's vector ALU across the
+# MFMA shadows without adding or removing any, to separate the scheduling effect on
+# throughput from the power effect of changing the instruction count. Dependency-checked,
+# so the correctness check below still applies and is the control for the experiment.
+if os.environ.get("FA_SCHED_VALU"):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+    import sched_valu  # noqa: E402
+    from triton import knobs  # noqa: E402
+
+    knobs.runtime.add_stages_inspection_hook = sched_valu.inspect_stages_hook
+
 # Ported FAV3 kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Select the kernel implementation: FA_MODULE=fav3 (default, eager rescale) or
