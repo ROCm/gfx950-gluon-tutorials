@@ -477,7 +477,9 @@ all. It is visible in a count of 3-source VALU in `fav4`'s loop body: **98 with 
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
-Measured at seqlen 16320 on GPU[0], TFLOPS and in-loop MFMA efficiency per SIMD:
+Measured at `B=1, S=16320, H=64, fp16` on GPU[0] — TFLOPS and in-loop MFMA efficiency per SIMD.
+(A different shape and dtype from §8, so read the two tables separately; the *deltas* are what
+matter here.)
 
 | | `fav3` | `fav4` |
 |---|---|---|
@@ -497,50 +499,62 @@ restores the tighter numerics on either kernel.
 
 ## 8. Results
 
-`B=1, HQ=HK=64, D=128, S=16384, fp16`, non-causal, MI355X, `rocm-smi` GPU[0]. TFLOPS is the mean
-of three runs of `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, averaging the last 100
-of 1000 dispatches; MFMA efficiency is the in-loop per-SIMD figure from an ATT instruction trace.
-The five configurations were run **interleaved** — one of each, three times round — so that any
-drift in the board hits every row equally.
+`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[0] — ROCm/FlyDSL's published
+benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
+`AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency is the
+in-loop per-SIMD figure from an ATT instruction trace. The five configurations were run
+**interleaved** — one of each, three times round — so any drift in the board hits every row
+equally. Every row here is stable to about 2 TFLOPS.
 
 | | TFLOPS | MFMA eff / SIMD |
 |---|---:|---:|
-| **`fav4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1236** | **93.8%** |
-| *ROCm/FlyDSL* — its own tuned config, non-causal | *1183* | *86.4%* |
-| **`fav3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1166** | **86.1%** |
-| `fav4` — stock LLVM, no plugin, no env | 1114 | 68.0% |
-| `fav3` — stock LLVM, no plugin, no env | 1091 | 67.9% |
+| *ROCm/FlyDSL* — its own tuned config | *1320* | 84.7% |
+| **`fav4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1318** | **94.5%** |
+| **`fav3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1243** | 86.2% |
+| `fav4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
+| `fav3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
 
 **What the compiler work is worth** is the distance between the tuned rows and the stock ones:
-**+10.9%** of throughput on `fav4` and **+6.8%** on `fav3`, and in efficiency terms **+25.8** and
-**+18.2 points**. Everything in §5 and §6 lives in that gap.
+**+10.0%** of throughput on `fav4` and **+8.9%** on `fav3`, and in efficiency terms **+26.0** and
+**+18.4 points**. Everything in §5 and §6 lives in that gap.
 
-**Stock LLVM cannot tell the two kernels apart.** 68.0% against 67.9% — without a scheduler,
-`fav4`'s lazy rescale is worth 2.1% of throughput and essentially nothing in efficiency. The
-7.7-point gap between the tuned rows is not the algorithm; it is the scheduler being handed a
-budget it can actually fit the work into. A design that creates headroom only pays if something
-downstream spends it.
+**Stock LLVM cannot tell the two kernels apart** where it counts — 68.5% against 67.8%. Without a
+scheduler, `fav4`'s lazy rescale barely moves the loop at all; the 8.3-point efficiency gap
+between the tuned rows is the scheduler exploiting budget headroom that lazy rescaling created,
+not the algorithm on its own. A design that creates headroom only pays if something downstream
+spends it.
 
 **The ceilings from §5 still frame the tuned rows.** `fav4`'s demand fits its window, so its
-ceiling is 100% and it reaches 93.8%. `fav3` leaves 4 × 48 = 192 cycles exposed per loop body
-against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.1%. The two are
-7.7 points apart while their ceilings are 8.6 apart — so the whole difference, and a little more,
-is work `fav3`'s budget cannot absorb rather than a worse schedule. `fav3` is fractionally closer
-to its own ceiling than `fav4` is to 100%.
+ceiling is 100% and it reaches 94.5%. `fav3` leaves 4 × 48 = 192 cycles exposed per loop body
+against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.2%. The two are
+8.3 points apart while their ceilings are 8.6 apart — so the whole difference is work `fav3`'s
+budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
+own ceiling.
 
-**On the FlyDSL row.** `fav4` is 4.5% ahead of it on throughput and 7.4 points on efficiency;
-`fav3` is level with it on efficiency (86.1 against 86.4) and 1.5% behind on throughput. That last
-pair is inside the run-to-run spread and should be read as a tie. Two caveats, both against these
-numbers rather than for them:
+**On the FlyDSL row.** This is its published configuration, and its published figure of 1320
+TFLOPS reproduces exactly (1319.4 / 1319.6 / 1320.2). `fav4` ties it — 0.2% apart, well inside
+any spread — and `fav3` is 5.8% behind.
 
-- **This sequence length costs the Gluon kernels a little.** 16384 gives `n_blocks = 256`, so
-  `(n_blocks − 3)` is odd and both run the `ODD_TAIL` path (§9) — one unpipelined tile in the
-  drain, about half a point of epilogue. 16320 and 16448 have no such tile.
-- **FlyDSL is sensitive to how the measurement is taken**, much more than the Gluon kernels are.
-  Its own benchmark averages a shallower window, which leaves the kernel in its thermal transient:
-  six consecutive runs of one config read 1236.9, 1242.8, 1165.9, 1167.7, 1159.3, 1157.5. The 1183
-  above comes from the same deep window the Gluon rows use. Earlier revisions of this table quoted
-  1242 for FlyDSL, which was a cool-die reading.
+The interesting part is *how* they tie, because the two kernels are strong in different places.
+`fav4` needs about 10% fewer cycles for the same work (94.5% against 84.7%). FlyDSL spends more of
+its time in the loop (94.1% against our 88.3% — its pipeline fill and drain are cheaper than our
+four-stage one) and clocks **5.2% higher** at comparable power. Those cancel:
+
+```
+fav4 cycle advantage    (0.945 x 0.8833) / (0.847 x 0.9413)  = +4.8%
+FlyDSL clock advantage   1650.9 MHz / 1569.8 MHz             = +5.2%
+```
+
+**And the ranking is shape-dependent, so treat one number with care.** At `B=1, S=16384` the board
+runs pinned to its ~1400 W cap; there cycles are what matter and `fav4` leads FlyDSL by 9.3%. At
+the shape above there is power headroom, FlyDSL's clock advantage cashes in, and the two are level.
+Neither shape is *the* answer — that one flatters us, this one flatters them. The quantity that
+does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
+the scheduler actually controls. `note.md` works the comparison through in full.
+
+One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
+`(n_blocks − 3)` is odd and both kernels run the `ODD_TAIL` path (§9) — one unpipelined tile in the
+drain. FlyDSL has no such constraint.
 
 Two things about the metrics themselves, worth knowing before quoting either:
 
@@ -550,25 +564,28 @@ the matrix unit. It is the right metric for judging a *scheduling* change, since
 what a scheduling change moves — but it carries no information a cycle count does not.
 
 **Cycles and TFLOPS disagree, and both are honest about different things.** A denser MFMA stream
-draws more power, and on a board already at 96% of its power cap that buys back a lower clock — so
-a change can be worth several percent of cycles and under one percent of wall time. Judge a
-scheduling change by cycles; judge a kernel by both. The two `--scale-on-q` variants in §7 are the
-clearest example.
+draws more power, and against a power cap that buys back a lower clock — so a change can be worth
+several percent of cycles and under one percent of wall time. bf16 is the cleanest example: it
+measures 3–7% faster than fp16 at *identical* cycle counts and identical in-loop efficiency, with
+the whole difference coming from clock, because its narrower mantissa toggles less of the
+multiplier array. Judge a scheduling change by cycles; judge a kernel by both.
 
 **Reproducing the Gluon rows:**
 
 ```bash
 cd <repo>
+SHAPE="--batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128"   # bf16 is the default
+
 # tuned
 HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-python scripts/fa_kernel_time.py --seqlen 16384 --iters 1000 --last-n 100 --scale-on-q 1
+python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
 
 # stock LLVM: the same command with every variable above removed
 HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 \
-python scripts/fa_kernel_time.py --seqlen 16384 --iters 1000 --last-n 100 --scale-on-q 1
+python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
 ```
 
 **Reproducing the FlyDSL row** needs a checkout of [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL);
@@ -580,14 +597,17 @@ pip install -e .            # per FlyDSL's own README
 
 cd <this repo>
 HIP_VISIBLE_DEVICES=<gpu> FLYDSL_ROOT=/path/to/FlyDSL \
-python scripts/fly_kernel_time.py --seqlen 16384 --iters 1000 --last-n 100
+python scripts/fly_kernel_time.py --batch 32 --seqlen 8192 --hq 8 --d 128 \
+  --iters 1000 --last-n 100
 ```
 
 `scripts/fly_kernel_time.py` builds `flash_attn_dualwave_swp` through FlyDSL's own
 `build_flash_attn_dualwave_swp_module`, then times it exactly as `fa_kernel_time.py` times ours —
 same rocprofv3 invocation, same serialization, same rotating-buffer rule, same averaging window —
 which is the only reason the two rows can be put in one table. It checks the output against
-`scaled_dot_product_attention` before timing.
+`scaled_dot_product_attention` before timing. The window depth matters: at `B=1` FlyDSL's own
+shallower window leaves the kernel in its thermal transient and six consecutive runs of one config
+read 1236.9, 1242.8, 1165.9, 1167.7, 1159.3, 1157.5. At the shape above both harnesses are steady.
 
 Its defaults are FlyDSL's own tuned configuration (`FLASH_ATTN_FUNC_KERNEL_CONFIG` in that
 project's `tests/kernels/test_flash_attn_fwd.py`): lazy rescale, `setprio`, stagger, and
