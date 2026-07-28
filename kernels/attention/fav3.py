@@ -204,16 +204,32 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     p_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=0, parent=mma_layout, k_width=pv_k_width)
     v_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=1, parent=mma_layout, k_width=pv_k_width)
 
+    # Store layout for the O tile (BLOCK_M x BLOCK_DMODEL = 256 x 128). `threads_per_warp`
+    # is [4, 16], not [16, 4]: with `order=[1, 0]` the D axis is contiguous, so 16 lanes x
+    # `size_per_thread`=8 covers all 128 columns of a row, giving 256 contiguous bytes per
+    # 16 lanes -- one full row per quarter-warp -- and 8 bf16 per lane is exactly the
+    # `dwordx4` the store wants. [16, 4] instead spreads 16 lanes down M and covers only 32
+    # columns per row, so each row is stitched from 4 lanes and the access is strided.
     blocked_layout: gl.constexpr = gl.BlockedLayout(
+        size_per_thread=[1, 8], threads_per_warp=[4, threads_per_warp // 4],
+        warps_per_cta=[num_warps, 1], order=[1, 0])
+
+    # The LSE store is 1-D over BLOCK_M and wants consecutive rows on consecutive lanes,
+    # which is the *opposite* of what the O store wants. Slicing dim 1 out of `blocked_layout`
+    # above leaves only `threads_per_warp[0]`=4 lanes along M, so `lse` would go out as 8
+    # stride-4 `global_store_dword` instead of 2 contiguous ones. Keep M-major for LSE only.
+    lse_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[threads_per_warp // 4, 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
 
     offs_m_layout:    gl.constexpr = gl.SliceLayout(dim=1, parent=blocked_layout)
     offs_d_layout:    gl.constexpr = gl.SliceLayout(dim=0, parent=blocked_layout)
+    offs_m_lse_layout: gl.constexpr = gl.SliceLayout(dim=1, parent=lse_layout)
     mma_m_layout:     gl.constexpr = gl.SliceLayout(dim=1, parent=mma_layout)
 
     offs_m    = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=offs_m_layout)
     offs_d    = gl.arange(0, BLOCK_DMODEL, layout=offs_d_layout)
+    offs_m_lse = start_m * BLOCK_M + gl.arange(0, BLOCK_M, layout=offs_m_lse_layout)
 
     q_base = Q + off_z * stride_qz + off_h_q * stride_qh
     k_base = K + off_z * stride_kz + off_h_k * stride_kh
@@ -473,13 +489,16 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     o_base  = Out + off_z * stride_oz + off_h_q * stride_oh
     o_ptrs  = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
     o_mask  = offs_m[:, None] < N_CTX
-    acc_blocked = gl.convert_layout(acc, blocked_layout)
-    gl.store(o_ptrs, acc_blocked.to(Out.dtype.element_ty), mask=o_mask)
+    # Downcast *before* the layout conversion, not after: `convert_layout` out of the mma
+    # layout goes through LDS, and doing it in bf16 halves the bytes that round trip.
+    acc_out = acc.to(Out.dtype.element_ty)
+    acc_blocked = gl.convert_layout(acc_out, blocked_layout)
+    gl.store(o_ptrs, acc_blocked, mask=o_mask)
 
-    l_ptrs = L + off_z * HQ * N_CTX + off_h_q * N_CTX + offs_m
-    l_mask = offs_m < N_CTX
+    l_ptrs = L + off_z * HQ * N_CTX + off_h_q * N_CTX + offs_m_lse
+    l_mask = offs_m_lse < N_CTX
     lse = m_i / 1.44269504089 + gl.log2(l_i) / 1.44269504089
-    lse_blocked = gl.convert_layout(lse, offs_m_layout)
+    lse_blocked = gl.convert_layout(lse, offs_m_lse_layout)
     gl.store(l_ptrs, lse_blocked, mask=l_mask)
 
 

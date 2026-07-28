@@ -2473,6 +2473,34 @@ Everything is inside the noise, and note the noise: the *same* old build measure
 resolvable to better than that. At S=8192 the spread is ~0.3% and the new build sits at the
 bottom of it, consistent with the 0.65% loop regression from the register shuffle.
 
+### 3.27.2b Applied to `fav3` as well
+
+`fav3` has the identical epilogue structure -- same `blocked_layout`, same
+`convert_layout` -> downcast -> store, same LSE store off `offs_m` -- so all three changes
+port over unchanged. Both kernels now emit the same drain shape:
+
+| epilogue | `fav4` old | `fav4` new | `fav3` new |
+|---|---:|---:|---:|
+| `global_store_dwordx4` / `_dword` | 8 / 2 | 8 / 2 | 8 / 2 |
+| `ds_write` | 16 x `b128` | 16 x `b64` | 16 x `b64` |
+| `ds_read` | 48 x `b128` | 32 x `b128` + 8 x `read2_b64` | 32 x `b128` + 8 x `read2_b64` |
+| `s_barrier` | 22 | **16** | **16** |
+| `s_waitcnt` | 62 | **52** | **31** |
+
+`fav3`'s waitcnt count is lower because its drain is simpler -- eager rescale, no three-tile
+tail. Interleaved timing at B=32 S=8192 bf16:
+
+    fav3 old  1245.6   1251.1        mean 1248.4
+    fav3 new  1255.3   1258.6        mean 1257.0      +0.69%
+
+So `fav3` gains 0.69% where `fav4` lost 0.2%, and **the difference is not the epilogue.** Both
+loops came out of the change with the same instruction count and different register
+assignments -- 589 for `fav3`, 549 for `fav4`, neither text identical to its old build -- so
+each kernel drew a different ticket in the allocation lottery, `fav3` favourably and `fav4`
+not. Read both numbers as one result: the drain change is worth somewhere between -0.2% and
++0.7%, which is to say it is worth about as much as the noise, and what moved the needle in
+either direction was register allocation in the loop.
+
 ### 3.27.3 The correction this forces
 
 Three independent reductions of fill/drain now measure zero throughput change:
