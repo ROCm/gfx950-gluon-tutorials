@@ -1779,18 +1779,16 @@ nothing". `patch()` now appends the fraction to `FLYDSL_RUNTIME_CACHE_DIR`.
 | -1.0 | 69.5% | 1240.4 | 1877.2 MHz | 1354.7 W | 660.8 |
 
 **Both directions lose.** Spreading -- the transform that does nothing to our kernels --
-costs FlyDSL 4.0 efficiency points and 1.7% throughput, because its shadows are already
-better packed than the even spread I would impose: **zero bare MFMA shadows out of 64**
-(3 VALU in 22 of them, 5 in 23, 6 in 13), against 20 bare out of 64 for `fav4`
-stock+scalarize. And every one of its in-loop VALU is movable by `sched_valu`'s test -- 67 of
-67, 69 of 69, against 9 of 75 for two of our four regions -- meaning **none of its
-dot-region VALU depends on that region's own MFMAs**. Its software pipelining is cleaner
-than ours, not sloppier.
+costs FlyDSL 4.0 efficiency points and 1.7% throughput; every clumping fraction is worse
+still. So FlyDSL's schedule is the best point in this transform's search space. (That bounds
+the downward slope and locates FlyDSL at the top of it; it does not prove no better schedule
+exists.)
 
-So the first conclusion is a negative one that matters: **FlyDSL's lower MFMA efficiency is
-not a scheduling defect.** There is no VALU placement in this transform's search space that
-improves it. (The sweep bounds the downward slope and locates FlyDSL at the top of it; it
-cannot prove no better schedule exists, only that even spreading and clumping are worse.)
+**An earlier draft of this section read more into that than it supports.** It compared
+FlyDSL's shadow occupancy against `fav4` *stock+scalarize* rather than the tuned build, and
+counted `fav4`'s predicated rescale as work it does, and concluded that FlyDSL's pipelining
+was cleaner than ours. Both inputs were wrong and so was the conclusion -- see
+"Instruction-level comparison" below, which redoes it against the right build.
 
 ![FlyDSL's sweep against ours](images/eff_tflops_scheduling.svg)
 
@@ -1809,30 +1807,34 @@ Matched ATT measurements, same session and tool, B=32 S=8192 H=8 bf16:
 | MFMA per iteration | 64 | 64 | identical work |
 | `ds_read` per iteration | 96 | 96 | identical |
 | barriers per iteration | 8 | 8 | identical |
-| **VALU per iteration** | **313** | **274** | FlyDSL 12.5% fewer |
-| all instructions | 539 | 493 | FlyDSL 8.5% fewer |
+| **VALU per iteration, unconditional** | **282** | **274** | within 3% -- see the correction below |
+| VALU behind an exec mask (skipped) | 33 | 0 | `fav4`'s lazy rescale |
 | `s_nop` cycles per iteration | 14 | 48 | +34 |
 | `s_setprio` per iteration | 0 | 4 | |
-| bare MFMA shadows | 20 / 64 | **0 / 64** | |
+| VALU issue cycles, unconditional | 1392 | 1352 | both under the 1536 that fits |
 | **cycles per iteration** | **4332.9** | **4900.3** | FlyDSL 13.1% more |
 | eff /SIMD | 94.5% | 83.6% | 82.9-83.6% across ATT runs |
 | loop / prologue / epilogue | 88.3 / 5.4 / 6.3% | **94.1 / 2.2 / 3.7%** | |
 | sclk | 1565.3 MHz | 1687.9 MHz | FlyDSL +7.8% |
 
-FlyDSL issues **fewer** instructions and packs its MFMA shadows **better**, and still takes
-**567 more cycles** per iteration. So those cycles are not instruction issue -- they are
-waiting. `s_nop` accounts for 34 of them. The rest is consistent with what its own build
+FlyDSL takes **567 more cycles** per iteration for the same 64 MFMA, and its VALU load is
+within 3% of ours once `fav4`'s never-executed rescale is excluded. Both kernels' VALU fits
+inside the MFMA shadows with room to spare, so in neither case are those cycles instruction
+issue -- they are waiting, and FlyDSL does 3.4x more of it. `s_nop` accounts for 34. The rest is consistent with what its own build
 flags say it is doing: `dualwave_swp_enable_stagger` and `dualwave_swp_setprio` (4
 `s_setprio` per iteration where we have none) deliberately offset and arbitrate the two waves
 so they stay out of each other's way. That attribution is inference from the flags and the
 instruction counts, not a measurement of the stall reason.
 
-What it buys is measured, though, and it is two things:
+What those cycles buy is measured, though, and it is two things. Note the direction of
+causation: the schedule sets the instruction sequence, the sequence sets the power the
+controller sees, the power sets the clock. Clock is never an independent knob here.
 
-1. **Clock, +7.8%.** And this is not a FlyDSL trick: 1687.9 MHz is within **0.4%** of what
-   our own `sclk(eff)` line predicts for 82.9%. A lower MFMA density draws less energy per
-   cycle, and at this shape the governor hands the difference back as frequency to anybody,
-   in any kernel, at that density.
+1. **Clock, +7.8%,** as a *consequence* of the sparser instruction sequence. 1687.9 MHz is
+   within **0.4%** of what our own `sclk(eff)` line predicts for 82.9%, and a single line
+   through both kernels' sweeps fits all 17 points within 1.7%. A lower MFMA density draws
+   less energy per cycle, and the controller hands the difference back as frequency to
+   anybody, in any kernel, at that density.
 2. **A cheap prologue and drain, +6.5%.** Its fill/drain is 5.95% of the dispatch against our
    11.65% -- a four-stage software pipeline that costs half of ours to start and stop.
 
@@ -1849,27 +1851,111 @@ sign of the prediction. So the decomposition accounts for the tie to within the 
 the clock measurement, and no term is missing -- but it cannot say which kernel is "really"
 ahead by tenths of a percent, and neither can the benchmark.
 
+### Instruction-level comparison, done against the right build
+
+The claim that FlyDSL schedules better than `fav4` was wrong, and it was wrong twice over.
+Corrected, per iteration, `fav4` **tuned** (not stock+scalarize) against FlyDSL, counting
+only instructions that are not behind an exec mask:
+
+| per iteration | `fav4` tuned | FlyDSL |
+|---|---:|---:|
+| MFMA / `ds_read` / `buffer_load` / barriers | 64 / 96 / 8 / 8 | 64 / 96 / 8 / 8 |
+| LDS mix | 64x `ds_read_b64_tr_b16` + 32x `b128` | identical |
+| VALU instructions | 282 | 274 |
+| of which packed (2 passes) | 0 | 0 |
+| of which transcendental (2 passes) | 66 | 64 |
+| **VALU issue cycles** | **1392** | **1352** |
+| hideable in the MFMA shadows (64 x 24) | 1536 | 1536 |
+| headroom | +144 | +184 |
+| behind an exec mask, so skipped | 33 VALU / 260 cycles | 0 |
+| `s_nop` cycles | 80 | 48 |
+| `s_waitcnt` / `s_setprio` | 8 / 0 | 4 / 4 |
+
+The two loops are **the same loop**: same MFMA count, same LDS instructions down to the
+opcode and width, same VMEM, same barriers, and VALU issue demand within 3%. The 12.5%
+VALU gap reported earlier was `fav4`'s lazy-rescale block -- 32 `v_pk_mul_f32` scaling the
+output accumulator -- which sits behind `s_and_saveexec_b64` + `s_cbranch_execz` and almost
+never executes. (Independently confirmed: forcing that block to skip moves stock+no-sink
+efficiency from 76.2% to 76.3%.) Charging it to `fav4` is what made FlyDSL look leaner.
+
+With that removed, **neither kernel is issue-limited**: both fit their VALU inside the MFMA
+shadows with 9-12% of the budget spare. So the ideal loop is 4096 cycles per SIMD per
+iteration for both, and what each actually spends above that is pure stall:
+
+    fav4 tuned   4096 ideal   4332.9 measured    237 cycles of stall  ( 5.5% of the loop)
+    FlyDSL       4096 ideal   4900.3 measured    804 cycles of stall  (16.4% of the loop)
+
+**`fav4`'s schedule hides VALU better -- by 3.4x on the only measure that counts.** That is
+what its 94.5% against 83.6% was saying all along, and the shadow-occupancy histogram I used
+to argue otherwise is not a substitute for it: a static count of VALU behind each MFMA says
+nothing about the stalls between them. In-loop MFMA efficiency is the criterion; it was
+right and the proxy was wrong.
+
+What FlyDSL's 804 stall cycles *are* remains open. `s_nop` accounts for 96 of them per SIMD.
+It has half our `s_waitcnt` count (4 against 8), so it synchronises at coarser granularity,
+and it is the only one of the two using `s_setprio` (4 per iteration) with
+`dualwave_swp_enable_stagger` on -- both of which deliberately serialise the two waves. That
+is a hypothesis consistent with the flags and the counts, not a measurement of the stall
+reason; the per-window SQ stall counters would settle it.
+
+### One clock law, one cycle law, and a fill/drain difference
+
+The two kernels appeared to have different curves. On the axis that carries the power effect
+they do not. Fitting `sclk` against efficiency separately gives -9.8 MHz/point for `fav4` and
+-12.5 for FlyDSL, but the two sweeps cover **disjoint** efficiency ranges (80.3-94.6 and
+68.4-82.9, overlapping in 2.6 points). Fit together:
+
+    sclk = -12.42 * eff + 2714.2        all 17 re-scheduled points, both kernels
+                                        R2 = 0.955, residual sd 18.8 MHz, worst point 1.7%
+
+They share the line because the power controller does not respond to MFMA efficiency; it
+responds to how busy the issue ports are, and with near-identical instruction mixes the two
+kernels put the same load on them at the same efficiency:
+
+    combined issue duty = (2048 + VALU issue cycles) / (2048/eff)
+    fav4    (2048 + 1392) / 2048 = 1.680 * eff
+    FlyDSL  (2048 + 1352) / 2048 = 1.660 * eff        1.2% apart
+
+So the causal chain is: **schedule -> instruction sequence -> issue duty per cycle -> power ->
+clock**, and efficiency is a good proxy for duty *only because* these two kernels do nearly
+the same work per iteration. Two kernels with the same MFMA efficiency but genuinely
+different VALU loads would not share this line -- that is the case where "somewhere else in
+the kernel" would move the clock, and it is not the case here.
+
+What is left is not a power term at all. Composing the two laws with the fill/drain:
+
+    TFLOPS = K * sclk(eff) / (n_iter * 4096/eff + fixed)
+
+with **one** K for both kernels, `n_iter` = 62, and `fixed` the per-workgroup prologue+drain
+cycles measured by ATT -- **35458 for `fav4`, 19221 for FlyDSL, a factor of 1.84** -- this
+reproduces all 17 points:
+
+| | mean abs. error | worst |
+|---|---:|---:|
+| 17 points, both kernels, one constant | **1.1%** | 2.9% |
+
+**That is the whole difference.** There is one clock law, one cycle law, and one number that
+separates the two kernels: `fav4` spends 35458 cycles per workgroup filling and draining its
+pipeline where FlyDSL spends 19221.
+
 ### The answer to the question
 
-**FlyDSL does not get more throughput at lower MFMA efficiency. It buys clock and pipeline
-overhead with cycles, and at this shape the trade is worth exactly what our cycles are
-worth.** In detail:
+**FlyDSL does not schedule better, and it does not get more throughput at lower MFMA
+efficiency for any reason internal to the loop.** In detail:
 
-- MFMA efficiency is a ratio, and the two kernels optimise different terms of it. Ours
-  minimises the denominator inside the loop; FlyDSL accepts a bigger denominator in exchange
-  for a smaller prologue/drain and a lower power density.
-- Its efficiency is not recoverable by scheduling -- its shadows are already full and its
-  pipelining is cleaner than ours. Its cycles go to deliberate inter-wave pacing.
-- Its clock advantage is fully explained by our own `sclk(eff)` line, so there is nothing
-  kernel-specific in it. **Any** schedule at 83% efficiency on this part gets that clock;
-  that is what makes the trade viable.
-- Both kernels sit at the top of their own re-scheduling curve, so neither has intra-loop
-  scheduling left. The gap that is actually open is the **prologue/drain**: 11.65% of our
-  dispatch against 5.95% of theirs, worth about 6% and untouched by anything in this file.
+- `fav4` hides its VALU 3.4x better (5.5% stall against 16.4%), on a loop with the same MFMA,
+  LDS and VMEM instructions and VALU issue demand within 3%. Higher in-loop MFMA efficiency
+  is exactly what that means, and it remains the right thing to optimise: over the measured
+  range, +17.8% efficiency is +5.3% TFLOPS, positive throughout.
+- The clock it gives up in exchange is not a kernel property. It is `sclk(eff)` -- one line
+  through both kernels -- and it is a *consequence* of the denser instruction sequence, via
+  the power controller, not an independent variable.
+- What FlyDSL actually beats us on is **fill and drain**: 19221 cycles per workgroup against
+  our 35458. That is the entire gap, it is worth about 6% of the dispatch, and nothing in
+  this file touches it.
 
-That last point is the actionable one. At `4.6` TFLOPS per efficiency point we have ~5
-efficiency points left, worth ~23 TFLOPS; halving our fill/drain to FlyDSL's would be worth
-about 80.
+At `4.6` TFLOPS per efficiency point we have ~5 efficiency points left, worth ~23 TFLOPS.
+Closing the fill/drain gap to FlyDSL's is worth about **80**. That is where the next win is.
 
 ### Reproducing
 

@@ -89,7 +89,7 @@
 <rect x="262.8" y="211.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="304.1" y="204.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="375.9" y="192.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
-<text class="h" x="8" y="332">2 &#160;Per GHz, both collapse onto one line — the cycle law does not care how</text>
+<text class="h" x="8" y="332">2 &#160;Per GHz, the sweeps collapse; FlyDSL sits above on its shorter fill/drain</text>
 <text class="n" x="76" y="348">Independent fits agree to 0.5% in slope: 7.36 (deleting) vs 7.33 (re-scheduling).</text>
 <line class="gr" x1="76" y1="568.0" x2="740" y2="568.0"/>
 <text class="t" x="69" y="571.5" text-anchor="end">620</text>
@@ -167,8 +167,8 @@
 <rect x="262.8" y="491.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="304.1" y="479.0" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="375.9" y="444.8" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
-<text class="h" x="8" y="644">3 &#160;And here is the difference: at fixed work, efficiency costs clock</text>
-<text class="n" x="76" y="660">Deleting VALU leaves the clock flat (grey). Re-scheduling the same stream denser gives back ~10 MHz per efficiency point.</text>
+<text class="h" x="8" y="644">3 &#160;Clock is set by efficiency alone — one line covers both kernels</text>
+<text class="n" x="76" y="660">Every re-scheduled point of both kernels is within 1.7% of it. Deleting VALU (grey) leaves the clock flat instead, because it removes the power as well.</text>
 <line class="gr" x1="76" y1="880.0" x2="740" y2="880.0"/>
 <text class="t" x="69" y="883.5" text-anchor="end">1550</text>
 <line class="gr" x1="76" y1="849.7" x2="740" y2="849.7"/>
@@ -203,19 +203,17 @@
 <line class="ax" x1="76" y1="668" x2="76" y2="880"/>
 <text class="t" x="408" y="916" text-anchor="middle">in-loop MFMA efficiency, per SIMD (%)</text>
 <text class="t" transform="translate(17,774) rotate(-90)" text-anchor="middle">sclk (MHz)</text>
-<path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,700.4 L740.0,920.2"/>
-<text class="lg" x="363.1" y="787.5" fill="#2f7d43">-9.8 MHz per point (R²=0.91)</text>
-<path fill="none" stroke="#d4820a" stroke-width="1.6" stroke-dasharray="4 3" d="M76.0,664.3 L740.0,944.3"/>
-<text class="lg" x="165.7" y="694.1" fill="#d4820a">FlyDSL</text>
-<line x1="259.0" y1="761.0" x2="259.0" y2="766.1" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
+<path fill="none" stroke="#1a1a1a" stroke-width="1.6"  d="M76.0,678.7 L740.0,940.7"/>
+<text class="lg" x="434.9" y="812.3" fill="#1a1a1a">one line, both kernels: -11.7 MHz per point (R²=0.92)</text>
+<line x1="259.0" y1="750.9" x2="259.0" y2="766.1" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="259.0" cy="766.1" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="271.0" y="770.1" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.5% off the line</text>
-<line x1="379.3" y1="800.8" x2="379.3" y2="796.5" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<text class="lg" x="271.0" y="770.1" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -1.4% off the line</text>
+<line x1="379.3" y1="798.3" x2="379.3" y2="796.5" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="379.3" cy="796.5" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
-<text class="lg" x="367.3" y="800.5" fill="#d4820a" text-anchor="end">FlyDSL  +0.4% off the line</text>
-<line x1="589.3" y1="870.3" x2="589.3" y2="870.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<text class="lg" x="367.3" y="800.5" fill="#d4820a" text-anchor="end">FlyDSL  +0.2% off the line</text>
+<line x1="589.3" y1="881.2" x2="589.3" y2="870.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="589.3" cy="870.7" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="577.3" y="874.7" fill="#2f7d43" text-anchor="end">fav4 best  -0.0% off the line</text>
+<text class="lg" x="577.3" y="874.7" fill="#2f7d43" text-anchor="end">fav4 best  +1.1% off the line</text>
 <circle cx="260.8" cy="770.6" r="3.0" fill="#b9b9b9"/>
 <circle cx="397.2" cy="778.7" r="3.0" fill="#b9b9b9"/>
 <circle cx="546.2" cy="793.8" r="3.0" fill="#b9b9b9"/>
