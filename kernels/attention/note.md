@@ -2015,8 +2015,9 @@ any fit:
 | gluon `fav4` tuned | 94.6% | 1324.7 | -0.1% | +1.7% | +0.0% |
 
 The offset from the gluon raw line is **constant at +3.1 to +3.4%** across a 5.7-point
-efficiency move, so FlyDSL's TFLOPS-vs-efficiency curve is the gluon one **shifted up, not
-tilted** -- and the shift is the fill/drain difference. Over all nine FlyDSL points, from
+efficiency move (3.28.1 shows the model reproduces both that offset and FlyDSL's steeper
+slope from its smaller `fixed` alone), so FlyDSL's TFLOPS-vs-efficiency curve is the gluon one
+**shifted up, not tilted** -- and the shift is the fill/drain difference. Over all nine FlyDSL points, from
 68.4% to 88.6%, the offset runs +1.6% to +3.4%, mean +2.8%, with no slope difference
 resolvable above the noise.
 
@@ -2540,3 +2541,105 @@ store, and the LSE store no longer scattered -- at no measurable throughput cost
 kept. What they are not is the 6% win 3.26.5 advertised, and the next attempt at the drain
 should be judged against the noise floor first: at S=8192 that is ~0.3%, which bounds what any
 fill/drain change can be shown to do.
+
+## 3.28 Why the FlyDSL curve sits above ours, and what is left (2026-07-28)
+
+Panel 1 of 3.25.8 has the orange (FlyDSL) curve above the green (`fav4`) one **and** steeper,
+which looked like an unexplained third term after 3.27 ruled out fill/drain as a lever. It is
+not a third term. Both features fall out of `fixed` plus the shared clock law, and the reason
+fill/drain is not a *lever* while still being the *explanation* is that it converts at about
+40 cents on the dollar.
+
+### 3.28.1 The model already produces both the offset and the slope
+
+Evaluating `TFLOPS = K*sclk(eff)/(62*4096/eff + fixed)` with the one K of 3.25.8 and each
+kernel's measured `fixed`, over each kernel's own efficiency range:
+
+| | fitted slope | model slope | model at mid-range | measured |
+|---|---:|---:|---:|---:|
+| `fav4`, eff 80-95, fixed 35449 | 4.65 /point | 3.29 | 1288.0 | 1302.6 |
+| FlyDSL, eff 68-83, fixed 19223 | 5.88 /point | 7.07 | 1290.1 | 1277.8 |
+
+The model puts FlyDSL's slope above ours in the same direction and rough magnitude as the fit,
+for a simple reason: with a *smaller* fixed cost, a given fractional change in loop cycles is a
+larger fractional change in the total, so the curve is both higher and steeper. Nothing else is
+required to reproduce the picture.
+
+### 3.28.2 At matched efficiency, fill/drain is 42% effective
+
+Take the two kernels at the same in-loop efficiency, where the loop cycles are equal *by
+definition* of the metric:
+
+    fav4   f=-0.4   eff 83.0   1270.4 TFLOPS   1666.7 MHz
+    FlyDSL f= 0     eff 82.9   1313.6 TFLOPS   1687.9 MHz
+
+    same eff -> same loop, 305966 cycles per wave
+      fav4    total = 305966 + 35449 = 341415
+      FlyDSL  total = 305966 + 19223 = 325189      -4.8%
+
+    predicted FlyDSL lead:  cycles +5.0%  x  clock +1.3%  =  +6.3%
+    measured  FlyDSL lead:                                   +3.4%
+    -> of the 5.0% the cycle difference promises, 2.1% arrives:  **42% effective**
+
+That single number reconciles everything in 3.26 and 3.27. Our fill/drain is 11.66% of the
+dispatch, so its *whole* value is 11.66% x 42% = 4.9%, and the 19.5% of it that 3.27 removed
+was worth 0.96% -- against a 0.3% noise floor at S=8192, three runs deep. The experiments were
+not wrong and neither was the accounting; the term is simply discounted.
+
+### 3.28.3 Why 42%: the wave slots are never empty
+
+`occupancy.json` is in the ATT capture and nobody had looked at it. Reconstructing the
+resident-wave count on the traced unit over the whole dispatch:
+
+    resident waves:  max 64,  and the count sits at 64 for **95.6%** of the window
+    it returns to 0 exactly **once**, at the end of the dispatch
+    the only excursions are brief dips to 60 / 56 / 52 -- 3.5% of the time in total
+
+So workgroup replacement is effectively instantaneous: as the eight waves of workgroup k
+retire -- staggered, because they do not finish together -- workgroup k+1's waves take the
+slots and begin their prologue while k's stragglers are still draining. **A workgroup's fill
+and drain are dead time for that workgroup but not for the machine**, which is exactly the
+shape of a term that shows up in the cycle accounting at full value and in the wall clock at
+half.
+
+### 3.28.4 Confirming it end to end: same work, half the workgroups
+
+If the discount comes from cross-workgroup overlap, then *halving the number of workgroups* at
+constant work should recover its share directly, with no code change at all. B=8 S=16384 has
+identical FLOPs to B=32 S=8192 (FLOPs go as B*S^2) with 4096 workgroups of ~128 iterations
+instead of 8192 of ~64 -- so half as many fill/drain instances:
+
+| | B=32 S=8192 (8192 wg) | B=8 S=16384 (4096 wg) | |
+|---|---:|---:|---:|
+| `fav4` | 1321.0 | **1340.1** | **+1.45%** |
+| FlyDSL | 1323.1 | 1339.7 | +1.25% |
+
+Both gain, and **`fav4` gains more than FlyDSL** -- which is the signature we want, since our
+fill/drain share is 1.96x theirs. (The gains are not proportional to that ratio, 1.16x rather
+than 1.96x, and the comparison carries confounds: the longer kernel has a different power
+profile and B=8 changes K/V reuse in L2. Read it as confirmation of the mechanism, not a
+calibration of it.)
+
+### 3.28.5 What is left to try, in order
+
+The curve question is closed: there is no missing term, and the fill/drain gap to FlyDSL is
+worth **~2.2%**, not the 6% of 3.26.5. Given that, and given that 3.25.7 and 3.27 have
+exhausted intra-loop scheduling and the drain's instruction count:
+
+1. **Fewer, longer-lived workgroups.** Demonstrated above: +1.45% for free at constant work.
+   This is a tiling choice, not a defect -- at B=32 S=8192 the grid is 8192 workgroups of 62
+   iterations, and `BLOCK_M=512` would halve that. The cost is coarser load balance at small
+   S and double the Q tile in registers/LDS, so it is a real trade, but it is the largest
+   measured effect left on the table.
+2. **Two workgroups per CU.** The 42% exists because fill/drain only overlaps *across* the
+   workgroup boundary. Both kernels sit at 252-256 VGPRs, which is 2 waves/SIMD and therefore
+   exactly one workgroup per CU; under ~168 VGPRs a third wave per SIMD fits and a workgroup's
+   fill would hide behind another workgroup's *loop* on the same CU rather than behind its
+   own neighbour's drain. That is the structural fix for the discount, and it is a large
+   change: our accumulator alone is 64 VGPRs.
+3. **Stop optimising the drain.** Its remaining value is 2.2% at this shape and the noise
+   floor is 0.3%, so anything short of closing the whole gap to FlyDSL is unmeasurable.
+
+And what is *not* left: the loop. At matched efficiency the two loops are identical by
+construction, 3.25.4 showed the instruction streams differ by 3%, and both kernels sit at the
+top of their own re-scheduling curve.
