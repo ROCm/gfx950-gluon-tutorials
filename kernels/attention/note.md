@@ -1160,3 +1160,61 @@ had to be hoisted above the `Q` load, which is where it now sits. Default `True`
 - TFLOPS measured interleaved with an unchanged SOQ=0 control: control 1166.5 / 1168.1,
   SOQ=1 1177.4 / 1175.7. An earlier batch had to be discarded because its two controls disagreed
   by 1.3%.
+
+## Final comparison at S=16384 (2026-07-28, GPU[0], interleaved)
+
+Five configurations, run one after another three times round so drift hits every row equally.
+TFLOPS is the mean of the three; efficiency is the in-loop per-SIMD ATT figure from a final run.
+
+| | run 1 | run 2 | run 3 | mean TF | mfma eff /SIMD |
+|---|---:|---:|---:|---:|---:|
+| gluon `fav4` tuned | 1228.1 | 1243.0 | 1236.8 | **1236.0** | **93.8%** |
+| ROCm/FlyDSL `63eb891` | 1178.3 | 1168.5 | 1202.2 | **1183.0** | 86.4% |
+| gluon `fav3` tuned | 1179.4 | 1171.1 | 1146.3 | **1165.6** | 86.1% |
+| gluon `fav4` stock LLVM | 1114.3 | 1121.3 | 1107.3 | **1114.3** | 68.0% |
+| gluon `fav3` stock LLVM | 1090.3 | 1094.1 | 1089.2 | **1091.2** | 67.9% |
+
+Tuned = llirSched plugin + `DISABLE_LLVM_OPT=disable-machine-sink` + `SCALE_ON_Q=1` +
+`MEMNOP=2`. Stock = no plugin, no env vars at all. The plugin stack is worth **+10.9%** on fav4
+and **+6.8%** on fav3; in efficiency, **+25.8** and **+18.2 points**.
+
+**Stock LLVM cannot tell fav3 and fav4 apart** -- 68.0% vs 67.9%, and only 2.1% of throughput.
+The 7.7-point gap between the tuned rows is the scheduler exploiting the budget headroom lazy
+rescaling creates, not the algorithm on its own.
+
+Caveats, both against these numbers rather than for them: S=16384 gives an even `n_blocks`, so
+both Gluon kernels run the `ODD_TAIL` tile (~0.5 pt of epilogue) that 16320/16448 avoid; and the
+variance of the tuned rows is larger than the stock ones (spreads 15-34 vs 5-14), since a denser
+MFMA stream sits nearer the power cap. fav4's 53 TF lead over FlyDSL exceeds any spread here;
+fav3-vs-FlyDSL (17 TF) does not and should be read as a tie.
+
+### FlyDSL is measurement-sensitive; use a deep window
+
+Its own harness averages a shallower window, which leaves the kernel in the thermal transient.
+Six consecutive runs of one config, 20 s apart:
+
+    1236.9   1242.8   1165.9   1167.7   1159.3   1157.5
+
+A monotonic 7% decay, and *not* the box: an unchanged gluon fav3 build interleaved with these read
+1176.7 twice. Re-running FlyDSL with the same 1000-dispatch / last-100 window the Gluon rows use
+gives 1159.0, 1167.2, 1191.4, 1201.6. **Earlier revisions of the README quoted 1242 for FlyDSL,
+which was a cool-die reading.** `scripts/fly_kernel_time.py` now applies our window to it.
+
+The protocol asymmetry runs in FlyDSL's favour, not ours: its Python launcher spaces dispatches
+further apart than our prepared launch, so its die runs cooler, and our numbers are taken in the
+more saturated regime.
+
+### FlyDSL config sweep (non-causal, S=16320)
+
+Its shipped defaults are its optimum. Relative to canonical:
+
+| knob | effect |
+|---|---|
+| `dualwave_swp_enable_stagger=False` | 1001.8 TF, **-15%** |
+| `dualwave_swp_setprio=False` | 1145.4 TF, -3% |
+| `waves_per_eu=1` | indistinguishable (interleaved pairs: 1242.4 vs 1242.7, then 1180.7 vs 1168.1) |
+| `dualwave_swp_lazy_rescale=False` | ~1044 TF, the fav3-equivalent path |
+
+Causal vs non-causal: **non-causal is its better number** -- 1178.0 TF against 1037 causal with
+the FLOPs halved for the skipped tiles, and causal's max error is 1.26e-03 against 5.4e-05. The
+builder defaults to `causal=True`; every number here forces `causal=False` to match our kernels.
