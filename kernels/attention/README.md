@@ -4,6 +4,42 @@ Forward flash-attention kernels for gfx950 (MI350 / MI355X), written in Triton E
 **Gluon**. Two kernels, `fav3` and `fav4`, share one pipeline architecture and differ in how
 they handle the softmax rescale.
 
+| `B=32, S=8192, H=8, D=128`, bf16, non-causal, MI355X | TFLOPS | MFMA eff / SIMD |
+|---|---:|---:|
+| **`fav4`** — lazy rescale, tuned | **1318** | **94.5%** |
+| `fav3` — eager rescale, tuned | 1243 | 86.2% |
+| *ROCm/FlyDSL* at its own published config | *1320* | *84.7%* |
+| `fav4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
+
+`fav4` ties the fastest published kernel for this shape while needing about 10% fewer cycles to
+do it. The distance between the first row and the last — **+10.0% of throughput, +26 points of
+efficiency** — is what the design work of §5 and the compiler work of §6 are worth together.
+§8 is the full table with its measurement protocol, the FlyDSL comparison worked through, and
+why that ranking is shape-dependent.
+
+**Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: §3 below uses its
+intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
+structure these kernels are built on. This also assumes you know the flash-attention algorithm
+— the streaming softmax that carries a running max `m`, a running sum `l` and an unnormalized
+accumulator `acc`, and rebases them with `alpha = exp2(m − m_new)` as the max moves. The term
+to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kernel, so rescaling
+it every tile is 64 vector instructions that are pure overhead whenever the row max did not
+actually move. §5 is the story of removing them.
+
+**To build and run**, from this directory:
+
+```bash
+FA_MODULE=fav4 DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python bench.py --seqlen 16320
+```
+
+Those three variables are not tuning knobs — they are what §6 is about, and dropping them
+measures the stock-LLVM row above instead. §9 has the files, the options and the scope limits.
+
+---
+
 The GEMM tutorial in [`../gemm/`](../gemm/README.md) asks where scheduling intelligence should
 live, and answers it for a kernel with **two** kinds of instruction competing for a SIMD:
 `mfma` that computes, and `buffer_load`/`ds_read` that prepare operands. Put them in different
@@ -19,14 +55,8 @@ That question generates this entire document. Answering it needs the SIMD's issu
 gives a cycle budget to spend (§2), places attention in the GEMM tutorial's taxonomy (§3), and
 then determines the loop structure (§4), the difference between the two kernels (§5), and what
 the compiler has to do for them (§6). §7 is an appendix for one conflict too subtle to belong in
-the main line.
-
-This assumes you know the flash-attention algorithm — the streaming softmax that carries a
-running max `m`, a running sum `l` and an unnormalized accumulator `acc`, and rebases them with
-`alpha = exp2(m − m_new)` as the max moves. The term to keep in mind is **`acc·alpha`**: `acc`
-is the largest live value in the kernel, so rescaling it every tile is 64 vector instructions
-that are pure overhead whenever the row max did not actually move. §5 is the story of removing
-them.
+the main line; §8 measures the result and takes the comparison above apart, and §9–§10 are the
+files, how to run them, and where to read further.
 
 ---
 
@@ -170,6 +200,8 @@ the grid is `(HQ, ceil(S/BLOCK_M), B)`. Per tile there are eight things to do.
 
 ![the eight per-tile operations and their dependencies](images/tile_deps.svg)
 
+### 4.1 Four pipeline stages, four clusters
+
 Run them in dependency order and the matrix core idles through every copy and every LDS read,
 and the memory pipe idles through all the math. The fix is the standard one — software-pipeline
 the loop so that the memory for a *future* tile overlaps the matrix work of the current one.
@@ -288,7 +320,7 @@ one has to spend:
 
 These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
 backend adds address arithmetic, and `fav3`'s scheduler leaves some work packed, which halves
-its instruction count — so §7's ceilings are computed from the compiled inventory rather than
+its instruction count — so §8's ceilings are computed from the compiled inventory rather than
 from this table. The shape of the argument is the same either way.
 
 **`fav3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
@@ -356,7 +388,7 @@ the ratio adjustable.
 | rule | why the hardware demands it |
 |---|---|
 | **Keep control flow out of the dot clusters.** The rescale's `warp_predicate` block lives in the `mem2` cluster, not in `VEC2` where the arithmetic belongs. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster is issued *before* the first MFMA — the matrix core waits on it. Moving the block to a mem cluster puts that cost against memory latency instead, and lets `dot1` start with the QK MFMA. |
-| **Balance the two dot clusters.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 304 and QK to 336. | 192 against 448 wastes the whole of QK's slack while PV pays for the overflow. Only the totals matter, and both are made of the same elementwise work, so it can be moved. |
+| **Balance the two dot clusters.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 340 and QK to 348. | 204 against 484 wastes the whole of QK's slack while PV pays for the overflow. Only the totals matter, and both are made of the same elementwise work, so it can be moved. |
 | **Rebalancing must cost nothing.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions at all**. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable, and it is a Gluon technique worth knowing well beyond attention. |
 
 ## 6. Making the compiler co-operate
@@ -494,8 +526,9 @@ same, and it does. The efficiency column moves further than the throughput colum
 §8 gives — a denser MFMA stream costs clock on a power-capped part.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
-goes from 3.05e-05 to 1.22e-04. Both are far inside the 1e-3 tolerance, and `--scale-on-q 0`
-restores the tighter numerics on either kernel.
+goes from 3.05e-05 to 1.22e-04 on `fav3`, and from 6.10e-05 to the same 1.22e-04 on `fav4`. All
+are far inside the 1e-3 tolerance, and `--scale-on-q 0` restores the tighter numerics on either
+kernel.
 
 ## 8. Results
 
@@ -640,7 +673,11 @@ against half the FLOPs, which comes out lower still.
 | `f16_fa_gfx950_common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
 | `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
 | `note.md` | the optimization notebook: what was tried, what it measured, and why |
+| `mfma_coissue_scheduling.md` | §2's cycle model written out as a scheduling problem, with the optimal schedule and its proof |
 | `att_attn*.json` | `rocprofv3` ATT (instruction-trace) configurations |
+
+Both commands below want the environment from the top of this README in front of them; without
+it they build the stock-LLVM configuration and report its numbers.
 
 ```bash
 # correctness + do_bench TFLOPS
@@ -696,8 +733,14 @@ immediately ahead of a dot cluster, which is what §5's first design rule exists
 - [`note.md`](note.md) — the optimization notebook: every step with its measurement, the
   per-stage instruction inventories, the environment-variable reference, the measurement
   protocol, and the comparison methodology.
+- [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md) — §2's budget as a formal
+  scheduling problem: the machine model, the optimal schedule for `M` MFMAs against `N` units
+  of math, and a matching-lower-bound proof that it is optimal.
 - [`../../plugins/llir_scheduler/llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html)
   — how the scheduler classifies a region, and how it packs or triages the windows.
+- [`../../docs/warp_pipelining.md`](../../docs/warp_pipelining.md) and
+  [`../../docs/mfma_efficiency.md`](../../docs/mfma_efficiency.md) — the theory behind
+  `warp_pipeline_stage` (§4) and behind the metric §8 reports.
 - **Provenance.** Ported from
   [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
   (`kernels/cdna4/fa/`). `f16_fa_gfx950_common.py` is verbatim; `fav3.py` is the upstream
