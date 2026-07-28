@@ -1624,6 +1624,25 @@ build extends the low end to 74.8%.
 
 ![Pure scheduling against the removal sweep](images/eff_tflops_scheduling.svg)
 
+The two shipping kernels are circled in all three panels. `fav4 best` is the `f = 0` anchor
+of the llirSched sweep, so it sits on every line by construction (-0.1%, +0.3%, -0.0%) and
+is marked only to show where on the axis the kernel we ship actually lives. **FlyDSL is the
+interesting one**, because nothing about it was used to build these lines:
+
+| against | prediction at 84.7% | FlyDSL | |
+|---|---:|---:|---:|
+| raw TFLOPS | 1280.5 | 1325.9 | **+3.5%** |
+| TFLOPS per GHz | 771.4 | 800.0 | **+3.7%** |
+| sclk | 1663.1 MHz | 1657.4 MHz | **-0.3%** |
+
+So the **clock law generalises across kernels** -- FlyDSL's clock is within 6 MHz of what a
+sweep of our own schedules predicts for its efficiency, which says `sclk(eff)` is the
+hardware's response to MFMA density rather than a property of our codegen. What FlyDSL beats
+the line on is cycles-per-unit-work at equal efficiency: +3.7%, which is the non-loop term,
+and it is the loop-share difference already measured above (94.1% of its time in the loop
+against our 88.3%). Its 84.7% is a *lower* number than our 94.6% for a reason unrelated to
+either -- it issues fewer, cheaper instructions per tile.
+
 ### The result: the same cycle law, a completely different payoff
 
     re-scheduling   TFLOPS =  4.65 * eff + 887.0     R2 = 0.991   (17 points)
@@ -1675,9 +1694,12 @@ applies to a scheduling change.
    spending less energy per unit of work -- fewer or cheaper instructions, less register
    traffic -- not packing the existing ones tighter. This is the same conclusion the
    fav4-vs-FlyDSL comparison reached from one data point, now with a slope attached.
-4. It also explains why FlyDSL, at 84.7% efficiency, ties a kernel at 94.5%: on this curve
-   those two differ by 10 points of efficiency, which at 4.6 TFLOPS a point is +46, and
-   FlyDSL's cheaper instruction stream buys back more than that in clock.
+4. **It decomposes the FlyDSL dead heat into three terms**, all measured. Our 9.9 extra
+   efficiency points are worth +46 TFLOPS on the re-scheduling line. Against that, FlyDSL
+   holds a +3.7% advantage in cycles-per-unit-work at equal efficiency (its loop share) and
+   collects the +5.9% clock that its lower MFMA density earns on the same `sclk(eff)` line
+   we sit on. The two sides come out within 1 TFLOPS of each other, which is what the
+   measurement says (1324.7 vs 1325.9).
 
 ### Reproducing
 

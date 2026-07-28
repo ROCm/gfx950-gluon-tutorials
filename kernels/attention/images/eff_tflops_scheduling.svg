@@ -31,7 +31,13 @@
 <path fill="none" stroke="#b9b9b9" stroke-width="1.6"  d="M76.0,254.6 L740.0,62.9"/>
 <text class="lg" x="418.7" y="147.7" fill="#b9b9b9">deleting VALU: 11.7/point</text>
 <path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,244.6 L740.0,168.3"/>
-<text class="lg" x="375.9" y="202.1" fill="#2f7d43">re-scheduling: 4.6/point</text>
+<text class="lg" x="225.9" y="219.4" fill="#2f7d43">re-scheduling: 4.6/point</text>
+<line x1="560.1" y1="188.9" x2="560.1" y2="189.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="560.1" cy="189.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="548.1" y="193.9" fill="#2f7d43" text-anchor="end">fav4 best  -0.1% off the line</text>
+<line x1="348.0" y1="213.3" x2="348.0" y2="189.3" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="348.0" cy="189.3" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="336.0" y="193.3" fill="#d4820a" text-anchor="end">FlyDSL  +3.5% off the line</text>
 <circle cx="168.1" cy="234.6" r="3.0" fill="#b9b9b9"/>
 <circle cx="208.8" cy="217.8" r="3.0" fill="#b9b9b9"/>
 <circle cx="230.2" cy="211.2" r="3.0" fill="#b9b9b9"/>
@@ -100,7 +106,13 @@
 <text class="t" transform="translate(17,462) rotate(-90)" text-anchor="middle">TFLOPS per GHz</text>
 <path fill="none" stroke="#b9b9b9" stroke-width="1.6" stroke-dasharray="5 3" d="M76.0,575.8 L740.0,333.9"/>
 <path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,590.9 L740.0,350.1"/>
-<text class="lg" x="418.7" y="458.6" fill="#2f7d43">7.33·eff + 151</text>
+<text class="lg" x="461.5" y="443.1" fill="#2f7d43">7.33·eff + 151</text>
+<line x1="560.1" y1="415.4" x2="560.1" y2="412.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="560.1" cy="412.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="548.1" y="416.9" fill="#2f7d43" text-anchor="end">fav4 best  +0.3% off the line</text>
+<line x1="348.0" y1="492.3" x2="348.0" y2="462.0" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="348.0" cy="462.0" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="336.0" y="466.0" fill="#d4820a" text-anchor="end">FlyDSL  +3.7% off the line</text>
 <circle cx="168.1" cy="546.2" r="3.0" fill="#b9b9b9"/>
 <circle cx="330.9" cy="478.8" r="3.0" fill="#b9b9b9"/>
 <circle cx="508.7" cy="413.4" r="3.0" fill="#b9b9b9"/>
@@ -154,7 +166,13 @@
 <text class="t" x="408" y="916" text-anchor="middle">in-loop MFMA efficiency, per SIMD (%)</text>
 <text class="t" transform="translate(17,774) rotate(-90)" text-anchor="middle">sclk (MHz)</text>
 <path fill="none" stroke="#2f7d43" stroke-width="1.6"  d="M76.0,678.5 L740.0,936.2"/>
-<text class="lg" x="375.9" y="786.9" fill="#2f7d43">-9.8 MHz per point (R²=0.91)</text>
+<text class="lg" x="225.9" y="728.7" fill="#2f7d43">-9.8 MHz per point (R²=0.91)</text>
+<line x1="560.1" y1="866.4" x2="560.1" y2="867.0" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="560.1" cy="867.0" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
+<text class="lg" x="548.1" y="871.0" fill="#2f7d43" text-anchor="end">fav4 best  -0.0% off the line</text>
+<line x1="348.0" y1="784.1" x2="348.0" y2="788.9" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
+<circle cx="348.0" cy="788.9" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
+<text class="lg" x="336.0" y="792.9" fill="#d4820a" text-anchor="end">FlyDSL  -0.3% off the line</text>
 <circle cx="168.1" cy="726.9" r="3.0" fill="#b9b9b9"/>
 <circle cx="330.9" cy="738.1" r="3.0" fill="#b9b9b9"/>
 <circle cx="508.7" cy="759.3" r="3.0" fill="#b9b9b9"/>
@@ -177,5 +195,5 @@
 <rect x="256.8" y="719.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
 <rect x="256.8" y="719.6" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
 <rect x="261.1" y="723.3" width="6.8" height="6.8" fill="#7a5ac9" stroke="#fff" stroke-width="0.8"/>
-<g transform="translate(76,916)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize build</text></g>
+<g transform="translate(76,916)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize</text><circle cx="509" cy="-4" r="5.2" fill="none" stroke="#767676" stroke-width="1.6"/><text class="k" x="520" y="0">shipping kernel</text></g>
 </svg>
