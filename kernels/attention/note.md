@@ -1330,3 +1330,66 @@ shapes are not interchangeable, alongside the power-cap difference.
 Two loose ends this leaves: the remap is keyed on `HQ` alone, so for a GQA/MQA shape with few
 query heads it silently does nothing, and the M-block and batch axes are never remapped at all.
 Whether either is worth exploiting is untested.
+
+## Kernel scope, files, and the odd-tail tile
+
+Moved here from the README (its §9) on 2026-07-28. Reference material rather than a log entry,
+but the ODD_TAIL numbers below are measurements, and they are why this is worth keeping.
+
+| file | what it is |
+|---|---|
+| `fav3.py` | eager rescale: Gluon kernel + its autotune config + host launcher `run_gluon_attention` |
+| `fav4.py` | `fav3` plus lazy rescaling and the cluster-balance rules of the README's §5 |
+| `f16_fa_gfx950_common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
+| `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
+| `note.md` | this file |
+| `mfma_coissue_scheduling.md` | the co-issue cycle model as a formal scheduling problem, with the optimal schedule and its proof |
+| `att_attn*.json` | `rocprofv3` ATT (instruction-trace) configurations |
+
+```bash
+# correctness + do_bench TFLOPS
+FA_MODULE=fav4 python bench.py --seqlen 16320
+
+# the reported metric: kernel time from rocprofv3, prepared launch
+FA_MODULE=fav4 python ../../scripts/fa_kernel_time.py --seqlen 16320
+```
+
+Both want the environment of the run recipe above in front of them (`disable-machine-sink` plus
+the two `LLVM_PASS_PLUGIN_*` variables); without it they build the stock-LLVM configuration and
+report its numbers. Pick the kernel with `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`. Harness
+defaults are `B=1, HQ=HK=64 (MHA), D=128, bhsd`, non-causal, **bf16** -- pass `--dtype fp16` for
+the other. Both kernels support either; bf16 is the default because it is what these parts are
+usually run in, and because it measures a few percent faster at the same cycle count.
+
+**Scope.** Both kernels are reduced to the single most-performant path: non-causal, head dim 128,
+fp16/bf16, `bhsd`/`bshd`, MHA/GQA/MQA, and a K length that is a multiple of `BLOCK_N`=64. Causal
+masking, ragged tails, other head dims and the wide autotune space were removed to keep the code
+readable; the full version is upstream in `AMD-Triton/gluon-kernels` (`kernels/cdna4/fa/`) and in
+this repo's git history.
+
+### The odd tail tile
+
+`N_CTX` is a `gl.constexpr`, so each sequence length is a separate compile. The 2x-unrolled loop
+covers tiles `[0, n_blocks-3)`; when that count is odd, both kernels emit one more tile after the
+loop under a constexpr `ODD_TAIL` guard. **This supersedes the "`ceil(N_CTX/64)` must be odd
+(static_assert)" bullets in the two run recipes above** -- an even `n_blocks` such as 16384 builds
+in both kernels now. The tail is always tile `n-4` and always an "even" tile, so the drain needs
+no change -- it already derives its LDS slots from `(index - block_start) % BUF_DEPTH` at runtime.
+
+The guard costs nothing when it is false: 16320 compiles to a byte-identical opcode stream in both
+kernels. When it is true the extra tile runs unpipelined, so it lands in the epilogue rather than
+the loop:
+
+| | cyc/iter | MFMA eff /SIMD | epilogue | VGPR spills |
+|---|---:|---:|---:|---:|
+| `fav4` S=16320 | 4299.3 | 95.3% | 2.38% | 0 |
+| `fav4` S=16384 | 4293.7 | 95.4% | 2.89% | 0 |
+| `fav3` S=16320 | 4802.8 | 85.3% | 3.07% | 9 |
+| `fav3` S=16384 | 4799.6 | 85.3% | 3.92% | 20 |
+
+The in-loop numbers are unchanged in both -- the tail buys its way in entirely out of the
+epilogue. `fav3` does pay for it in registers: the tail's live ranges push spills from 9 to 20,
+all of them in that unpipelined block rather than in the loop, which is why the loop's cycle count
+and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
+immediately ahead of a dot cluster, which is what the README's first design rule exists to
+prevent.

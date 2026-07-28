@@ -36,7 +36,7 @@ python bench.py --seqlen 16320
 ```
 
 Those three variables are not tuning knobs — they are what §6 is about, and dropping them
-measures the stock-LLVM row above instead. §9 has the files, the options and the scope limits.
+measures the stock-LLVM row above instead.
 
 ---
 
@@ -55,8 +55,8 @@ That question generates this entire document. Answering it needs the SIMD's issu
 gives a cycle budget to spend (§2), places attention in the GEMM tutorial's taxonomy (§3), and
 then determines the loop structure (§4), the difference between the two kernels (§5), and what
 the compiler has to do for them (§6). §7 is an appendix for one conflict too subtle to belong in
-the main line; §8 measures the result and takes the comparison above apart, and §9–§10 are the
-files, how to run them, and where to read further.
+the main line; §8 measures the result and takes the comparison above apart, and §9 is where to
+read further.
 
 ---
 
@@ -600,7 +600,7 @@ identity, so it does nothing at this shape. It *is* active at `B=1, HQ=64`, whic
 reason the two shapes are not interchangeable.
 
 One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
-`(n_blocks − 3)` is odd and both kernels run the `ODD_TAIL` path (§9) — one unpipelined tile in the
+`(n_blocks − 3)` is odd and both kernels run the `ODD_TAIL` path — one unpipelined tile in the
 drain. FlyDSL has no such constraint.
 
 Two things about the metrics themselves, worth knowing before quoting either:
@@ -664,75 +664,15 @@ project's `tests/kernels/test_flash_attn_fwd.py`): lazy rescale, `setprio`, stag
 script passes `causal=False` to match the Gluon kernels; `--causal 1` measures the causal path
 against half the FLOPs, which comes out lower still.
 
-## 9. Files, and how to run
-
-| file | what it is |
-|---|---|
-| `fav3.py` | eager rescale: Gluon kernel + its autotune config + host launcher `run_gluon_attention` |
-| `fav4.py` | `fav3` plus lazy rescaling and the rules of §5 |
-| `f16_fa_gfx950_common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
-| `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
-| `note.md` | the optimization notebook: what was tried, what it measured, and why |
-| `mfma_coissue_scheduling.md` | §2's cycle model written out as a scheduling problem, with the optimal schedule and its proof |
-| `att_attn*.json` | `rocprofv3` ATT (instruction-trace) configurations |
-
-Both commands below want the environment from the top of this README in front of them; without
-it they build the stock-LLVM configuration and report its numbers.
-
-```bash
-# correctness + do_bench TFLOPS
-FA_MODULE=fav4 python bench.py --seqlen 16320
-
-# the reported metric: kernel time from rocprofv3, prepared launch
-FA_MODULE=fav4 python ../../scripts/fa_kernel_time.py --seqlen 16320
-```
-
-Pick the kernel with `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`. Defaults are
-`B=1, HQ=HK=64 (MHA), D=128, bhsd`, non-causal, **bf16** — pass `--dtype fp16` for the other.
-Both kernels support either; bf16 is the default because it is what these parts are usually run in,
-and because it measures a few percent faster for the same cycle count (§8).
-
-Both need the scheduling plugin loaded and one other pass disabled, and **both take the same
-environment** — there is no longer a variable that has to agree with which kernel is being built
-(§6). The exact variables, which component owns each, and which are cache-invalidating are
-tabulated under **Environment variables** in [`note.md`](note.md).
-
-**Scope.** Both kernels are reduced to the single most-performant path: non-causal, head dim
-128, fp16/bf16, `bhsd`/`bshd`, MHA/GQA/MQA, and a K length that is a multiple of `BLOCK_N`=64.
-Causal masking, ragged tails, other head dims and the wide autotune space were removed to keep
-the code readable; see the provenance note below.
-
-`N_CTX` is a `gl.constexpr`, so each sequence length is a separate compile. The 2×-unrolled loop
-covers tiles `[0, n_blocks-3)`; when that count is odd, both kernels emit one more tile after the
-loop under a constexpr `ODD_TAIL` guard, which is what lets an even `n_blocks` such as 16384
-build at all. The tail is always tile `n-4` and always an "even" tile, so the drain needs no
-change — it already derives its LDS slots from `(index - block_start) % BUF_DEPTH` at runtime.
-
-The guard costs nothing when it is false: 16320 compiles to a byte-identical opcode stream in
-both kernels. When it is true the extra tile runs unpipelined, so it lands in the epilogue
-rather than the loop:
-
-| | cyc/iter | MFMA eff / SIMD | epilogue | VGPR spills |
-|---|---:|---:|---:|---:|
-| `fav4` S=16320 | 4299.3 | 95.3% | 2.38% | 0 |
-| `fav4` S=16384 | 4293.7 | 95.4% | 2.89% | 0 |
-| `fav3` S=16320 | 4802.8 | 85.3% | 3.07% | 9 |
-| `fav3` S=16384 | 4799.6 | 85.3% | 3.92% | 20 |
-
-The in-loop numbers are unchanged in both — the tail buys its way in entirely out of the
-epilogue. `fav3` does pay for it in registers: the tail's live ranges push spills from 9 to 20,
-all of them in that unpipelined block rather than in the loop, which is why the loop's cycle
-count and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
-immediately ahead of a dot cluster, which is what §5's first design rule exists to prevent.
-
-## 10. Where to go deeper
+## 9. Where to go deeper
 
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
   ping-pong that attention builds on.
 - [`note.md`](note.md) — the optimization notebook: every step with its measurement, the
   per-stage instruction inventories, the environment-variable reference, the measurement
-  protocol, and the comparison methodology.
+  protocol, and the comparison methodology. Its last section is the file map, what the two
+  kernels do and do not support, and the odd-tail tile.
 - [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md) — §2's budget as a formal
   scheduling problem: the machine model, the optimal schedule for `M` MFMAs against `N` units
   of math, and a matching-lower-bound proof that it is optimal.
