@@ -2119,7 +2119,7 @@ reproduces all 17 points:
 |---|---:|---:|
 | 17 points, both kernels, one constant | **1.1%** | 2.9% |
 
-**That is the whole difference** -- but note what it does and does not say. `fav4` still
+**That is the whole difference in cycles** -- though 3.27 later shows fill/drain cycles do not convert into time, so read this as an accounting identity, not a lever. Note also what it does and does not say. `fav4` still
 needs fewer cycles *in total*: its loop advantage is 35179 cycles and its fill/drain penalty
 16225, so it comes out **5.9% ahead on total cycles per workgroup** (304087 against 323041).
 Fill/drain gives back only 46% of what the schedule wins. What erases the remainder is the
@@ -2154,9 +2154,11 @@ efficiency for any reason internal to the loop.** In detail:
   through both kernels -- and it is a *consequence* of the denser instruction sequence, via
   the power controller, not an independent variable.
 - What FlyDSL beats us on is **fill and drain**: 19223 cycles per workgroup against our
-  35449, a 1.84x gap. It is not, however, "the whole gap" -- `fav4` is still 5.9% ahead on
-  total cycles, and fill/drain claws back under half of the loop advantage. The clock does
-  the rest.
+  35449, a 1.84x gap. It is not "the whole gap" -- `fav4` is still 5.9% ahead on total
+  cycles, and fill/drain claws back under half of the loop advantage. **And 3.27 shows those
+  cycles do not convert into time**: cutting 19.5% of our fill/drain moved throughput 0.2%,
+  and the model fits nearly as well with the term zeroed. Treat the 1.84x as a real cycle
+  difference of unproven value.
 
 Two leads, and the second one needs its own experiment before being believed. We have ~5
 efficiency points left at `4.6` TFLOPS a point, worth ~23 TFLOPS. Closing the fill/drain gap
@@ -2403,3 +2405,110 @@ mma-to-blocked case. Two ways at it: pick a `blocked_layout` for the store that 
 from the mma layout by a lane swap alone, or teach the conversion to use the cross-lane path
 when the permutation is within a wave. Either removes 16 `ds_write`, 8 barriers and 9 waits
 from the drain -- and unlike 3.26.6, that is large enough for the benchmark to see.
+
+## 3.27 Epilogue store: downcast first, and a coalesced store layout (2026-07-28)
+
+Two changes to the drain, both in `fav4.py`, prompted by 3.26.8. Unlike 3.26.6 these are
+kernel-source changes, not assembly rewrites.
+
+1. **Downcast before converting**, not after. `gl.convert_layout` out of the mma layout goes
+   through LDS, so doing it in f32 and rounding afterwards round-trips twice the bytes:
+
+   ```python
+   acc_out     = acc.to(Out.dtype.element_ty)          # was: convert first,
+   acc_blocked = gl.convert_layout(acc_out, blocked_layout)   #      downcast after
+   gl.store(o_ptrs, acc_blocked, mask=o_mask)
+   ```
+
+2. **`threads_per_warp=[4, 16]` for the store layout**, not `[16, 4]`. With `order=[1, 0]` the
+   D axis is contiguous, so 16 lanes x `size_per_thread`=8 covers all 128 columns of a row --
+   256 contiguous bytes per 16 lanes, and 8 bf16 per lane is exactly the `dwordx4` the store
+   wants. `[16, 4]` spreads 16 lanes down M and covers only 32 columns per row, so each row is
+   stitched from 4 lanes.
+
+**A third change was needed to make (2) safe.** `blocked_layout` also feeds `offs_m`, which the
+LSE store uses, and the dim-1 slice of `[4, 16]` leaves only 4 lanes along M -- so `lse` went
+out as **8 stride-4 `global_store_dword` instead of 2 contiguous ones**. LSE is 1 KB against
+O's 64 KB so it is invisible at S=8192, but it showed up as a 3% regression at S=2048 where the
+epilogue is a third of the dispatch. Fixed by giving LSE its own M-major `lse_layout` and a
+separate `offs_m_lse`; the O store keeps `[4, 16]`.
+
+### 3.27.1 What the changes do
+
+| epilogue, static | old | bf16-first only | bf16 + `[4,16]` + LSE split |
+|---|---:|---:|---:|
+| `global_store_dwordx4` | 8 | 8 | 8 |
+| `global_store_dword` (LSE) | 2 | 2 | 2 |
+| `ds_write` for `convert_layout` | 16 x `b128` | **8 x `b128`** | 16 x `b64` |
+| `ds_read` for it | 16 x `b128` | 8 x `b128` | 8 x `ds_read2_b64` |
+| `s_barrier` | 22 | 18 | **16** |
+| `s_waitcnt` | 62 | 55 | **52** |
+
+Both variants halve the bytes that cross LDS (128 bytes per lane instead of 256). Traced, the
+full version is a large improvement on everything it targeted:
+
+| per workgroup | old | new | |
+|---|---:|---:|---|
+| prologue | 16428.8 | 13685.9 | **-16.7%** |
+| loop (62 iterations) | 268638.4 | 270396.1 | +0.65% |
+| epilogue | 19019.8 | **14860.0** | **-21.9%** |
+| fill + drain | 35449 | **28546** | **-19.5%** |
+| total | 304087 | 298942 | -1.7% |
+
+(The prologue also shrank, because `offs_m`/`offs_d` feed the Q load too and `[4, 16]` coalesces
+it better. The loop grew 0.65% with **the same 549 instructions** but different registers --
+`v_add_f32_e64 v64, v68, -v126` became `... -v124` -- so it is a register-allocation shift, not
+a scheduling change.)
+
+### 3.27.2 And the throughput does not move
+
+| | old | new | bf16-first only |
+|---|---:|---:|---:|
+| S=8192 | 1328.4 / 1326.7 | 1325.6 | 1323.7 |
+| S=4096 | 1294.0 | 1292.8 | -- |
+| S=2048 | 1221.7 / 1224.9 / 1197.3 | 1212.3 / 1223.2 | 1198.6 |
+
+Everything is inside the noise, and note the noise: the *same* old build measured 1221.7,
+1224.9 and 1197.3 at S=2048, a 2.3% spread, because a 460 us kernel on a shared box is not
+resolvable to better than that. At S=8192 the spread is ~0.3% and the new build sits at the
+bottom of it, consistent with the 0.65% loop regression from the register shuffle.
+
+### 3.27.3 The correction this forces
+
+Three independent reductions of fill/drain now measure zero throughput change:
+
+| change | fill/drain cycles removed | TFLOPS |
+|---|---:|---:|
+| 3.26.6 counted waits (assembly) | -1857 (-5.2%) | -0.15% |
+| 3.27 bf16-first + store layout | **-6903 (-19.5%)** | -0.2% |
+| both together, S=2048 where fill/drain is ~30% | -6903 | inside a 2.3% noise floor |
+
+And the model cannot see the term either. Refitting `TFLOPS = K*sclk/(62*4096/eff + fixed)`
+over the 20 points of 3.25.8 with different `fixed`:
+
+| `fixed` | mean abs. error | max |
+|---|---:|---:|
+| measured, 35449 / 19223 | 1.1% | 2.7% |
+| 35449 for both | 1.2% | 2.3% |
+| 19223 for both | 1.4% | 2.7% |
+| **0 for both** | **1.6%** | 3.5% |
+
+Zeroing it costs 0.5 points of mean error. **The per-kernel fill/drain term was never
+load-bearing in that fit**, and I read too much into it: 3.25.10's "the only term that
+separates them is fill/drain", 3.25.11's "what FlyDSL beats us on is fill and drain", and
+3.26.5's "worth about 80 TFLOPS" all overstate what the data supports. The cycles are real
+and measured; their conversion into dispatch time is not.
+
+The likely reason, untested: **fill/drain is latency, and latency overlaps across
+workgroups.** As the waves of workgroup k reach `s_endpgm` the CU launches workgroup k+1's
+waves, so k+1's prologue -- which is memory-latency-bound, 9248 of its 11793 cycles being
+stall -- runs while k is still draining, and across 8192 workgroups on 256 CUs there is always
+other work to absorb it. The loop is issue-bound and therefore additive; the fill and drain
+are not. An occupancy trace over a workgroup boundary would confirm or kill this.
+
+**What is worth keeping anyway.** Both changes are strictly better on every static and traced
+measure -- half the LDS bytes, 6 fewer barriers, 10 fewer waitcnts, a properly coalesced O
+store, and the LSE store no longer scattered -- at no measurable throughput cost. They are
+kept. What they are not is the 6% win 3.26.5 advertised, and the next attempt at the drain
+should be judged against the noise floor first: at S=8192 that is ~0.3%, which bounds what any
+fill/drain change can be shown to do.
