@@ -1892,12 +1892,10 @@ to argue otherwise is not a substitute for it: a static count of VALU behind eac
 nothing about the stalls between them. In-loop MFMA efficiency is the criterion; it was
 right and the proxy was wrong.
 
-What FlyDSL's 804 stall cycles *are* remains open. `s_nop` accounts for 96 of them per SIMD.
-It has half our `s_waitcnt` count (4 against 8), so it synchronises at coarser granularity,
-and it is the only one of the two using `s_setprio` (4 per iteration) with
-`dualwave_swp_enable_stagger` on -- both of which deliberately serialise the two waves. That
-is a hypothesis consistent with the flags and the counts, not a measurement of the stall
-reason; the per-window SQ stall counters would settle it.
+What FlyDSL's 804 stall cycles *are* is answered in 3.25.9 from the trace itself: ATT
+attributes a stall count to every instruction, and the coarse-synchronisation hypothesis --
+half our `s_waitcnt` count, `s_setprio` and `dualwave_swp_enable_stagger` deliberately
+serialising the two waves -- is what the numbers show.
 
 ### 3.25.5 Where the VALU difference actually is: nowhere
 
@@ -2039,7 +2037,53 @@ FlyDSL gave up 4.3% of its clock to gain 5.7 efficiency points and came out **2.
 The clock give-back is real, it is predictable, and it is smaller than the cycle win --
 in both kernels, at every point measured.
 
-### 3.25.9 One clock law, one cycle law, and a fill/drain difference
+### 3.25.9 Where the stall cycles go, from the trace
+
+The ATT capture carries more than the summary `process_json.py` prints. `code.json` in the
+`ui_output_*` directory holds one row per instruction with its **hitcount, total cycles and
+stall cycles** aggregated over the traced waves, so dividing by the hitcount gives stall per
+execution and the loop's index range (`loop_first_index` .. `loop_last_index`) selects the
+body. No extra runs needed -- the traces already taken answer it.
+
+Stall cycles per iteration **per wave**, `fav4` tuned against FlyDSL as shipped:
+
+| stall source | n | `fav4` | share | n | FlyDSL | share |
+|---|---:|---:|---:|---:|---:|---:|
+| `s_barrier` | 8 | 405 | 20% | 8 | **609** | 23% |
+| `s_waitcnt` | 8 | 57 | 3% | 4 | **263** | 10% |
+| LDS read | 96 | 705 | 35% | 96 | 668 | 26% |
+| VMEM | 8 | 63 | 3% | 8 | 175 | 7% |
+| `s_nop` | 18 | 320 | 16% | 16 | 208 | 8% |
+| MFMA | 64 | 104 | 5% | 64 | 148 | 6% |
+| VALU | 282 | 373 | 18% | 274 | 525 | 20% |
+| other scalar | 41 | 0 | 0% | 24 | 16 | 1% |
+| **total stall** | | **2029** | | | **2613** | |
+| loop cycles/iter/wave | | 4276 | | | 4775 | |
+
+(The loop-cycle rows are the sum of the per-instruction durations over the index range;
+they land 1.3% and 2.6% under the summary's 4332.9 and 4900.3, which is instructions the
+range clips. Note also that ATT charges an MFMA only its **issue** slot, not the 32-cycle
+XDL occupancy -- the pipe runs on after the wave has moved on -- so these columns describe
+the wave's timeline, not the MFMA pipe's.)
+
+**Synchronisation is 70% of the difference.** FlyDSL stalls 872 cycles per wave per
+iteration on barriers and waitcnts against our 463, a factor of 1.89, and that +409 covers
+most of the +584 total. The sharpest single number is `s_waitcnt`: **FlyDSL's four cost 263
+cycles where our eight cost 57**, 4.6x more stall from half as many instructions. That is
+exactly what coarser synchronisation means -- fewer, later wait points, each of which has
+more outstanding traffic to drain -- and 3.25.4 could only offer it as a hypothesis from the
+instruction counts. Here it is measured.
+
+The rest of the gap is consistent with the same story: +204 on barriers is what a
+deliberately staggered wave pair looks like from inside one wave, and FlyDSL is the only one
+of the two using `s_setprio`. Against those, FlyDSL is *better* on LDS-read stall (668
+against 705) and on `s_nop` (208 against 320) -- and note that both kernels' `s_nop` stall
+runs about 4x the nominal immediate (48 and 80 cycles of `s_nop` respectively), because the
+nop is where a descheduled wave actually loses its slot. That 4x is the same multiplier
+3.25.7 measured from the other direction, where deleting 34 cycles of pacing nop shortened
+the loop by 279.
+
+### 3.25.10 One clock law, one cycle law, and a fill/drain difference
 
 The two kernels appeared to have different curves. On the axis that carries the power effect
 they do not. Fitting `sclk` against efficiency separately gives -9.8 MHz/point for `fav4` and
@@ -2095,7 +2139,7 @@ total-cycle advantage widens with sequence length: -5.9% at S=8192 (62 iteration
 S=16384, -10.1% at S=32768. That is the same amortization that flips the ranking between
 shapes.
 
-### 3.25.10 The answer to the question
+### 3.25.11 The answer to the question
 
 **FlyDSL does not schedule better, and it does not get more throughput at lower MFMA
 efficiency for any reason internal to the loop.** In detail:
@@ -2123,7 +2167,7 @@ average power, not to in-loop efficiency. The sweeps cannot say how much: `fixed
 constant in every one of them, so the fitted `sclk(eff)` never saw it move. Varying the
 prologue depth and re-measuring the clock is the experiment that would settle it.
 
-### 3.25.11 Reproducing
+### 3.25.12 Reproducing
 
 ```bash
 # byte-identity control, then a swept point
