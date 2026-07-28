@@ -2565,26 +2565,50 @@ for a simple reason: with a *smaller* fixed cost, a given fractional change in l
 larger fractional change in the total, so the curve is both higher and steeper. Nothing else is
 required to reproduce the picture.
 
-### 3.28.2 At matched efficiency, fill/drain is 42% effective
+### 3.28.2 The matched-efficiency question: draw the vertical line
 
-Take the two kernels at the same in-loop efficiency, where the loop cycles are equal *by
-definition* of the metric:
+The direct form of the question is: at the *same* in-loop MFMA efficiency, FlyDSL has higher
+throughput -- why? The identity leaves exactly two candidates, because
 
-    fav4   f=-0.4   eff 83.0   1270.4 TFLOPS   1666.7 MHz
-    FlyDSL f= 0     eff 82.9   1313.6 TFLOPS   1687.9 MHz
+    TFLOPS = FLOPs / time,   time = (62 * 4096/eff + fixed) / clock
 
-    same eff -> same loop, 305966 cycles per wave
-      fav4    total = 305966 + 35449 = 341415
-      FlyDSL  total = 305966 + 19223 = 325189      -4.8%
+and both kernels do the same FLOPs per dispatch (verified: 4096 MFMA per workgroup each, same
+grid). **Matched efficiency means the loop term is identical by definition of the metric**, so
+only `fixed` and `clock` remain. Interpolating `fav4`'s sweep at each FlyDSL point:
 
-    predicted FlyDSL lead:  cycles +5.0%  x  clock +1.3%  =  +6.3%
-    measured  FlyDSL lead:                                   +3.4%
-    -> of the 5.0% the cycle difference promises, 2.1% arrives:  **42% effective**
+| eff | FlyDSL TF | `fav4` TF | TF gap | FlyDSL MHz | `fav4` MHz | clock gap | cycles/work gap |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 82.9 | 1313.6 | 1270.0 | +3.4% | 1687.9 | 1668.0 | +1.2% | +2.2% |
+| 85.0 | 1322.2 | 1281.7 | +3.2% | 1653.8 | 1651.6 | +0.1% | +3.0% |
+| 86.9 | 1334.8 | 1291.5 | +3.4% | 1629.8 | 1635.1 | -0.3% | +3.7% |
+| 88.6 | 1341.7 | 1299.7 | +3.2% | 1614.5 | 1618.8 | -0.3% | +3.5% |
+| **mean** | | | **+3.3%** | | | **+0.2%** | **+3.1%** |
 
-That single number reconciles everything in 3.26 and 3.27. Our fill/drain is 11.66% of the
-dispatch, so its *whole* value is 11.66% x 42% = 4.9%, and the 19.5% of it that 3.27 removed
-was worth 0.96% -- against a 0.3% noise floor at S=8192, three runs deep. The experiments were
-not wrong and neither was the accounting; the term is simply discounted.
+**The clock gap is +0.2% -- zero.** Which is what 3.25.9 requires: both kernels sit on one
+`sclk(eff)` line, so at the same efficiency they draw the same power and get the same clock.
+The clock cannot be the answer to the vertical-line question, and an earlier single-pair
+version of this table said +1.3%, which was scatter.
+
+So **the entire +3.3% is cycles the two kernels spend outside the loop**, and there is nowhere
+else for it to be: prologue + epilogue, 35449 per workgroup for us against 19223 for them.
+That difference is worth +5.0 to +5.3% at face value at these efficiencies, and 44-71% of it
+arrives (mean ~60%), the discount being 3.28.3's cross-workgroup overlap.
+
+Concretely, from 3.26 and 3.26.8, the 16226 cycles are:
+
+- **Prologue.** FlyDSL loads Q with a direct global-to-LDS DMA (`buffer_load ... lds`). We
+  stage it through VGPRs -- global load, wait, unpack, scale, repack, `ds_write` -- because
+  `SCALE_ON_Q` multiplies Q in registers, and that forces one blanket `s_waitcnt vmcnt(0)`
+  costing 3512 cycles per wave plus 8 `ds_write`.
+- **Epilogue.** FlyDSL fixes the mma-to-store layout with `v_permlane32_swap_b32` +
+  `v_cndmask` in the register file. We call `gl.convert_layout`, which Gluon lowers to an LDS
+  round trip: 16 `ds_write` plus reads, and on that one source line 8 barriers and 9 waitcnts.
+- **Net synchronisation:** 11 `s_waitcnt` and 17 `s_barrier` outside the loop for them, 84 and
+  30 for us.
+
+That reconciles 3.26 and 3.27 as well: our fill/drain is 11.66% of the dispatch, so at ~60%
+effectiveness its whole value is ~7%, and the 19.5% of it that 3.27 removed was worth ~1.4%
+against a 0.3% noise floor -- marginal, which is what the measurement showed.
 
 ### 3.28.3 Why 42%: the wave slots are never empty
 
