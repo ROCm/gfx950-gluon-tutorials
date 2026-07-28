@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 940" width="760" height="940" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
 <style>.ax{stroke:#767676;stroke-width:1}.gr{stroke:#ececec;stroke-width:1}.t{font-size:10.5px;fill:#767676}.h{font-size:12.5px;font-weight:600;fill:#1a1a1a}.n{font-size:10.5px;fill:#767676}.lg{font-size:10.5px}.k{font-size:10.5px;fill:#767676}</style>
 <text class="h" x="8" y="20">1 &#160;Same efficiency axis, three kernels, two ways of moving along it</text>
-<text class="n" x="76" y="36">Grey: VALU deleted (work shrinks). Green/purple: the identical instruction stream re-scheduled. B=32 S=8192 H=8 bf16, GPU[0].</text>
+<text class="n" x="76" y="36">Grey: VALU deleted. Green/purple: the same stream re-scheduled. Orange: FlyDSL re-scheduled. Triangles: FlyDSL with its pacing removed, which is the only lever that raises its efficiency -- and it stays on the same parallel line.</text>
 <line class="gr" x1="76" y1="256.0" x2="740" y2="256.0"/>
 <text class="t" x="69" y="259.5" text-anchor="end">1200</text>
 <line class="gr" x1="76" y1="203.0" x2="740" y2="203.0"/>
@@ -89,6 +89,9 @@
 <rect x="262.8" y="211.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="304.1" y="204.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="375.9" y="192.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<path d="M481.6,176.5 L485.8,184.1 L477.4,184.1 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M451.1,180.2 L455.3,187.8 L446.9,187.8 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M417.0,186.8 L421.2,194.4 L412.8,194.4 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
 <text class="h" x="8" y="332">2 &#160;Per GHz, the sweeps collapse; FlyDSL sits above on its shorter fill/drain</text>
 <text class="n" x="76" y="348">Independent fits agree to 0.5% in slope: 7.36 (deleting) vs 7.33 (re-scheduling).</text>
 <line class="gr" x1="76" y1="568.0" x2="740" y2="568.0"/>
@@ -167,6 +170,9 @@
 <rect x="262.8" y="491.4" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="304.1" y="479.0" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="375.9" y="444.8" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
+<path d="M481.6,403.8 L485.8,411.4 L477.4,411.4 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M451.1,412.9 L455.3,420.5 L446.9,420.5 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M417.0,427.7 L421.2,435.3 L412.8,435.3 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
 <text class="h" x="8" y="644">3 &#160;Clock is set by efficiency alone — one line covers both kernels</text>
 <text class="n" x="76" y="660">Every re-scheduled point of both kernels is within 1.7% of it. Deleting VALU (grey) leaves the clock flat instead, because it removes the power as well.</text>
 <line class="gr" x1="76" y1="880.0" x2="740" y2="880.0"/>
@@ -242,5 +248,8 @@
 <rect x="262.8" y="735.5" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="304.1" y="748.8" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
 <rect x="375.9" y="793.1" width="6.8" height="6.8" fill="#d4820a" stroke="#fff" stroke-width="0.8"/>
-<g transform="translate(76,932)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize</text><circle cx="509" cy="-4" r="5.2" fill="none" stroke="#767676" stroke-width="1.6"/><text class="k" x="520" y="0">unmodified kernel</text><rect x="0" y="8" width="6.8" height="6.8" fill="#d4820a"/><text class="k" x="13" y="15">re-scheduled, FlyDSL assembly</text></g>
+<path d="M481.6,836.5 L485.8,844.1 L477.4,844.1 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M451.1,827.3 L455.3,834.9 L446.9,834.9 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<path d="M417.0,812.7 L421.2,820.3 L412.8,820.3 Z" fill="#a03c8c" stroke="#fff" stroke-width="0.8"/>
+<g transform="translate(76,932)"><circle cx="4" cy="-4" r="3" fill="#b9b9b9"/><text class="k" x="13" y="0">VALU deleted</text><rect x="128" y="-7.4" width="6.8" height="6.8" fill="#2f7d43"/><text class="k" x="141" y="0">re-scheduled, llirSched build</text><rect x="330" y="-7.4" width="6.8" height="6.8" fill="#7a5ac9"/><text class="k" x="343" y="0">re-scheduled, stock+scalarize</text><circle cx="509" cy="-4" r="5.2" fill="none" stroke="#767676" stroke-width="1.6"/><text class="k" x="520" y="0">unmodified kernel</text><rect x="0" y="8" width="6.8" height="6.8" fill="#d4820a"/><text class="k" x="13" y="15">re-scheduled, FlyDSL assembly</text><path d="M215,9 L219,16 L211,16 Z" fill="#a03c8c"/><text class="k" x="226" y="15">FlyDSL, pacing removed (higher efficiency)</text></g>
 </svg>

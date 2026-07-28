@@ -1767,7 +1767,7 @@ binary. The first sweep taken with this harness reported `f=0` and `f=1.0` as 82
 83.0%/1318 -- one kernel measured twice, which reads exactly like "re-scheduling changes
 nothing". `patch()` now appends the fraction to `FLYDSL_RUNTIME_CACHE_DIR`.
 
-### 3.25.2 FlyDSL's schedule is already the top of its own curve
+### 3.25.2 FlyDSL's schedule is the top of its own curve -- in this transform's dimension
 
 | `f` | eff /SIMD | TFLOPS | sclk | power | TF/GHz |
 |---:|---:|---:|---:|---:|---:|
@@ -1780,9 +1780,10 @@ nothing". `patch()` now appends the fraction to `FLYDSL_RUNTIME_CACHE_DIR`.
 
 **Both directions lose.** Spreading -- the transform that does nothing to our kernels --
 costs FlyDSL 4.0 efficiency points and 1.7% throughput; every clumping fraction is worse
-still. So FlyDSL's schedule is the best point in this transform's search space. (That bounds
-the downward slope and locates FlyDSL at the top of it; it does not prove no better schedule
-exists.)
+still. So FlyDSL's schedule is the best point in this transform's search space, which bounds
+the downward slope and locates FlyDSL at the top of it. It does **not** mean no better
+schedule exists, and one does: 3.25.7 raises FlyDSL to 88.6% and 1341.7 TFLOPS by deleting
+six pacing `s_nop`, a dimension `sched_valu` never touches.
 
 **An earlier draft of this section read more into that than it supports.** It compared
 FlyDSL's shadow occupancy against `fav4` *stock+scalarize* rather than the tuned build, and
@@ -1957,7 +1958,88 @@ epilogue), which is where FlyDSL sits at S=8192. **That is the mechanism behind 
 flip between the two shapes**, and it is the same fill/drain term, not a separate effect:
 at S=8192 our fixed cost is charged to 62 iterations, at S=16384 to 126.
 
-### 3.25.7 One clock law, one cycle law, and a fill/drain difference
+### 3.25.7 Raising FlyDSL's efficiency: its pacing, not its VALU
+
+`sched_valu` cannot improve FlyDSL because it only moves VALU, and 3.25.4 showed FlyDSL's
+VALU already fits its shadows with 184 cycles spare. Its 804 stall cycles are **pacing**. So
+the lever is the pacing instructions, and `FLY_SCHED_STRIP` deletes them --
+`strip_pacing()` in `sched_valu.py`, which drops the named scalar opcodes and then
+re-inserts only the `s_nop` the architecture requires, computed on the original stream.
+
+The 16 `s_nop` in FlyDSL's loop turn out to be three distinct things, and the context
+identifies each:
+
+| count | immediate | sits between | what it is |
+|---:|---|---|---|
+| 6 | `s_nop 0` | `s_mov_b32 m0, sN` -> `buffer_load ... lds` | **m0-write hazard**: the DMA takes its LDS base from m0 |
+| 4 | `s_nop 1` | `v_mov` -> `v_permlane32_swap_b32` | **cross-lane hazard**, `VALUWritesVDstWaitStates = 2` |
+| 4 | `s_nop 7` | immediately after `s_barrier` | **pure pacing** -- FlyDSL's own trick, which we adopted as `LLIRSCHED_WP_MEMNOP` |
+| 2 | `s_nop 0` | before `s_barrier` | pacing |
+
+Stripping all 16 returned wrong results (max_err 2.2e-02), because the model knew neither
+hazard: it did not track `m0` at all, and had nothing for cross-lane ops. Both are now in it
+-- an `lds` modifier makes an instruction read `m0`, `v_permlane*` gets a 2-wait-state
+requirement from `GCNHazardRecognizer::checkPermlaneHazards` -- after which the strip removes
+**only the 6 pacing nops, 34 cycles per wave**, and every variant validates.
+
+| FlyDSL variant | eff /SIMD | cyc/iter | TFLOPS | sclk | power |
+|---|---:|---:|---:|---:|---:|
+| as shipped | 82.9% | 4900.3 | 1313.6 | 1687.9 MHz | 1337.1 W |
+| **pacing `s_nop` removed** | **88.6%** | **4620.9** | **1341.7** | 1614.5 MHz | 1322.1 W |
+| `s_setprio` removed | 86.9% | 4716.0 | 1334.8 | 1629.8 MHz | 1332.5 W |
+| both removed | 85.0% | 4819.5 | 1322.2 | 1653.8 MHz | 1332.2 W |
+
+**So FlyDSL's shipped schedule is not optimal after all** -- 3.25.2's claim that it sits at
+the top of its own curve holds only in the VALU-placement dimension that `sched_valu`
+searches. In the pacing dimension it is 2.1% short: +5.7 efficiency points and +2.1% TFLOPS
+for deleting 6 scalar instructions, which also puts it **1.3% ahead of `fav4` tuned**
+(1341.7 against 1324.7). Removing `s_setprio` is a smaller win on its own and the two do not
+compose -- taking both is worse than either, so the priority hints earn their place once the
+nops are gone.
+
+Worth noting how the arithmetic multiplies: 34 cycles per wave is 68 per SIMD, and the loop
+got **279 cycles shorter**, a **4.1x knock-on**. A nop at the mem-cluster head delays the LDS
+burst, which delays the barrier, which idles the partner wave. That is the same coupling our
+own `MEMNOP` sweep found, read in the other direction -- and it says FlyDSL over-paces at this
+shape.
+
+### 3.25.8 Do the improved points fit the curve? Yes, on all three
+
+This is the test the higher-efficiency points exist for, since nothing about them went into
+any fit:
+
+| variant | eff | TFLOPS | vs. gluon raw line | vs. the single clock law | vs. the full model |
+|---|---:|---:|---:|---:|---:|
+| FlyDSL as shipped | 82.9% | 1313.6 | +3.3% | +0.2% | +1.5% |
+| FlyDSL, pacing removed | 88.6% | 1341.7 | **+3.3%** | **+0.0%** | +1.2% |
+| FlyDSL, `s_setprio` removed | 86.9% | 1334.8 | +3.4% | -0.3% | +0.8% |
+| FlyDSL, both removed | 85.0% | 1322.2 | +3.1% | -0.3% | +1.2% |
+| gluon `fav4` tuned | 94.6% | 1324.7 | -0.1% | +1.7% | +0.0% |
+
+The offset from the gluon raw line is **constant at +3.1 to +3.4%** across a 5.7-point
+efficiency move, so FlyDSL's TFLOPS-vs-efficiency curve is the gluon one **shifted up, not
+tilted** -- and the shift is the fill/drain difference. Over all nine FlyDSL points, from
+68.4% to 88.6%, the offset runs +1.6% to +3.4%, mean +2.8%, with no slope difference
+resolvable above the noise.
+
+On the clock axis the improved points are the strongest confirmation in this file: the
+de-paced kernel lands at 1614.5 MHz against 1613.7 predicted, **0.05% off**, on a law fitted
+entirely from `fav4`'s sweep and FlyDSL's *lower*-efficiency points. Denser instruction
+sequence, more power, less clock -- and the amount is set by the density alone, not by which
+kernel produced it.
+
+And the full model now covers **20 points across two kernels with one constant**:
+
+    TFLOPS = K * sclk(eff) / (62 * 4096/eff + fixed)      mean |error| 1.1%, max 2.9%
+
+![](images/eff_tflops_scheduling.svg)
+
+The practical reading, which is also the answer to whether MFMA efficiency is worth chasing:
+FlyDSL gave up 4.3% of its clock to gain 5.7 efficiency points and came out **2.1% ahead**.
+The clock give-back is real, it is predictable, and it is smaller than the cycle win --
+in both kernels, at every point measured.
+
+### 3.25.9 One clock law, one cycle law, and a fill/drain difference
 
 The two kernels appeared to have different curves. On the axis that carries the power effect
 they do not. Fitting `sclk` against efficiency separately gives -9.8 MHz/point for `fav4` and
@@ -2013,13 +2095,15 @@ total-cycle advantage widens with sequence length: -5.9% at S=8192 (62 iteration
 S=16384, -10.1% at S=32768. That is the same amortization that flips the ranking between
 shapes.
 
-### 3.25.8 The answer to the question
+### 3.25.10 The answer to the question
 
 **FlyDSL does not schedule better, and it does not get more throughput at lower MFMA
 efficiency for any reason internal to the loop.** In detail:
 
 - `fav4` hides its VALU 3.4x better (5.5% stall against 16.4%), on a loop with the same MFMA,
-  LDS and VMEM instructions and VALU issue demand within 3%. Higher in-loop MFMA efficiency
+  LDS and VMEM instructions and VALU issue demand within 3%. FlyDSL's own stall is not even
+  at its minimum: deleting six pacing `s_nop` takes it to 88.6% and 1341.7 TFLOPS (3.25.7),
+  past `fav4`, so its shipped configuration leaves 2.1% on the table at this shape. Higher in-loop MFMA efficiency
   is exactly what that means, and it remains the right thing to optimise: over the measured
   range, +17.8% efficiency is +5.3% TFLOPS, positive throughout.
 - The clock it gives up in exchange is not a kernel property. It is `sclk(eff)` -- one line
@@ -2039,7 +2123,7 @@ average power, not to in-loop efficiency. The sweeps cannot say how much: `fixed
 constant in every one of them, so the fitted `sclk(eff)` never saw it move. Varying the
 prologue depth and re-measuring the clock is the experiment that would settle it.
 
-### 3.25.9 Reproducing
+### 3.25.11 Reproducing
 
 ```bash
 # byte-identity control, then a swept point

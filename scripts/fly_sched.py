@@ -122,19 +122,29 @@ def loop_bounds(lines):
     return best
 
 
-def rewrite_isa(isa, frac):
-    """Apply the sched_valu rewrite to one ISA text."""
+def rewrite_isa(isa, frac, strip=()):
+    """Apply the sched_valu rewrite to one ISA text.
+
+    `strip` names scalar pacing opcodes to delete from the loop (`s_nop`, `s_setprio`).
+    FlyDSL's VALU already fits inside its MFMA shadows, so its cycles above the ideal are
+    pacing, and stripping is the only lever in this file that can raise its efficiency.
+    """
     import sched_valu as S
 
-    if frac == 0:
-        return isa, (0, 0)
     lines = isa.split("\n")
     b = loop_bounds(lines)
     if b is None:
         raise RuntimeError("fly_sched: could not find the inner loop in FlyDSL's ISA")
-    S._NOPS[0] = 0
-    out, moved = S.schedule(lines, b[0], b[1], frac)
-    return "\n".join(out), (moved, S._NOPS[0])
+    moved = nops = 0
+    if strip:
+        lines, (removed, readded) = S.strip_pacing(lines, b[0], b[1], drop=tuple(strip))
+        moved, nops = -removed, readded
+        b = loop_bounds(lines)
+    if frac:
+        S._NOPS[0] = 0
+        lines, moved = S.schedule(lines, b[0], b[1], frac)
+        nops += S._NOPS[0]
+    return "\n".join(lines), (moved, nops)
 
 
 def assemble(isa, arch="gfx950"):
@@ -156,6 +166,7 @@ def assemble(isa, arch="gfx950"):
 def patch():
     """Install the assembly-rewriting compile step in place of FlyDSL's."""
     frac = float(os.environ.get("FLY_SCHED_VALU", "0") or 0)
+    strip = tuple(x.strip() for x in os.environ.get("FLY_SCHED_STRIP", "").split(",") if x.strip())
     dump = os.environ.get("FLY_SCHED_DUMP")
 
     # FlyDSL caches the finished code object on disk, and nothing about the rewrite is in its
@@ -164,7 +175,8 @@ def patch():
     # f=0 and f=1.0 as 82.9%/1316 and 83.0%/1318, which was one kernel measured twice. Give
     # each fraction its own cache namespace.
     base = os.environ.get("FLYDSL_RUNTIME_CACHE_DIR") or os.path.expanduser("~/.flydsl/cache")
-    os.environ["FLYDSL_RUNTIME_CACHE_DIR"] = os.path.join(base, f"fly_sched_{frac}")
+    os.environ["FLYDSL_RUNTIME_CACHE_DIR"] = os.path.join(
+        base, f"fly_sched_{frac}_{'-'.join(strip) or 'none'}")
 
     from flydsl._mlir import ir
     from flydsl._mlir.passmanager import PassManager
@@ -199,7 +211,7 @@ def patch():
         isa = _unescape(m.group(1)).decode("utf-8", "replace")
 
         # 2. rewrite, 3. assemble
-        new_isa, (moved, nops) = rewrite_isa(isa, frac)
+        new_isa, (moved, nops) = rewrite_isa(isa, frac, strip=strip)
         obj = assemble(new_isa, arch=backend.target.arch)
         if dump:
             open(dump + ".orig.s", "w").write(isa)
@@ -221,7 +233,7 @@ def patch():
         asm = asm[:mb.start(1)] + _escape(obj) + asm[mb.end(1):]
         out = ir.Module.parse(asm, context=module.context)
         same = " (byte-identical to FlyDSL's own)" if obj == old else ""
-        print(f"[fly_sched] frac={frac} moved {moved} VALU, {nops} s_nop, "
+        print(f"[fly_sched] frac={frac} strip={strip or '()'} moved {moved} VALU, {nops} s_nop, "
               f"code object {len(old)} -> {len(obj)} bytes{same}",
               file=sys.stderr, flush=True)
         return out

@@ -101,6 +101,8 @@ def _regs(operand):
         out.add(("special", "exec"))
     if re.search(r"\bscc\b", operand):
         out.add(("special", "scc"))
+    if re.search(r"\bm0\b", operand):
+        out.add(("special", "m0"))
     return out
 
 
@@ -129,6 +131,13 @@ _ACC_DEST = ("v_fmac", "v_mac_", "v_pk_fmac", "v_dot", "v_mad_mix", "v_fma_mix")
 # an `s_nop`. Drain that gap and the kernel returns NaN while staying correctly ordered.
 _TRANS = ("v_exp_", "v_log_", "v_rcp_", "v_rsq_", "v_sqrt_", "v_sin_", "v_cos_",
           "v_tanh_", "v_rcp_iflag")
+
+# Cross-lane ops read the whole wave's copy of their source, and a VALU write feeding one
+# needs a wait state that nothing in the dataflow expresses. FlyDSL pairs every
+# `v_mov / v_permlane32_swap_b32` with an `s_nop 1`; ours does the same.
+_XLANE = ("v_permlane", "v_ds_permute", "v_ds_bpermute", "v_mov_b32_dpp")
+_XLANE_WS = 2   # GCNHazardRecognizer::checkPermlaneHazards, VALUWritesVDstWaitStates
+_M0_WS = 1      # s_mov to m0 -> an instruction that reads m0
 
 
 def defs_uses(line):
@@ -159,6 +168,13 @@ def defs_uses(line):
             r |= _regs(ops[3])
         if op.startswith(_ACC_DEST):
             r |= _regs(ops[0])
+        # An `lds` modifier makes a buffer load a global->LDS DMA, whose LDS base comes
+        # from m0. Nothing names m0 in the operand list, so add it by hand -- without this
+        # the `s_mov_b32 m0, sN` before it looks independent, and the `s_nop` guarding the
+        # m0-write hazard looks removable. It is not: removing those six nops in FlyDSL's
+        # loop leaves the DMA writing to a stale LDS offset (max_err 2.2e-02).
+        if re.search(r"\blds\b", line.split(";")[0]):
+            r.add(("special", "m0"))
         if "_co_" in op or op.startswith(("v_add_c", "v_sub_c")):
             w.add(("special", "vcc"))
             r.add(("special", "vcc"))
@@ -344,6 +360,7 @@ def _hazard_pairs(items):
     ismfma = [opcode(l).startswith("v_mfma") for _, l in items]
     istrans = [opcode(l).startswith(_TRANS) for _, l in items]
     isvalu = [_is_valu(opcode(l)) for _, l in items]
+    isxlane = [opcode(l).startswith(_XLANE) for _, l in items]
     cyc = [_ws(l) for _, l in items]
     pref = [0] * (n + 1)
     for i in range(n):
@@ -352,16 +369,22 @@ def _hazard_pairs(items):
     for i in range(n):
         wi, ri = du[i]
         for j in range(i + 1, n):
+            wj, rj = du[j]
+            dep = (rj & wi) or (wj & wi) or (wj & ri)
+            if not dep:
+                continue
             cap = 0
-            if ismfma[i] or ismfma[j]:
+            if ("special", "m0") in (rj & wi):
+                cap = _M0_WS
+            elif isxlane[j] and not isxlane[i]:
+                cap = _XLANE_WS
+            elif ismfma[i] or ismfma[j]:
                 cap = _MAX_MFMA_WS
             elif istrans[i] and isvalu[j] and not istrans[j]:
                 cap = _TRANS_WS
             if not cap:
                 continue
-            wj, rj = du[j]
-            if (rj & wi) or (wj & wi) or (wj & ri):
-                out.append((i, j, min(pref[j] - pref[i + 1], cap)))
+            out.append((i, j, min(pref[j] - pref[i + 1], cap)))
     return out
 
 
@@ -470,6 +493,60 @@ def schedule(lines, lo, hi, frac):
         out += res
     out += lines[prev_end:]
     return out, moved
+
+
+def strip_pacing(lines, lo, hi, drop=("s_nop",)):
+    """Delete scalar pacing instructions from the loop, re-inserting only the `s_nop` the
+    architecture actually requires.
+
+    Neither `s_nop` nor `s_setprio` moves data, so removing them cannot change what the loop
+    computes -- but `s_nop` can be load-bearing for the MFMA and transcendental hazards. So
+    the requirements are computed on the *original* stream (capped at the architectural
+    figure, as `_hazard_pairs` does) and re-satisfied on the stripped one, which leaves the
+    minimum legal spacing rather than whatever the producer chose.
+
+    This is the lever for a loop whose VALU already fits in its MFMA shadows: there the
+    cycles above the ideal are pacing and arbitration, and no amount of VALU re-placement
+    touches them.
+    """
+    out, prev, removed, readded = lines[:lo], lo, 0, 0
+    for a, b in _regions(lines, lo, hi):
+        out += lines[prev:a]
+        prev = b
+        items, tail = _items(lines[a:b])
+        if not items:
+            out += lines[a:b]
+            continue
+        need = {}
+        for i, j, d in _hazard_pairs(items):
+            need.setdefault(j, []).append((i, d))
+        indent = re.match(r"\s*", items[0][1]).group(0) or "\t"
+        res, cum, end_at = [], 0, {}
+        for k, (pre, line) in enumerate(items):
+            if opcode(line).startswith(drop):
+                # keep the attached lines -- they include the loop label and the inline-asm
+                # markers, and dropping the label with the instruction breaks the back edge
+                res += pre
+                removed += 1
+                continue
+            deficit = 0
+            for pk, d in need.get(k, ()):
+                if pk in end_at:
+                    deficit = max(deficit, d - (cum - end_at[pk]))
+            while deficit > 0:
+                q = min(15, deficit - 1)
+                res.append(f"{indent}s_nop {q}")
+                cum += q + 1
+                deficit -= q + 1
+                readded += 1
+            res += pre
+            res.append(line)
+            cum += _ws(line)
+            end_at[k] = cum
+        res += tail
+        out += res
+    out += lines[prev:]
+    return out, (removed, readded)
 
 
 def _pin_items(lines, a, b, items):
