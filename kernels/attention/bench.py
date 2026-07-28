@@ -102,7 +102,7 @@ SEQLENS = [1024, 2048, 4096, 8192, 16384]
 
 def parse_args():
     p = argparse.ArgumentParser(description="FAV3 rotated-4cluster attention benchmark (gfx950)")
-    p.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
+    p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64, help="number of query heads")

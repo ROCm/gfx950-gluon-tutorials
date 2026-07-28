@@ -1218,3 +1218,76 @@ Its shipped defaults are its optimum. Relative to canonical:
 Causal vs non-causal: **non-causal is its better number** -- 1178.0 TF against 1037 causal with
 the FLOPs halved for the skipped tiles, and causal's max error is 1.26e-03 against 5.4e-05. The
 builder defaults to `causal=True`; every number here forces `causal=False` to match our kernels.
+
+## Why B=32 S=8192 beats B=1 S=16384, and what that says about the comparison
+
+Both shapes do **exactly the same work** -- 8.796 TFLOP per dispatch -- and both divide evenly
+into the machine (4096 and 8192 workgroups against 256 resident), so the 11% throughput
+difference is not a FLOP-count or tail-effect artifact.
+
+**The loop body is identical.** In-loop MFMA efficiency and cyc/iter barely move with the shape,
+which they cannot: the loop does not depend on B or H.
+
+| bf16 | eff /SIMD | loop | pro | epi | cyc/iter |
+|---|---:|---:|---:|---:|---:|
+| fav4 B=1 S=16384 | 93.9% | 94.07% | 2.58% | 3.35% | 4361.5 |
+| fav4 B=32 S=8192 | 94.5% | 88.31% | 5.47% | 6.22% | 4334.6 |
+| fav3 B=1 S=16384 | 86.0% | 95.14% | 1.68% | 3.18% | 4761.7 |
+| fav3 B=32 S=8192 | 86.1% | 90.52% | 3.42% | 6.06% | 4757.1 |
+
+**Per cycle the B=32 shape is strictly worse.** Each workgroup walks 128 K/V blocks instead of
+256, so the fixed prologue and drain amortize over half as much work and their share **doubles**
+(5.9% -> 11.7%). Counting whole dispatches it needs about **4% more cycles**.
+
+**It wins on clock, because it is not power-limited.**
+
+| bf16 | TFLOPS | sclk | power |
+|---|---:|---:|---:|
+| fav4 B=1 S=16384 | 1296.5 | 1527.7 MHz | **1396.5 W -- at the cap** |
+| fav4 B=32 S=8192 | 1325.6 | **1569.8 MHz** | 1317.6 W |
+| FlyDSL B=1 S=16384 | 1186.3 | 1541.1 MHz | 1366.1 W |
+| FlyDSL B=32 S=8192 | 1327.1 | **1650.9 MHz** | 1339.4 W |
+
+The chain: shorter loops -> double the prologue/drain -> a **less MFMA-dense** instruction stream
+-> lower power -> off the ~1400 W cap -> the governor grants more clock, and the clock is worth
+more than the cycles it cost. The "better" config is better partly *because* it wastes more time
+on pipeline fill and drain.
+
+**This is why the ranking flips between shapes.** The two kernels have opposite strengths:
+
+- fav4 is **cycle**-efficient -- 94.5% in-loop against FlyDSL's 84.7%.
+- FlyDSL is **power**-efficient per cycle -- at B=32 it clocks 5.2% higher at comparable power,
+  and it also spends more of its time in the loop (94.13% vs 88.33%), so its pipeline fill/drain
+  is cheaper than our four-stage one.
+
+At B=1 S=16384 the board is pinned at the cap, cycle efficiency decides, and fav4 wins by 9.3%.
+At B=32 S=8192 there is power headroom and the two cancel almost exactly:
+
+    fav4 cycle advantage   (0.945 x 0.8833) / (0.847 x 0.9413) = +4.8%
+    FlyDSL clock advantage  1650.9 / 1569.8                    = +5.2%
+
+which is a dead heat, and the measurement agrees (1318.0 vs 1320.1). **Neither shape gives "the"
+answer** -- B=1/S=16384 flatters us, B=32/S=8192 flatters them. The one quantity that is stable
+across both shapes and both dtypes is the in-loop MFMA efficiency, which is the thing the
+scheduler actually controls.
+
+### The B=32 matrix (bf16, GPU[0], interleaved, 3 rounds)
+
+FlyDSL's published config: B=32, S=8192, H=8, D=128, bf16, non-causal. Their post claims 1320
+TFLOPS; **reproduced at 1319.4 / 1319.6 / 1320.2** with `scripts/fly_kernel_time.py`.
+
+| | run 1 | run 2 | run 3 | mean TF | eff /SIMD |
+|---|---:|---:|---:|---:|---:|
+| ROCm/FlyDSL `63eb891` | 1318.7 | 1320.8 | 1320.8 | **1320.1** | 84.7% |
+| gluon `fav4` tuned | 1317.1 | 1318.8 | 1318.2 | **1318.0** | **94.5%** |
+| gluon `fav3` tuned | 1242.1 | 1242.6 | 1243.1 | **1242.6** | 86.2% |
+| gluon `fav4` stock LLVM | 1197.6 | 1196.4 | 1198.7 | **1197.6** | 68.5% |
+| gluon `fav3` stock LLVM | 1141.0 | 1140.7 | 1141.1 | **1140.9** | 67.8% |
+
+This shape is a far better benchmark than B=1/S=16320: every row is stable to ~2 TFLOPS, where
+B=1 gave FlyDSL a 34-point spread and a 7% warm-up decay. B=32 puts 8192 workgroups and a 2.1 GB
+working set on the die, so it reaches a uniform steady state and holds it. **Prefer it for
+headline numbers.**
+
+The plugin stack is worth **+10.0%** on fav4 (1197.6 -> 1318.0) and **+8.9%** on fav3
+(1140.9 -> 1242.6) here, against +10.9% / +6.8% at B=1 S=16384 fp16.

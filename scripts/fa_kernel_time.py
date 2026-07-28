@@ -86,7 +86,7 @@ from run_perf_table import avg_kernel_time_ns, find_kernel_trace_csv  # noqa: E4
 
 def parse_args():
     p = argparse.ArgumentParser(description="rocprofv3 kernel-time TFLOPS for FA (gfx950)")
-    p.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
+    p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64)

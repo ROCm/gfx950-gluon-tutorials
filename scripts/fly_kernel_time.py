@@ -62,7 +62,7 @@ def parse_args():
     p.add_argument("--hq", type=int, default=64)
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--seqlen", type=int, default=16384)
-    p.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
+    p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     p.add_argument("--iters", type=int, default=1000)
     p.add_argument("--last-n", type=int, default=100)
     p.add_argument("--warmup", type=int, default=10)

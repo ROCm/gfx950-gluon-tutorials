@@ -617,7 +617,9 @@ FA_MODULE=fav4 python ../../scripts/fa_kernel_time.py --seqlen 16320
 ```
 
 Pick the kernel with `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`. Defaults are
-`B=1, HQ=HK=64 (MHA), D=128, fp16, bhsd`, non-causal.
+`B=1, HQ=HK=64 (MHA), D=128, bhsd`, non-causal, **bf16** — pass `--dtype fp16` for the other.
+Both kernels support either; bf16 is the default because it is what these parts are usually run in,
+and because it measures a few percent faster for the same cycle count (§8).
 
 Both need the scheduling plugin loaded and one other pass disabled, and **both take the same
 environment** — there is no longer a variable that has to agree with which kernel is being built
