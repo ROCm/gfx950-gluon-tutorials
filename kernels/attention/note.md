@@ -1898,6 +1898,65 @@ and it is the only one of the two using `s_setprio` (4 per iteration) with
 is a hypothesis consistent with the flags and the counts, not a measurement of the stall
 reason; the per-window SQ stall counters would settle it.
 
+### Where the VALU difference actually is: nowhere
+
+The counts above are over the **whole loop body**, not the dot regions alone -- but on these
+two kernels that is the same comparison, because almost all of the loop's VALU is in the dot
+regions and the mem regions hold two instructions each:
+
+| unconditional VALU | `fav4` tuned | FlyDSL |
+|---|---:|---:|
+| 4 dot (QK/PV) regions | 280 (75, 65, 75, 65) | 272 (67, 69, 67, 69) |
+| 5 mem regions | 2 | 2 |
+| issue cycles, dot regions | 1384 | 1344 |
+
+So the entire difference is **8 instructions out of 280, 2.9%** -- 40 issue cycles out of 1384.
+Opcode by opcode:
+
+| opcode | `fav4` | FlyDSL | note |
+|---|---:|---:|---|
+| `v_add_f32` | 130 | 66 | |
+| `v_sub_f32` | 4 | 66 | add+sub: **134 vs 132**, the split is opcode selection |
+| `v_maximum3_f32` | 34 | 0 | IEEE NaN-propagating form |
+| `v_max3_f32` / `v_max_f32` | 0 | 30 / 4 | max ops: **34 vs 34, exactly equal** |
+| `v_exp_f32` | 66 | 64 | +2 |
+| `v_cvt_pk_bf16_f32` | 32 | 32 | equal |
+| `v_cmp_*` / `v_cndmask` / `v_mov` | 12 | 8 | +4 bookkeeping |
+| **total** | **282** | **274** | **+8 instructions, +40 issue cycles** |
+
+The two large-looking rows cancel. `v_add_f32` 130 against 66 pairs with `v_sub_f32` 4
+against 66: both kernels issue ~133 add/sub, they just fold the negation differently. The
+max rows cancel exactly at 34 each -- Triton emits `v_maximum3_f32` for IEEE semantics where
+FlyDSL emits `v_max3_f32` plus four `v_max_f32`, and the two are the same
+`VOP3_Profile<VOP_F32_F32_F32_F32>` in LLVM, so same rate, no cost difference. What is left
+is 2 extra `v_exp_f32` and 4 extra compare/select/move on our side.
+
+**"FlyDSL has fewer VALU" is not a real phenomenon.** The 12.5% figure reported earlier was
+entirely `fav4`'s 32 predicated `v_pk_mul_f32`, which do not execute. The two kernels compute
+the same softmax with the same instruction budget to within 3%.
+
+### Fill and drain, measured
+
+ATT reports the prologue and epilogue durations directly, so this does not have to be
+inferred from the loop ratio. Per workgroup, at B=32 S=8192 (62 loop iterations):
+
+| cycles per workgroup | `fav4` tuned | FlyDSL | ratio |
+|---|---:|---:|---:|
+| prologue | 16428.8 | 7144.6 | 2.30x |
+| loop, 62 iterations | 268638.4 | 303817.4 | 0.88x |
+| epilogue | 19019.8 | 12078.6 | 1.57x |
+| **fill + drain** | **35448.5** | **19223.3** | **1.84x** |
+| total | 304086.9 | 323040.6 | |
+| fill/drain as a share | 11.66% | 5.95% | |
+| in iteration-equivalents | 8.18 iterations | 3.92 iterations | |
+
+Both numbers are **fixed per workgroup** -- they do not scale with sequence length -- so their
+cost is entirely a function of how many iterations they amortize over. At S=16384 the same
+~35k cycles cost `fav4` only 5.9% (the B=1 S=16384 row above: 2.58% prologue + 3.35%
+epilogue), which is where FlyDSL sits at S=8192. **That is the mechanism behind the ranking
+flip between the two shapes**, and it is the same fill/drain term, not a separate effect:
+at S=8192 our fixed cost is charged to 62 iterations, at S=16384 to 126.
+
 ### One clock law, one cycle law, and a fill/drain difference
 
 The two kernels appeared to have different curves. On the axis that carries the power effect
