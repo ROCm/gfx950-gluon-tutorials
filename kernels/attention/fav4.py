@@ -413,7 +413,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         # and the per-thread register bases 4 become 6 (32768 elements / 512 threads = 64
         # each, eight 16-byte DMA granules). Bits: reg 6 + lane 6 + warp 3 = 15 = 256 x 128.
         q_smem_layout: gl.constexpr = PaddedSharedLayout(
-            interval_padding_pairs=[[512, 32]],
+            interval_padding_pairs=[[512, 8]],
             offset_bases=[
                 [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
                 [16, 0], [32, 0], [64, 0], [128, 0],

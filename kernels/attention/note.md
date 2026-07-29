@@ -2725,11 +2725,18 @@ Three things went wrong on the way, all caught by the reference check:
 
 | per workgroup, traced | baseline | direct-to-LDS |
 |---|---:|---:|
-| prologue | 16428.8 | **13431** (-18%) |
-| epilogue | 14860.0 | 14929 |
-| **loop** | **268638** | **276523 (+2.9%)** |
+| prologue | 16428.8 | **13312.9** (-19.0%) |
+| epilogue | 19019.8 | 14921.0 |
+| **loop** | **268638.4** | **276689.0 (+3.0%)** |
 | in-loop MFMA efficiency | 94.5% | **91.8%** |
-| total | 304087 | 304883 |
+| cyc/iter | 4332.9 | 4462.7 |
+| total | 304086.9 | 304922.9 (+0.3%) |
+
+Trace archived at `/data/fav4_qdirectlds_B32_S8192_H8_bf16_se0_cu1_att`, taken on the
+configuration as committed -- Q's padded layout uses `interval_padding_pairs=[[512, 8]]`, not
+the `[[512, 32]]` copied from V. That matters: `[[512, 32]]` measured a 15946-cycle prologue
+against `[[512, 8]]`'s 13313, because Q is read exactly once and the wider padding buys
+nothing while inflating LDS and pushing `kt_smem`/`v_smem` further along.
 
 ### 3.29.3 The gating was wrong, and the loop change is real
 
