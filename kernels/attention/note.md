@@ -2926,7 +2926,19 @@ register across the entire loop; recomputing it costs one instruction per iterat
 
 **A spare register is worth more than the instruction.** `scripts/hoist_lds_addr.py`
 (`FA_HOIST_LDS_ADDR=1`) moves the add out, into a register nothing else touches, and redirects
-the 16 `ds_read`s that took its result:
+the 16 `ds_read`s that took its result.
+
+To be clear about what it is: **an assembly hack**, in the same family as `sched_valu` and
+`relax_vmcnt` -- it hooks Triton's `make_amdgcn` stage and edits the final text, pattern
+matching one `v_add_u32_e32`, picking a register by reading `.amdhsa_next_free_vgpr`, and
+hand-editing the descriptor. It is a price tag, not a fix, and it is doubly gated: the add
+only exists under `FA_Q_DIRECT_LDS=1`, which is itself off by default, so nothing shipped
+touches it. A real fix belongs either in LLVM -- MachineLICM declined to hoist a provably
+invariant value although 246 of an available 256 VGPRs were in use, so the register it wanted
+was there -- or in Gluon, by removing the reason the offsets stopped fitting the 16-bit
+`ds_read offset:` field in the first place (3.29.4).
+
+The measurement:
 
 | | DMA, add in loop | DMA, add hoisted |
 |---|---:|---:|
