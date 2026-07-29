@@ -98,7 +98,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # fav4 (lazy-rescale variant). Both expose run_gluon_attention.
 import importlib  # noqa: E402
 
-from f16_fa_gfx950_common import (
+from common import (
     _check_output,
     compute_flops,
     get_shape_from_layout,

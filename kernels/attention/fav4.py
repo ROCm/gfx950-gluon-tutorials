@@ -83,7 +83,7 @@ from triton.experimental.gluon.language._layouts import (
 )
 
 
-from f16_fa_gfx950_common import (
+from common import (
     get_shape_from_layout,
     get_strides_from_layout,
     MetaData,

@@ -144,7 +144,7 @@ def parse_args():
 def fa_flops(args):
     """Total FLOPs per dispatch: two B*HQ*M*N*D GEMMs, non-causal.
 
-    Same expression as ``f16_fa_gfx950_common.compute_flops(..., causal=False)``,
+    Same expression as ``kernels/attention/common.py``'s ``compute_flops(..., causal=False)``,
     duplicated here so the script does not need to import torch/triton.
     """
     return 2 * (2.0 * args.batch * args.hq * args.seqlen * args.seqlen * args.d)

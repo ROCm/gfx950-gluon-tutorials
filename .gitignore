@@ -25,3 +25,7 @@ cache/
 # Private counter-collection work — kept locally, deliberately not tracked
 kernels/attention/att_stall_counters.yaml
 kernels/attention/private_counter_collection_recipe.md
+# ATT config variants used only by the above (all-SE, and SIMD0-only). The
+# tracked att_attn_se0.json is the one the documented recipes use.
+kernels/attention/att_attn.json
+kernels/attention/att_attn_simd0.json

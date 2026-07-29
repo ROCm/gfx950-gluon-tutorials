@@ -744,7 +744,7 @@ which is enough to invert the top two rows of the table.
   single best config for this shape — the per-`(D, BLOCK_N, warps)` layout dispatch,
   causal/masked-tail scheduling, non-pipelined fallbacks, head-dim padding and the multi-config
   autotune space were removed and the pipelined loop inlined into one flat `gluon_attn_fwd`.
-  `f16_fa_gfx950_common.py` came over with it and has since been cut down to what these two
+  `common.py` came over with it and has since been cut down to what these two
   kernels and `bench.py` actually call: the non-pipelined `attn_fwd_inner` and its building
   blocks, the arch dispatch, the ragged/`thd` paths and the results-table plumbing are all gone
   with the features that used them. The full version is upstream and in git history. `fav3.py`

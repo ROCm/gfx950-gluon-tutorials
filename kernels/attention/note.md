@@ -1340,7 +1340,7 @@ but the ODD_TAIL numbers below are measurements, and they are why this is worth 
 |---|---|
 | `fav3.py` | eager rescale: Gluon kernel + its autotune config + host launcher `run_gluon_attention` |
 | `fav4.py` | `fav3` plus lazy rescaling and the cluster-balance rules of the README's §5 |
-| `f16_fa_gfx950_common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
+| `common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
 | `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
 | `note.md` | this file |
 | `att_attn*.json` | `rocprofv3` ATT (instruction-trace) configurations |
