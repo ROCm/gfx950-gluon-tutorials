@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 306" width="600" height="306" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .title { font-size: 13px; font-weight: 600; fill: #767676; }
+    .sub   { font-size: 11px; fill: #767676; }
+    .axis  { font-size: 10.5px; fill: #767676; }
+    .grp   { font-size: 12px; font-weight: 600; fill: #767676; }
+    .val   { font-size: 12px; font-weight: 600; fill: #767676; }
+    .eff   { font-size: 11px; font-weight: 600; fill: #000000; }
+    .leg   { font-size: 11px; fill: #767676; }
+    .grid  { stroke: #767676; stroke-opacity: .22; stroke-width: 1; }
+    .base  { stroke: #767676; stroke-opacity: .55; stroke-width: 1; }
+  </style>
+
+  <text class="title" x="8" y="17">What the design and the compiler work are worth</text>
+  <text class="sub"   x="8" y="33">TFLOPS above each bar; in-loop MFMA efficiency per SIMD inside it. Zero baseline.</text>
+
+  <!-- gridlines + y axis -->
+  <text class="axis" x="52" y="60"    text-anchor="end">TFLOPS</text>
+  <line class="grid" x1="60" y1="87.1"  x2="440" y2="87.1"/>
+  <text class="axis" x="52" y="91"   text-anchor="end">1200</text>
+  <line class="grid" x1="60" y1="141.4" x2="440" y2="141.4"/>
+  <text class="axis" x="52" y="145"  text-anchor="end">800</text>
+  <line class="grid" x1="60" y1="195.7" x2="440" y2="195.7"/>
+  <text class="axis" x="52" y="199"  text-anchor="end">400</text>
+  <line class="base" x1="60" y1="250"   x2="440" y2="250"/>
+  <text class="axis" x="52" y="254"  text-anchor="end">0</text>
+
+  <!-- group 1: fmha_v3 -->
+  <path d="M133,250 L133,85.3 Q133,81.3 137,81.3 L153,81.3 Q157,81.3 157,85.3 L157,250 Z" fill="#2a78d6"/>
+  <text class="val" x="145" y="73.3" text-anchor="middle">1243</text>
+  <text class="eff" x="145" y="168" text-anchor="middle" transform="rotate(-90,145,168)">86.2%</text>
+
+  <path d="M167,250 L167,99.2 Q167,95.2 171,95.2 L187,95.2 Q191,95.2 191,99.2 L191,250 Z" fill="#eb6834"/>
+  <text class="val" x="179" y="87.2" text-anchor="middle">1141</text>
+  <text class="eff" x="179" y="175" text-anchor="middle" transform="rotate(-90,179,175)">67.8%</text>
+
+  <text class="grp" x="162" y="268" text-anchor="middle">fmha_v3</text>
+  <text class="sub" x="162" y="282" text-anchor="middle">eager rescale</text>
+
+  <!-- group 2: fmha_v4 + the reference -->
+  <path d="M287,250 L287,75.1 Q287,71.1 291,71.1 L307,71.1 Q311,71.1 311,75.1 L311,250 Z" fill="#2a78d6"/>
+  <text class="val" x="299" y="63.1" text-anchor="middle">1318</text>
+  <text class="eff" x="299" y="163" text-anchor="middle" transform="rotate(-90,299,163)">94.5%</text>
+
+  <path d="M321,250 L321,91.4 Q321,87.4 325,87.4 L341,87.4 Q345,87.4 345,91.4 L345,250 Z" fill="#eb6834"/>
+  <text class="val" x="333" y="79.4" text-anchor="middle">1198</text>
+  <text class="eff" x="333" y="171" text-anchor="middle" transform="rotate(-90,333,171)">68.5%</text>
+
+  <path d="M355,250 L355,74.9 Q355,70.9 359,70.9 L375,70.9 Q379,70.9 379,74.9 L379,250 Z" fill="#1baf7a"/>
+  <text class="val" x="367" y="62.9" text-anchor="middle">1320</text>
+  <text class="eff" x="367" y="163" text-anchor="middle" transform="rotate(-90,367,163)">84.7%</text>
+
+  <text class="grp" x="333" y="268" text-anchor="middle">fmha_v4</text>
+  <text class="sub" x="333" y="282" text-anchor="middle">lazy rescale</text>
+
+  <!-- legend -->
+  <rect x="470" y="112" width="11" height="11" rx="2" fill="#2a78d6"/>
+  <text class="leg" x="487" y="121">llirSched, tuned</text>
+  <rect x="470" y="136" width="11" height="11" rx="2" fill="#eb6834"/>
+  <text class="leg" x="487" y="145">stock LLVM</text>
+  <rect x="470" y="160" width="11" height="11" rx="2" fill="#1baf7a"/>
+  <text class="leg" x="487" y="169">ROCm/FlyDSL</text>
+
+  <text class="sub" x="8" y="298">B=32 S=8192 H=8 D=128 · bf16 · non-causal · MI355X · full table and protocol in §9</text>
+</svg>

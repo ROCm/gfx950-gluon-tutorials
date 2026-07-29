@@ -4,25 +4,25 @@ Forward flash-attention kernels for gfx950 (MI350 / MI355X), written in Triton E
 **Gluon**. Two kernels, `fmha_v3` and `fmha_v4`, share one pipeline architecture and differ in how
 they handle the softmax rescale.
 
+![TFLOPS and in-loop MFMA efficiency for both kernels, tuned and on stock LLVM, against ROCm/FlyDSL](images/results.svg)
+
+Read the two numbers on each bar against each other, because they disagree. On **throughput**
+the tuned `fmha_v4` and ROCm/FlyDSL are a dead heat — 1318 against 1320, well inside any spread.
+On **MFMA efficiency** they are 9.8 points apart: `fmha_v4` does the same work in about 10% fewer
+cycles and hands the difference back as clock, on a part already at its power cap (§9).
+
+The gap that this document is actually about is the one inside each group — **+10.0% of throughput
+and +26 points of efficiency** between a tuned build and a stock one, from the same kernel source.
+That is what the design work of §5 and the compiler work of §6 are worth. Note also that stock
+LLVM cannot tell the two kernels apart at all (68.5% against 67.8%): the lazy rescale of `fmha_v4`
+only pays once something downstream spends the headroom it creates.
+
 **On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
 implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
 decode-shaped MQA/GQA designs) will sit beside them rather than inside them. `v3` and `v4` track
 the softmax-rescale generation, not a file version: `fmha_v3` rescales the accumulator on every
 tile, `fmha_v4` defers it (§5). Note the *layouts* MQA and GQA are already handled here via
 `--hk` — what a future kernel would change is the pipeline, not the head mapping.
-
-| `B=32, S=8192, H=8, D=128`, bf16, non-causal, MI355X | TFLOPS | MFMA eff / SIMD |
-|---|---:|---:|
-| **`fmha_v4`** — lazy rescale, tuned | **1318** | **94.5%** |
-| `fmha_v3` — eager rescale, tuned | 1243 | 86.2% |
-| *ROCm/FlyDSL* at its own published config | *1320* | *84.7%* |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
-
-`fmha_v4` ties the fastest published kernel for this shape while needing about 10% fewer cycles to
-do it. The distance between the first row and the last — **+10.0% of throughput, +26 points of
-efficiency** — is what the design work of §5 and the compiler work of §6 are worth together.
-§9 is the full table with its measurement protocol, the FlyDSL comparison worked through, and
-why that ranking is shape-dependent.
 
 **Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: §3 below uses its
 intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
