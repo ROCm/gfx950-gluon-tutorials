@@ -96,18 +96,27 @@ def _driver_main(argv):
              b_t.stride(1), b_t.stride(0), c.stride(0), c.stride(1))
         )
 
+    jit_kernel = getattr(mod, KERNEL_REGEX[args.kernel])
     grid_mn = triton.cdiv(M, mod.BLOCK_M) * triton.cdiv(N, mod.BLOCK_N)
-    constexprs = dict(
-        BLOCK_M=mod.BLOCK_M, BLOCK_N=mod.BLOCK_N, BLOCK_K=mod.BLOCK_K,
-        WARPS_M=mod.WARPS_M, WARPS_N=mod.WARPS_N,
-        GRID_MN=grid_mn, NUM_XCDS=mod.NUM_XCDS, GROUP_SIZE_M=mod.GROUP_SIZE_M,
-    )
+
+    # Derive the constexprs from the kernel signature rather than hardcoding one
+    # kernel's shape: take every constexpr argument the module defines at module
+    # level (BLOCK_*, WARPS_*, SPLIT_K, NUM_XCDS, GROUP_SIZE_M ...). GRID_MN is
+    # the only one computed from the problem size.
+    constexprs = {"GRID_MN": grid_mn}
+    for name in jit_kernel.arg_names:
+        if name in constexprs or not hasattr(mod, name):
+            continue
+        value = getattr(mod, name)
+        constexprs[name] = getattr(value, "value", value)  # unwrap gl.constexpr
+
     compiler_options = {"num_warps": mod.NUM_WARPS}
-    attrs = mod._agpr_attrs()
+    if hasattr(mod, "_agpr_attrs"):
+        attrs = mod._agpr_attrs()          # intra_wave: env-gated agpr-alloc=256
+    else:
+        attrs = (("amdgpu-agpr-alloc", "0,0"),)  # inter_wave pins no-AGPR itself
     if attrs:
         compiler_options["llvm_fn_attrs"] = attrs
-
-    jit_kernel = getattr(mod, KERNEL_REGEX[args.kernel])
     prepared = PreparedKernel.create(
         jit_kernel, (grid_mn, 1), runtime_sets,
         constexprs=constexprs, compiler_options=compiler_options,
