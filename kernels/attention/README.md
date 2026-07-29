@@ -13,18 +13,10 @@ behind it on how much of the matrix pipe's time goes to matrix work. The other b
 the same kernel source built without the scheduling plugin. [§9](#9-results) works through what separates all
 five, and what each step costs.
 
-**Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
-intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
-structure these kernels are built on. This also assumes you know the flash-attention algorithm
-— the streaming softmax that carries a running max `m`, a running sum `l` and an unnormalized
-accumulator `acc`, and rebases them with `alpha = exp2(m − m_new)` as the max moves. The term
-to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kernel, so rescaling
-it every tile is 64 vector instructions that are pure overhead whenever the row max did not
-actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
-
-**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
-tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag
-introduces. [§9](#9-results) has the build and run commands.
+The efficiency column is what the rest of this document is about. 94.5% means the matrix pipe
+takes a new MFMA in 94.5% of the loop's cycles, and the missing 5.5% is time the SIMD spent
+issuing something it could not hide behind one. So the design question is what *else* a flash
+attention kernel has to issue, and where that work can go.
 
 ---
 
@@ -47,6 +39,19 @@ the main line. [§8](#8-applying-this-to-your-own-kernel) is the part meant to t
 diagnosing a kernel of your own, and which of these numbers are gfx950's rather than the
 architecture's. [§9](#9-results) measures the result and takes the comparison above apart; [§10](#10-where-to-go-deeper) is where to read
 further.
+
+**Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
+intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
+structure these kernels are built on. This also assumes you know the flash-attention algorithm
+— the streaming softmax that carries a running max `m`, a running sum `l` and an unnormalized
+accumulator `acc`, and rebases them with `alpha = exp2(m − m_new)` as the max moves. The term
+to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kernel, so rescaling
+it every tile is 64 vector instructions that are pure overhead whenever the row max did not
+actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
+
+**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag
+introduces. [§9](#9-results) has the build and run commands.
 
 ---
 
