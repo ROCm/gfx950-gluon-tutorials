@@ -51,11 +51,15 @@ external `rocprofv3 --kernel-trace` timing.
 
 ## 3. Results
 
-MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`. Headline
-numbers are from [`tools/bench_prepared.py`](tools/bench_prepared.py) on GPU 3:
-prepared launch, 3 rotating tensor sets, 1000 dispatches, **mean of the last
-100**, timed with `rocprofv3 --kernel-trace`. In-loop MFMA efficiency is from
-ATT.
+MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`.
+
+Headline numbers are at **M=4096, N=4864, K=8256** (see §3.1 for why that shape),
+from [`tools/bench_prepared.py`](tools/bench_prepared.py) on GPU 3: prepared
+launch, 3 rotating tensor sets, 1000 dispatches, **mean of the last 100**, timed
+with `rocprofv3 --kernel-trace`. `cyc/iter` and MFMA efficiency are per wave per
+K-step from an fp16 ATT capture.
+
+**4096 x 4864 x 8256**
 
 | | fp16 TF | bf16 TF | cyc/iter | mfma/iter/wave | **per-SIMD MFMA eff** |
 |---|---|---|---|---|---|
@@ -66,8 +70,8 @@ Per-SIMD is the comparable figure -- the matrix unit is a per-SIMD resource, so
 the 8-wave kernel's per-wave fraction doubles for its two co-resident waves. At
 ~98% the 8-wave loop is essentially at the matrix-unit ceiling.
 
-For scale, Triton's own `BlockPingpong` schedule on the same shape
-(`python/tutorials/03-matrix-multiplication.py` at 256x256x64 / `num_warps=8`,
+For scale, Triton's own `BlockPingpong` schedule at the same 4096x4864x8256
+(`python/tutorials/03-matrix-multiplication.py`, tile 256x256x64, `num_warps=8`,
 with the loop-variant K mask removed so the pass fires) reaches 4273.8 cyc/iter
 and 95.84% per-SIMD at 543.0 TFLOPS. It uses `v_mfma_f32_32x32x8_f16`, which is
 more power-dense than the `16x16x16` used here and clocks down to 1.023 GHz for
