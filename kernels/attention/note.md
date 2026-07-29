@@ -2731,31 +2731,66 @@ Three things went wrong on the way, all caught by the reference check:
 | in-loop MFMA efficiency | 94.5% | **91.8%** |
 | total | 304087 | 304883 |
 
-### 3.29.3 And the loop pays for it
+### 3.29.3 The gating was wrong, and the loop change is real
 
-The prologue win is real and larger than 3.26.6's counted-wait probe managed. The loop loss is
-larger still, and it is a **codegen knock-on, not a property of the change**: the loop body is
-not touched by any of this, yet its instruction stream comes out different --
+A first version of this claimed the change was gated behind `FA_Q_DIRECT_LDS` and reported a
+loop regression from it. **Three of the edits were not actually gated** -- Q's shared layout
+became `PaddedSharedLayout` unconditionally, the scale moved onto `q_dot` unconditionally, and
+the `wait_group(0)` was deleted rather than made conditional -- so the "switch off" build was
+not the previous kernel and the comparison was against the wrong thing. Everything is now
+inside the `if Q_DMA:` / `else:` split, including the layout, the allocation, the load, the
+position of the `q_dot` read and the `wait_group(0)`, and the result is checkable:
 
-    v_add_f32_e64  124 -> 122     s_nop  18 -> 16
-    v_add_u32_e32    0 -> 1       v_pk_add_f32  0 -> 1
+| assembly section | committed baseline | switch OFF | switch ON |
+|---|---:|---:|---:|
+| prologue | 655 | **655, identical** | 566 |
+| loop | 549 | **549, identical** | 547 |
+| epilogue | 1342 | **1342, identical** | 1356 |
 
--- 549 instructions becoming 547, with a **packed** f32 add appearing in a loop that 3.18 and
-the `fneg` work went to some trouble to keep unpacked. Splitting the two contributions with
-`--scale-on-q 0`, which moves the scale back into VEC1:
+With the switch off the kernel is byte-for-byte what it was. With it on, the loop assembly
+still changes -- and that is not a mistake in the source change. The source diff touches
+nothing but the prologue; register allocation and instruction selection are **whole-function**
+properties, so a prologue change propagates:
 
-    scale on q_dot        eff 91.8%   loop 276523
-    scale in VEC1         eff 93.1%   loop 272671
-    baseline, no DMA      eff 94.5%   loop 268638
+| | baseline | switch ON |
+|---|---:|---:|
+| kernel VGPRs | 256 | **246** |
+| distinct VGPRs used in the loop | 243 (highest v249) | 238 (highest v241) |
 
-So roughly half the regression is the scale's new position perturbing allocation and half is
-the DMA itself. Neither is inherent; both are the register allocator and the interleave
-responding to a changed prologue, which is the same lottery 3.27 saw (`fav3` +0.69% and `fav4`
--0.2% from one identical change). Chasing it means going back into the plugin, and the prize
-is bounded: even a *free* prologue would be worth 13431 cycles of 304087, 4.4% of cycles and
-~2.6% of time at the 60% conversion of 3.28.
+Q no longer occupies VGPRs on its way to LDS, peak pressure drops by 10, the allocator makes a
+different assignment across the whole function, and three things follow in the loop:
 
-**Kept behind `FA_Q_DIRECT_LDS=1`, default off.** The mechanism is right, it is validated
-bit-identically on both paths, and it is the only way to get Q to LDS without the blanket
-wait -- but as it stands the kernel is 0.3% worse in total cycles, so it does not become the
-default on the strength of an argument.
+    gained   v_pk_add_f32 v[196:197], v[66:67], v[164:165] op_sel_hi:[1,0] neg_lo neg_hi
+             v_add_u32_e32 v65, 0x1d880, v174
+    lost     2x v_add_f32_e64,  2x s_nop
+
+1. **The packed add is a fusion.** `neg_lo`/`neg_hi` on src1 makes it a *subtract*, and its
+   `.loc` is `p_4 = gl.exp2(qk_4 - m_new[:, None])` -- the softmax subtract. Under the new
+   assignment two of those subtracts landed in **even-aligned adjacent register pairs**, which
+   is precisely the precondition LLVM's packed-math formation looks for, so two
+   `v_add_f32_e64` became one `v_pk_add_f32`. Nothing asked for this; it is alignment luck.
+2. **`v_add_u32_e32 v65, 0x1d880, v174` is LDS address arithmetic.** Q's padded layout is
+   larger than the swizzled one it replaced, `q_smem` is allocated before `kt_smem`/`v_smem`,
+   so their base offsets shift and the loop needs one more add to reach them.
+3. **Two hazard `s_nop` become unnecessary** because the new assignment changes which
+   MFMA/VALU pairs are close enough to need padding.
+
+**And the packed op is not the cause of the slowdown.** Forcing it back apart with
+`AMDGCN_SCALARIZE_PACKED_FOPS=1` makes things *worse*, not better:
+
+    DMA, packed add present              eff 91.8%   loop 276523
+    DMA + AMDGCN_SCALARIZE_PACKED_FOPS   eff 90.5%   loop 280547
+    baseline                             eff 94.5%   loop 268638
+
+So the regression is not one bad instruction. It is the llirSched interleave landing
+differently on a differently-allocated loop -- the same lottery 3.27 measured, where one
+identical epilogue change gave `fav3` +0.69% and `fav4` -0.2%. Splitting the contributions
+with `--scale-on-q 0`, which moves the scale back into VEC1: 91.8% with the scale on `q_dot`,
+93.1% with it in VEC1, 94.5% baseline -- so roughly half the loss is the scale's new position
+perturbing allocation and half is the DMA's own pressure change.
+
+**Kept behind `FA_Q_DIRECT_LDS=1`, default off.** The prologue win is real and larger than
+3.26.6's probe managed, the mechanism is right, and both paths validate bit-identically. But
+the loop loss outweighs it, and the prize is bounded anyway: a *free* prologue would be 13431
+of 304087 cycles, 4.4% of cycles and ~2.6% of time at 3.28's 60% conversion. Recovering the
+loop means going back into the allocator's behaviour, not into the kernel.

@@ -396,59 +396,67 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     k_base = K + off_z * stride_kz + off_h_k * stride_kh
     v_base = V + off_z * stride_vz + off_h_k * stride_vh
 
-    # Q goes to LDS by the same direct global-to-LDS DMA the loop uses for K/V, so it never
-    # passes through VGPRs. That needs a DMA-writable *padded* shared layout instead of the
-    # swizzled one a register store used, plus an address layout to build the offsets from.
-    # Both are the V pattern extended along dim 0: V is [64, 128], Q is [256, 128], same
-    # contiguous dimension, so only the row bases grow -- 13 offset bases become 15, and the
-    # per-thread register bases 4 become 6 (32768 elements / 512 threads = 64 each, eight
-    # 16-byte DMA chunks). Bits: reg 6 + lane 6 + warp 3 = 15 = 2^15 = 256 x 128.
-    q_offset_bases: gl.constexpr = [
-        [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
-        [16, 0], [32, 0], [64, 0], [128, 0],
-        [1, 0], [2, 0], [4, 0], [8, 0]
-    ]
-    q_smem_layout: gl.constexpr = PaddedSharedLayout(
-        interval_padding_pairs=[[512, 32]],
-        offset_bases=q_offset_bases,
-        cga_layout=[],
-        shape=[BLOCK_M, BLOCK_DMODEL])
-    q_async_layout: gl.constexpr = DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0], [64, 0], [128, 0]],
-        lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
-        warp_bases=[[1, 0], [2, 0], [4, 0]],
-        block_bases=[],
-        shape=[BLOCK_M, BLOCK_DMODEL])
-    q_smem = gl.allocate_shared_memory(Q.dtype.element_ty, [BLOCK_M, BLOCK_DMODEL], layout=q_smem_layout)
-
     qk_scale: gl.constexpr = SM_SCALE * 1.44269504089
 
-    # A buffer DMA has no per-element mask, so a partial M tile would read Q out of bounds.
-    # The kernel's shape scope only guarantees N_CTX is a multiple of BLOCK_N, so take the
-    # DMA when the tile is full and fall back to the register-staged path when it is not
-    # (S=16320 with BLOCK_M=256, for instance).
+    # `FA_Q_DIRECT_LDS=1` loads the Q tile with the same global-to-LDS DMA the loop uses for
+    # K/V, so it never passes through VGPRs and the register path's blanket
+    # `s_waitcnt vmcnt(0)` disappears. A buffer DMA has no per-element mask, and the kernel's
+    # shape scope only guarantees `N_CTX % BLOCK_N == 0`, so a partial M tile falls back.
+    # Everything below is gated: with the switch off this is the register path, byte for
+    # byte. See note.md 3.29 -- the DMA wins the prologue and loses more in the loop.
     Q_DMA: gl.constexpr = Q_DIRECT_TO_LDS and N_CTX % BLOCK_M == 0
-    q_ad: gl.constexpr = gl.SliceLayout(dim=1, parent=q_async_layout)
-    q_an: gl.constexpr = gl.SliceLayout(dim=0, parent=q_async_layout)
-    q_off = (gl.arange(0, BLOCK_M, layout=q_ad)[:, None] * stride_qm
-             + gl.arange(0, BLOCK_DMODEL, layout=q_an)[None, :] * stride_qk)
 
-    # Issued here, at the top of the kernel, and *not* waited for: it is the oldest async
-    # group, so the prologue's existing `wait_group(2)` before the first QK drains it with
-    # K[0], and everything in between -- the layout setup and three more copies -- covers its
-    # latency. Issuing it further down instead cost 3505 cycles of prologue.
     if Q_DMA:
-        cdna4_async.buffer_load_to_shared(q_smem, q_base + start_m * BLOCK_M * stride_qm, q_off)
-        cdna4_async.commit_group()   # ACQ -- ahead of K[0], drained by the wait_group(2) below
+        # A DMA-writable *padded* shared layout, plus an address layout to build the offsets
+        # from. Both are the V pattern extended along dim 0: V is [64, 128], Q is [256, 128],
+        # same contiguous dimension, so only the row bases grow -- 13 offset bases become 15,
+        # and the per-thread register bases 4 become 6 (32768 elements / 512 threads = 64
+        # each, eight 16-byte DMA granules). Bits: reg 6 + lane 6 + warp 3 = 15 = 256 x 128.
+        q_smem_layout: gl.constexpr = PaddedSharedLayout(
+            interval_padding_pairs=[[512, 32]],
+            offset_bases=[
+                [0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [0, 64],
+                [16, 0], [32, 0], [64, 0], [128, 0],
+                [1, 0], [2, 0], [4, 0], [8, 0]
+            ],
+            cga_layout=[],
+            shape=[BLOCK_M, BLOCK_DMODEL])
+        q_async_layout: gl.constexpr = DistributedLinearLayout(
+            reg_bases=[[0, 1], [0, 2], [0, 4], [8, 0], [64, 0], [128, 0]],
+            lane_bases=[[0, 8], [0, 16], [0, 32], [0, 64], [16, 0], [32, 0]],
+            warp_bases=[[1, 0], [2, 0], [4, 0]],
+            block_bases=[],
+            shape=[BLOCK_M, BLOCK_DMODEL])
+        q_smem = gl.allocate_shared_memory(
+            Q.dtype.element_ty, [BLOCK_M, BLOCK_DMODEL], layout=q_smem_layout)
+        q_ad: gl.constexpr = gl.SliceLayout(dim=1, parent=q_async_layout)
+        q_an: gl.constexpr = gl.SliceLayout(dim=0, parent=q_async_layout)
+        q_off = (gl.arange(0, BLOCK_M, layout=q_ad)[:, None] * stride_qm
+                 + gl.arange(0, BLOCK_DMODEL, layout=q_an)[None, :] * stride_qk)
+        # Issued at the top of the kernel and *not* waited for: it is the oldest async group,
+        # so the prologue's existing `wait_group(2)` before the first QK drains it together
+        # with K[0]. `q_dot` is read there, and the scale applied to it, because with the DMA
+        # Q is never in registers on the way in. Issuing it further down cost 3505 cycles.
+        cdna4_async.buffer_load_to_shared(
+            q_smem, q_base + start_m * BLOCK_M * stride_qm, q_off)
+        cdna4_async.commit_group()   # ACQ
     else:
+        q_smem_layout: gl.constexpr = gl.SwizzledSharedLayout(
+            vec=8, per_phase=1, max_phase=16, order=[1, 0])
+        q_smem = gl.allocate_shared_memory(
+            Q.dtype.element_ty, [BLOCK_M, BLOCK_DMODEL], layout=q_smem_layout)
         q_ptrs = q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-        q = gl.load(q_ptrs, mask=offs_m[:, None] < N_CTX, other=0.0)
+        q_mask = offs_m[:, None] < N_CTX
+        q = gl.load(q_ptrs, mask=q_mask, other=0.0)
+        # SCALE_ON_Q (opt5, the default): fold qk_scale into Q ONCE here, outside the loop.
+        # qk then already carries the scale, so VEC1's per-element fma(qk, qk_scale, -m_new)
+        # collapses to a plain subtract and the row max needs no scale multiply -- it also
+        # shortens the row-max dependency chain. Costs one extra rounding of Q: max error
+        # 1.22e-04 vs 6.10e-05, both inside the 1e-3 tolerance. Worth ~+0.5%.
+        if SCALE_ON_Q:
+            q = (q.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)
         q_smem.store(q)
-    # The DMA itself is issued in the prologue below, as the group *before* K[0], so that
-    # the existing `wait_group(2)` drains Q and K[0] together and Q's latency is covered by
-    # the issue of three more copies. Staging Q through VGPRs is what used to force an
-    # `s_waitcnt vmcnt(0)` immediately after the loads -- 3512 cycles per wave, the single
-    # most expensive instruction in the kernel -- because the scale needed Q in registers.
+        q_dot = q_smem.load(q_dot_layout)
 
     m_i  = gl.full([BLOCK_M], float("-inf"), dtype=gl.float32, layout=mma_m_layout)
     l_i  = gl.full([BLOCK_M], 1.0,           dtype=gl.float32, layout=mma_m_layout)
@@ -539,8 +547,11 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     kt_step = BLOCK_N * stride_kn   # per-tile base pointer advance
     v_step = BLOCK_N * stride_vk
 
-    # (a `wait_group(0)` stood here. It was a no-op -- nothing had been issued yet --
-    # but with Q in flight it would drain ACQ and expose the very latency this hides.)
+    if not Q_DMA:
+        # No-op when nothing has been issued, which is the case on the register path. With Q
+        # in flight it would drain ACQ and expose the very latency the DMA path hides, so it
+        # is gated rather than deleted.
+        cdna4_async.wait_group(0)
 
 
     # Intended steady-state async depth: keep 2*BUF_DEPTH-2 == 2 commit groups in
@@ -579,11 +590,14 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # arithmetic in the same order and still once per kernel, but it no longer forces Q
     # through VGPRs, which is what lets the load above be a DMA. q_dot lives in registers
     # for every iteration, so scaling it here is scaling it once.
-    q_dot = q_smem.load(q_dot_layout)
-    if SCALE_ON_Q:
-        q_dot = (q_dot.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)
-    # note: with Q_DMA the wait_group(2) above covered ACQ; on the fallback path the store
-    # happened before the prefetches and Gluon's own shared-memory dependency handles it.
+    if Q_DMA:
+        # Q was DMA'd, so it is read here -- the wait_group(2) above covered ACQ -- and the
+        # scale is applied to the operand instead of to Q on its way in. Same arithmetic in
+        # the same order, still once per kernel, since q_dot lives in registers for every
+        # iteration.
+        q_dot = q_smem.load(q_dot_layout)
+        if SCALE_ON_Q:
+            q_dot = (q_dot.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)
     kt0 = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
     qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
     m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_i, qk_scale, SCALE_ON_Q)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
