@@ -2667,3 +2667,95 @@ exhausted intra-loop scheduling and the drain's instruction count:
 And what is *not* left: the loop. At matched efficiency the two loops are identical by
 construction, 3.25.4 showed the instruction streams differ by 3%, and both kernels sit at the
 top of their own re-scheduling curve.
+
+## 3.29 Direct-to-LDS Q: it works, and it loses (2026-07-29)
+
+3.26.7 traced both of the prologue's costs -- the 3512-cycle `s_waitcnt vmcnt(0)` and the 8
+`ds_write_b128` -- to one root cause: `SCALE_ON_Q` scales Q in registers, so the tile has to
+land in VGPRs before it can go to LDS. FlyDSL does not, and gets Q there with the same
+global-to-LDS DMA the loop uses for K/V. This implements that. `FA_Q_DIRECT_LDS=1`, off by
+default, because it costs more in the loop than it saves in the prologue.
+
+### 3.29.1 What it took
+
+**A DMA-writable shared layout for Q.** Q used `SwizzledSharedLayout`, which only a register
+store can write. K/V use `PaddedSharedLayout` plus a `DistributedLinearLayout` for the address
+computation, so Q needs the same pair. Both are the V pattern extended along dim 0 -- V is
+[64, 128], Q is [256, 128], same contiguous dimension -- so only the row bases grow:
+
+    offset_bases:  13 -> 15   ([64,0] and [128,0] added; 2^15 = 256 x 128)
+    reg_bases:      4 -> 6    (32768 / 512 threads = 64 elements each, eight 16-byte chunks)
+    lane_bases, warp_bases: unchanged from V
+
+The first three reg bases stay `[0,1],[0,2],[0,4]`, which is what makes each lane's 8 elements
+contiguous in both global memory and LDS -- the DMA's 16-byte granule.
+
+**The scale moves onto `q_dot`.** Applied to the operand read *out* of LDS rather than to Q on
+its way in. Same arithmetic in the same order, still once per kernel -- `q_dot` sits in
+registers for every iteration -- but Q no longer has to pass through VGPRs.
+
+**Issue early, wait late.** The copy is committed at the top of the kernel as the oldest async
+group, so the prologue's existing `wait_group(2)` before the first QK drains it together with
+K[0], and the layout setup plus three more copies cover its latency. No new wait is added.
+
+Three things went wrong on the way, all caught by the reference check:
+
+1. **The DMA base was missing `start_m * BLOCK_M * stride_qm`.** The register path picked that
+   up through `offs_m`; `q_base` does not carry it. Every workgroup read Q rows 0-255, giving
+   max_err 1.5e-01 -- and a *deterministic* error, which is what pointed away from the layout
+   and at the addressing.
+2. **A `wait_group(0)` sat just before the prologue's first copy.** It was a no-op when nothing
+   was in flight, but with Q outstanding it drained ACQ immediately and cost 3505 cycles of
+   prologue -- the exact latency the change exists to hide.
+3. A buffer DMA has no per-element mask, so a partial M tile would read Q out of bounds. The
+   kernel's scope only guarantees `N_CTX % BLOCK_N == 0`, so the DMA is taken when
+   `N_CTX % BLOCK_M == 0` and the register path is kept as a constexpr fallback (S=16320 uses
+   it).
+
+### 3.29.2 It does what was asked
+
+| prologue, static | register-staged | direct-to-LDS |
+|---|---:|---:|
+| `global_load_dwordx4` (Q into VGPRs) | 8 | **0** |
+| `ds_write_b128` (VGPRs into LDS) | 8 | **0** |
+| `s_waitcnt vmcnt(0)` | 1 | **0** |
+| `buffer_load ... lds` | 10 | 18 |
+| instructions | 655 | 569 |
+| VGPRs (whole kernel) | 256 | **246** |
+
+| per workgroup, traced | baseline | direct-to-LDS |
+|---|---:|---:|
+| prologue | 16428.8 | **13431** (-18%) |
+| epilogue | 14860.0 | 14929 |
+| **loop** | **268638** | **276523 (+2.9%)** |
+| in-loop MFMA efficiency | 94.5% | **91.8%** |
+| total | 304087 | 304883 |
+
+### 3.29.3 And the loop pays for it
+
+The prologue win is real and larger than 3.26.6's counted-wait probe managed. The loop loss is
+larger still, and it is a **codegen knock-on, not a property of the change**: the loop body is
+not touched by any of this, yet its instruction stream comes out different --
+
+    v_add_f32_e64  124 -> 122     s_nop  18 -> 16
+    v_add_u32_e32    0 -> 1       v_pk_add_f32  0 -> 1
+
+-- 549 instructions becoming 547, with a **packed** f32 add appearing in a loop that 3.18 and
+the `fneg` work went to some trouble to keep unpacked. Splitting the two contributions with
+`--scale-on-q 0`, which moves the scale back into VEC1:
+
+    scale on q_dot        eff 91.8%   loop 276523
+    scale in VEC1         eff 93.1%   loop 272671
+    baseline, no DMA      eff 94.5%   loop 268638
+
+So roughly half the regression is the scale's new position perturbing allocation and half is
+the DMA itself. Neither is inherent; both are the register allocator and the interleave
+responding to a changed prologue, which is the same lottery 3.27 saw (`fav3` +0.69% and `fav4`
+-0.2% from one identical change). Chasing it means going back into the plugin, and the prize
+is bounded: even a *free* prologue would be worth 13431 cycles of 304087, 4.4% of cycles and
+~2.6% of time at the 60% conversion of 3.28.
+
+**Kept behind `FA_Q_DIRECT_LDS=1`, default off.** The mechanism is right, it is validated
+bit-identically on both paths, and it is the only way to get Q to LDS without the blanket
+wait -- but as it stands the kernel is 0.3% worse in total cycles, so it does not become the
+default on the strength of an argument.
