@@ -1,8 +1,8 @@
-# Flash Attention on gfx950 (CDNA4) in Gluon
+# FMHA on gfx950 (CDNA4) in Gluon
 
-Forward flash-attention kernels for gfx950 (MI350 / MI355X), written in Triton Experimental
-**Gluon**. Two kernels, `fmha_v3` and `fmha_v4`, share one pipeline architecture and differ in how
-they handle the softmax rescale.
+Forward **FMHA** — flash multi-head attention — kernels for gfx950 (MI350 / MI355X), written in
+Triton Experimental **Gluon**. Two kernels, `fmha_v3` and `fmha_v4`, share one pipeline
+architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
@@ -15,8 +15,8 @@ five, and what each step costs.
 
 That efficiency number is what the rest of this document is about. 94.5% means the matrix pipe
 takes a new MFMA in 94.5% of the loop's cycles, and the missing 5.5% is time the SIMD spent
-issuing something it could not hide behind one. So the design question is what *else* a flash
-attention kernel has to issue, and where that work can go.
+issuing something it could not hide behind one. So the design question is what *else* an FMHA
+kernel has to issue, and where that work can go.
 
 ---
 
