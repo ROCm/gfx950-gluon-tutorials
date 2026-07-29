@@ -113,12 +113,24 @@ from f16_fa_gfx950_common import (
 LAZY_RESCALE_THRESHOLD = tl.constexpr(8.0)
 
 
-# Direct-to-LDS Q (FA_Q_DIRECT_LDS=1). Loads the Q tile with the same global-to-LDS DMA the
-# loop uses for K/V instead of staging it through VGPRs, which removes the blanket
-# `s_waitcnt vmcnt(0)` the register path forces. It does what it says -- prologue 16429 ->
-# 13431 cycles per workgroup, 8 `global_load` and 8 `ds_write` gone, VGPRs 256 -> 246 -- but
-# the loop regresses 2.9% (in-loop MFMA efficiency 94.5% -> 91.8%) on a codegen knock-on,
-# and that is larger than the prologue win. Off by default; see note.md 3.29.
+# FUTURE WORK -- off by default, and left in place rather than reverted so it can be picked
+# up. `FA_Q_DIRECT_LDS=1` loads the Q tile with the same global-to-LDS DMA the loop uses for
+# K/V instead of staging it through VGPRs, which removes the blanket `s_waitcnt vmcnt(0)`
+# the register path forces.
+#
+# It does what it says: prologue 16429 -> 13313 cycles per workgroup, 8 `global_load` and 8
+# `ds_write` gone, VGPRs 256 -> 246, and both paths validate bit-identically. It is not the
+# default because the *loop* regresses 2.9% (in-loop MFMA efficiency 94.5% -> 91.8%) for two
+# reasons that live outside this kernel:
+#
+#   - deferring the `q_dot` read past the K/V allocation extends `q_smem`'s live range, so
+#     Triton can no longer overlay it with `kt_smem`/`v_smem`; LDS goes 68016 -> 134560 B and
+#     the K/V offsets stop fitting a `ds_read`'s 16-bit `offset:` field (note.md 3.29.4);
+#   - the lower register pressure makes the allocator reassign across the whole function, and
+#     the llirSched interleave lands differently on the result (3.29.3).
+#
+# Picking it up means addressing one of those, not this code. With the switch off, the
+# generated prologue, loop and epilogue are byte-identical to the build before this existed.
 Q_DIRECT_TO_LDS = tl.constexpr(os.environ.get("FA_Q_DIRECT_LDS", "0") == "1")
 
 

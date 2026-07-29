@@ -3072,3 +3072,25 @@ assembly probe rather than fixed by this plugin.
    scope. Every pass takes a single `BasicBlock`, so this is a rework, not a predicate change.
 3. Or drop the whole approach for this kernel and fix it where it originates: LLVM's
    MachineLICM declined to hoist with 10 VGPRs still available (3.29.5).
+
+### 3.29.6 Status: parked
+
+`FA_Q_DIRECT_LDS` stays **off**, and the code stays in `fav4.py` rather than being reverted,
+so it can be picked up. With the switch off the generated prologue, loop and epilogue are
+byte-identical to the build before any of this existed (655 / 549 / 1342 instructions,
+verified against 241a047), so nothing shipped is carrying the experiment.
+
+What a future attempt has to solve is not in this code:
+
+1. **The LDS overlay.** `q_smem` and `kt_smem`/`v_smem` share 64 KB today only because
+   `q_dot` is read before the K/V buffers are allocated. Deferring that read -- which is what
+   covers the DMA's latency -- doubles the allocation and pushes the K/V offsets past a
+   `ds_read`'s 16-bit field (3.29.4). Either the read moves back and the wait returns, or the
+   two allocations have to be made to share explicitly.
+2. **The allocator.** Freeing 10 VGPRs changes the assignment across the whole function and
+   the llirSched interleave lands differently on it (3.29.3) -- worth -2.7 efficiency points
+   here, and not something the kernel source controls.
+
+Neither is a Gluon-level problem, which is why this is parked rather than pursued. The
+prologue win it demonstrates is real and is the largest single one found: 3116 cycles per
+workgroup, ~19% of the prologue.
