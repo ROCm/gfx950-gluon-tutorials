@@ -84,7 +84,6 @@ from triton.experimental.gluon.language._layouts import (
 
 
 from f16_fa_gfx950_common import (
-    compute_dot1_qk,
     get_shape_from_layout,
     get_strides_from_layout,
     MetaData,
@@ -605,7 +604,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
         if SCALE_ON_Q:
             q_dot = (q_dot.to(gl.float32) * qk_scale).to(Q.dtype.element_ty)
     kt0 = cdna4_async.load_shared_relaxed(kt_smem.index(0), kt_dot_layout)                    # LRK[0] -> K regs tile 0
-    qk = compute_dot1_qk(q_dot, kt0, BLOCK_M, BLOCK_N, mma_layout)  # dot_qk[0] -> qk[0]
+    qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+    qk = mfma_cdna4(q_dot, kt0, qk)  # dot_qk[0] -> qk[0]
     m_run, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, alpha_c = sc_vec1(qk, m_i, qk_scale, SCALE_ON_Q)   # VEC1[0] -> m_new[0], p[0], alpha[0]=0
 
     gl.barrier()                                                   # WAR: LRK[0] ds_read vs K[2] write
@@ -632,7 +632,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
         # even tile (block_n): LDS slots cur=0, next=1
         with warp_pipeline_stage("dot1"):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+            qk = mfma_cdna4(q_dot, kt_dot, qk)   # dot_qk
             l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2 (sum+cvt; rescale in prior mem2)
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
@@ -651,7 +652,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
 
         # odd tile (block_n+1): LDS slots cur=1, next=0
         with warp_pipeline_stage("dot1"):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+            qk = mfma_cdna4(q_dot, kt_dot, qk)   # dot_qk
             l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2 (sum+cvt; rescale in prior mem2)
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
@@ -672,7 +674,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     if ODD_TAIL:
         block_n = block_start + main_loop_pairs * 2
         with warp_pipeline_stage("dot1"):
-            qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk
+            qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+            qk = mfma_cdna4(q_dot, kt_dot, qk)   # dot_qk
             l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)   # VEC2
         cdna4_async.wait_group(WAIT_LOOP - 1)
         with warp_pipeline_stage("mem1"):
@@ -701,7 +704,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     s_nm1 = ((nm1 - block_start) % BUF_DEPTH).to(tl.int32)
 
     # output tile n-3 (also issues the final V prefetch, ACV[n-1])
-    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-2]
+    qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+    qk = mfma_cdna4(q_dot, kt_dot, qk)   # dot_qk[n-2]
     cdna4_async.wait_group(2)                                           # V[n-3] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm3), v_dot_layout)                    # LRV[n-3]
     l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)  # VEC2[n-3] (rescale done in loop's last mem2)
@@ -715,7 +719,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     kt_dot = cdna4_async.load_shared_relaxed(kt_smem.index(s_nm1), kt_dot_layout)                 # LRK[n-1] -> K regs tile n-1
 
     # output tile n-2
-    qk = compute_dot1_qk(q_dot, kt_dot, BLOCK_M, BLOCK_N, mma_layout)   # dot_qk[n-1]
+    qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
+    qk = mfma_cdna4(q_dot, kt_dot, qk)   # dot_qk[n-1]
     cdna4_async.wait_group(1)                                           # V[n-2] complete
     v_dot = cdna4_async.load_shared_relaxed(v_smem.index(s_nm2), v_dot_layout)                    # LRV[n-2]
     l_i, p_dot = sc_vec2(l_i, p_c_0123, p_c_4, qk_c_5, qk_c_6, qk_c_7, m_run, p_dot_layout, q_dot.dtype, qk_scale, SCALE_ON_Q)  # VEC2[n-2]

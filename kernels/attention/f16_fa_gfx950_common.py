@@ -12,7 +12,6 @@ import torch
 import triton.language as tl
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
-from triton.experimental.gluon.language.amd.cdna4 import mfma as mfma_cdna4
 
 # ---------------------------------------------------------------------------
 # Kernel-side helpers
@@ -47,20 +46,6 @@ def _nan_propagating_max(a, b):
 def nan_propagating_max(x, axis):
     """Reduce-max using IEEE 754 maximum (propagates NaN)."""
     return gl.reduce(x, axis, _nan_propagating_max)
-
-
-@gluon.jit
-def compute_dot1_qk(
-    q_dot,
-    kt_dot,
-    BLOCK_M: gl.constexpr,
-    BLOCK_N: gl.constexpr,
-    mma_layout: gl.constexpr,
-):
-    """DOT1: compute QK^T from register operands. Returns unscaled qk scores."""
-    qk = gl.zeros([BLOCK_M, BLOCK_N], dtype=gl.float32, layout=mma_layout)
-    qk = mfma_cdna4(q_dot, kt_dot, qk)
-    return qk
 
 
 # ---------------------------------------------------------------------------

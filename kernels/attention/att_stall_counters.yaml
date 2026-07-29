@@ -1,0 +1,48 @@
+# Extra ATT perf-counter definitions for the fav3 mfma-bubble investigation.
+# Giovanni's non-public SQ stall counters are not in ROCm's counter_defs.yaml,
+# so define them here and pass with `rocprofv3 ... -E att_stall_counters.yaml`.
+#
+# Event ids are the gfx950 SQ_PERF_SEL_* enum values (verified: enum == the
+# gfx950 `event:` used by counter_defs.yaml, e.g. VALU_MFMA_BUSY_CYCLES=93,
+# ACTIVE_INST_VALU=120, WAIT_INST_LDS=112 all match).
+#
+# Collect (SE0 + SIMD0, iteration [8], fav3 + llirSched ON):
+#   rocprofv3 --att -i att_attn_simd0.json -E att_stall_counters.yaml \
+#     --att-perfcounter-ctrl 1 \
+#     --att-perfcounters "SQ_STALL_PIT:0x1 SQ_PT_POWER_STALL:0x1 SQ_VALU_SRC_C_CONFLICT:0x1 SQ_VALU_DEP_STALL:0x1" \
+#     -d <out> -- python bench.py ...
+rocprofiler-sdk:
+  counters-schema-version: 1
+  counters:
+  - name: SQ_STALL_PIT
+    description: "Total PIT stall cycles (SQ stalled a valid instruction). SQ_PERF_SEL_STALL_PIT."
+    properties: []
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 226
+  - name: SQ_PT_POWER_STALL
+    description: "Cycles the power throttle indicated ALU should stall. SQ_PERF_SEL_PT_POWER_STALL."
+    properties: []
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 164
+  - name: SQ_VALU_SRC_C_CONFLICT
+    description: "Cycles VALU is stalled by arbitration due to src-C port conflict. SQ_PERF_SEL_VALU_SRC_C_CONFLICT."
+    properties: []
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 158
+  - name: SQ_VALU_DEP_STALL
+    description: "Cycles VALU is stalled by previous instructions due to dependencies. SQ_PERF_SEL_VALU_DEP_STALL."
+    properties: []
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 148
