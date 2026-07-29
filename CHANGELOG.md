@@ -5,11 +5,12 @@ compiler / Triton evolution.
 
 ---
 
-## 2026-07-29 — Re-pin to `gfx950-tutorial-v2.0` (Gluon `warp_predicate`, warp-pipeline barriers)
+## 2026-07-29 — New Triton tag `gfx950-tutorial-v2.0` (Gluon `warp_predicate`, warp-pipeline barriers)
 
-The pinned Triton tag moves from `gfx950-tutorial-v1.1` to
-[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0),
-two commits on top of `v1.1`:
+[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+is `gfx950-tutorial-v1.1` plus two commits. **It is the pin for the attention kernels only** —
+the GEMM kernels stay on `v1.1`, and their recorded numbers stay as measured there until they
+are re-measured on `v2.0`.
 
 - **`gl.warp_predicate`** — a per-wave masked-skip region lowering to `s_and_saveexec` +
   `s_cbranch_execz`, with no cross-wave reduction and no barrier. `kernels/attention/fav4.py`
@@ -21,11 +22,11 @@ two commits on top of `v1.1`:
   out of the MFMA stages.
 
 - **LLVM pin unchanged (`850a2b1b`).** Both tags carry the same LLVM, so the out-of-tree
-  LLIR-scheduler plugin (`plugins/llir_scheduler/libLlirSched.so`) is **not** rebuilt.
-- **No GEMM impact.** The barrier change fires for every warp-pipeline kernel, so it was A/B'd
-  against `v1.1`: all four `inter_wave` kernels (a16w16 fp16/bf16, a8w8, a4w4) pass their
-  correctness checks and compile to **byte-identical assembly**, as do both attention kernels.
-  The GEMM numbers recorded in this file and in the kernel READMEs therefore stand as measured.
+  LLIR-scheduler plugin (`plugins/llir_scheduler/libLlirSched.so`) is **not** rebuilt, and the
+  one `.so` works against either tag. This is the first re-pin where that holds.
+- **The barrier change fires for every warp-pipeline kernel**, not just attention, so it was
+  checked against `v1.1` before tagging: all four `inter_wave` GEMM kernels (a16w16 fp16/bf16,
+  a8w8, a4w4) pass their correctness checks on both tags.
 
 ## 2026-07-29 — Flash Attention forward kernels (`kernels/attention/`)
 

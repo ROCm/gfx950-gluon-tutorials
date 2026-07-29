@@ -30,13 +30,10 @@ each scheduling region and routes it to one of two models:
 
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
-Triton is built with**. This tutorial pins Triton to
-[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0),
-whose LLVM is commit **`850a2b1b`** (see `cmake/llvm-info.json`). If the Triton /
-LLVM pin changes, **rebuild the `.so`**.
-
-> The `v1.1` → `v2.0` re-pin did **not** move LLVM — both tags carry `850a2b1b` — so
-> the shipped `libLlirSched.so` is unchanged and needs no rebuild.
+Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) for the GEMM
+kernels and [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0) for the attention kernels.
+**Both tags carry the same LLVM, commit `850a2b1b`** (see `cmake/llvm-info.json`), so the
+one prebuilt `.so` works with either. If the LLVM pin itself moves, **rebuild the `.so`**.
 
 ## Build
 Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-850a2b1b-*`):
@@ -51,7 +48,7 @@ The plugin does **not** link LLVM; it resolves LLVM symbols from `libtriton` at
 load time (see prerequisites).
 
 ## Triton prerequisites
-The `gfx950-tutorial-v2.0` pin carries the source change this plugin needs: it
+Both pins carry the source change this plugin needs: it
 *keeps the TargetMachine for LLVM plugins* via `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`,
 without which `optimize_module` runs all of O3 with no target machine and codegen
 regresses. The one thing left to the builder is symbol visibility:
