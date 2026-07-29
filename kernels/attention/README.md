@@ -9,11 +9,11 @@ they handle the softmax rescale.
 Tuned, `fmha_v4` reaches **1318 TFLOPS** at **94.5%** in-loop MFMA efficiency per SIMD, and
 `fmha_v3` 1243 at 86.2%. The reference point is ROCm/FlyDSL, whose published configuration reaches
 **1320** on this shape from **84.7%** efficiency — level with `fmha_v4` on throughput, ten points
-behind it on how much of the matrix pipe's time goes to matrix work. The other bar in each group is
+behind it on how much of the matrix pipe's time goes to matrix work. The orange bar in each group is
 the same kernel source built without the scheduling plugin. [§9](#9-results) works through what separates all
 five, and what each step costs.
 
-The efficiency column is what the rest of this document is about. 94.5% means the matrix pipe
+That efficiency number is what the rest of this document is about. 94.5% means the matrix pipe
 takes a new MFMA in 94.5% of the loop's cycles, and the missing 5.5% is time the SIMD spent
 issuing something it could not hide behind one. So the design question is what *else* a flash
 attention kernel has to issue, and where that work can go.
@@ -641,7 +641,7 @@ equally. Every row here is stable to about 2 TFLOPS.
 | `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
 | `fmha_v3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
 
-**What lazy rescaling is worth** is the distance across the two groups: **+5.0%** on stock LLVM
+**What lazy rescaling is worth** is the distance between the two kernels: **+5.0%** on stock LLVM
 (1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency column says something the
 throughput column does not, though. Stock LLVM cannot tell the two kernels apart where it counts —
 67.8% against 68.5%, **+0.7 points** — while the tuned rows are **8.3 points** apart. Lazy
@@ -651,7 +651,7 @@ pays if something spends it. **Its price** is that `fmha_v4` cannot be written i
 skipping the rescale per wave needs `gl.warp_predicate` — and that removing the rescale unbalances
 the two dot clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
-**What the scheduling is worth** is the distance within each group, from the stock build to the
+**What the scheduling is worth** is the distance within each kernel, from its stock build to its
 tuned one: **+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms
 **+26.0** and **+18.4 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
