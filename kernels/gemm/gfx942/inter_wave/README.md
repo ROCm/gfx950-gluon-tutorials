@@ -1,140 +1,185 @@
 # inter_wave — 8-wave warp-pipeline a16w16 GEMM for gfx942 / MI300X
 
-Port of the gfx950 tutorial's [`inter_wave/a16w16`](../../inter_wave/a16w16):
-8 warps/CTA = **2 waves/SIMD**, the hot loop split into `warp_pipeline_stage`
-clusters so the two wave groups run a stage out of phase — while one group is on
-the matrix unit, the other issues its loads and absorbs the waits.
+8 warps per CTA = **2 waves per SIMD**, `warps_per_cta = [2, 4]`, tile
+256×256×64, `v_mfma_f32_16x16x16_f16`. The hot loop is eight barrier-delimited
+regions with memory and matrix work **strictly alternating**, so the two wave
+groups ping-pong: while one group holds the matrix unit the other issues its
+global loads, LDS reads and LDS writes.
 
 ```bash
-cd ..                                            # kernels/gemm/gfx942
-python bench.py -k inter_wave                     # correctness + TFLOPS
-python bench.py -k inter_wave --K 4160 --dtype fp16 --show-clock
-rocprofv3 --kernel-trace -f csv -d out -- python bench.py -k inter_wave --K 4160 --rocprof
+cd ..                                              # kernels/gemm/gfx942
+python bench.py -k inter_wave                      # correctness + TFLOPS
+python tools/bench_prepared.py --kernel inter_wave --gpus all   # sustained timing
+python tools/lds_conflict.py  --kernel inter_wave              # LDS bank conflicts
+python tools/run_att.py inter_wave --K 8256 --out att_inter    # ATT trace
 ```
 
-No environment variables needed; the no-AGPR setting is baked into the launch.
-
-## Configuration
-
-| | |
-|---|---|
-| tile M×N×K | 256 × 256 × 64 |
-| warps / CTA | 8, `warps_per_cta = [2, 4]` |
-| MFMA | `AMDMFMALayout(version=3, instr_shape=[16,16,16], transposed=True)`, `k_width=8` |
-| LDS | 4 × 16 KB half-tile slots, single-buffered, 65536 B total |
-| dot operands | read as **K=32 slices** of the K=64 LDS tile |
-| regions / K-step | 8 (4 quadrants × 2 K-slices) |
-| accumulators | VGPR (`amdgpu-agpr-alloc=0,0`) |
-| codegen | 224 VGPR, 0 AGPR, 0 spills, **2 waves/SIMD** |
-
-The memory pipeline is inherited unchanged from [`intra_wave`](../intra_wave/):
-`buffer_load → local_store → local_load` (no `buffer_load_to_shared` on CDNA3)
-and per-half-tile LDS slot recycling (64 KB is exactly one stage).
-
-## What is specific to the 8-wave kernel
-
-### The register wall
-
-Two waves per SIMD split the unified 512-register file, so each wave gets **256
-registers, VGPR and AGPR together**. AGPRs buy no capacity at this occupancy —
-hence `amdgpu-agpr-alloc=0,0`, the opposite of the 4-wave kernel. Budgeting a
-256×256×64 stage against 256:
-
-```
-accumulators   4 × [128×128] f32 / (8 × 64)   = 128
-dot operands   4 live half-tiles (K=64)        =  96
-global staging 4 half-tiles                    =  32
-                                                 ---
-                                                 256   before addressing
-```
-
-Built that way it compiles to 256 VGPRs **with 28 spill slots** and runs at 279
-TFLOPS. The dot operands are the only compressible term, so they are read as
-**K=32 slices** of the same K=64 LDS tile — `smem.slice(0, 32, k_dim)` and
-`slice(32, 32, k_dim)` — halving that term to 48 and landing at 224 VGPR, 0
-spills, 2 waves/SIMD, 510 TFLOPS.
-
-Slicing on the *read* side only is deliberate. Dropping `BLOCK_K` to 32 would cut
-the same registers, but it also halves the contiguous run of every global load
-from 128 B to 64 B, doubling TCP cache-line pressure: that variant measured 386
-TFLOPS, and ablating its `buffer_load`s moved it to 503, i.e. the loads were
-costing 30%. Keeping `BLOCK_K=64` for the global side and slicing only the LDS
-read gets both.
-
-### The region schedule
-
-Slicing K doubles the region count to 8, which is also what the warp pipeline
-wants: a K-step is 256 MFMA/SIMD ≈ 4096 cycles, so 8 regions put a cluster
-boundary every ~512 cycles — the same barrier cadence as the gfx950 8-wave
-kernel, where 4 regions of a 2×-faster MFMA give the same interval. A 4-region
-version of this kernel (one boundary per ~1024 cycles) and a `BLOCK_K=32`
-version (one per ~256 cycles) both measured slower.
-
-```
-region   DOT                      LR (next region's operand)   LW / GR
---------------------------------------------------------------------
-R0   C_tl += A_t[k0] B_l[k0]      A_b[k0]                      -
-R1   C_bl += A_b[k0] B_l[k0]      B_r[k0]                      -
-R2   C_tr += A_t[k0] B_r[k0]      A_t[k1]                      -
-R3   C_br += A_b[k0] B_r[k0]      B_l[k1]                      A_top
-R4   C_tl += A_t[k1] B_l[k1]      A_b[k1]                      B_left
-R5   C_bl += A_b[k1] B_l[k1]      B_r[k1]                      A_bot
-R6   C_tr += A_t[k1] B_r[k1]      B_l[k0] of tile k+1          B_right
-R7   C_br += A_b[k1] B_r[k1]      A_t[k0] of tile k+1          -
-```
-
-Each operand register is overwritten exactly one region after its last use, so
-four live slices suffice — no doubling. Each LDS slot is refilled one region
-after its last read (`A_top` read last in R2, refilled in R3; `B_left` R3/R4;
-`A_bot` R4/R5; `B_right` R5/R6), so one barrier per region boundary is both
-sufficient and correct, and the producer→consumer window spans well over the two
-stages that [`docs/warp_pipelining.md` §7](../../../../docs/warp_pipelining.md)
-requires when the groups are a stage apart.
-
-The `"mem"` cluster carries the higher `s_setprio` (1 vs 0), as the tutorial
-prescribes, so its address VALU keeps issuing while the other group is on the
-matrix unit. The generated assembly confirms the schedule: the pre-loop
-`s_and_saveexec_b64` / `s_cbranch_execz` / `s_barrier` is the `cond_barrier`
-phase shift, and every cluster boundary carries an `s_setprio` + `s_barrier`.
+No environment variables needed — the no-AGPR setting is baked into the launch.
 
 ## Performance
 
-MI300X, `do_bench` median of 3. Shapes are the gfx942-native ones: N=4864 gives
-a 16×19 = 304-workgroup grid (one per CU, no tail), and K is an odd multiple of
-64 so A's row stride is not a power of two. See the [gfx942 README §3.1](../README.md)
-for why that is worth ~20-30%, and §3.3 on power throttling.
+GPU 3 of an MI300X node, 4096×4864×8256, via `tools/bench_prepared.py`: prepared
+launch, 3 rotating tensor sets, 1000 dispatches, **mean of the last 100**, timed
+with `rocprofv3 --kernel-trace`. Efficiency from ATT.
 
-**fp16**
+| | TFLOPS | cyc/iter | mfma/iter/wave | per-wave | **per-SIMD MFMA eff** |
+|---|---|---|---|---|---|
+| fp16 | **606.8** | 4192.5 | 128 | 48.85% | **97.70%** |
+| bf16 | **648.1** | 4158.2 | 128 | 49.25% | **98.51%** |
 
-| M | N | K | inter_wave | 4-wave | torch | vs torch |
-|---|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 572 | 534 | 579 | 0.99 |
-| 4096 | 4864 | 4160 | **622** | 567 | 620 | 1.00 |
-| 4096 | 4864 | 8256 | **575** | 561 | 572 | 1.01 |
-| 4096 | 4864 | 16448 | **611** | 575 | 586 | 1.04 |
+Per-SIMD is the meaningful figure: the matrix unit is a per-SIMD resource, so for
+a 2-wave-per-SIMD kernel it is the per-wave fraction × 2. At ~98% the loop is
+essentially at the matrix-unit ceiling.
 
-**bf16**
+Against Triton's own `BlockPingpong` reference (`03-matrix-multiplication.py` at
+256×256×64 / `num_warps=8`, with the loop-variant K mask removed so pingpong
+fires):
 
-| M | N | K | inter_wave | 4-wave | torch | vs torch |
-|---|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | **609** | 565 | 595 | 1.02 |
-| 4096 | 4864 | 4160 | **651** | 586 | 647 | 1.01 |
-| 4096 | 4864 | 8256 | **609** | 567 | 602 | 1.01 |
-| 4096 | 4864 | 16448 | **659** | 600 | 623 | 1.06 |
+| | cyc/iter | per-SIMD | TFLOPS | MFMA | clock |
+|---|---|---|---|---|---|
+| **this kernel** | **4192.5** | **97.70%** | **606.8** | `16x16x16` | 1.20–1.26 GHz |
+| Triton pingpong | 4273.8 | 95.84% | 543.0 | `32x32x8` | 1.023 GHz |
 
-TFLOPS. Consistently 7-10% ahead of the 4-wave kernel and at or above hipBLASLt
-on every shape, which is what warp-pipelining is supposed to buy on gfx942: the
-4-wave kernel loses 41% to LDS barriers it cannot hide, and here the co-resident
-wave group hides them.
+Ahead on both cycles and efficiency, and further ahead on wall clock because
+`16x16x16` is less power-dense than `32x32x8`: this part sits on a 750 W cap, so
+the reference's denser MFMA stream clocks itself down. **Compare cycles, not
+microseconds** — see [../README.md](../README.md) §3.3.
 
-**These wall-clock numbers understate the gap.** ATT traces (see the
-[gfx942 README §3.4-3.5](../README.md)) put per-SIMD MFMA
-efficiency at **86.5% here vs 69.7%** for the 4-wave kernel, and the traced
-dispatch at 715k cycles vs 856k -- 16.5% fewer cycles, 17.8% less wall time at
-matched clock. Most of that advantage is eaten back in a benchmark loop because
-the denser MFMA stream draws more power and the 750 W cap clocks the part down;
-at K=8256 the two kernels end up only ~2% apart in `do_bench`.
+All tested shapes (`bench.py`, `do_bench`, correctness checked against fp32):
 
-`GROUP_SIZE_M` was swept over 1-16 with `bench.py --sweep-gm`:
-GM=1 and GM=2 cost 1-2%, and 4 through 8 are indistinguishable (spreads overlap).
-Left at 4.
+| M | N | K | fp16 | bf16 | torch fp16 |
+|---|---|---|---|---|---|
+| 4096 | 4864 | 2112 | 620.1 | 660.8 | 554.6 |
+| 4096 | 4864 | 4160 | 677.2 | 702.5 | 626.1 |
+| 4096 | 4864 | 8256 | 586.3 | 635.2 | 570.1 |
+| 4096 | 4864 | 16448 | 640.6 | 684.2 | 588.2 |
+
+Codegen: **240 VGPR, 0 AGPR, 0 spills, 2 waves/SIMD, 64 KB LDS**, and
+`SQ_LDS_BANK_CONFLICT` measures exactly **0**.
+
+How it got here:
+
+| | cyc/iter | per-SIMD | barriers/K-step |
+|---|---|---|---|
+| initial port (4 quadrants × 2 K-slices, 16 regions) | 4770.6 | 85.86% | 16 |
+| 8-region redesign | 4651.0 | 88.06% | 8 |
+| **+ conflict-free swizzle** | **4192.5** | **97.70%** | 8 |
+
+## Design
+
+### Whole-tensor global and LDS writes, sliced LDS reads
+
+Global loads and LDS stores move whole tensors; reads and dots work on
+half-tiles sliced out of the same buffers:
+
+```
+GR A / LW A    A[256 x 64]    4 x buffer_load_dwordx4  /  4 x ds_write_b128
+GR B / LW B    B[64 x 256]    4 x buffer_load_dwordx4  /  4 x ds_write_b128
+
+A_t = A[0:128, :]   A_b = A[128:256, :]   B_l = B[:, 0:128]   B_r = B[:, 128:256]
+```
+
+The slice is along M (for A) or N (for B) — never along K, the swizzled
+dimension — so the shared layout is undisturbed by slicing.
+
+### One LDS buffer; the registers are the pipeline
+
+```
+A[256 x 64] x 2 B  +  B[64 x 256] x 2 B  =  32 KB + 32 KB  =  64 KB
+```
+
+exactly MI300X's LDS, so double buffering is impossible — and unnecessary.
+**The pipelining buffer is the registers holding the in-flight global loads, not
+LDS.** LDS holds tile *k* while tile *k+1* is in flight from HBM; the
+`local_store` of *k+1* lands only after the last `local_load` of *k*.
+
+### The eight regions
+
+Region *k* processes tile *k* and prefetches tile *k+1*:
+
+| region | kind | work | instructions | cycles |
+|---|---|---|---|---|
+| 0 | mem | `GR B[k+1]`, `LR A_t[k]` | 4 `buffer_load_dwordx4` + 8 `ds_read_b128` | 256 |
+| 1 | dot | `C_tl += A_t × B_l` | 32 mfma | 512 |
+| 2 | mem | `GR A[k+1]`, `LR B_r[k]` | 4 `buffer_load_dwordx4` + 4 `ds_read_b128` | 128 |
+| 3 | dot | `C_tr += A_t × B_r` | 32 mfma | 512 |
+| 4 | mem | `LR A_b[k]`, `LW B[k+1]` | 8 `ds_read_b128` + 4 `ds_write_b128` | 384 |
+| 5 | dot | `C_bl += A_b × B_l` | 32 mfma | 512 |
+| 6 | mem | `LR B_l[k+1]`, `LW A[k+1]` | 4 `ds_read_b128` + 4 `ds_write_b128` | 256 |
+| 7 | dot | `C_br += A_b × B_r` | 32 mfma | 512 |
+
+Memory-region cycles are LDS-port time with 4 of the 8 waves in the memory phase
+at 128 B/clk. **Every memory region fits inside the dot region it ping-pongs
+against** (256/128/384/256 against 512) — that is the property which keeps the
+matrix unit fed, and the reason this schedule reaches ~98%.
+
+### Why this order
+
+**Dot order** `C_tl → C_tr → C_bl → C_br` together with **read order**
+`B_l → A_t → B_r → A_b` halves the operand registers. A_t is live only across
+regions 1–3 and A_b only across 5–7, so **the two share one register set**; B_l
+(used in 1 and 5) and B_r (used in 3 and 7) both span the body and need their
+own. Per lane, replicated across the warp grid:
+
+```
+A_t / A_b    [128x64] over WARPS_M=2     32 VGPR  (shared)
+B_l , B_r    [64x128] over WARPS_N=4     16 VGPR each
+C quadrants  4 x [128x128] f32          128 VGPR
+A,B staging  whole tiles / 8 waves        32 VGPR
+```
+
+Independent registers for all four half-tiles would cost 96 instead of 64 and
+spill. An earlier version avoided that by reading K=32 slices instead, at the
+price of 16 regions and twice the barriers.
+
+**GR/LW order** is B before A on both sides. Each store sits 2 dot regions
+(~1024 cycles) after its load, which is the global-latency cover; B is stored
+first because `LR B_l[k+1]` in region 6 needs it.
+
+**Hazards** are all closed by region boundaries: A is read in regions 0 and 4 and
+written in 6; B is read in 2 (and in 6, for *k+1*) and written in 4.
+
+### LDS layout — `SwizzledSharedLayout(8, 1, 8)`
+
+The three parameters place element `(r, c)` at column
+`((c / vec) ^ phase) * vec + (c % vec)`, with `phase = (r / per_phase) % max_phase`:
+
+* `vec = 8` — swizzle granularity; 8 fp16 = 16 B, which keeps `ds_read_b128` /
+  `ds_write_b128` legal.
+* `per_phase = 1` — one row per phase.
+* `max_phase = 8` — 8 distinct phases before the pattern repeats.
+
+`per_phase = 1`, **not 2**. The global-load layout has consecutive lanes walking
+consecutive rows, so lanes 0–15 of a `b128` access cover **two adjacent rows**.
+With `per_phase = 2` those rows share a phase, land on the same 32 banks, and
+every access replays. Measured with `tools/lds_conflict.py --sweep`:
+
+| | conflict ratio | cyc / LDS instr | `SQ_LDS_IDX_ACTIVE` |
+|---|---|---|---|
+| `(8, 2, 8)` | 0.750 | 14.00 | 3.514e9 |
+| **`(8, 1, 8)`** | **0.000** | **8.00** | **2.008e9** |
+
+8.00 cyc/instr is the floor (1024 B at 128 B/clk). Worth **−9.9% loop cycles** —
+the single largest win in this kernel.
+
+> [!WARNING]
+> `tools/layout_check.py`'s analytical model reports `(8, 2, 8)` as
+> conflict-free. It is wrong, and it is what led to the original choice. Trust
+> `SQ_LDS_BANK_CONFLICT` over the model.
+
+## Where the remaining time goes
+
+Per wave per iteration, from ATT:
+
+| | this kernel | Triton pingpong |
+|---|---|---|
+| mfma | 1972.0 | 1969.9 |
+| `s_barrier` | 801.9 | 631.6 |
+| `ds_write` | 529.9 | 293.9 |
+| `ds_read` | 284.2 | 560.4 |
+| `s_waitcnt` | 282.8 | 356.1 |
+
+`ds_read` is now half the reference's. `ds_write` is still 1.8× it: the
+reference's store region is *pure*, whereas regions 4 and 6 here still mix reads
+with writes and pay LDS read/write turnaround. Isolating all 8 `ds_write`s into
+one read-free region is the obvious next experiment.
