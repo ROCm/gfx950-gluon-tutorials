@@ -53,57 +53,76 @@ external `rocprofv3 --kernel-trace` timing.
 
 MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`.
 
-Headline numbers are at **M=4096, N=4864, K=8256** (see §3.1 for why that shape),
-from [`tools/bench_prepared.py`](tools/bench_prepared.py) on GPU 3: prepared
-launch, 3 rotating tensor sets, 1000 dispatches, **mean of the last 100**, timed
-with `rocprofv3 --kernel-trace`. `cyc/iter` and MFMA efficiency are per wave per
-K-step from an fp16 ATT capture.
-
-**4096 x 4864 x 8256**
-
-| | fp16 TF | bf16 TF | cyc/iter | mfma/iter/wave | **per-SIMD MFMA eff** |
-|---|---|---|---|---|---|
-| intra_wave (4-wave) | 611.3 | 655.1 | 4587.6 | 256 | 89.28% |
-| **inter_wave (8-wave)** | **606.8** | **648.1** | **4192.5** | 128 | **97.70%** |
-
-Per-SIMD is the comparable figure -- the matrix unit is a per-SIMD resource, so
-the 8-wave kernel's per-wave fraction doubles for its two co-resident waves. At
-~98% the 8-wave loop is essentially at the matrix-unit ceiling.
-
-For scale, Triton's own `BlockPingpong` schedule at the same 4096x4864x8256
-(`python/tutorials/03-matrix-multiplication.py`, tile 256x256x64, `num_warps=8`,
-with the loop-variant K mask removed so the pass fires) reaches 4273.8 cyc/iter
-and 95.84% per-SIMD at 543.0 TFLOPS. It uses `v_mfma_f32_32x32x8_f16`, which is
-more power-dense than the `16x16x16` used here and clocks down to 1.023 GHz for
-it -- so the 8-wave kernel above is ahead on cycles, on efficiency, and by a
-wider margin on wall clock. See §3.5.
-
-Across all tested shapes (`bench.py`, `do_bench` median, correctness checked
-against fp32; `torch` is hipBLASLt via `torch.matmul`):
+**One methodology for every number below**, so the tables are comparable with
+each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family), on
+**GPU 3** — the fastest of the node's eight, by median over three sweeps, spread
+4.0%. TFLOPS come from [`tools/bench_prepared.py`](tools/bench_prepared.py):
+prepared launch (compile once, arguments pre-bound, launch stub entered
+directly), 3 rotating tensor sets so no dispatch reads its predecessor's
+cache-resident operands, 1000 dispatches, **mean of the last 100** kernel
+durations from `rocprofv3 --kernel-trace`. `torch` is hipBLASLt via
+`torch.matmul` through the *same* harness. Per-SIMD MFMA efficiency is from ATT.
 
 **fp16**
 
-| M | N | K | intra_wave | inter_wave | torch |
+| K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 594.7 | **620.1** | 554.6 |
-| 4096 | 4864 | 4160 | 645.4 | **677.2** | 626.1 |
-| 4096 | 4864 | 8256 | 577.5 | **586.3** | 570.1 |
-| 4096 | 4864 | 16448 | 631.7 | **640.6** | 588.2 |
+| 2112 | 586.4 | 87.10% | **620.0** | 96.71% | 583.4 |
+| 4160 | 603.9 | 88.57% | **618.5** | 98.25% | 581.9 |
+| 8256 | **614.3** | 89.28% | 598.3 | 97.81% | 579.6 |
+| 16448 | 629.0 | 89.63% | **641.1** | 99.42% | 589.8 |
 
 **bf16**
 
-| M | N | K | intra_wave | inter_wave | torch |
+| K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 618.6 | **660.8** | 607.3 |
-| 4096 | 4864 | 4160 | 676.6 | **702.5** | 654.3 |
-| 4096 | 4864 | 8256 | 669.7 | 635.2 | 595.5 |
-| 4096 | 4864 | 16448 | 684.7 | **684.2** | 626.4 |
+| 2112 | 612.7 | 87.10% | **644.4** | 96.71% | 618.7 |
+| 4160 | 642.5 | 88.56% | **658.3** | 98.26% | 626.6 |
+| 8256 | 638.4 | 89.30% | **647.3** | 97.78% | 620.8 |
+| 16448 | 678.6 | 89.63% | **689.9** | 99.42% | 627.2 |
 
-TFLOPS. Both kernels beat hipBLASLt on every shape.
+`eff` is in-loop **per-SIMD** MFMA efficiency, the comparable figure: the matrix
+unit is a per-SIMD resource, so the 8-wave kernel's per-wave fraction doubles for
+its two co-resident waves. At 96.7–99.4% the 8-wave loop is essentially at the
+matrix-unit ceiling; the 4-wave one sits ~10 points back, and
+[`intra_wave/README.md`](intra_wave/README.md) shows via ablation that almost all
+of that gap is `ds_write` the MFMA stream cannot hide.
+
+Efficiency barely moves with dtype (fp16 and bf16 agree to three digits — the
+codegen is identical) but does move with K, from 96.7% at K=2112 to 99.4% at
+K=16448: a longer K means more loop iterations per prologue and better L2 reuse
+on the global loads.
+
+**inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8. intra_wave beats
+hipBLASLt on 7 of 8 — it loses bf16 K=2112 (612.7 vs 618.7).
+
+For scale, Triton's own `BlockPingpong` schedule at 4096×4864×8256
+(`python/tutorials/03-matrix-multiplication.py`, tile 256×256×64, `num_warps=8`,
+with the loop-variant K mask removed so the pass fires) reaches 4273.8 cyc/iter
+and 95.84% per-SIMD at 543.0 TFLOPS. It uses `v_mfma_f32_32x32x8_f16`, which is
+more power-dense than the `16x16x16` used here and clocks down to 1.023 GHz for
+it — so inter_wave is ahead on cycles, on efficiency, and by a wider margin on
+wall clock. See §3.5.
+
+Cycles per iteration per wave behind the efficiency column, for reference:
+
+| K | intra_wave | inter_wave |
+|---|---|---|
+| 2112 | 4702.5 | 4235.5 |
+| 4160 | 4624.8 | 4168.8 |
+| 8256 | 4587.7 | 4187.7 |
+| 16448 | 4569.8 | 4120.0 |
 
 Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills, 1 wave/SIMD; inter_wave 240
 VGPR, 0 AGPR, 0 spills, **2 waves/SIMD**. Both use exactly 65536 B of LDS, and
 both measure `SQ_LDS_BANK_CONFLICT` = **0**.
+
+> [!NOTE]
+> `bench.py` reports `do_bench` medians on the *default* device instead, so its
+> numbers will not match these: a different GPU (up to 4% across the node), a
+> timer that includes the Python launch path and inter-dispatch gaps rather than
+> kernel duration alone, and a shorter, cooler run. Use it for correctness
+> checking and quick iteration; use the tables above for reporting.
 
 ### 3.1 Why these shapes
 
@@ -195,12 +214,14 @@ wave-slot files (4 SE x 4 SIMD x `sl0`); the 8-wave kernel produces 32, adding
 (its `MFMA_CYCLE_MAP` already gives 16 cycles, correct for CDNA3's
 `v_mfma_f32_16x16x16_f16`):
 
+At K=8256 (all four K values are in §3):
+
 | | mfma/iter/wave | cycles/iter/wave | per-wave | **per-SIMD** |
 |---|---|---|---|---|
 | intra_wave, as first ported | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
-| intra_wave, current | 256 | 4587.6 | 89.3% | **89.3%** |
+| intra_wave, current | 256 | 4587.7 | 89.3% | **89.3%** |
 | inter_wave, as first ported | 128 | 4770.6 | 42.9% | **85.9%** (2 waves/SIMD) |
-| inter_wave, current | 128 | **4192.5** | 48.9% | **97.7%** |
+| inter_wave, current | 128 | **4187.7** | 48.9% | **97.8%** |
 
 Both kernels moved a long way from the initial port: intra_wave through the
 opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md), inter_wave
@@ -208,12 +229,12 @@ through the 8-region redesign in [`inter_wave/README.md`](inter_wave/README.md).
 The LDS bank-conflict fix in §4.3 is common to both and was worth -9.9% loop
 cycles on the 8-wave kernel.
 
-### 3.5 The TFLOPS tables understate the 8-wave kernel
+### 3.5 Why TFLOPS understates the 8-wave kernel
 
-The 8-wave kernel is **9.4% fewer cycles per K-step** than the 4-wave one
-(4192.5 vs 4587.6) and 8.4 points better on per-SIMD MFMA efficiency, yet the
-do_bench tables in §3 put them within ~2% at K=8256 and even favour the 4-wave
-kernel in bf16. The 750 W cap is why. A first capture pair taken
+The clearest case is fp16 K=8256 in §3: the 8-wave kernel runs **8.7% fewer
+cycles per K-step** (4187.7 vs 4587.7) at **8.5 points** higher per-SIMD MFMA
+efficiency, and still measures **lower** TFLOPS — 598.3 against 614.3. The 750 W
+cap is why. A first capture pair taken
 back-to-back without a cooldown recorded:
 
 | | cycles | wall | clock |
