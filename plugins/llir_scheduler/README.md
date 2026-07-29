@@ -1,12 +1,20 @@
 # LLIR Scheduler — out-of-tree LLVM pass plugin
 
-The LLIR scheduler (MFMA ↔ memory interleave for GEMM hot loops, described in the
-[a16w16 v5 README](../../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md)) is
-shipped here as an **out-of-tree LLVM pass plugin**. It is the `sched.barrier`
-variant: it reorders the MFMA/`ds_read`/
-`buffer_load` instructions in the LLVM-IR hot loop and pins the order with
-`llvm.amdgcn.sched.barrier(i32 0)` after each memory anchor, so LLVM's machine
-scheduler preserves the interleave (no misched-disable needed).
+The LLIR scheduler is shipped here as an **out-of-tree LLVM pass plugin**. It classifies
+each scheduling region and routes it to one of two models:
+
+- **MFMA ↔ memory — a throughput problem.** The original model, used by the GEMM hot loops
+  and described in the
+  [a16w16 v5 README](../../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md). It
+  reorders the MFMA/`ds_read`/`buffer_load` instructions in the LLVM-IR hot loop and pins
+  the order with `llvm.amdgcn.sched.barrier(i32 0)` after each memory anchor, so LLVM's
+  machine scheduler preserves the interleave (no misched-disable needed).
+- **MFMA ↔ VALU — a co-execution problem.** Used by the flash-attention dot clusters
+  ([`kernels/attention/`](../../kernels/attention/README.md) §6). Every vector op has to be
+  assigned to a specific MFMA's 24-cycle shadow, in the right form, or it falls outside and
+  costs cycles. Here the plugin does not reorder: it *declares* the intended pipeline with
+  `sched_group_barrier` and lets AMDGPU's IGroupLP construct it. A second algorithm handles
+  regions whose VALU demand exceeds the available shadow.
 
 > **Learn the algorithm** → [`llir_scheduler.html`](llir_scheduler.html). The illustrated
 > design reference walks through the whole pass: instruction classification, dependency-safe

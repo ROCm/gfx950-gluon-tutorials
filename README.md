@@ -17,7 +17,7 @@ cd kernels/gemm/intra_wave/a16w16
 python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
-Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling.
+Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling. Then [`kernels/attention/`](kernels/attention/README.md) takes the same reasoning to Flash Attention, where a third kind of instruction — the softmax's vector math — has to share a SIMD with the matrix pipe.
 
 > [!TIP]
 > Every version README follows the same shape: **Motivation → Design → Performance Analysis → What Comes Next.** If you only want the fastest FP16 kernel, jump to `v9_beyond_hotloop`. If you want to understand *why* it's fast, start from `v0_naive`.
@@ -29,10 +29,11 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 ```
 .
 ├── kernels/              # The tutorial — step-by-step kernel implementations
-│   └── gemm/
-│       ├── a16w16/       # FP16 GEMM, v0 → v9 (start here)
-│       ├── a8w8/         # BF8 GEMM — same design, adapted for 8-bit
-│       └── a4w4/         # MXFP4 GEMM with per-group microscaling
+│   ├── gemm/
+│   │   ├── a16w16/       # FP16 GEMM, v0 → v9 (start here)
+│   │   ├── a8w8/         # BF8 GEMM — same design, adapted for 8-bit
+│   │   └── a4w4/         # MXFP4 GEMM with per-group microscaling
+│   └── attention/        # Flash Attention forward (fav3, fav4) — MFMA ↔ VALU co-execution
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
@@ -48,6 +49,8 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Learn the full optimization workflow end to end          | `kernels/gemm/intra_wave/a16w16/`      |
 | Apply the same design to FP8                             | `kernels/gemm/intra_wave/a8w8/`        |
 | Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/intra_wave/a4w4/`        |
+| Optimize Flash Attention, where vector math competes with the MFMA | `kernels/attention/`        |
+| Work out why *your* kernel's matrix pipe stalls          | `kernels/attention/` §8     |
 | Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |
@@ -65,14 +68,15 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | `a16w16`  | FP16      | 256×256×64   | Foundation — all techniques introduced here across v0 → v9        |
 | `a8w8`    | BF8       | 256×256×128  | Same design, larger `BLOCK_K`, 32-cycle scaled MFMA               |
 | `a4w4`    | MXFP4     | 256×256×256  | Adds the scale pipeline (GR → LW → LR), 16-cycle MFMA, LDS port contention |
+| `attention` | FP16 / BF16 | 256×64, D=128 | Flash Attention forward: MFMA ↔ VALU **co-execution**, lazy softmax rescale |
 
-The a16w16 series is the tutorial; a8w8 and a4w4 are what the same design looks like once you change the data type. Each one assumes you've read the previous.
+The a16w16 series is the tutorial; a8w8 and a4w4 are what the same design looks like once you change the data type. Each one assumes you've read the previous. `attention` comes after all of them: it reuses the 8-wave warp pipeline from `inter_wave/` and asks what changes when the work competing for the SIMD is arithmetic rather than memory.
 
 ---
 
 ## What's Next
 
-Today the tutorial covers GEMM for **16-bit (FP16)**, **8-bit (BF8)**, and **MXFP4** compute. Planned additions: **memory-bound GEMM**, **FAv3 prefill**, **FA decode**, and an **MXFP4 MoE** kernel. See [`ROADMAP.md`](ROADMAP.md) for details.
+Today the tutorial covers GEMM for **16-bit (FP16)**, **8-bit (BF8)** and **MXFP4** compute, plus **Flash Attention forward** (prefill) in `kernels/attention/`. Planned additions: **memory-bound GEMM**, **FA decode**, and an **MXFP4 MoE** kernel. See [`ROADMAP.md`](ROADMAP.md) for details.
 
 ---
 

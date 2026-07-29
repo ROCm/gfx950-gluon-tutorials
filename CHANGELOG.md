@@ -5,6 +5,29 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-29 — Flash Attention forward kernels (`kernels/attention/`)
+
+Adds the first non-GEMM section of the tutorial: `fav3` (eager softmax rescale) and `fav4`
+(lazy rescale), two Gluon flash-attention forward kernels sharing one 8-wave warp-pipeline
+architecture. They extend the `inter_wave` design to a kernel with a **third** category of
+instruction competing for the SIMD — the softmax's vector math — which the README works
+through as an MFMA ↔ VALU **co-execution** budget.
+
+- **llirSched gains a second scheduling model.** Regions mixing `mfma` with memory keep the
+  existing throughput interleave; regions mixing `mfma` with VALU are instead *declared* with
+  `sched_group_barrier` and built by AMDGPU's IGroupLP, with a separate algorithm for regions
+  whose VALU demand exceeds the available MFMA shadow. Region classification picks between
+  them, so the GEMM kernels are unaffected — their assembly is unchanged.
+- **`amdgcnas` is not used by these kernels.**
+- **Three FA-specific scripts**: `scripts/fa_kernel_time.py`, `scripts/fly_kernel_time.py`
+  (times ROCm/FlyDSL under our protocol for a like-for-like comparison) and
+  `scripts/att_pick_cu.py`.
+
+> [!IMPORTANT]
+> These kernels need a Triton **newer than `gfx950-tutorial-v1.1`** — `fav4` does not compile
+> without `gl.warp_predicate`. The re-pin is a separate change; until it lands, the pin
+> recorded below is the one the GEMM kernels are built against.
+
 ## 2026-07-14 — Re-pin to `gfx950-tutorial-v1.1` (upstream merge of the warp-pipeline barrier PR)
 
 The pinned Triton commit moves from `gfx950-tutorial-v1.0` to `gfx950-tutorial-v1.1`.

@@ -1,6 +1,15 @@
 # Scripts
 
-Helper scripts for profiling and benchmarking Triton GEMM kernels.
+Helper scripts for profiling and benchmarking the tutorial's Triton/Gluon kernels.
+
+Most of the scripts below drive the GEMM kernels. Three are specific to
+[`kernels/attention/`](../kernels/attention/README.md):
+
+| script | what it does |
+|---|---|
+| `fa_kernel_time.py` | the reported FA metric: `rocprofv3 --kernel-trace` TFLOPS with a prepared launch, averaging the last N of 1000 dispatches. The FA counterpart of `run_perf_table.py --rocprof` |
+| `fly_kernel_time.py` | times ROCm/FlyDSL's `flash_attn_dualwave_swp` under the *same* protocol, so its numbers can share a table with ours |
+| `att_pick_cu.py` | picks an `att_target_cu` that exists on the current die. Parts harvest one CU per shader array, and `rocprofv3 --att` aimed at a harvested CU exits 0 and records nothing |
 
 ## install_att_decoder.sh
 
