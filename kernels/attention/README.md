@@ -150,8 +150,8 @@ form that can never be hidden. Those are not in tension; they apply to different
 > microarchitectural reasons behind them are not in the public document, so they are stated
 > here as behaviour rather than mechanism. You do not have to take them on faith either — an
 > ATT instruction trace timestamps every issue, so the cost of each class, and whether a given
-> op landed inside a shadow or outside it, can be read straight off a trace of your own kernel
-> ([`note.md`](note.md) has the recipe).
+> op landed inside a shadow or outside it, can be read straight off a trace of your own kernel.
+> §8.2 is how.
 >
 > The formal version of this model — read phase, window, the packed hazard, and a proof that
 > `(MFMA ‖ 6 unpacked) × M, then packed` is the optimal schedule for `M` MFMAs against `N` units
@@ -392,8 +392,9 @@ downstream will drag the producer toward it, because a pure `fsub` carries no ch
 therefore no `s_barrier` or `sched.barrier` orders it (§6). Half the subtracts end up in a mem
 stage: the work leaves the cluster it was meant to leave without arriving in the one it was meant
 to reach. *Which* pass does the moving is worth knowing if you are debugging your own kernel — it
-is ISel's pre-RA list scheduler, not `MachineSink`, proved by re-running the same IR under
-`-pre-RA-sched=linearize`; [`note.md`](note.md) has the evidence.
+is ISel's pre-RA list scheduler, not `MachineSink`: its very first MIR dump already shows the
+subtracts in the mem region, before `MachineSink` runs at all, and re-running the same IR under
+`-pre-RA-sched=linearize` keeps every one of them in the dot cluster.
 
 Moving both ops instead removes the opportunity. The **raw** slice is carried across and subtracted
 where it is exponentiated, so the subtract is born in the cluster that consumes it and there is
@@ -596,9 +597,10 @@ still not reaching the ceiling.
 
 **Then measure.** Take an ATT instruction trace and run
 [`scripts/process_json.py`](../../scripts/process_json.py); it prints in-loop MFMA efficiency
-**per wave**, so double it for the per-SIMD figure when two waves share the SIMD. (`note.md` has
-the full recipe, including `scripts/att_pick_cu.py` — ATT silently records nothing if you aim it
-at a CU that does not exist on your die.)
+**per wave**, so double it for the per-SIMD figure when two waves share the SIMD. Aim the trace
+with [`scripts/att_pick_cu.py`](../../scripts/att_pick_cu.py): parts harvest one CU per shader
+array, and ATT records nothing at all — exit 0, a trace file with no wave data — if you target a
+CU that does not exist on your die.
 
 **Then route the gap.** What you see, what it means, and where in this document it is worked
 through:
@@ -610,7 +612,7 @@ through:
 | a stage's tail is vector work while the matrix pipe is idle | the interleave was requested but never constructed | §6 — declare it, don't pin it |
 | efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock | §9 — power cap |
 | a small delay at a stage head changes things sharply and non-monotonically | a phase relationship between two waves, not a quantity | §7 — sweep it, bisection will mislead you |
-| two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | §6 and `note.md` |
+| two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | §6 |
 | in-loop numbers are good but whole-dispatch throughput is not | prologue and drain are not amortizing — short loops, or too many pipeline stages | §9 |
 
 The habit underneath all of it: **judge a scheduling change by cycles, and a kernel by both cycles
@@ -687,7 +689,7 @@ runs pinned to its ~1400 W cap; there cycles are what matter and `fav4` leads Fl
 the shape above there is power headroom, FlyDSL's clock advantage cashes in, and the two are level.
 Neither shape is *the* answer — that one flatters us, this one flatters them. The quantity that
 does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
-the scheduler actually controls. `note.md` works the comparison through in full.
+the scheduler actually controls.
 
 **Before trusting any cross-implementation row, check that the work was handed out the same way** —
 a difference in grid or occupancy would confound the whole table. It does not here: both sides
@@ -696,8 +698,9 @@ per wave and `waves_per_eu=2`, so both issue 8192 workgroups, one resident per C
 tail imbalance. The differences in the table are what happens inside the loop, and power. One
 caveat runs against the Gluon rows rather than for them: `S=8192` makes `(n_blocks − 3)` odd, so
 both kernels run an unpipelined `ODD_TAIL` tile in the drain and FlyDSL has no such constraint.
-The full audit — XCD remapping on both sides, the FlyDSL config sweep, the die-to-die and thermal
-caveats, and the commands that reproduce every row — is in [`note.md`](note.md).
+Two more were checked the same way and are also clean: neither side remaps workgroups across XCDs
+at this shape, and FlyDSL's shipped configuration is its own optimum, so nothing here is a
+strawman of it.
 
 Two things about the metrics themselves, worth knowing before quoting either:
 
@@ -717,18 +720,14 @@ Both harnesses were run under one protocol — `scripts/fly_kernel_time.py` buil
 `flash_attn_dualwave_swp` through its own builder and then times it exactly as
 `scripts/fa_kernel_time.py` times ours, same rocprofv3 invocation, serialization, rotating-buffer
 rule and averaging window. That is the only reason the rows can share a table, and it matters more
-than it sounds: measured with its own shallower window, FlyDSL reads up to 7% high on a cool die.
-The commands for every row are in [`note.md`](note.md).
+than it sounds: measured with its own shallower window, FlyDSL reads up to 7% high on a cool die,
+which is enough to invert the top two rows of the table.
 
 ## 10. Where to go deeper
 
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
   ping-pong that attention builds on.
-- [`note.md`](note.md) — the optimization notebook: every step with its measurement, the
-  per-stage instruction inventories, the environment-variable reference, the measurement
-  protocol, and the comparison methodology. Its last section is the file map, what the two
-  kernels do and do not support, and the odd-tail tile.
 - [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md) — §2's budget as a formal
   scheduling problem: the machine model, the optimal schedule for `M` MFMAs against `N` units
   of math, and a matching-lower-bound proof that it is optimal.
