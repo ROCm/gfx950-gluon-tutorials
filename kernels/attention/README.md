@@ -525,26 +525,42 @@ all. It is visible in a count of 3-source VALU in `fmha_v4`'s loop body: **98 wi
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
-Measured at `B=1, S=16320, H=64, fp16` on GPU[0] — TFLOPS and in-loop MFMA efficiency per SIMD.
-(A different shape and dtype from [§9](#9-results), so read the two tables separately; the *deltas* are what
-matter here.)
+Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[0],
+rocprofv3 kernel time interleaved over three rounds for TFLOPS, an ATT instruction trace for the
+in-loop MFMA efficiency per SIMD. Every throughput figure below is a three-round mean with a spread
+of at most 3 TFLOPS.
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
-| no `s_nop`, no fold | 1165 / 83.9% | 1223 / 89.5% |
-| `MEMNOP=2` | 1169 / 85.3% | 1233 / 92.4% |
-| `MEMNOP=2` + `SCALE_ON_Q` | **1177 / 86.2%** | **1243 / 93.8%** |
+| no `s_nop`, no fold | 1229 / 83.7% | 1302 / 90.6% |
+| `MEMNOP=2` | 1234 / 85.0% | 1310 / 92.4% |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1250 / 86.3%** | **1322 / 94.2%** |
 
-Each step is worth well under a percent of throughput, and together about 1% on `fmha_v3` and 1.6% on
-`fmha_v4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
-same op count leaving the same cluster in both, so a mechanism tied to that op count should pay the
-same, and it does. The efficiency column moves further than the throughput column for the reason
-[§9](#9-results) gives — a denser MFMA stream costs clock on a power-capped part.
+Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
+and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
+fold the larger, at **+1.25%** and **+0.91%**.
 
-`SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
-goes from 3.05e-05 to 1.22e-04 on `fmha_v3`, and from 6.10e-05 to the same 1.22e-04 on `fmha_v4`. All
-are far inside the 1e-3 tolerance, and `--scale-on-q 0` restores the tighter numerics on either
-kernel.
+That the fold pays the two kernels *differently* is worth pausing on, because it is the one thing
+this table says that the same experiment at `B=1, S=16320, fp16` did not. There both kernels gained
+the same ~0.8%, which invited the reading that a mechanism removing the same 64 ops from the same
+cluster should pay the same in both. Here `fmha_v3` gains a third again as much as `fmha_v4`, and the
+[§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) budget explains why: `fmha_v3` is *over* its co-execution budget, so ops that leave the cluster
+come off the exposed remainder and shorten the loop directly, while `fmha_v4` already fits and was
+hiding most of them anyway. The op count is the same; what differs is whether those ops were costing
+cycles.
+
+The efficiency column moves further than the throughput column throughout, for the reason [§9](#9-results)
+gives — a denser MFMA stream costs clock. And it barely moves *between* shapes: against the
+`B=1, S=16320, fp16` run of the same six configurations, five of the six efficiency figures land
+within 0.4 points, which is the cleanest evidence in this document for [§9](#9-results)'s claim that in-loop
+MFMA efficiency is the quantity that does not depend on the shape.
+
+`SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
+max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
+to 9.99e-04 on `fmha_v4`, at this shape in bf16. All four are inside tolerance by a wide margin: one bf16
+rounding step at this output magnitude (max |o| = 0.17) is **1.34e-03**, so even the worst of them
+is under a single ULP of the format the kernel writes. `--scale-on-q 0` restores the tighter
+numerics on either kernel.
 
 ## 8. Applying this to your own kernel
 
