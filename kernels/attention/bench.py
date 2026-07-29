@@ -67,6 +67,14 @@ if os.environ.get("FA_ABLATE_VALU"):
 
     knobs.runtime.add_stages_inspection_hook = ablate_valu.inspect_stages_hook
 
+# Hoist a loop-invariant LDS base address out of the loop (scripts/hoist_lds_addr.py).
+if os.environ.get("FA_HOIST_LDS_ADDR"):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+    import hoist_lds_addr  # noqa: E402
+    from triton import knobs  # noqa: E402
+
+    knobs.runtime.add_stages_inspection_hook = hoist_lds_addr.inspect_stages_hook
+
 # VALU rescheduling (scripts/sched_valu.py): re-balance the loop's vector ALU across the
 # MFMA shadows without adding or removing any, to separate the scheduling effect on
 # throughput from the power effect of changing the instruction count. Dependency-checked,

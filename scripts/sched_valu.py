@@ -121,6 +121,12 @@ _SIMPLE_DEST = (
     "v_lshr", "v_ashr", "v_alignbit", "v_alignbyte", "v_perm_b32", "v_sad_", "v_pack_",
     "v_pk_add", "v_pk_sub", "v_pk_mul", "v_pk_fma", "v_pk_max", "v_pk_min",
     "v_readfirstlane", "v_readlane", "v_bcnt_", "v_ffbl_", "v_ffbh_", "v_cvt_pk",
+    # integer address arithmetic: single destination, like the float forms. Leaving these out
+    # sent them to the conservative branch, which reports their *sources* as written too --
+    # enough to make a loop-invariant address add look loop-variant.
+    "v_add_u32", "v_add_nc_u32", "v_sub_u32", "v_subrev_u32", "v_add_co_u32",
+    "v_add3_u32", "v_lshl_add_u32", "v_lshl_or_b32", "v_mad_u32", "v_mul_lo_u32",
+    "v_mul_hi_u32", "v_min_u32", "v_max_u32", "v_min_i32", "v_max_i32",
 )
 # Accumulate-in-place forms read their destination as well.
 _ACC_DEST = ("v_fmac", "v_mac_", "v_pk_fmac", "v_dot", "v_mad_mix", "v_fma_mix")

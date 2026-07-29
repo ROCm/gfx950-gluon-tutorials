@@ -2910,3 +2910,56 @@ and this. And they point in opposite directions on the fix, which is what makes 
 The way out is to let `q_smem` alias the K/V buffers explicitly rather than relying on the
 allocator's liveness analysis -- Q is dead once `q_dot` is in registers, and it is only the
 *schedule* that hides that. Not attempted.
+
+### 3.29.5 The address add is loop-invariant, and a spare VGPR buys 6.6x its cost
+
+Two questions about the `v_add_u32_e32 v65, 0x1d880, v174` of 3.29.4: is it loop-invariant,
+and would giving it its own VGPR help. **Yes and yes.**
+
+**It is invariant.** `v174` is never written inside the loop, and before the loop it is
+`v_add_u32_e32 v174, 0, v20` -- a copy of `v20`. So the base is a constant for the whole loop
+and the compiler is **rematerialising** it, once per iteration, rather than keeping it live.
+The reason is visible in `v65`'s other uses: it is part of the QK accumulator `v[64:79]` for
+eight MFMAs and a softmax temporary in between. Holding the base would cost a dedicated
+register across the entire loop; recomputing it costs one instruction per iteration, and with
+246 of 246 VGPRs already in use that is the trade the allocator took.
+
+**A spare register is worth more than the instruction.** `scripts/hoist_lds_addr.py`
+(`FA_HOIST_LDS_ADDR=1`) moves the add out, into a register nothing else touches, and redirects
+the 16 `ds_read`s that took its result:
+
+| | DMA, add in loop | DMA, add hoisted |
+|---|---:|---:|
+| loop instructions | 547 | 546 |
+| VGPRs | 246 | 248 (still 2 waves/SIMD) |
+| loop cycles per workgroup | 276689 | **275039** |
+| cyc/iter | 4462.7 | **4436.1** |
+| in-loop MFMA efficiency | 91.8% | **92.3%** |
+| total per workgroup | 304923 | **303520** |
+
+Removing one VALU saved **26.6 cycles per iteration** -- 6.6x the ~4 cycles the instruction
+itself occupies. That is the mem-cluster-head effect the `MEMNOP` sweeps found, seen from the
+other side: the add sat immediately in front of a 16-deep `ds_read` burst, so its 4 cycles
+delayed the burst, and the burst delays the barrier behind it. It also puts the DMA variant's
+total cycles marginally *below* the default's 304087, though throughput still does not move
+(1316.9 / 1323.1 against 1319.0 with the add, and 1328.7 for the default) -- a 0.5% spread on
+a 0.3% floor, the same place every cycle win in 3.26-3.28 has landed.
+
+**Two bugs on the way, both worth recording:**
+
+1. **My own parser said the add was not invariant.** `v_add_u32` was missing from
+   `sched_valu.py`'s `_SIMPLE_DEST`, so it fell into the conservative branch that treats an
+   unrecognised vector op as reading *and writing* every register it names -- which reports
+   `v174` as written by the very instruction that reads it. The first version of 3.29.4 was
+   written off that output. The integer address ops are now listed, which also makes the
+   scheduler less conservative in general; `FA_SCHED_VALU=-0.5` still validates.
+2. **"Insert into the preheader, just before the loop label" is wrong on this kernel.** The
+   header `.LBB0_4` is not reached by fall-through: a forward `s_branch .LBB0_4` jumps to it
+   over the ten preceding lines, so an instruction placed there is dead code. The base
+   register stayed uninitialised and the kernel returned `max_err 2.88` with a *small* mean --
+   part of the output reading LDS at the wrong offset. The hoist now goes immediately after
+   the source register's definition, which dominates the loop by construction since the loop
+   reads it.
+
+The second one generalises: on an assembly rewrite there is no "the preheader". The only place
+guaranteed to dominate a loop is a point that already dominates one of the loop's own inputs.
