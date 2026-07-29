@@ -2975,3 +2975,100 @@ a 0.3% floor, the same place every cycle win in 3.26-3.28 has landed.
 
 The second one generalises: on an assembly rewrite there is no "the preheader". The only place
 guaranteed to dominate a loop is a point that already dominates one of the loop's own inputs.
+
+## 3.30 The amdgcnas peephole's LICM: never runs here, and its nop pass miscompiles (2026-07-29)
+
+`plugins/amdgcnas` carries a post-assembly LICM with register renaming -- exactly what 3.29.5
+hand-rolled -- so it is the obvious way to hoist that invariant address add properly instead
+of by an assembly hack. It does not work out. Three findings, in increasing order of
+importance.
+
+### 3.30.1 On `fav4` it is a silent no-op
+
+`amdgcn_as()` bails before any pass if `program.get_loop()` returns `None`, and `get_loop`
+looks for a block that is **its own predecessor and successor** -- a single-basic-block
+self-loop:
+
+```python
+def is_loop(self):
+    if len(self.preds) == 0 or len(self.succs) == 0:
+        return False
+    return (self in self.preds) and (self in self.succs)
+```
+
+`fav4`'s loop is not one block. The lazy rescale is guarded by `s_and_saveexec_b64` plus
+`s_cbranch_execz`, which splits the body:
+
+| | basic blocks | self-loops found | peephole changes the text |
+|---|---:|---:|---|
+| `fav4` default | 43 | **0** | no |
+| `fav4` `FA_Q_DIRECT_LDS=1` | 27 | **0** | no |
+| FlyDSL | 14 | **0** | no |
+| `fav3` | 33 | 1 | **yes** |
+
+So on `fav4` the LICM never sees the add, and neither does anything else in the peephole --
+`TRITON_AMDGCNAS_PLUGIN=1` has been a no-op on this kernel all along. The README says the
+peephole targets "the GEMM hot loop", and a GEMM loop *is* a single block; nothing is being
+mis-sold, but it does not transfer to an attention loop with a predicated region in it.
+
+### 3.30.2 On `fav3` it runs, and produces a wrong kernel
+
+`fav3` has no predicated block in its loop -- eager rescale -- so it has the self-loop the
+pass wants, and the peephole fires. The result does not compute attention:
+
+    fav3 plain                     max_err 9.77e-04   OK
+    fav3 + TRITON_AMDGCNAS_PLUGIN  max_err 1.06e-01   MISMATCH
+
+Bisected by disabling one pass at a time:
+
+| disabled | result |
+|---|---|
+| `optimize_nops` | **OK, 9.77e-04** |
+| `eliminate_save_restore` | mismatch |
+| `licm` | mismatch |
+| `optimize_buffer_load_m0` | mismatch |
+
+`optimize_nops` is the one. Its rule is stated in its own comment:
+
+```python
+## The only allowed nop is the one between a set-m0 and a buffer_load;
+## everything else is dead.
+```
+
+It knows the **m0** hazard -- the same one 3.25.7 had to discover -- and no others. It drops
+12 of `fav3`'s 52 `s_nop`, and on this kernel the survivors are load-bearing for three more
+classes that a GEMM loop does not exercise:
+
+| hazard | requirement | where it comes from |
+|---|---|---|
+| MFMA -> VALU read of the accumulator | up to **19** wait states | `GCNHazardRecognizer` `MaxWaitStates`, SMFMA 32x32 |
+| transcendental -> non-TRANS consumer | **1** | `GCNSubtarget::hasTransForwardingHazard()`, gfx940+ |
+| VALU write -> `v_permlane32_swap` vdst | **2** | `checkPermlaneHazards`, `VALUWritesVDstWaitStates` |
+
+A GEMM loop has no `v_exp` and no `v_permlane32_swap`, and its MFMA spacing is regular, so the
+rule holds there and fails here. This is the same trap 3.25.7 fell into from the other
+direction: stripping FlyDSL's `s_nop` returned `max_err 2.2e-02` until the model was taught m0
+and permlane. **`TRITON_AMDGCNAS_PLUGIN=1` should not be used with `fav3` as it stands.**
+
+### 3.30.3 And the safe subset is a regression anyway
+
+With `optimize_nops` disabled the remaining passes -- LICM, save/restore elimination, the m0
+sink -- are correct on `fav3`, so they can be priced:
+
+    fav3 plain                       1252.6   1258.4      mean 1255.5
+    fav3 + peephole, no nop pass     1235.8   1239.0      mean 1237.4     -1.4%
+
+So the route is closed at both ends: the peephole cannot reach `fav4`'s loop, and where it can
+reach a loop its correct part costs 1.4%. The invariant add in 3.29.5 stays priced by the
+assembly probe rather than fixed by this plugin.
+
+**What would actually fix it**, in order of how much work each is:
+
+1. Teach `optimize_nops` the other three hazard classes -- the model is already written, in
+   `sched_valu.py`'s `_hazard_pairs` (MFMA 19 / TRANS 1 / permlane 2 / m0 1, distances counted
+   in wait states). That makes the pass safe on attention kernels; it does not make it
+   profitable.
+2. Give `get_loop` natural-loop detection instead of self-loop matching, so `fav4` is in
+   scope. Every pass takes a single `BasicBlock`, so this is a rework, not a predicate change.
+3. Or drop the whole approach for this kernel and fix it where it originates: LLVM's
+   MachineLICM declined to hoist with 10 VGPRs still available (3.29.5).
