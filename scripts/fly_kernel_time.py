@@ -39,7 +39,7 @@ were taken at ROCm/FlyDSL `63eb891` (v0.2.4-26-g63eb891).
     python scripts/fly_kernel_time.py --seqlen 16384
     python scripts/fly_kernel_time.py --seqlen 16384 --causal 1     # ~half the FLOPs
 
-`--eager-rescale` selects the fav3-equivalent path; the remaining flags expose the
+`--eager-rescale` selects the fmha_v3-equivalent path; the remaining flags expose the
 builder's other performance knobs, all of which default to FlyDSL's own tuned values (see
 `FLASH_ATTN_FUNC_KERNEL_CONFIG` in its `tests/kernels/test_flash_attn_fwd.py`).
 """
@@ -72,7 +72,7 @@ def parse_args():
     p.add_argument(
         "--eager-rescale",
         action="store_true",
-        help="dualwave_swp_lazy_rescale=False, the fav3-equivalent path",
+        help="dualwave_swp_lazy_rescale=False, the fmha_v3-equivalent path",
     )
     p.add_argument("--setprio", type=int, default=1)
     p.add_argument("--stagger", type=int, default=1)

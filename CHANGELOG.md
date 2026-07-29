@@ -13,7 +13,7 @@ the GEMM kernels stay on `v1.1`, and their recorded numbers stay as measured the
 are re-measured on `v2.0`.
 
 - **`gl.warp_predicate`** — a per-wave masked-skip region lowering to `s_and_saveexec` +
-  `s_cbranch_execz`, with no cross-wave reduction and no barrier. `kernels/attention/fav4.py`
+  `s_cbranch_execz`, with no cross-wave reduction and no barrier. `kernels/attention/fmha_v4.py`
   does not compile without it: it is what lets a wavefront skip the accumulator rescale when
   none of its own rows advanced their running max.
 - **warp-pipeline barriers** — always emit LOCAL cluster barriers rather than the minimal set,
@@ -30,7 +30,7 @@ are re-measured on `v2.0`.
 
 ## 2026-07-29 — Flash Attention forward kernels (`kernels/attention/`)
 
-Adds the first non-GEMM section of the tutorial: `fav3` (eager softmax rescale) and `fav4`
+Adds the first non-GEMM section of the tutorial: `fmha_v3` (eager softmax rescale) and `fmha_v4`
 (lazy rescale), two Gluon flash-attention forward kernels sharing one 8-wave warp-pipeline
 architecture. They extend the `inter_wave` design to a kernel with a **third** category of
 instruction competing for the SIMD — the softmax's vector math — which the README works
@@ -47,7 +47,7 @@ through as an MFMA ↔ VALU **co-execution** budget.
   `scripts/att_pick_cu.py`.
 
 > [!IMPORTANT]
-> These kernels need `gfx950-tutorial-v2.0` — `fav4` does not compile without
+> These kernels need `gfx950-tutorial-v2.0` — `fmha_v4` does not compile without
 > `gl.warp_predicate`. See the re-pin entry above.
 
 ## 2026-07-14 — Re-pin to `gfx950-tutorial-v1.1` (upstream merge of the warp-pipeline barrier PR)

@@ -33,7 +33,7 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 │   │   ├── a16w16/       # FP16 GEMM, v0 → v9 (start here)
 │   │   ├── a8w8/         # BF8 GEMM — same design, adapted for 8-bit
 │   │   └── a4w4/         # MXFP4 GEMM with per-group microscaling
-│   └── attention/        # Flash Attention forward (fav3, fav4) — MFMA ↔ VALU co-execution
+│   └── attention/        # Flash Attention forward (fmha_v3, fmha_v4) — MFMA ↔ VALU co-execution
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables

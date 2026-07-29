@@ -1,4 +1,4 @@
-# 1 FAv3 gfx950 — MFMA/VALU co-issue scheduling exploration
+# 1 FMHA v3 gfx950 — MFMA/VALU co-issue scheduling exploration
 
 What we tried to better overlap VALU with MFMA in the rotated-4-cluster gluon
 kernel.
@@ -35,7 +35,7 @@ fusion at `b1 h64 d128 sq16320 bshd fp16`; config 5 is the reference kernel at
 | 1 | baseline | gfx950-tutorial + pinned LLVM, no llirSched | 1002 | 62.4% | 31.2% | 6561 |
 | 2 | fix_boundary | llir_FAv3 + pinned LLVM, no llirSched | 1008 | 65.1% | 32.6% | 6288 |
 | 4 | sched.group.barrier | schedGroupBarrier + peephole LLVM (AUTO split) | 1038 | 70.1% | 35.1% | 5839 |
-| 3 | llirSched_FAv3 | llir_FAv3 + peephole LLVM + llirSched ON | 1046 | 71.9% | 35.9% | 5701 |
+| 3 | llirSched_FMHA v3 | llir_FAv3 + peephole LLVM + llirSched ON | 1046 | 71.9% | 35.9% | 5701 |
 | 5 | triton_reference | fav3_padded + Austin's LLVM | 1077 | 76.4% | 38.2% | 2681 |
 
 **Caveat on #4:** this run used the *auto-derived* co-issue split on *packed* math
@@ -172,9 +172,9 @@ worth trying (WIP).
 
 ---
 
-# 2 FAv4 — opt1 / opt2 / opt3 (DOT1-stage restructuring)
+# 2 FMHA v4 — opt1 / opt2 / opt3 (DOT1-stage restructuring)
 
-Follow-on to the co-issue/barrier work above, on `fav4.py` (lazy-softmax-rescale
+Follow-on to the co-issue/barrier work above, on `fmha_v4.py` (lazy-softmax-rescale
 FA). Same 2×-unrolled rotated 4-stage ping-pong (`dot1`/`mem1`/`dot2`/`mem2`), but
 the online-softmax correction (`acc *= alpha`, `l_i *= alpha`) is applied **lazily**
 and skipped per-wave via `gl.warp_predicate(alpha < 1.0, …)` (an
@@ -275,7 +275,7 @@ env flags:
                     v_pk_add; v_mfma ...                    <- MFMA stage clean
 ```
 
-Loop: 15 staggered waits → **4 single `lgkmcnt(0)` drains**. **Perf-neutral** on fav4
+Loop: 15 staggered waits → **4 single `lgkmcnt(0)` drains**. **Perf-neutral** on fmha_v4
 (~1157 TFLOPS either way, 41.96%) — unlike the *bare*-barrier PV case above, these
 staggered waits were already hidden by inter-wave scheduling, so this is a
 cleanliness/robustness fix rather than a perf one. Inter-wave a16w16 warp-pipeline
@@ -292,7 +292,7 @@ HIP_VISIBLE_DEVICES=5 \                    # rocm-smi GPU[4] (shared box)
 DISABLE_LLVM_OPT=disable-machine-sink \    # opt2 finding #2 (exp/fma leak)
 LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \   # or the plugin regresses hard
-FA_MODULE=fav4 python bench.py --seqlen 16320
+FA_MODULE=fmha_v4 python bench.py --seqlen 16320
 ```
 
 - Needs triton from `llir_FAv3` (warp_predicate + `unlikely` + force-LOCAL barriers +
@@ -306,7 +306,7 @@ FA_MODULE=fav4 python bench.py --seqlen 16320
 
 ---
 
-# 3 FAv4 — opt4 / opt5 / opt6, and the compiler defects they exposed
+# 3 FMHA v4 — opt4 / opt5 / opt6, and the compiler defects they exposed
 
 Continuation of the opt1–opt3 log above. Same shape (`b1 h64 d128 sq16320 fp16`,
 rocm-smi GPU[4] = `HIP_VISIBLE_DEVICES=5`).
@@ -532,7 +532,7 @@ HIP_VISIBLE_DEVICES=1 \                    # rocm-smi GPU[0], the fast die (ATT:
 DISABLE_LLVM_OPT=disable-machine-sink \    # required
 LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-FA_MODULE=fav4 python bench.py --seqlen 16320
+FA_MODULE=fmha_v4 python bench.py --seqlen 16320
 ```
 
 ### 3.9.1 Environment variables
@@ -560,7 +560,7 @@ reproduce any number in this file.**
 | `LLIRSCHED_WP_DEBUG` | per-region model, counts, group sizes, chosen window |
 
 The two that used to be load-bearing are now defaults. Verified: with **no `LLIRSCHED_*`
-set at all**, fav3 and fav4 SOQ=1/0 build byte-identical assembly to the old
+set at all**, fmha_v3 and fmha_v4 SOQ=1/0 build byte-identical assembly to the old
 `LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2` recipe. `MEMNOP`'s default of 2 is not the 3
 opt6 originally chose -- re-swept after opt8 / the dependency-ordered SGB / mixed-class
 windows / the `fneg` fix; see the retune section below. The six experiment flags that
@@ -583,7 +583,7 @@ attention is measured the same way as the GEMM kernels
 (`scripts/run_perf_table.py:run_rocprof_trace`):
 
 ```bash
-FA_MODULE=fav4 <plugin env from the recipe above> \
+FA_MODULE=fmha_v4 <plugin env from the recipe above> \
 python scripts/fa_kernel_time.py --seqlen 16320        # --launch prepared is the default
 ```
 
@@ -617,15 +617,15 @@ Bigger error sources than method choice, both measured on this box:
   as DPM ramps), so single-shot `bench.py`-style numbers sit 4-7% above steady state.
   Alternate A/B/A/B with idle between when comparing anything under ~1.5%.
 
-## 3.11 fav3 — the over-capacity `sched_group_barrier` algorithm
+## 3.11 fmha_v3 — the over-capacity `sched_group_barrier` algorithm
 
 `declareRegionGroups` assumes the stage's VALU work FITS the mfma co-exec capacity
-(`24 cyc x M`) and spreads it so no group overflows. fav3 breaks that assumption. Its
+(`24 cyc x M`) and spreads it so no group overflows. fmha_v3 breaks that assumption. Its
 dot stages carry more VALU than the mfma shadows can hide:
 
 ```
-fav3 QK: 476 cyc of VALU vs 384 cyc of capacity   -> minGroups 20 for 16 mfma
-fav3 PV: 496 cyc                                  -> minGroups 21 for 16 mfma
+fmha_v3 QK: 476 cyc of VALU vs 384 cyc of capacity   -> minGroups 20 for 16 mfma
+fmha_v3 PV: 496 cyc                                  -> minGroups 21 for 16 mfma
 ```
 
 The balanced packer's response was to merge cheap pairs into 48-cycle groups, which the
@@ -648,9 +648,9 @@ automatically when `total > 24*M`; opt out with `LLIRSCHED_WP_NOOVERCAP`):
    form). **Uncovered ops stay packed** -- nothing hides them either way, and one
    `v_pk_mul_f32` retires two elements in one issue where two `v_mul_f32` need two.
 
-**So fav3 must NOT set `AMDGCN_SCALARIZE_PACKED_FOPS`** -- that pass splits every packed
+**So fmha_v3 must NOT set `AMDGCN_SCALARIZE_PACKED_FOPS`** -- that pass splits every packed
 op in any block containing an mfma, including the ones this path deliberately keeps
-packed. fav4 still needs it.
+packed. fmha_v4 still needs it.
 
 Slot model as specified: 1 mfma = 6 slots, unpacked op = 1, packed op = 2, exp2 = 2,
 permlane = 5.
@@ -659,7 +659,7 @@ permlane = 5.
 
 A window is one mfma's 24-cycle shadow and may hold **several groups of different
 IGroupLP classes**: `[MFMA 1][VALU 1][TRANS 1]` asks for one mfma and then a sub and an
-exp2 behind it. fav3's PV stage ends in exactly that pair and used to spend two windows
+exp2 behind it. fmha_v3's PV stage ends in exactly that pair and used to spend two windows
 on 12 cycles of work. The merge step is class-agnostic too, so a VALU fragment can share
 a window with a TRANS fragment.
 
@@ -672,12 +672,12 @@ after:   [V6]24 [V6]24 [V4]16 [V5]36 *[V14]112 [V4+T1]24 [T3]24 x10 [T1+V1+T1]20
 (`*` = declared with no mfma in front of it, i.e. deliberately uncovered.)
 
 PV overflow 64 -> 32 cyc, empty windows 1 -> 0. A freed window is fed back into the
-coverage budget by a fixed-point loop, though on fav3's PV there is nothing to buy: its
+coverage budget by a fixed-point loop, though on fmha_v3's PV there is nothing to buy: its
 unpackable work is 368 cyc of a 384 cyc capacity, so only 16 cyc (2 `v_pk_fma`) can ever
 be covered while rule 1 holds. 14 stay packed by arithmetic, not by a packing failure.
 
 **Measured** (GPU[0], kernel-time protocol): 1139.5 (balanced packer + scalarize) ->
-1158.3 (over-capacity path) -> **1165.0** (+ mixed-class windows) = **+2.2%**. fav4 is
+1158.3 (over-capacity path) -> **1165.0** (+ mixed-class windows) = **+2.2%**. fmha_v4 is
 provably unaffected: its stages are under capacity, it never enters this path, and its
 compiled asm hashes identically before/after.
 
@@ -689,7 +689,7 @@ is an FP `UnaryOperator`, which inflates a declared group by an instruction that
 gets emitted. IGroupLP cannot fill that group and **its pipeline solver then discards the
 schedule for the entire region**, not just that group.
 
-Found via fav4 `SCALE_ON_Q=0`, whose VEC1 computes `fma(qk, qk_scale, -m_new)`:
+Found via fmha_v4 `SCALE_ON_Q=0`, whose VEC1 computes `fma(qk, qk_scale, -m_new)`:
 
 ```
 seg1 (a QK stage): MFMA 6xfma MFMA 6xfma MFMA 6xadd MFMA 6xadd MFMA 3xadd+cvt+add
@@ -708,7 +708,7 @@ Neither pre-reordering before the declaration (still 9/16; this was
 15/16 but is slower overall) worked around it. The weight model was the fix.
 
 After: all four stages 16/16, declarations symmetric, 4725.7 -> 4634.2 cyc/iter (-1.9%),
-MFMA eff 86.7 -> 88.4%/SIMD, 1215.5 -> 1220.2 TFLOPS. fav3 1164.5 -> 1166.5.
+MFMA eff 86.7 -> 88.4%/SIMD, 1215.5 -> 1220.2 TFLOPS. fmha_v3 1164.5 -> 1166.5.
 **Diagnostic worth remembering:** two stages that should be identical declaring different
 op counts in the `[sgb]` debug lines.
 
@@ -718,7 +718,7 @@ opt6 picked k=3 before opt8, the dependency-ordered SGB declaration, mixed-class
 and the `fneg` fix. Re-swept at b1 h64 d128 sq16320 fp16, kernel-time protocol, 45 s
 cool-down, >=2 samples each:
 
-| `MEMNOP` | fav4 SOQ=0 | fav4 SOQ=1 |
+| `MEMNOP` | fmha_v4 SOQ=0 | fmha_v4 SOQ=1 |
 |---|---|---|
 | 0 | 1227.4 | -- |
 | 1 | 1221.6 (noisy, 0.8% spread) | -- |
@@ -745,7 +745,7 @@ Same shape throughout: **B=1 HQ=64 HK=64 S=16320 D=128 fp16 non-causal**.
 
 - **TFLOPS**: GPU[0] (`HIP_VISIBLE_DEVICES=1`), `scripts/fa_kernel_time.py` -- rocprofv3
   kernel time, prepared launch, `AMD_SERIALIZE_KERNEL=3`, 45 s idle before each run,
-  >=2 samples in both orders. Repeatability: fav3 and FlyDSL-eager <=0.1%, the two
+  >=2 samples in both orders. Repeatability: fmha_v3 and FlyDSL-eager <=0.1%, the two
   lazy-rescale kernels ~0.5-1% (denser MFMA stream -> power-limited -> clock-sensitive).
 - **In-loop MFMA efficiency**: also **GPU[0]**, `att_attn_se0.json` (SE mask 0x1, all 4
   SIMDs, dispatch iteration 8) with `att_target_cu` chosen by `scripts/att_pick_cu.py`
@@ -758,11 +758,11 @@ Same shape throughout: **B=1 HQ=64 HK=64 S=16320 D=128 fp16 non-causal**.
 - FlyDSL helpers referenced below are archived at `/data/fa_compare/`
   (`fly_iters.py`, `fly_ktime.py`, `att_fly_se0.json`); FlyDSL checkout `/root/FlyDSL`.
 
-### 3.15.1 Eager rescale: gluon fav3 vs FlyDSL `lazy_rescale=False`
+### 3.15.1 Eager rescale: gluon fmha_v3 vs FlyDSL `lazy_rescale=False`
 
 | kernel | TFLOPS | cyc/iter | eff/wave | **eff/SIMD** | loop |
 |---|---:|---:|---:|---:|---:|
-| **gluon fav3** (over-cap SGB + mixed-class windows + fneg fix) | **1167.1** | **4801.7** | 42.65% | **85.3%** | 95.4% |
+| **gluon fmha_v3** (over-cap SGB + mixed-class windows + fneg fix) | **1167.1** | **4801.7** | 42.65% | **85.3%** | 95.4% |
 | FlyDSL `dualwave_swp`, `lazy_rescale=False` | 1043.8 | 6694.5 | 30.59% | 61.2% | 97.5% |
 | | **+11.8%** | **-28.3%** | | **+24.1 pts** | |
 
@@ -773,11 +773,11 @@ rather than power-bound, vs ~1450 MHz for ours) and still loses by 11.9%. Turnin
 rescale off costs FlyDSL **-16.0%** but costs gluon only **-6.2%**; our eager path
 degrades ~2.6x more gracefully, which is what the over-capacity algorithm buys.
 
-**Reproduce -- gluon fav3 TFLOPS** (note: **no** `AMDGCN_SCALARIZE_PACKED_FOPS`):
+**Reproduce -- gluon fmha_v3 TFLOPS** (note: **no** `AMDGCN_SCALARIZE_PACKED_FOPS`):
 
 ```bash
 cd <repo>
-HIP_VISIBLE_DEVICES=1 FA_MODULE=fav3 \
+HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v3 \
 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
@@ -785,19 +785,19 @@ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python scripts/fa_kernel_time.py --seqlen 16320 --iters 400 --last-n 200
 ```
 
-**Reproduce -- gluon fav3 MFMA efficiency:**
+**Reproduce -- gluon fmha_v3 MFMA efficiency:**
 
 ```bash
 cd <repo>/kernels/attention
 ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ \
-HIP_VISIBLE_DEVICES=5 FA_MODULE=fav3 \
+HIP_VISIBLE_DEVICES=5 FA_MODULE=fmha_v3 \
 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fav3 -- \
+rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fmha_v3 -- \
   python bench.py --rocprof --seqlen 16320 --n-iters 20
-python ../../scripts/process_json.py /tmp/att_fav3/ui_output_*
+python ../../scripts/process_json.py /tmp/att_fmha_v3/ui_output_*
 ```
 
 **Reproduce -- FlyDSL eager TFLOPS and MFMA efficiency:**
@@ -818,12 +818,12 @@ The eager path is one flag on FlyDSL's builder -- `flash_attn_gfx950.py:60` take
 line 366/440. The public wrapper exposes it as `lazy_rescale=`
 (`flash_attn_interface.py:146`).
 
-### 3.15.2 Lazy rescale: gluon fav4 (SOQ=1 / SOQ=0) vs FlyDSL default
+### 3.15.2 Lazy rescale: gluon fmha_v4 (SOQ=1 / SOQ=0) vs FlyDSL default
 
 | kernel | TFLOPS | cyc/iter | eff/wave | **eff/SIMD** | loop |
 |---|---:|---:|---:|---:|---:|
-| **gluon fav4, `SCALE_ON_Q=1`** (default) | **1245.5** | **4306.1** | 47.56% | **95.1%** | 95.1% |
-| gluon fav4, `SCALE_ON_Q=0` | 1231.2 | 4419.2 | 46.34% | 92.7% | 95.2% |
+| **gluon fmha_v4, `SCALE_ON_Q=1`** (default) | **1245.5** | **4306.1** | 47.56% | **95.1%** | 95.1% |
+| gluon fmha_v4, `SCALE_ON_Q=0` | 1231.2 | 4419.2 | 46.34% | 92.7% | 95.2% |
 | FlyDSL `dualwave_swp`, `lazy_rescale=True` (default) | 1242.4 | 4747.5 | 43.14% | 86.3% | 96.8% |
 
 `SCALE_ON_Q=0` is the one row that needs care: it is thermally sensitive and read 1214.7
@@ -831,17 +831,17 @@ straight after the hottest kernel with only 45 s idle, then recovered 1224.5 -> 
 1231.2 over three runs at 90 s idle (it had measured 1233-1235 earlier in a cooler
 session). Treat it as ~1231 +-4 and do not read a 1% delta off a single sample.
 
-**gluon fav4 and FlyDSL tie on throughput (+0.2%) but not on cycles**: fav4 needs
+**gluon fmha_v4 and FlyDSL tie on throughput (+0.2%) but not on cycles**: fmha_v4 needs
 **9.2% fewer cycles per iteration** (4300 vs 4734) and is **8.8 points ahead on MFMA
 efficiency**, yet ends up level in wall time. Clock accounts for part of it, not all:
 
-- total kernel cycles, `126 x cyc_iter / loop_ratio`: fav4 ~571 k, FlyDSL ~618 k, so at
-  equal clock fav4 should be **~8% faster**; measured is +0.2%, leaving ~7.8 points to
+- total kernel cycles, `126 x cyc_iter / loop_ratio`: fmha_v4 ~571 k, FlyDSL ~618 k, so at
+  equal clock fmha_v4 should be **~8% faster**; measured is +0.2%, leaving ~7.8 points to
   explain.
-- sampled XCD clocks during each run: fav4 1420-1440 MHz at 1318-1345 W, FlyDSL-lazy
+- sampled XCD clocks during each run: fmha_v4 1420-1440 MHz at 1318-1345 W, FlyDSL-lazy
   1492 MHz -- a **4.3%** gap, i.e. roughly half of what is needed.
 
-So **fav4's denser MFMA stream buys cycles and pays for them in clock** on a die already
+So **fmha_v4's denser MFMA stream buys cycles and pays for them in clock** on a die already
 at 96% of its power cap, but the clock samples (1-2 per run, `amd-smi` at 2 s intervals)
 only cover about half the gap; the remainder is not yet accounted for. Candidates worth
 checking before quoting this as settled: sampling density, and whether the traced dispatch
@@ -849,11 +849,11 @@ checking before quoting this as settled: sampling density, and whether the trace
 The safe reading: **MFMA efficiency is the metric that tracks our scheduling work; TFLOPS
 on this board partly tracks the power budget.**
 
-**Reproduce -- gluon fav4 TFLOPS** (`--scale-on-q 1` or `0`):
+**Reproduce -- gluon fmha_v4 TFLOPS** (`--scale-on-q 1` or `0`):
 
 ```bash
 cd <repo>
-HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v4 \
 AMDGCN_SCALARIZE_PACKED_FOPS=1 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
@@ -861,19 +861,19 @@ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python scripts/fa_kernel_time.py --seqlen 16320 --iters 400 --last-n 200 --scale-on-q 1
 ```
 
-**Reproduce -- gluon fav4 MFMA efficiency:**
+**Reproduce -- gluon fmha_v4 MFMA efficiency:**
 
 ```bash
 cd <repo>/kernels/attention
 ROCPROF_ATT_LIBRARY_PATH=/opt/rocm/lib/ \
-HIP_VISIBLE_DEVICES=5 FA_MODULE=fav4 \
+HIP_VISIBLE_DEVICES=5 FA_MODULE=fmha_v4 \
 AMDGCN_SCALARIZE_PACKED_FOPS=1 LLIRSCHED_WP_SGB=1 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fav4 -- \
+rocprofv3 --att -i att_attn_se0.json -d /tmp/att_fmha_v4 -- \
   python bench.py --rocprof --seqlen 16320 --n-iters 20 --scale-on-q 1
-python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
+python ../../scripts/process_json.py /tmp/att_fmha_v4/ui_output_*
 ```
 
 **Reproduce -- FlyDSL lazy (default):** same two commands as FlyDSL eager above with
@@ -882,8 +882,8 @@ python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
 ### 3.15.3 Gotchas that invalidate these measurements
 
 - **`AMDGCN_SCALARIZE_PACKED_FOPS` no longer applies to either kernel** (group-size fix at the
-  end of this file). It used to be required for fav4 and forbidden for fav3. Every recipe and
-  number recorded *above* this line was measured with it set for fav4, and those recipes still
+  end of this file). It used to be required for fmha_v4 and forbidden for fmha_v3. Every recipe and
+  number recorded *above* this line was measured with it set for fmha_v4, and those recipes still
   reproduce those numbers -- the pass still exists, it is just no longer needed.
 - **`LLVM_PASS_PLUGIN_*` and `LLIRSCHED_*` are not in the Triton cache key.** Use a
   separate `TRITON_CACHE_DIR` per configuration or `rm -rf ~/.triton/cache`, or you will
@@ -898,10 +898,10 @@ python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
   on GPU[4] and GPU[5] give **4299.95 vs 4295.79 cyc/iter and 47.63 vs 47.67 %/wave --
   0.1%**, despite those dies differing ~0.6% in throughput. Cross-check on the mix: the
   clock implied by (GPU[0] wall time, GPU[4] cycles, 16 workgroups per CU) is 1303 MHz for
-  fav4 SOQ=1, 1359 for fav3, 1405 for FlyDSL-lazy and 1654 for FlyDSL-eager -- a plausible
+  fmha_v4 SOQ=1, 1359 for fmha_v3, 1405 for FlyDSL-lazy and 1654 for FlyDSL-eager -- a plausible
   band, ordered exactly as MFMA density predicts and matching the ~1820 MHz sampled
   directly for the VALU-bound FlyDSL-eager.
-- **Thermal state dominates sub-1.5% deltas.** A fav3 run taken 30 s after a heavy series
+- **Thermal state dominates sub-1.5% deltas.** A fmha_v3 run taken 30 s after a heavy series
   read 1130 instead of 1165 (-3%) on a kernel that otherwise repeats to 0.05%. Use
   45-60 s idle and alternate A/B.
 - `fly_ktime.py` averages the final 250 of 400 dispatches where the gluon driver is told
@@ -912,11 +912,11 @@ python ../../scripts/process_json.py /tmp/att_fav4/ui_output_*
 
 | directory | what |
 |---|---|
-| `fav4_opt8_SGB_mergepack_memnop3_...` | fav4 SOQ=1, `MEMNOP=3` |
-| `fav4_opt8_SCALEONQ_false_SGB_memnop3_...` | fav4 SOQ=0 before the `fneg` fix (9/16 windows) |
-| `fav4_opt8_SCALEONQ_false_fnegfix_SGB_memnop3_...` | fav4 SOQ=0 after the fix (16/16) |
-| `fav3_overcapSGB_nopackedscalarize_memnop3_...` | fav3, chunk layout |
-| `fav3_overcapSGB_mixedclasswindows_memnop3_...` | fav3, mixed-class windows |
+| `fav4_opt8_SGB_mergepack_memnop3_...` | fmha_v4 SOQ=1, `MEMNOP=3` |
+| `fav4_opt8_SCALEONQ_false_SGB_memnop3_...` | fmha_v4 SOQ=0 before the `fneg` fix (9/16 windows) |
+| `fav4_opt8_SCALEONQ_false_fnegfix_SGB_memnop3_...` | fmha_v4 SOQ=0 after the fix (16/16) |
+| `fav3_overcapSGB_nopackedscalarize_memnop3_...` | fmha_v3, chunk layout |
+| `fav3_overcapSGB_mixedclasswindows_memnop3_...` | fmha_v3, mixed-class windows |
 
 
 ## 3.16 Why ATT captured nothing on GPU[0] -- a harvested CU, not a broken die
@@ -980,7 +980,7 @@ be over every *selected* array, not one: on GPU[0] the SE0 arrays harvest CU0 in
 CU7 in XCC1 and CU8 in XCC2-7, so only the intersection is safe.
 
 **Bonus: this also re-validated the cross-die metric mixing on the fast die itself.** With
-`att_target_cu: 4`... actually with CU2, the full-shape trace of fav4 SOQ=1 on **GPU[0]**
+`att_target_cu: 4`... actually with CU2, the full-shape trace of fmha_v4 SOQ=1 on **GPU[0]**
 gives **4303.8 cyc/iter, 47.59%/wave** against **4299.95 / 47.63%** on GPU[4] -- **0.09%**.
 So the tables' TFLOPS-from-GPU[0] + cycles-from-GPU[4] mix is sound, and traces can now be
 taken on whichever die is free.
@@ -1008,10 +1008,10 @@ temporary `AMDGCN_MFMA_N_INNER` gate there (default branch byte-identical), GPU[
 
 | | suppressed | cyc/iter | mfma eff /SIMD | sclk | power | kernel time |
 |---|---|---|---|---|---|---|
-| **fav4** k-inner, MEMNOP=2 | 0/128 (0%) | 4298.4 | 95.3% | 1435.7 MHz | 1399.7 W | 1243.0 TF |
-| **fav4** n-inner, MEMNOP=3 | 40/128 (31%) | 4285.4 (-0.30%) | 95.6% | 1446.7 MHz (+0.77%) | 1399.7 W | 1246.1 TF (+0.25%) |
-| **fav3** k-inner, MEMNOP=2 | 0/64 (0%) | 4806.0 | 85.2% | 1485.6 MHz | 1396.3 W | 1168.5 TF |
-| **fav3** n-inner, MEMNOP=2 | 20/64 (31%) | 4797.1 (-0.19%) | 85.4% | 1496.3 MHz (+0.72%) | 1394.8 W | ~1171.8 TF |
+| **fmha_v4** k-inner, MEMNOP=2 | 0/128 (0%) | 4298.4 | 95.3% | 1435.7 MHz | 1399.7 W | 1243.0 TF |
+| **fmha_v4** n-inner, MEMNOP=3 | 40/128 (31%) | 4285.4 (-0.30%) | 95.6% | 1446.7 MHz (+0.77%) | 1399.7 W | 1246.1 TF (+0.25%) |
+| **fmha_v3** k-inner, MEMNOP=2 | 0/64 (0%) | 4806.0 | 85.2% | 1485.6 MHz | 1396.3 W | 1168.5 TF |
+| **fmha_v3** n-inner, MEMNOP=2 | 20/64 (31%) | 4797.1 (-0.19%) | 85.4% | 1496.3 MHz (+0.72%) | 1394.8 W | ~1171.8 TF |
 
 **Conclusion: the effect is real and reproducible but limited, so the tree keeps k-inner.**
 Power is pinned at the cap in all four runs, so the saving appears as **clock, not watts** —
@@ -1032,19 +1032,19 @@ Details worth keeping:
   this comparison ran n-inner on k-inner's MEMNOP and read the resulting +1.9% clock as a power
   win; it was ~100 cycles/iter of barrier wait. Never compare clocks across builds with
   different cycle counts.
-- **The reorder does not perturb the schedule.** fav4 asm inventory is identical (573 instrs,
+- **The reorder does not perturb the schedule.** fmha_v4 asm inventory is identical (573 instrs,
   same classes per stage, same `s_nop`/`s_waitcnt` counts), the QK class interleave is
   byte-identical, and VGPRs go *down* 256 -> 248 with no spills. The llir scheduler counts
   classes and is indifferent to register identity, exactly as expected.
-- **Mem-stage pacing is order-sensitive on fav4 but not fav3.** fav4's MEMNOP optimum flips
+- **Mem-stage pacing is order-sensitive on fmha_v4 but not fmha_v3.** fmha_v4's MEMNOP optimum flips
   2 -> 3 (n-inner: 4447.5 / 4313.4 / 4400.9 / **4285.4** / 4295.5 for MEMNOP 0-4; k-inner is
-  4298.4 at 2 and 4394.4 at 3). fav3 stays at 2 for both. Per-stage attribution from raw ATT
+  4298.4 at 2 and 4394.4 at 3). fmha_v3 stays at 2 for both. Per-stage attribution from raw ATT
   records localized this — and it must **include the `s_barrier` records**, which hold
   ~440-540 cyc/iter that instruction-level attribution drops entirely.
 - **Count suppression from the ATT dynamic stream, not from the asm.** Deriving the loop body
   from the `This Inner Loop Header` comment plus a `.LBB0_<n-1>` latch guess over-collects on
-  fav3 (144 mfma instead of the true 64 that `process_json`'s back-edge detection finds), which
-  first produced a bogus "fav3 starts at 12%". Walking a wave's executed instructions has no
+  fmha_v3 (144 mfma instead of the true 64 that `process_json`'s back-edge detection finds), which
+  first produced a bogus "fmha_v3 starts at 12%". Walking a wave's executed instructions has no
   loop-structure heuristic to get wrong.
 - **FlyDSL already emits the n-inner order**, and gets 62.5% of srcB / 31% overall for free;
   gluon k-inner gets 0%. Its accumulator adjacency costs it nothing, since the 16x16-only C/D
@@ -1063,19 +1063,19 @@ mechanism.
 
 The point is that **neither kernel needs `AMDGCN_SCALARIZE_PACKED_FOPS` now.** Both start from
 packed math, the declaration is satisfiable either way, and `SIPreEmitPeephole` splits whatever
-lands in an MFMA shadow. fav3 never set the variable -- its over-capacity path already reasoned in
-instructions -- and fav4 no longer has to, so there is no longer an environment variable that has
+lands in an MFMA shadow. fmha_v3 never set the variable -- its over-capacity path already reasoned in
+instructions -- and fmha_v4 no longer has to, so there is no longer an environment variable that has
 to agree with which kernel is being compiled.
 
 Measured on GPU[0], seqlen 16320 fp16, both correct against torch SDPA:
 
 | | cyc/iter | mfma eff /SIMD | ceiling | TFLOPS | spills |
 |---|---:|---:|---:|---:|---:|
-| fav3 (byte-identical asm to before) | 4803.5 | 85.3% | 91.4% | 1169 | 9 |
-| fav4 | 4373.2 | 93.7% | 100% | 1241 | 2 |
-| fav4 SCALE_ON_Q=0 | 4438.0 | 92.3% | 100% | 1220 | -- |
+| fmha_v3 (byte-identical asm to before) | 4803.5 | 85.3% | 91.4% | 1169 | 9 |
+| fmha_v4 | 4373.2 | 93.7% | 100% | 1241 | 2 |
+| fmha_v4 SCALE_ON_Q=0 | 4438.0 | 92.3% | 100% | 1220 | -- |
 
-fav4 gives up **1.6% of cycles and 0.3% of throughput** against the old force-everything-scalar
+fmha_v4 gives up **1.6% of cycles and 0.3% of throughput** against the old force-everything-scalar
 build (4304.6 / 95.2% / 1245). Its loop still reaches the 100% ceiling with no packed op left in
 it, so the loss is not coverage but **fill accuracy**: a count is a faithful cycle budget only when
 the class is uniform-cost, and a VALU group holding both 4-cycle scalars and 8-cycle packed ops can
@@ -1091,38 +1091,38 @@ Two alternatives were measured and rejected:
   before the declaration is emitted. 4412.0 cyc, 92.8% -- worse than the one-line change and
   thirty lines instead of one. Note the hand-off ordering is essential either way: the dispatch to
   `declareRegionGroupsOverCap` happens *inside* `declareRegionGroups` after run collection, so
-  anything done at the top of that function also hits fav3 and destroys its packed remainder
+  anything done at the top of that function also hits fmha_v3 and destroys its packed remainder
   (measured: ceiling 91.4% -> 85.6%, 0 packed left).
 
-fav4 also picks up 2 VGPR spills (`private_segment_fixed_size` 0 -> 12), all outside the loop:
+fmha_v4 also picks up 2 VGPR spills (`private_segment_fixed_size` 0 -> 12), all outside the loop:
 without the global Triton pass the prologue and drain keep their packed ops, which shifts pressure
 there. No scratch traffic in the loop body.
 
-**Measurement note.** fav3's asm is byte-identical, which makes it a free control for thermal
-drift, and it earned its keep here: a mid-session batch read fav3 at 1136.7 against its usual
-1168.5, i.e. the whole batch was ~2.7% low. After a 200 s cool-down fav3 read 1169.1 and 1169.6
-either side of fav4's 1241.5. Bracket any TFLOPS measurement with an unchanged binary.
+**Measurement note.** fmha_v3's asm is byte-identical, which makes it a free control for thermal
+drift, and it earned its keep here: a mid-session batch read fmha_v3 at 1136.7 against its usual
+1168.5, i.e. the whole batch was ~2.7% low. After a 200 s cool-down fmha_v3 read 1169.1 and 1169.6
+either side of fmha_v4's 1241.5. Bracket any TFLOPS measurement with an unchanged binary.
 
 ## 3.19 mem-stage pacing x scale-on-Q matrix (2026-07-27, GPU[0], unified plugin)
 
 Three settings, both kernels, seqlen 16320 fp16. `LLIRSCHED_WP_MEMNOP` controls the `s_nop`s at
-each mem-cluster head. fav3 had no `SCALE_ON_Q` when this was first run; it has one now (see
+each mem-cluster head. fmha_v3 had no `SCALE_ON_Q` when this was first run; it has one now (see
 below), so all three settings exist for both kernels.
 
-| setting | | fav3 | fav4 |
+| setting | | fmha_v3 | fmha_v4 |
 |---|---|---|---|
 | 1 | SOQ=0, no `s_nop` (`MEMNOP=0`) | 1165.0 TF / 4882.1 cyc / 83.9% | 1222.8 TF / 4577.2 cyc / 89.5% |
 | 2 | SOQ=0, `MEMNOP=2` | 1168.8 TF / 4802.0 cyc / 85.3% | 1233.1 TF / 4434.5 cyc / 92.4% |
 | 3 | SOQ=1, `MEMNOP=2` | **1176.6** TF / 4752.2 cyc / 86.2% | **1242.6** TF / 4368.7 cyc / 93.8% |
 
-What the pacing is worth on its own (setting 1 -> 2): fav3 **-1.6% cycles**, +1.4 pts, +0.3% TF;
-fav4 **-3.1% cycles**, +2.9 pts, +0.8% TF. It helps fav4 about twice as much as fav3, which fits
-the mechanism -- fav3's dot clusters are over capacity, so its mem clusters are less often the
+What the pacing is worth on its own (setting 1 -> 2): fmha_v3 **-1.6% cycles**, +1.4 pts, +0.3% TF;
+fmha_v4 **-3.1% cycles**, +2.9 pts, +0.8% TF. It helps fmha_v4 about twice as much as fmha_v3, which fits
+the mechanism -- fmha_v3's dot clusters are over capacity, so its mem clusters are less often the
 thing the other wave is waiting on.
 
-Scale-on-Q on top (2 -> 3): fav4 **-1.5% cycles**, +1.4 pts, +0.8% TF; fav3 **-1.0% cycles**,
-+0.9 pts, +0.8% TF. Together the two are worth **-4.6% cycles / +1.6% TF** on fav4 and
-**-2.7% cycles / +1.0% TF** on fav3. Both kernels gain about the same 0.8% from scale-on-Q, which
+Scale-on-Q on top (2 -> 3): fmha_v4 **-1.5% cycles**, +1.4 pts, +0.8% TF; fmha_v3 **-1.0% cycles**,
++0.9 pts, +0.8% TF. Together the two are worth **-4.6% cycles / +1.6% TF** on fmha_v4 and
+**-2.7% cycles / +1.0% TF** on fmha_v3. Both kernels gain about the same 0.8% from scale-on-Q, which
 is what you would expect -- it removes the same per-element multiply from the same cluster in both.
 
 **`MEMNOP=2` is the optimum in all three configurations**, which is the current default. Full
@@ -1130,28 +1130,28 @@ sweep, cyc/iter:
 
 | `MEMNOP` | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
-| fav3 SOQ=0 | 4882.1 | 4828.1 | **4802.0** | 4818.5 | 4814.6 |
-| fav3 SOQ=1 | 4823.8 | 4783.5 | **4752.2** | 4761.6 | 4765.7 |
-| fav4 SOQ=0 | 4577.2 | 4538.2 | **4434.5** | 4523.1 | 4444.0 |
-| fav4 SOQ=1 | 4422.9 | 4467.1 | **4368.7** | 4524.9 | 4483.8 |
+| fmha_v3 SOQ=0 | 4882.1 | 4828.1 | **4802.0** | 4818.5 | 4814.6 |
+| fmha_v3 SOQ=1 | 4823.8 | 4783.5 | **4752.2** | 4761.6 | 4765.7 |
+| fmha_v4 SOQ=0 | 4577.2 | 4538.2 | **4434.5** | 4523.1 | 4444.0 |
+| fmha_v4 SOQ=1 | 4422.9 | 4467.1 | **4368.7** | 4524.9 | 4483.8 |
 
 Note the sweep is not monotonic and not smooth -- 4 beats 3 in two of the three rows. Pacing is a
 phase relationship between two waves' LDS bursts, not a quantity, so bisecting it does not work;
 sweep the small range.
 
-TFLOPS were bracketed by an unchanged fav3 `MEMNOP=2` build before and after, reading 1168.8 and
+TFLOPS were bracketed by an unchanged fmha_v3 `MEMNOP=2` build before and after, reading 1168.8 and
 1168.9, so the box was stable across the batch (see the drift incident recorded above).
 
-### 3.19.1 `SCALE_ON_Q` added to fav3
+### 3.19.1 `SCALE_ON_Q` added to fmha_v3
 
-Mirrors fav4: `qk_scale` is folded into `Q` once before the loop, so VEC1's row max needs no scale
+Mirrors fmha_v4: `qk_scale` is folded into `Q` once before the loop, so VEC1's row max needs no scale
 multiply and its `fma(qk, qk_scale, -m_new)` collapses to a plain subtract. `qk_scale`'s definition
-had to be hoisted above the `Q` load, which is where it now sits. Default `True`, matching fav4 --
-**so fav3's default build changes**, from 4802.0 cyc / 85.3% to 4752.2 / 86.2%.
+had to be hoisted above the `Q` load, which is where it now sits. Default `True`, matching fmha_v4 --
+**so fmha_v3's default build changes**, from 4802.0 cyc / 85.3% to 4752.2 / 86.2%.
 
-- `SCALE_ON_Q=False` compiles to a **byte-identical opcode stream** to fav3 before the change, so
+- `SCALE_ON_Q=False` compiles to a **byte-identical opcode stream** to fmha_v3 before the change, so
   the branch costs nothing when it is off.
-- Accuracy follows fav4's tradeoff exactly: max error 3.05e-05 -> 1.22e-04 from the extra fp16
+- Accuracy follows fmha_v4's tradeoff exactly: max error 3.05e-05 -> 1.22e-04 from the extra fp16
   rounding of Q, both far inside the 1e-3 tolerance.
 - Spills improve slightly, 9 -> 8.
 - The **ceiling does not move**: 192 exposed cycles either way, so 91.4%. SOQ=1 shifts 8 cycles of
@@ -1168,25 +1168,25 @@ TFLOPS is the mean of the three; efficiency is the in-loop per-SIMD ATT figure f
 
 | | run 1 | run 2 | run 3 | mean TF | mfma eff /SIMD |
 |---|---:|---:|---:|---:|---:|
-| gluon `fav4` tuned | 1228.1 | 1243.0 | 1236.8 | **1236.0** | **93.8%** |
+| gluon `fmha_v4` tuned | 1228.1 | 1243.0 | 1236.8 | **1236.0** | **93.8%** |
 | ROCm/FlyDSL `63eb891` | 1178.3 | 1168.5 | 1202.2 | **1183.0** | 86.4% |
-| gluon `fav3` tuned | 1179.4 | 1171.1 | 1146.3 | **1165.6** | 86.1% |
-| gluon `fav4` stock LLVM | 1114.3 | 1121.3 | 1107.3 | **1114.3** | 68.0% |
-| gluon `fav3` stock LLVM | 1090.3 | 1094.1 | 1089.2 | **1091.2** | 67.9% |
+| gluon `fmha_v3` tuned | 1179.4 | 1171.1 | 1146.3 | **1165.6** | 86.1% |
+| gluon `fmha_v4` stock LLVM | 1114.3 | 1121.3 | 1107.3 | **1114.3** | 68.0% |
+| gluon `fmha_v3` stock LLVM | 1090.3 | 1094.1 | 1089.2 | **1091.2** | 67.9% |
 
 Tuned = llirSched plugin + `DISABLE_LLVM_OPT=disable-machine-sink` + `SCALE_ON_Q=1` +
-`MEMNOP=2`. Stock = no plugin, no env vars at all. The plugin stack is worth **+10.9%** on fav4
-and **+6.8%** on fav3; in efficiency, **+25.8** and **+18.2 points**.
+`MEMNOP=2`. Stock = no plugin, no env vars at all. The plugin stack is worth **+10.9%** on fmha_v4
+and **+6.8%** on fmha_v3; in efficiency, **+25.8** and **+18.2 points**.
 
-**Stock LLVM cannot tell fav3 and fav4 apart** -- 68.0% vs 67.9%, and only 2.1% of throughput.
+**Stock LLVM cannot tell fmha_v3 and fmha_v4 apart** -- 68.0% vs 67.9%, and only 2.1% of throughput.
 The 7.7-point gap between the tuned rows is the scheduler exploiting the budget headroom lazy
 rescaling creates, not the algorithm on its own.
 
 Caveats, both against these numbers rather than for them: S=16384 gives an even `n_blocks`, so
 both Gluon kernels run the `ODD_TAIL` tile (~0.5 pt of epilogue) that 16320/16448 avoid; and the
 variance of the tuned rows is larger than the stock ones (spreads 15-34 vs 5-14), since a denser
-MFMA stream sits nearer the power cap. fav4's 53 TF lead over FlyDSL exceeds any spread here;
-fav3-vs-FlyDSL (17 TF) does not and should be read as a tie.
+MFMA stream sits nearer the power cap. fmha_v4's 53 TF lead over FlyDSL exceeds any spread here;
+fmha_v3-vs-FlyDSL (17 TF) does not and should be read as a tie.
 
 ### 3.20.1 FlyDSL is measurement-sensitive; use a deep window
 
@@ -1195,7 +1195,7 @@ Six consecutive runs of one config, 20 s apart:
 
     1236.9   1242.8   1165.9   1167.7   1159.3   1157.5
 
-A monotonic 7% decay, and *not* the box: an unchanged gluon fav3 build interleaved with these read
+A monotonic 7% decay, and *not* the box: an unchanged gluon fmha_v3 build interleaved with these read
 1176.7 twice. Re-running FlyDSL with the same 1000-dispatch / last-100 window the Gluon rows use
 gives 1159.0, 1167.2, 1191.4, 1201.6. **Earlier revisions of the README quoted 1242 for FlyDSL,
 which was a cool-die reading.** `scripts/fly_kernel_time.py` now applies our window to it.
@@ -1213,7 +1213,7 @@ Its shipped defaults are its optimum. Relative to canonical:
 | `dualwave_swp_enable_stagger=False` | 1001.8 TF, **-15%** |
 | `dualwave_swp_setprio=False` | 1145.4 TF, -3% |
 | `waves_per_eu=1` | indistinguishable (interleaved pairs: 1242.4 vs 1242.7, then 1180.7 vs 1168.1) |
-| `dualwave_swp_lazy_rescale=False` | ~1044 TF, the fav3-equivalent path |
+| `dualwave_swp_lazy_rescale=False` | ~1044 TF, the fmha_v3-equivalent path |
 
 Causal vs non-causal: **non-causal is its better number** -- 1178.0 TF against 1037 causal with
 the FLOPs halved for the skipped tiles, and causal's max error is 1.26e-03 against 5.4e-05. The
@@ -1230,10 +1230,10 @@ which they cannot: the loop does not depend on B or H.
 
 | bf16 | eff /SIMD | loop | pro | epi | cyc/iter |
 |---|---:|---:|---:|---:|---:|
-| fav4 B=1 S=16384 | 93.9% | 94.07% | 2.58% | 3.35% | 4361.5 |
-| fav4 B=32 S=8192 | 94.5% | 88.31% | 5.47% | 6.22% | 4334.6 |
-| fav3 B=1 S=16384 | 86.0% | 95.14% | 1.68% | 3.18% | 4761.7 |
-| fav3 B=32 S=8192 | 86.1% | 90.52% | 3.42% | 6.06% | 4757.1 |
+| fmha_v4 B=1 S=16384 | 93.9% | 94.07% | 2.58% | 3.35% | 4361.5 |
+| fmha_v4 B=32 S=8192 | 94.5% | 88.31% | 5.47% | 6.22% | 4334.6 |
+| fmha_v3 B=1 S=16384 | 86.0% | 95.14% | 1.68% | 3.18% | 4761.7 |
+| fmha_v3 B=32 S=8192 | 86.1% | 90.52% | 3.42% | 6.06% | 4757.1 |
 
 **Per cycle the B=32 shape is strictly worse.** Each workgroup walks 128 K/V blocks instead of
 256, so the fixed prologue and drain amortize over half as much work and their share **doubles**
@@ -1243,8 +1243,8 @@ which they cannot: the loop does not depend on B or H.
 
 | bf16 | TFLOPS | sclk | power |
 |---|---:|---:|---:|
-| fav4 B=1 S=16384 | 1296.5 | 1527.7 MHz | **1396.5 W -- at the cap** |
-| fav4 B=32 S=8192 | 1325.6 | **1569.8 MHz** | 1317.6 W |
+| fmha_v4 B=1 S=16384 | 1296.5 | 1527.7 MHz | **1396.5 W -- at the cap** |
+| fmha_v4 B=32 S=8192 | 1325.6 | **1569.8 MHz** | 1317.6 W |
 | FlyDSL B=1 S=16384 | 1186.3 | 1541.1 MHz | 1366.1 W |
 | FlyDSL B=32 S=8192 | 1327.1 | **1650.9 MHz** | 1339.4 W |
 
@@ -1255,15 +1255,15 @@ on pipeline fill and drain.
 
 **This is why the ranking flips between shapes.** The two kernels have opposite strengths:
 
-- fav4 is **cycle**-efficient -- 94.5% in-loop against FlyDSL's 84.7%.
+- fmha_v4 is **cycle**-efficient -- 94.5% in-loop against FlyDSL's 84.7%.
 - FlyDSL is **power**-efficient per cycle -- at B=32 it clocks 5.2% higher at comparable power,
   and it also spends more of its time in the loop (94.13% vs 88.33%), so its pipeline fill/drain
   is cheaper than our four-stage one.
 
-At B=1 S=16384 the board is pinned at the cap, cycle efficiency decides, and fav4 wins by 9.3%.
+At B=1 S=16384 the board is pinned at the cap, cycle efficiency decides, and fmha_v4 wins by 9.3%.
 At B=32 S=8192 there is power headroom and the two cancel almost exactly:
 
-    fav4 cycle advantage   (0.945 x 0.8833) / (0.847 x 0.9413) = +4.8%
+    fmha_v4 cycle advantage   (0.945 x 0.8833) / (0.847 x 0.9413) = +4.8%
     FlyDSL clock advantage  1650.9 / 1569.8                    = +5.2%
 
 which is a dead heat, and the measurement agrees (1318.0 vs 1320.1). **Neither shape gives "the"
@@ -1279,17 +1279,17 @@ TFLOPS; **reproduced at 1319.4 / 1319.6 / 1320.2** with `scripts/fly_kernel_time
 | | run 1 | run 2 | run 3 | mean TF | eff /SIMD |
 |---|---:|---:|---:|---:|---:|
 | ROCm/FlyDSL `63eb891` | 1318.7 | 1320.8 | 1320.8 | **1320.1** | 84.7% |
-| gluon `fav4` tuned | 1317.1 | 1318.8 | 1318.2 | **1318.0** | **94.5%** |
-| gluon `fav3` tuned | 1242.1 | 1242.6 | 1243.1 | **1242.6** | 86.2% |
-| gluon `fav4` stock LLVM | 1197.6 | 1196.4 | 1198.7 | **1197.6** | 68.5% |
-| gluon `fav3` stock LLVM | 1141.0 | 1140.7 | 1141.1 | **1140.9** | 67.8% |
+| gluon `fmha_v4` tuned | 1317.1 | 1318.8 | 1318.2 | **1318.0** | **94.5%** |
+| gluon `fmha_v3` tuned | 1242.1 | 1242.6 | 1243.1 | **1242.6** | 86.2% |
+| gluon `fmha_v4` stock LLVM | 1197.6 | 1196.4 | 1198.7 | **1197.6** | 68.5% |
+| gluon `fmha_v3` stock LLVM | 1141.0 | 1140.7 | 1141.1 | **1140.9** | 67.8% |
 
 This shape is a far better benchmark than B=1/S=16320: every row is stable to ~2 TFLOPS, where
 B=1 gave FlyDSL a 34-point spread and a 7% warm-up decay. B=32 puts 8192 workgroups and a 2.1 GB
 working set on the die, so it reaches a uniform steady state and holds it. **Prefer it for
 headline numbers.**
 
-The plugin stack is worth **+10.0%** on fav4 (1197.6 -> 1318.0) and **+8.9%** on fav3
+The plugin stack is worth **+10.0%** on fmha_v4 (1197.6 -> 1318.0) and **+8.9%** on fmha_v3
 (1140.9 -> 1242.6) here, against +10.9% / +6.8% at B=1 S=16384 fp16.
 
 ### 3.21.2 Launch geometry and XCD remapping: gluon vs FlyDSL
@@ -1300,7 +1300,7 @@ Checked because a grid or occupancy difference would confound the §8 table. It 
 `num_waves = 8`, `rows_per_wave = 32`, `waves_per_eu = 2`, with a comment that the geometry
 "follow[s] the gfx950 dual-wave 8-wave CTA". Every one of those matches ours.
 
-| | gluon fav3/fav4 | FlyDSL |
+| | gluon fmha_v3/fmha_v4 | FlyDSL |
 |---|---|---|
 | grid | `(HQ, ceil(S/BLOCK_M), B)` | `(NUM_HEADS_Q, ceil(S/BLOCK_M), batch)` |
 | BLOCK_M / BLOCK_N | 256 / 64 | 256 / 64 |
@@ -1338,8 +1338,8 @@ but the ODD_TAIL numbers below are measurements, and they are why this is worth 
 
 | file | what it is |
 |---|---|
-| `fav3.py` | eager rescale: Gluon kernel + its autotune config + host launcher `run_gluon_attention` |
-| `fav4.py` | `fav3` plus lazy rescaling and the cluster-balance rules of the README's §5 |
+| `fmha_v3.py` | eager rescale: Gluon kernel + its autotune config + host launcher `run_gluon_attention` |
+| `fmha_v4.py` | `fmha_v3` plus lazy rescaling and the cluster-balance rules of the README's §5 |
 | `common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
 | `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
 | `note.md` | this file |
@@ -1347,15 +1347,15 @@ but the ODD_TAIL numbers below are measurements, and they are why this is worth 
 
 ```bash
 # correctness + do_bench TFLOPS
-FA_MODULE=fav4 python bench.py --seqlen 16320
+FA_MODULE=fmha_v4 python bench.py --seqlen 16320
 
 # the reported metric: kernel time from rocprofv3, prepared launch
-FA_MODULE=fav4 python ../../scripts/fa_kernel_time.py --seqlen 16320
+FA_MODULE=fmha_v4 python ../../scripts/fa_kernel_time.py --seqlen 16320
 ```
 
 Both want the environment of the run recipe above in front of them (`disable-machine-sink` plus
 the two `LLVM_PASS_PLUGIN_*` variables); without it they build the stock-LLVM configuration and
-report its numbers. Pick the kernel with `FA_MODULE=fav3` (default) or `FA_MODULE=fav4`. Harness
+report its numbers. Pick the kernel with `FA_MODULE=fmha_v3` (default) or `FA_MODULE=fmha_v4`. Harness
 defaults are `B=1, HQ=HK=64 (MHA), D=128, bhsd`, non-causal, **bf16** -- pass `--dtype fp16` for
 the other. Both kernels support either; bf16 is the default because it is what these parts are
 usually run in, and because it measures a few percent faster at the same cycle count.
@@ -1381,13 +1381,13 @@ the loop:
 
 | | cyc/iter | MFMA eff /SIMD | epilogue | VGPR spills |
 |---|---:|---:|---:|---:|
-| `fav4` S=16320 | 4299.3 | 95.3% | 2.38% | 0 |
-| `fav4` S=16384 | 4293.7 | 95.4% | 2.89% | 0 |
-| `fav3` S=16320 | 4802.8 | 85.3% | 3.07% | 9 |
-| `fav3` S=16384 | 4799.6 | 85.3% | 3.92% | 20 |
+| `fmha_v4` S=16320 | 4299.3 | 95.3% | 2.38% | 0 |
+| `fmha_v4` S=16384 | 4293.7 | 95.4% | 2.89% | 0 |
+| `fmha_v3` S=16320 | 4802.8 | 85.3% | 3.07% | 9 |
+| `fmha_v3` S=16384 | 4799.6 | 85.3% | 3.92% | 20 |
 
 The in-loop numbers are unchanged in both -- the tail buys its way in entirely out of the
-epilogue. `fav3` does pay for it in registers: the tail's live ranges push spills from 9 to 20,
+epilogue. `fmha_v3` does pay for it in registers: the tail's live ranges push spills from 9 to 20,
 all of them in that unpipelined block rather than in the loop, which is why the loop's cycle count
 and efficiency do not move. A runtime tail instead of a constexpr one would put a branch
 immediately ahead of a dot cluster, which is what the README's first design rule exists to
@@ -1405,7 +1405,7 @@ guess.
 
 Adding VALU to a saturated kernel is not possible without a free VGPR, and at 256/256 allocated
 there is none (a rotating-destination filler faults). So the sweep runs the other way. Start from
-`fav4` on **stock LLVM + `disable-machine-sink`** -- 76.2% efficiency, the low end -- and delete an
+`fmha_v4` on **stock LLVM + `disable-machine-sink`** -- 76.2% efficiency, the low end -- and delete an
 evenly spaced fraction of the in-loop dot-cluster VALU, 0 to 100% in steps of 5%. The kernel stops
 computing attention, but the MFMA count per iteration, the loop trip count and the memory traffic
 are all untouched, so TFLOPS remains a fair measure of the same work.
@@ -1477,7 +1477,7 @@ The natural hypothesis is that a denser MFMA stream draws more power and gives c
 Flat to ±1.1% with no trend, at a power that is *not* the cap (the same poller reads 1396.5 W at
 B=1 S=16384, which is the cap -- see the shape comparison above). **The reason is that this method
 moves two power terms in opposite directions**: each step issues more MFMA per second and much less
-VALU per second. At `frac=0.65` the build issues 11% more MFMA/s than tuned `fav4` while retaining
+VALU per second. At `frac=0.65` the build issues 11% more MFMA/s than tuned `fmha_v4` while retaining
 only 35% of its dot-cluster VALU, and the two land at the same board power. So the sweep isolates
 the *cycle* effect cleanly, which is what it was for -- but it cannot say anything about the clock
 cost of a real optimization, which holds the VALU count fixed.
@@ -1489,9 +1489,9 @@ at the same shape:
 
 | kernel | eff /SIMD | TFLOPS | sclk | power | TF/GHz | vs. line | vs. line/GHz |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `fav4` stock LLVM + no-sink | 76.2% | 1235.5 | 1738.1 MHz | 1341.1 W | 710.8 | -1.3% | -1.8% |
+| `fmha_v4` stock LLVM + no-sink | 76.2% | 1235.5 | 1738.1 MHz | 1341.1 W | 710.8 | -1.3% | -1.8% |
 | ROCm/FlyDSL `63eb891` | 84.7% | 1325.9 | 1657.4 MHz | 1335.9 W | 800.0 | -1.8% | +1.8% |
-| gluon `fav4` tuned | 94.5% | 1323.6 | 1565.8 MHz | 1316.0 W | 845.3 | **-9.7%** | -1.5% |
+| gluon `fmha_v4` tuned | 94.5% | 1323.6 | 1565.8 MHz | 1316.0 W | 845.3 | **-9.7%** | -1.5% |
 
 **In raw TFLOPS the tuned kernel is 9.7% below the ablation line**, while the other two sit on it.
 The deviation is not noise and it is not the kernels being different: it tracks the clock. Dividing
@@ -1506,7 +1506,7 @@ FlyDSL included, which shares none of our codegen. Its +1.8% is the loop-share d
 noted above (94.1% of its time in the loop against our 88.3%), i.e. exactly the non-loop term the
 intercept represents.
 
-That decomposition closes the fav4-vs-FlyDSL dead heat exactly:
+That decomposition closes the fmha_v4-vs-FlyDSL dead heat exactly:
 
     cycles  845.3 / 800.0  = 1.0567     (+5.7%, not the +11.6% the raw efficiency ratio suggests)
     clock   1565.8 / 1657.4 = 0.9447    (-5.5%)
@@ -1524,7 +1524,7 @@ That decomposition closes the fav4-vs-FlyDSL dead heat exactly:
    worth +5.7% in cycles and -5.5% in clock. This is why the two are a dead heat here and why the
    ranking flips at B=1, and it is the quantitative form of the point the shape comparison above
    makes qualitatively.
-4. The headline `fav4` stock -> tuned gain of 68.5% -> 94.5% efficiency is a real 1197.6 -> 1318.0,
+4. The headline `fmha_v4` stock -> tuned gain of 68.5% -> 94.5% efficiency is a real 1197.6 -> 1318.0,
    not the ~1650 that proportionality would imply. Both statements are in the README; only the
    second one is misleading.
 
@@ -1532,7 +1532,7 @@ That decomposition closes the fav4-vs-FlyDSL dead heat exactly:
 
 ```bash
 # one point of the sweep: efficiency by ATT, throughput by kernel time
-FA_ABLATE_VALU=frac FA_ABLATE_FRAC=0.65 HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+FA_ABLATE_VALU=frac FA_ABLATE_FRAC=0.65 HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v4 \
   DISABLE_LLVM_OPT=disable-machine-sink \
   python ../../scripts/fa_kernel_time.py --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 \
     --iters 2000 --last-n 100 --scale-on-q 1
@@ -1629,13 +1629,13 @@ predicts at that kernel's efficiency:
 
 | kernel | eff /SIMD | raw TFLOPS | per GHz | sclk (MHz) |
 |---|---:|---:|---:|---:|
-| `fav4` stock LLVM + no-sink | 76.2% | 1235.5 / 1241.0 (**-0.4%**) | 710.8 / 709.2 (**+0.2%**) | 1738.1 / 1746.4 (**-0.5%**) |
+| `fmha_v4` stock LLVM + no-sink | 76.2% | 1235.5 / 1241.0 (**-0.4%**) | 710.8 / 709.2 (**+0.2%**) | 1738.1 / 1746.4 (**-0.5%**) |
 | ROCm/FlyDSL `63eb891` | 84.7% | 1325.9 / 1280.5 (**+3.5%**) | 800.0 / 771.4 (**+3.7%**) | 1657.4 / 1663.1 (**-0.3%**) |
-| gluon `fav4` tuned | 94.6% | 1324.7 / 1326.5 (**-0.1%**) | 846.3 / 844.0 (**+0.3%**) | 1565.3 / 1566.0 (**-0.0%**) |
+| gluon `fmha_v4` tuned | 94.6% | 1324.7 / 1326.5 (**-0.1%**) | 846.3 / 844.0 (**+0.3%**) | 1565.3 / 1566.0 (**-0.0%**) |
 
-`fav4` tuned is the `f = 0` anchor of the llirSched sweep, so it sits on every line by
+`fmha_v4` tuned is the `f = 0` anchor of the llirSched sweep, so it sits on every line by
 construction; it is circled only to show where on the axis the kernel we ship lives. The
-other two rows are independent. **`fav4` stock + no-sink is a different instruction stream
+other two rows are independent. **`fmha_v4` stock + no-sink is a different instruction stream
 entirely** -- no plugin, no `scalarize`, so a different opcode mix and a different count from
 anything in the sweep -- and it lands within **0.5% on all three lines**. FlyDSL shares none
 of our codegen and lands within **0.3% of the clock line**.
@@ -1701,7 +1701,7 @@ applies to a scheduling change.
    remaining 5.4 efficiency points are worth about 17 TFLOPS. Getting past that means
    spending less energy per unit of work -- fewer or cheaper instructions, less register
    traffic -- not packing the existing ones tighter. This is the same conclusion the
-   fav4-vs-FlyDSL comparison reached from one data point, now with a slope attached.
+   fmha_v4-vs-FlyDSL comparison reached from one data point, now with a slope attached.
 4. **It decomposes the FlyDSL dead heat into three terms**, all measured. Our 9.9 extra
    efficiency points are worth +46 TFLOPS on the re-scheduling line. Against that, FlyDSL
    holds a +3.7% advantage in cycles-per-unit-work at equal efficiency (its loop share) and
@@ -1713,7 +1713,7 @@ applies to a scheduling change.
 
 ```bash
 # one point: `f` negative clumps, positive spreads, 0 leaves the assembly alone
-FA_SCHED_VALU=-0.3 HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \
+FA_SCHED_VALU=-0.3 HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v4 \
   DISABLE_LLVM_OPT=disable-machine-sink \
   LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
   LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
@@ -1731,7 +1731,7 @@ failure, it looks like a 15% speedup.
 ## 3.25 FlyDSL from modified assembly: why it wins at lower MFMA efficiency (2026-07-28)
 
 FlyDSL is the one point that sits off the cycle law -- +2.6% above it -- and it is also the
-kernel that ties `fav4` while measuring 11 efficiency points lower. Both facts want the same
+kernel that ties `fmha_v4` while measuring 11 efficiency points lower. Both facts want the same
 experiment: apply the re-scheduling sweep to **FlyDSL's own assembly** and see what its curve
 looks like from the inside.
 
@@ -1785,8 +1785,8 @@ schedule exists, and one does: 3.25.7 raises FlyDSL to 88.6% and 1341.7 TFLOPS b
 six pacing `s_nop`, a dimension `sched_valu` never touches.
 
 **An earlier draft of this section read more into that than it supports.** It compared
-FlyDSL's shadow occupancy against `fav4` *stock+scalarize* rather than the tuned build, and
-counted `fav4`'s predicated rescale as work it does, and concluded that FlyDSL's pipelining
+FlyDSL's shadow occupancy against `fmha_v4` *stock+scalarize* rather than the tuned build, and
+counted `fmha_v4`'s predicated rescale as work it does, and concluded that FlyDSL's pipelining
 was cleaner than ours. Both inputs were wrong and so was the conclusion -- see
 "Instruction-level comparison" below, which redoes it against the right build.
 
@@ -1802,13 +1802,13 @@ that difference is not resolved. **The same two laws describe both kernels.**
 
 Matched ATT measurements, same session and tool, B=32 S=8192 H=8 bf16:
 
-| | `fav4` tuned | FlyDSL | |
+| | `fmha_v4` tuned | FlyDSL | |
 |---|---:|---:|---|
 | MFMA per iteration | 64 | 64 | identical work |
 | `ds_read` per iteration | 96 | 96 | identical |
 | barriers per iteration | 8 | 8 | identical |
 | **VALU per iteration, unconditional** | **282** | **274** | within 3% -- see the correction below |
-| VALU behind an exec mask (skipped) | 33 | 0 | `fav4`'s lazy rescale |
+| VALU behind an exec mask (skipped) | 33 | 0 | `fmha_v4`'s lazy rescale |
 | `s_nop` cycles per iteration | 14 | 48 | +34 |
 | `s_setprio` per iteration | 0 | 4 | |
 | VALU issue cycles, unconditional | 1392 | 1352 | both under the 1536 that fits |
@@ -1818,7 +1818,7 @@ Matched ATT measurements, same session and tool, B=32 S=8192 H=8 bf16:
 | sclk | 1565.3 MHz | 1687.9 MHz | FlyDSL +7.8% |
 
 FlyDSL takes **567 more cycles** per iteration for the same 64 MFMA, and its VALU load is
-within 3% of ours once `fav4`'s never-executed rescale is excluded. Both kernels' VALU fits
+within 3% of ours once `fmha_v4`'s never-executed rescale is excluded. Both kernels' VALU fits
 inside the MFMA shadows with room to spare, so in neither case are those cycles instruction
 issue -- they are waiting, and FlyDSL does 3.4x more of it. `s_nop` accounts for 34. The rest is consistent with what its own build
 flags say it is doing: `dualwave_swp_enable_stagger` and `dualwave_swp_setprio` (4
@@ -1841,7 +1841,7 @@ controller sees, the power sets the clock. Clock is never an independent knob he
 Against those, our 13.1% cycle advantage. Composing all three on whole-kernel time per loop
 iteration:
 
-    fav4    4332.9 / 0.8834 = 4904.8 cycles  @ 1565.3 MHz = 3.133 us
+    fmha_v4    4332.9 / 0.8834 = 4904.8 cycles  @ 1565.3 MHz = 3.133 us
     FlyDSL  4900.3 / 0.9405 = 5210.3 cycles  @ 1687.9 MHz = 3.087 us   (1.5% ahead)
 
 and the measurement is a tie to 0.1% (1324.7 vs 1325.9). The 1.5% residual is inside the
@@ -1853,11 +1853,11 @@ ahead by tenths of a percent, and neither can the benchmark.
 
 ### 3.25.4 Instruction-level comparison, done against the right build
 
-The claim that FlyDSL schedules better than `fav4` was wrong, and it was wrong twice over.
-Corrected, per iteration, `fav4` **tuned** (not stock+scalarize) against FlyDSL, counting
+The claim that FlyDSL schedules better than `fmha_v4` was wrong, and it was wrong twice over.
+Corrected, per iteration, `fmha_v4` **tuned** (not stock+scalarize) against FlyDSL, counting
 only instructions that are not behind an exec mask:
 
-| per iteration | `fav4` tuned | FlyDSL |
+| per iteration | `fmha_v4` tuned | FlyDSL |
 |---|---:|---:|
 | MFMA / `ds_read` / `buffer_load` / barriers | 64 / 96 / 8 / 8 | 64 / 96 / 8 / 8 |
 | LDS mix | 64x `ds_read_b64_tr_b16` + 32x `b128` | identical |
@@ -1873,19 +1873,19 @@ only instructions that are not behind an exec mask:
 
 The two loops are **the same loop**: same MFMA count, same LDS instructions down to the
 opcode and width, same VMEM, same barriers, and VALU issue demand within 3%. The 12.5%
-VALU gap reported earlier was `fav4`'s lazy-rescale block -- 32 `v_pk_mul_f32` scaling the
+VALU gap reported earlier was `fmha_v4`'s lazy-rescale block -- 32 `v_pk_mul_f32` scaling the
 output accumulator -- which sits behind `s_and_saveexec_b64` + `s_cbranch_execz` and almost
 never executes. (Independently confirmed: forcing that block to skip moves stock+no-sink
-efficiency from 76.2% to 76.3%.) Charging it to `fav4` is what made FlyDSL look leaner.
+efficiency from 76.2% to 76.3%.) Charging it to `fmha_v4` is what made FlyDSL look leaner.
 
 With that removed, **neither kernel is issue-limited**: both fit their VALU inside the MFMA
 shadows with 9-12% of the budget spare. So the ideal loop is 4096 cycles per SIMD per
 iteration for both, and what each actually spends above that is pure stall:
 
-    fav4 tuned   4096 ideal   4332.9 measured    237 cycles of stall  ( 5.5% of the loop)
+    fmha_v4 tuned   4096 ideal   4332.9 measured    237 cycles of stall  ( 5.5% of the loop)
     FlyDSL       4096 ideal   4900.3 measured    804 cycles of stall  (16.4% of the loop)
 
-**`fav4`'s schedule hides VALU better -- by 3.4x on the only measure that counts.** That is
+**`fmha_v4`'s schedule hides VALU better -- by 3.4x on the only measure that counts.** That is
 what its 94.5% against 83.6% was saying all along, and the shadow-occupancy histogram I used
 to argue otherwise is not a substitute for it: a static count of VALU behind each MFMA says
 nothing about the stalls between them. In-loop MFMA efficiency is the criterion; it was
@@ -1902,7 +1902,7 @@ The counts above are over the **whole loop body**, not the dot regions alone -- 
 two kernels that is the same comparison, because almost all of the loop's VALU is in the dot
 regions and the mem regions hold two instructions each:
 
-| unconditional VALU | `fav4` tuned | FlyDSL |
+| unconditional VALU | `fmha_v4` tuned | FlyDSL |
 |---|---:|---:|
 | 4 dot (QK/PV) regions | 280 (75, 65, 75, 65) | 272 (67, 69, 67, 69) |
 | 5 mem regions | 2 | 2 |
@@ -1911,7 +1911,7 @@ regions and the mem regions hold two instructions each:
 So the entire difference is **8 instructions out of 280, 2.9%** -- 40 issue cycles out of 1384.
 Opcode by opcode:
 
-| opcode | `fav4` | FlyDSL | note |
+| opcode | `fmha_v4` | FlyDSL | note |
 |---|---:|---:|---|
 | `v_add_f32` | 130 | 66 | |
 | `v_sub_f32` | 4 | 66 | add+sub: **134 vs 132**, the split is opcode selection |
@@ -1930,7 +1930,7 @@ FlyDSL emits `v_max3_f32` plus four `v_max_f32`, and the two are the same
 is 2 extra `v_exp_f32` and 4 extra compare/select/move on our side.
 
 **"FlyDSL has fewer VALU" is not a real phenomenon.** The 12.5% figure reported earlier was
-entirely `fav4`'s 32 predicated `v_pk_mul_f32`, which do not execute. The two kernels compute
+entirely `fmha_v4`'s 32 predicated `v_pk_mul_f32`, which do not execute. The two kernels compute
 the same softmax with the same instruction budget to within 3%.
 
 ### 3.25.6 Fill and drain, measured
@@ -1938,7 +1938,7 @@ the same softmax with the same instruction budget to within 3%.
 ATT reports the prologue and epilogue durations directly, so this does not have to be
 inferred from the loop ratio. Per workgroup, at B=32 S=8192 (62 loop iterations):
 
-| cycles per workgroup | `fav4` tuned | FlyDSL | ratio |
+| cycles per workgroup | `fmha_v4` tuned | FlyDSL | ratio |
 |---|---:|---:|---:|
 | prologue | 16428.8 | 7144.6 | 2.30x |
 | loop, 62 iterations | 268638.4 | 303817.4 | 0.88x |
@@ -1950,7 +1950,7 @@ inferred from the loop ratio. Per workgroup, at B=32 S=8192 (62 loop iterations)
 
 Both numbers are **fixed per workgroup** -- they do not scale with sequence length -- so their
 cost is entirely a function of how many iterations they amortize over. At S=16384 the same
-~35k cycles cost `fav4` only 5.9% (the B=1 S=16384 row above: 2.58% prologue + 3.35%
+~35k cycles cost `fmha_v4` only 5.9% (the B=1 S=16384 row above: 2.58% prologue + 3.35%
 epilogue), which is where FlyDSL sits at S=8192. **That is the mechanism behind the ranking
 flip between the two shapes**, and it is the same fill/drain term, not a separate effect:
 at S=8192 our fixed cost is charged to 62 iterations, at S=16384 to 126.
@@ -1989,7 +1989,7 @@ requirement from `GCNHazardRecognizer::checkPermlaneHazards` -- after which the 
 **So FlyDSL's shipped schedule is not optimal after all** -- 3.25.2's claim that it sits at
 the top of its own curve holds only in the VALU-placement dimension that `sched_valu`
 searches. In the pacing dimension it is 2.1% short: +5.7 efficiency points and +2.1% TFLOPS
-for deleting 6 scalar instructions, which also puts it **1.3% ahead of `fav4` tuned**
+for deleting 6 scalar instructions, which also puts it **1.3% ahead of `fmha_v4` tuned**
 (1341.7 against 1324.7). Removing `s_setprio` is a smaller win on its own and the two do not
 compose -- taking both is worse than either, so the priority hints earn their place once the
 nops are gone.
@@ -2011,7 +2011,7 @@ any fit:
 | FlyDSL, pacing removed | 88.6% | 1341.7 | **+3.3%** | **+0.0%** | +1.2% |
 | FlyDSL, `s_setprio` removed | 86.9% | 1334.8 | +3.4% | -0.3% | +0.8% |
 | FlyDSL, both removed | 85.0% | 1322.2 | +3.1% | -0.3% | +1.2% |
-| gluon `fav4` tuned | 94.6% | 1324.7 | -0.1% | +1.7% | +0.0% |
+| gluon `fmha_v4` tuned | 94.6% | 1324.7 | -0.1% | +1.7% | +0.0% |
 
 The offset from the gluon raw line is **constant at +3.1 to +3.4%** across a 5.7-point
 efficiency move (3.28.1 shows the model reproduces both that offset and FlyDSL's steeper
@@ -2022,7 +2022,7 @@ resolvable above the noise.
 
 On the clock axis the improved points are the strongest confirmation in this file: the
 de-paced kernel lands at 1614.5 MHz against 1613.7 predicted, **0.05% off**, on a law fitted
-entirely from `fav4`'s sweep and FlyDSL's *lower*-efficiency points. Denser instruction
+entirely from `fmha_v4`'s sweep and FlyDSL's *lower*-efficiency points. Denser instruction
 sequence, more power, less clock -- and the amount is set by the density alone, not by which
 kernel produced it.
 
@@ -2045,9 +2045,9 @@ stall cycles** aggregated over the traced waves, so dividing by the hitcount giv
 execution and the loop's index range (`loop_first_index` .. `loop_last_index`) selects the
 body. No extra runs needed -- the traces already taken answer it.
 
-Stall cycles per iteration **per wave**, `fav4` tuned against FlyDSL as shipped:
+Stall cycles per iteration **per wave**, `fmha_v4` tuned against FlyDSL as shipped:
 
-| stall source | n | `fav4` | share | n | FlyDSL | share |
+| stall source | n | `fmha_v4` | share | n | FlyDSL | share |
 |---|---:|---:|---:|---:|---:|---:|
 | `s_barrier` | 8 | 405 | 20% | 8 | **609** | 23% |
 | `s_waitcnt` | 8 | 57 | 3% | 4 | **263** | 10% |
@@ -2086,7 +2086,7 @@ the loop by 279.
 ### 3.25.10 One clock law, one cycle law, and a fill/drain difference
 
 The two kernels appeared to have different curves. On the axis that carries the power effect
-they do not. Fitting `sclk` against efficiency separately gives -9.8 MHz/point for `fav4` and
+they do not. Fitting `sclk` against efficiency separately gives -9.8 MHz/point for `fmha_v4` and
 -12.5 for FlyDSL, but the two sweeps cover **disjoint** efficiency ranges (80.3-94.6 and
 68.4-82.9, overlapping in 2.6 points). Fit together:
 
@@ -2098,7 +2098,7 @@ responds to how busy the issue ports are, and with near-identical instruction mi
 kernels put the same load on them at the same efficiency:
 
     combined issue duty = (2048 + VALU issue cycles) / (2048/eff)
-    fav4    (2048 + 1392) / 2048 = 1.680 * eff
+    fmha_v4    (2048 + 1392) / 2048 = 1.680 * eff
     FlyDSL  (2048 + 1352) / 2048 = 1.660 * eff        1.2% apart
 
 So the causal chain is: **schedule -> instruction sequence -> issue duty per cycle -> power ->
@@ -2112,20 +2112,20 @@ What is left is not a power term at all. Composing the two laws with the fill/dr
     TFLOPS = K * sclk(eff) / (n_iter * 4096/eff + fixed)
 
 with **one** K for both kernels, `n_iter` = 62, and `fixed` the per-workgroup prologue+drain
-cycles measured by ATT -- **35458 for `fav4`, 19221 for FlyDSL, a factor of 1.84** -- this
+cycles measured by ATT -- **35458 for `fmha_v4`, 19221 for FlyDSL, a factor of 1.84** -- this
 reproduces all 17 points:
 
 | | mean abs. error | worst |
 |---|---:|---:|
 | 17 points, both kernels, one constant | **1.1%** | 2.9% |
 
-**That is the whole difference in cycles** -- though 3.27 later shows fill/drain cycles do not convert into time, so read this as an accounting identity, not a lever. Note also what it does and does not say. `fav4` still
+**That is the whole difference in cycles** -- though 3.27 later shows fill/drain cycles do not convert into time, so read this as an accounting identity, not a lever. Note also what it does and does not say. `fmha_v4` still
 needs fewer cycles *in total*: its loop advantage is 35179 cycles and its fill/drain penalty
 16225, so it comes out **5.9% ahead on total cycles per workgroup** (304087 against 323041).
 Fill/drain gives back only 46% of what the schedule wins. What erases the remainder is the
 clock, 7.3% lower, which is the power consequence of that same density:
 
-| per workgroup, cycles | `fav4` tuned | FlyDSL | `fav4` vs FlyDSL |
+| per workgroup, cycles | `fmha_v4` tuned | FlyDSL | `fmha_v4` vs FlyDSL |
 |---|---:|---:|---:|
 | loop, 62 iterations | 268638 | 303817 | **-35179  (-11.6%)** |
 | prologue + epilogue | 35449 | 19223 | +16225  (+84.4%) |
@@ -2134,7 +2134,7 @@ clock, 7.3% lower, which is the power consequence of that same density:
 | time = cycles / clock | | | **+1.5%** |
 
 and the +1.5% is inside the clock spread -- at FlyDSL's other reading of 1657.4 MHz the same
-cycle counts put `fav4` 0.3% ahead. Because fill/drain is fixed per workgroup, `fav4`'s
+cycle counts put `fmha_v4` 0.3% ahead. Because fill/drain is fixed per workgroup, `fmha_v4`'s
 total-cycle advantage widens with sequence length: -5.9% at S=8192 (62 iterations), -8.7% at
 S=16384, -10.1% at S=32768. That is the same amortization that flips the ranking between
 shapes.
@@ -2144,17 +2144,17 @@ shapes.
 **FlyDSL does not schedule better, and it does not get more throughput at lower MFMA
 efficiency for any reason internal to the loop.** In detail:
 
-- `fav4` hides its VALU 3.4x better (5.5% stall against 16.4%), on a loop with the same MFMA,
+- `fmha_v4` hides its VALU 3.4x better (5.5% stall against 16.4%), on a loop with the same MFMA,
   LDS and VMEM instructions and VALU issue demand within 3%. FlyDSL's own stall is not even
   at its minimum: deleting six pacing `s_nop` takes it to 88.6% and 1341.7 TFLOPS (3.25.7),
-  past `fav4`, so its shipped configuration leaves 2.1% on the table at this shape. Higher in-loop MFMA efficiency
+  past `fmha_v4`, so its shipped configuration leaves 2.1% on the table at this shape. Higher in-loop MFMA efficiency
   is exactly what that means, and it remains the right thing to optimise: over the measured
   range, +17.8% efficiency is +5.3% TFLOPS, positive throughout.
 - The clock it gives up in exchange is not a kernel property. It is `sclk(eff)` -- one line
   through both kernels -- and it is a *consequence* of the denser instruction sequence, via
   the power controller, not an independent variable.
 - What FlyDSL beats us on is **fill and drain**: 19223 cycles per workgroup against our
-  35449, a 1.84x gap. It is not "the whole gap" -- `fav4` is still 5.9% ahead on total
+  35449, a 1.84x gap. It is not "the whole gap" -- `fmha_v4` is still 5.9% ahead on total
   cycles, and fill/drain claws back under half of the loop advantage. **And 3.27 shows those
   cycles do not convert into time**: cutting 19.5% of our fill/drain moved throughput 0.2%,
   and the model fits nearly as well with the term zeroed. Treat the 1.84x as a real cycle
@@ -2200,7 +2200,7 @@ by the hitcount, since fill/drain instructions can execute more than once).
 
 ### 3.26.1 The work is the same
 
-| per wave | `fav4` tuned | FlyDSL | |
+| per wave | `fmha_v4` tuned | FlyDSL | |
 |---|---:|---:|---|
 | **prologue** | | | |
 | MFMA | 16 | 16 | **identical** |
@@ -2223,7 +2223,7 @@ deferring the rescale out of the loop is free.
 
 ### 3.26.2 The difference is synchronisation
 
-| cycles per wave | `fav4` tuned | FlyDSL | delta |
+| cycles per wave | `fmha_v4` tuned | FlyDSL | delta |
 |---|---:|---:|---:|
 | prologue: `s_barrier` + `s_waitcnt` | **5879** (30 instrs) | 3032 (6 instrs) | **+2847** |
 | epilogue: `s_barrier` + `s_waitcnt` | **6489** (84 instrs) | 2174 (22 instrs) | **+4315** |
@@ -2232,10 +2232,10 @@ deferring the rescale out of the loop is free.
 | total attributed | 30502 | 21199 | +9303 |
 | (ATT phase durations) | 35449 | 19223 | +16226 |
 
-**`fav4` issues 84 `s_waitcnt` outside the loop against FlyDSL's 11, and 30 barriers against
+**`fmha_v4` issues 84 `s_waitcnt` outside the loop against FlyDSL's 11, and 30 barriers against
 17.** That is a 7.6x difference in wait points, and it accounts for **+7162 cycles, 44% of the
 whole fill/drain gap**. The staged LDS path adds another 1345, taking the two together to
-52%. (The per-instruction attribution covers 72% of `fav4`'s prologue duration and 98% of its
+52%. (The per-instruction attribution covers 72% of `fmha_v4`'s prologue duration and 98% of its
 epilogue; the balance is time the trace charges to no instruction, so read the deltas rather
 than the absolute totals.)
 
@@ -2259,14 +2259,14 @@ contains three `s_waitcnt` totalling 2353.
 
 ### 3.26.4 The LDS staging path
 
-`fav4` fills and drains LDS two different ways; FlyDSL uses only one:
+`fmha_v4` fills and drains LDS two different ways; FlyDSL uses only one:
 
-| whole kernel | `fav4` | FlyDSL |
+| whole kernel | `fmha_v4` | FlyDSL |
 |---|---:|---:|
 | `buffer_load ... lds` (direct-to-LDS DMA) | 24 | 24 |
 | `ds_write` (VGPR-staged) | **25** | **0** |
 
-Both use the DMA path for the loop's K/V streaming. But `fav4` additionally stages through
+Both use the DMA path for the loop's K/V streaming. But `fmha_v4` additionally stages through
 VGPRs in the prologue (8 `ds_write_b128` after `global_load_dwordx4`) and, more expensively,
 in the epilogue, where 16 `ds_write_b128` in four groups of four (indices 2283-2374, 82-136
 cycles each) do a cross-wave exchange of the output tile through LDS. FlyDSL has no
@@ -2334,8 +2334,8 @@ question, not investigated.
 
 ### 3.26.7 Why the prologue has `ds_write` at all
 
-`.loc` attribution puts all eight prologue `ds_write_b128` on **`fav4.py:391`**, which is
-`q_smem.store(q)`, and puts the 3512-cycle `vmcnt(0)` on **`fav4.py:390`**, the line above:
+`.loc` attribution puts all eight prologue `ds_write_b128` on **`fmha_v4.py:391`**, which is
+`q_smem.store(q)`, and puts the 3512-cycle `vmcnt(0)` on **`fmha_v4.py:390`**, the line above:
 
 ```python
 if SCALE_ON_Q:
@@ -2392,7 +2392,7 @@ transpose in the register file** -- exactly the exchange the 32x32 MFMA output l
 make each lane hold four *contiguous* dwords, and exactly what our epilogue uses LDS for.
 About 24 instructions and ~130 cycles per store, eight times.
 
-Ours is `gl.convert_layout(acc, blocked_layout)` at **`fav4.py:644`**, and Gluon lowers that
+Ours is `gl.convert_layout(acc, blocked_layout)` at **`fmha_v4.py:644`**, and Gluon lowers that
 to an LDS round trip: 16 `ds_write_b128` plus the matching reads, and on that one source line
 **8 `s_barrier` and 9 `s_waitcnt`** -- the largest single identifiable block in the epilogue.
 So both kernels reach `dwordx4`; we pay a shared-memory round trip and its synchronisation
@@ -2408,7 +2408,7 @@ from the drain -- and unlike 3.26.6, that is large enough for the benchmark to s
 
 ## 3.27 Epilogue store: downcast first, and a coalesced store layout (2026-07-28)
 
-Two changes to the drain, both in `fav4.py`, prompted by 3.26.8. Unlike 3.26.6 these are
+Two changes to the drain, both in `fmha_v4.py`, prompted by 3.26.8. Unlike 3.26.6 these are
 kernel-source changes, not assembly rewrites.
 
 1. **Downcast before converting**, not after. `gl.convert_layout` out of the mma layout goes
@@ -2473,13 +2473,13 @@ Everything is inside the noise, and note the noise: the *same* old build measure
 resolvable to better than that. At S=8192 the spread is ~0.3% and the new build sits at the
 bottom of it, consistent with the 0.65% loop regression from the register shuffle.
 
-### 3.27.2b Applied to `fav3` as well
+### 3.27.2b Applied to `fmha_v3` as well
 
-`fav3` has the identical epilogue structure -- same `blocked_layout`, same
+`fmha_v3` has the identical epilogue structure -- same `blocked_layout`, same
 `convert_layout` -> downcast -> store, same LSE store off `offs_m` -- so all three changes
 port over unchanged. Both kernels now emit the same drain shape:
 
-| epilogue | `fav4` old | `fav4` new | `fav3` new |
+| epilogue | `fmha_v4` old | `fmha_v4` new | `fmha_v3` new |
 |---|---:|---:|---:|
 | `global_store_dwordx4` / `_dword` | 8 / 2 | 8 / 2 | 8 / 2 |
 | `ds_write` | 16 x `b128` | 16 x `b64` | 16 x `b64` |
@@ -2487,16 +2487,16 @@ port over unchanged. Both kernels now emit the same drain shape:
 | `s_barrier` | 22 | **16** | **16** |
 | `s_waitcnt` | 62 | **52** | **31** |
 
-`fav3`'s waitcnt count is lower because its drain is simpler -- eager rescale, no three-tile
+`fmha_v3`'s waitcnt count is lower because its drain is simpler -- eager rescale, no three-tile
 tail. Interleaved timing at B=32 S=8192 bf16:
 
-    fav3 old  1245.6   1251.1        mean 1248.4
-    fav3 new  1255.3   1258.6        mean 1257.0      +0.69%
+    fmha_v3 old  1245.6   1251.1        mean 1248.4
+    fmha_v3 new  1255.3   1258.6        mean 1257.0      +0.69%
 
-So `fav3` gains 0.69% where `fav4` lost 0.2%, and **the difference is not the epilogue.** Both
+So `fmha_v3` gains 0.69% where `fmha_v4` lost 0.2%, and **the difference is not the epilogue.** Both
 loops came out of the change with the same instruction count and different register
-assignments -- 589 for `fav3`, 549 for `fav4`, neither text identical to its old build -- so
-each kernel drew a different ticket in the allocation lottery, `fav3` favourably and `fav4`
+assignments -- 589 for `fmha_v3`, 549 for `fmha_v4`, neither text identical to its old build -- so
+each kernel drew a different ticket in the allocation lottery, `fmha_v3` favourably and `fmha_v4`
 not. Read both numbers as one result: the drain change is worth somewhere between -0.2% and
 +0.7%, which is to say it is worth about as much as the noise, and what moved the needle in
 either direction was register allocation in the loop.
@@ -2543,7 +2543,7 @@ fill/drain change can be shown to do.
 
 ## 3.28 Why the FlyDSL curve sits above ours, and what is left (2026-07-28)
 
-Panel 1 of 3.25.8 has the orange (FlyDSL) curve above the green (`fav4`) one **and** steeper,
+Panel 1 of 3.25.8 has the orange (FlyDSL) curve above the green (`fmha_v4`) one **and** steeper,
 which looked like an unexplained third term after 3.27 ruled out fill/drain as a lever. It is
 not a third term. Both features fall out of `fixed` plus the shared clock law, and the reason
 fill/drain is not a *lever* while still being the *explanation* is that it converts at about
@@ -2556,7 +2556,7 @@ kernel's measured `fixed`, over each kernel's own efficiency range:
 
 | | fitted slope | model slope | model at mid-range | measured |
 |---|---:|---:|---:|---:|
-| `fav4`, eff 80-95, fixed 35449 | 4.65 /point | 3.29 | 1288.0 | 1302.6 |
+| `fmha_v4`, eff 80-95, fixed 35449 | 4.65 /point | 3.29 | 1288.0 | 1302.6 |
 | FlyDSL, eff 68-83, fixed 19223 | 5.88 /point | 7.07 | 1290.1 | 1277.8 |
 
 The model puts FlyDSL's slope above ours in the same direction and rough magnitude as the fit,
@@ -2573,9 +2573,9 @@ throughput -- why? The identity leaves exactly two candidates, because
 
 and both kernels do the same FLOPs per dispatch (verified: 4096 MFMA per workgroup each, same
 grid). **Matched efficiency means the loop term is identical by definition of the metric**, so
-only `fixed` and `clock` remain. Interpolating `fav4`'s sweep at each FlyDSL point:
+only `fixed` and `clock` remain. Interpolating `fmha_v4`'s sweep at each FlyDSL point:
 
-| eff | FlyDSL TF | `fav4` TF | TF gap | FlyDSL MHz | `fav4` MHz | clock gap | cycles/work gap |
+| eff | FlyDSL TF | `fmha_v4` TF | TF gap | FlyDSL MHz | `fmha_v4` MHz | clock gap | cycles/work gap |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 82.9 | 1313.6 | 1270.0 | +3.4% | 1687.9 | 1668.0 | +1.2% | +2.2% |
 | 85.0 | 1322.2 | 1281.7 | +3.2% | 1653.8 | 1651.6 | +0.1% | +3.0% |
@@ -2634,10 +2634,10 @@ instead of 8192 of ~64 -- so half as many fill/drain instances:
 
 | | B=32 S=8192 (8192 wg) | B=8 S=16384 (4096 wg) | |
 |---|---:|---:|---:|
-| `fav4` | 1321.0 | **1340.1** | **+1.45%** |
+| `fmha_v4` | 1321.0 | **1340.1** | **+1.45%** |
 | FlyDSL | 1323.1 | 1339.7 | +1.25% |
 
-Both gain, and **`fav4` gains more than FlyDSL** -- which is the signature we want, since our
+Both gain, and **`fmha_v4` gains more than FlyDSL** -- which is the signature we want, since our
 fill/drain share is 1.96x theirs. (The gains are not proportional to that ratio, 1.16x rather
 than 1.96x, and the comparison carries confounds: the longer kernel has a different power
 profile and B=8 changes K/V reuse in L2. Read it as confirmation of the mechanism, not a
@@ -2793,7 +2793,7 @@ overlaid with K/V, doubling the LDS allocation. See 3.29.4.
 
 So the regression is not one bad instruction. It is the llirSched interleave landing
 differently on a differently-allocated loop -- the same lottery 3.27 measured, where one
-identical epilogue change gave `fav3` +0.69% and `fav4` -0.2%. Splitting the contributions
+identical epilogue change gave `fmha_v3` +0.69% and `fmha_v4` -0.2%. Splitting the contributions
 with `--scale-on-q 0`, which moves the scale back into VEC1: 91.8% with the scale on `q_dot`,
 93.1% with it in VEC1, 94.5% baseline -- so roughly half the loss is the scale's new position
 perturbing allocation and half is the DMA's own pressure change.
@@ -2818,14 +2818,14 @@ cd <repo>
 SHAPE="--batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128"   # bf16 is the default
 
 # tuned
-HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 LLIRSCHED_WP_MEMNOP=2 \
+HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fmha_v4 LLIRSCHED_WP_MEMNOP=2 \
 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
 
 # stock LLVM: the same command with every variable above removed
-HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 \
+HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fmha_v4 \
 python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
 ```
 
@@ -2982,7 +2982,7 @@ hand-rolled -- so it is the obvious way to hoist that invariant address add prop
 of by an assembly hack. It does not work out. Three findings, in increasing order of
 importance.
 
-### 3.30.1 On `fav4` it is a silent no-op
+### 3.30.1 On `fmha_v4` it is a silent no-op
 
 `amdgcn_as()` bails before any pass if `program.get_loop()` returns `None`, and `get_loop`
 looks for a block that is **its own predecessor and successor** -- a single-basic-block
@@ -2995,28 +2995,28 @@ def is_loop(self):
     return (self in self.preds) and (self in self.succs)
 ```
 
-`fav4`'s loop is not one block. The lazy rescale is guarded by `s_and_saveexec_b64` plus
+`fmha_v4`'s loop is not one block. The lazy rescale is guarded by `s_and_saveexec_b64` plus
 `s_cbranch_execz`, which splits the body:
 
 | | basic blocks | self-loops found | peephole changes the text |
 |---|---:|---:|---|
-| `fav4` default | 43 | **0** | no |
-| `fav4` `FA_Q_DIRECT_LDS=1` | 27 | **0** | no |
+| `fmha_v4` default | 43 | **0** | no |
+| `fmha_v4` `FA_Q_DIRECT_LDS=1` | 27 | **0** | no |
 | FlyDSL | 14 | **0** | no |
-| `fav3` | 33 | 1 | **yes** |
+| `fmha_v3` | 33 | 1 | **yes** |
 
-So on `fav4` the LICM never sees the add, and neither does anything else in the peephole --
+So on `fmha_v4` the LICM never sees the add, and neither does anything else in the peephole --
 `TRITON_AMDGCNAS_PLUGIN=1` has been a no-op on this kernel all along. The README says the
 peephole targets "the GEMM hot loop", and a GEMM loop *is* a single block; nothing is being
 mis-sold, but it does not transfer to an attention loop with a predicated region in it.
 
-### 3.30.2 On `fav3` it runs, and produces a wrong kernel
+### 3.30.2 On `fmha_v3` it runs, and produces a wrong kernel
 
-`fav3` has no predicated block in its loop -- eager rescale -- so it has the self-loop the
+`fmha_v3` has no predicated block in its loop -- eager rescale -- so it has the self-loop the
 pass wants, and the peephole fires. The result does not compute attention:
 
-    fav3 plain                     max_err 9.77e-04   OK
-    fav3 + TRITON_AMDGCNAS_PLUGIN  max_err 1.06e-01   MISMATCH
+    fmha_v3 plain                     max_err 9.77e-04   OK
+    fmha_v3 + TRITON_AMDGCNAS_PLUGIN  max_err 1.06e-01   MISMATCH
 
 Bisected by disabling one pass at a time:
 
@@ -3035,7 +3035,7 @@ Bisected by disabling one pass at a time:
 ```
 
 It knows the **m0** hazard -- the same one 3.25.7 had to discover -- and no others. It drops
-12 of `fav3`'s 52 `s_nop`, and on this kernel the survivors are load-bearing for three more
+12 of `fmha_v3`'s 52 `s_nop`, and on this kernel the survivors are load-bearing for three more
 classes that a GEMM loop does not exercise:
 
 | hazard | requirement | where it comes from |
@@ -3047,17 +3047,17 @@ classes that a GEMM loop does not exercise:
 A GEMM loop has no `v_exp` and no `v_permlane32_swap`, and its MFMA spacing is regular, so the
 rule holds there and fails here. This is the same trap 3.25.7 fell into from the other
 direction: stripping FlyDSL's `s_nop` returned `max_err 2.2e-02` until the model was taught m0
-and permlane. **`TRITON_AMDGCNAS_PLUGIN=1` should not be used with `fav3` as it stands.**
+and permlane. **`TRITON_AMDGCNAS_PLUGIN=1` should not be used with `fmha_v3` as it stands.**
 
 ### 3.30.3 And the safe subset is a regression anyway
 
 With `optimize_nops` disabled the remaining passes -- LICM, save/restore elimination, the m0
-sink -- are correct on `fav3`, so they can be priced:
+sink -- are correct on `fmha_v3`, so they can be priced:
 
-    fav3 plain                       1252.6   1258.4      mean 1255.5
-    fav3 + peephole, no nop pass     1235.8   1239.0      mean 1237.4     -1.4%
+    fmha_v3 plain                       1252.6   1258.4      mean 1255.5
+    fmha_v3 + peephole, no nop pass     1235.8   1239.0      mean 1237.4     -1.4%
 
-So the route is closed at both ends: the peephole cannot reach `fav4`'s loop, and where it can
+So the route is closed at both ends: the peephole cannot reach `fmha_v4`'s loop, and where it can
 reach a loop its correct part costs 1.4%. The invariant add in 3.29.5 stays priced by the
 assembly probe rather than fixed by this plugin.
 
@@ -3067,14 +3067,14 @@ assembly probe rather than fixed by this plugin.
    `sched_valu.py`'s `_hazard_pairs` (MFMA 19 / TRANS 1 / permlane 2 / m0 1, distances counted
    in wait states). That makes the pass safe on attention kernels; it does not make it
    profitable.
-2. Give `get_loop` natural-loop detection instead of self-loop matching, so `fav4` is in
+2. Give `get_loop` natural-loop detection instead of self-loop matching, so `fmha_v4` is in
    scope. Every pass takes a single `BasicBlock`, so this is a rework, not a predicate change.
 3. Or drop the whole approach for this kernel and fix it where it originates: LLVM's
    MachineLICM declined to hoist with 10 VGPRs still available (3.29.5).
 
 ### 3.29.6 Status: parked
 
-`FA_Q_DIRECT_LDS` stays **off**, and the code stays in `fav4.py` rather than being reverted,
+`FA_Q_DIRECT_LDS` stays **off**, and the code stays in `fmha_v4.py` rather than being reverted,
 so it can be picked up. With the switch off the generated prologue, loop and epilogue are
 byte-identical to the build before any of this existed (655 / 549 / 1342 instructions,
 verified against 241a047), so nothing shipped is carrying the experiment.

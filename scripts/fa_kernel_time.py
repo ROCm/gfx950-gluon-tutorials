@@ -57,9 +57,9 @@ dies on one board span 6.5% (they track the *slowest* XCD clock, r=0.89, not the
 average), and a thermally cool part over-reads by 4-7% as DPM ramps into its
 power-limited plateau.
 
-Example (fav4 at the tutorial shape, plugin stack enabled):
+Example (fmha_v4 at the tutorial shape, plugin stack enabled):
 
-    HIP_VISIBLE_DEVICES=1 FA_MODULE=fav4 \\
+    HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v4 \\
     DISABLE_LLVM_OPT=disable-machine-sink \\
     LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \\
     LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \\
@@ -241,7 +241,7 @@ def main():
 
     modes = ["jit", "prepared"] if args.launch == "both" else [args.launch]
     print(
-        f"FA kernel-time TFLOPS | module={os.environ.get('FA_MODULE', 'fav3')} "
+        f"FA kernel-time TFLOPS | module={os.environ.get('FA_MODULE', 'fmha_v3')} "
         f"B={args.batch} HQ={args.hq} HK={args.hk} N={args.seqlen} D={args.d} "
         f"{args.dtype} {args.layout} non-causal | {fa_flops(args) * 1e-12:.2f} TFLOP/dispatch"
     )

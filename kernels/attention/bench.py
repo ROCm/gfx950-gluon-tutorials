@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ##############################################################################
-"""Baseline benchmark for the FAV3 (rotated 4-cluster) Gluon flash-attention
+"""Baseline benchmark for the FMHA (rotated 4-cluster) Gluon flash-attention
 kernel, ported from AMD-Triton/gluon-kernels (kernels/cdna4/fa).
 
 Mirrors the GEMM tutorial bench.py: correctness vs a torch reference, do_bench
@@ -92,10 +92,10 @@ if os.environ.get("FA_SCHED_VALU"):
 
     knobs.runtime.add_stages_inspection_hook = sched_valu.inspect_stages_hook
 
-# Ported FAV3 kernel + shared helpers live alongside this file.
+# Ported FMHA kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Select the kernel implementation: FA_MODULE=fav3 (default, eager rescale) or
-# fav4 (lazy-rescale variant). Both expose run_gluon_attention.
+# Select the kernel implementation: FA_MODULE=fmha_v3 (default, eager rescale) or
+# fmha_v4 (lazy-rescale variant). Both expose run_gluon_attention.
 import importlib  # noqa: E402
 
 from common import (
@@ -107,7 +107,7 @@ from common import (
     sdpa_reference,
 )  # noqa: E402
 
-_FA_MODULE = os.environ.get("FA_MODULE", "fav3")
+_FA_MODULE = os.environ.get("FA_MODULE", "fmha_v3")
 run_gluon_attention = importlib.import_module(_FA_MODULE).run_gluon_attention  # noqa: E402
 
 # Where the softmax scale is applied (SCALE_ON_Q: pre-scale Q outside the loop, so
@@ -136,7 +136,7 @@ SEQLENS = [1024, 2048, 4096, 8192, 16384]
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="FAV3 rotated-4cluster attention benchmark (gfx950)")
+    p = argparse.ArgumentParser(description="FMHA rotated-4cluster attention benchmark (gfx950)")
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
     p.add_argument("--batch", type=int, default=1)
@@ -212,7 +212,7 @@ def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
     ok, max_diff, mean_diff = _check_output(o_cmp, o_ref)
     tag = "✅ match" if ok else "❌ MISMATCH"
     print(
-        f"[FAV3] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} non-causal {layout} "
+        f"[FMHA] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} non-causal {layout} "
         f"{q.dtype}: {tag}  (max={max_diff:.2e} mean={mean_diff:.2e})"
     )
     return ok
@@ -248,7 +248,7 @@ def run_rocprof_iterations(args, torch_dtype, seqlens):
             q, k, v, o, md = sets[i % len(sets)]
             launch_attention(q, k, v, o, md)
         torch.cuda.synchronize()
-        print(f"[FAV3] N={N_CTX}: {args.n_iters} iterations done ({n_sets} rotating set(s))")
+        print(f"[FMHA] N={N_CTX}: {args.n_iters} iterations done ({n_sets} rotating set(s))")
 
 
 def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
@@ -322,7 +322,7 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
         torch.cuda.synchronize()
         ok, max_diff, _ = _check_output(o, o_ref)
         print(
-            f"[FAV3] N={N_CTX}: prepared vs ordinary launch "
+            f"[FMHA] N={N_CTX}: prepared vs ordinary launch "
             f"{'✅ match' if ok else '❌ MISMATCH'} (max={max_diff:.2e})"
         )
         if not ok:
@@ -331,7 +331,7 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
             # ablation is a timing probe; skip the check rather than the measurement.
             if os.environ.get("FA_ABLATE_VALU"):
                 print(
-                    "[FAV3] ablation active: launcher-equivalence check skipped "
+                    "[FMHA] ablation active: launcher-equivalence check skipped "
                     "(output is garbage by design)"
                 )
             else:
@@ -344,7 +344,7 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
             prepared(i)
         torch.cuda.synchronize()
         print(
-            f"[FAV3] N={N_CTX}: {args.n_warmup} warmup + {args.n_iters} prepared "
+            f"[FMHA] N={N_CTX}: {args.n_warmup} warmup + {args.n_iters} prepared "
             f"dispatches done ({prepared.slots} rotating set(s))"
         )
 
@@ -382,7 +382,7 @@ def main():
             styles=[("blue", "-")],
             ylabel="TFLOPS",
             plot_name=(
-                f"fav3-attn-B{args.batch}-HQ{args.hq}-HK{args.hk}"
+                f"fmha_v3-attn-B{args.batch}-HQ{args.hq}-HK{args.hk}"
                 f"-D{args.d}-{args.layout}-{args.dtype}"
             ),
             args={},
@@ -401,7 +401,7 @@ def main():
         return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, False) / ms * 1e-9
 
     print(
-        f"\nFAV3 rotated-4cluster attention | B={args.batch} HQ={args.hq} HK={args.hk} "
+        f"\nFMHA rotated-4cluster attention | B={args.batch} HQ={args.hq} HK={args.hk} "
         f"D={args.d} layout={args.layout} dtype={args.dtype} non-causal"
     )
     benchmark.run(show_plots=False, print_data=True)

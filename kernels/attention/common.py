@@ -1,7 +1,7 @@
 """Shared helpers for the CDNA4 (gfx950) Flash Attention Gluon kernels.
 
 Split by who uses what: the ``@gluon.jit`` helpers are called from inside
-``fav3.py`` / ``fav4.py``; the rest is host-side plumbing used by those kernels'
+``fmha_v3.py`` / ``fmha_v4.py``; the rest is host-side plumbing used by those kernels'
 launchers and by ``bench.py`` (problem metadata, input generation, the torch
 correctness reference, and the FLOP model).
 """

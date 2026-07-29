@@ -1,17 +1,24 @@
 # Flash Attention on gfx950 (CDNA4) in Gluon
 
 Forward flash-attention kernels for gfx950 (MI350 / MI355X), written in Triton Experimental
-**Gluon**. Two kernels, `fav3` and `fav4`, share one pipeline architecture and differ in how
+**Gluon**. Two kernels, `fmha_v3` and `fmha_v4`, share one pipeline architecture and differ in how
 they handle the softmax rescale.
+
+**On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
+implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
+decode-shaped MQA/GQA designs) will sit beside them rather than inside them. `v3` and `v4` track
+the softmax-rescale generation, not a file version: `fmha_v3` rescales the accumulator on every
+tile, `fmha_v4` defers it (§5). Note the *layouts* MQA and GQA are already handled here via
+`--hk` — what a future kernel would change is the pipeline, not the head mapping.
 
 | `B=32, S=8192, H=8, D=128`, bf16, non-causal, MI355X | TFLOPS | MFMA eff / SIMD |
 |---|---:|---:|
-| **`fav4`** — lazy rescale, tuned | **1318** | **94.5%** |
-| `fav3` — eager rescale, tuned | 1243 | 86.2% |
+| **`fmha_v4`** — lazy rescale, tuned | **1318** | **94.5%** |
+| `fmha_v3` — eager rescale, tuned | 1243 | 86.2% |
 | *ROCm/FlyDSL* at its own published config | *1320* | *84.7%* |
-| `fav4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
 
-`fav4` ties the fastest published kernel for this shape while needing about 10% fewer cycles to
+`fmha_v4` ties the fastest published kernel for this shape while needing about 10% fewer cycles to
 do it. The distance between the first row and the last — **+10.0% of throughput, +26 points of
 efficiency** — is what the design work of §5 and the compiler work of §6 are worth together.
 §9 is the full table with its measurement protocol, the FlyDSL comparison worked through, and
@@ -28,7 +35,7 @@ actually move. §5 is the story of removing them.
 
 **Toolchain.** These kernels need Triton built from the
 [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
-tag or later — `fav4` does not compile without `gl.warp_predicate`, which that tag introduces.
+tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag introduces.
 Build it with default symbol visibility so the scheduler plugin can resolve LLVM symbols:
 
 ```bash
@@ -39,7 +46,7 @@ cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 **To build and run**, from this directory:
 
 ```bash
-FA_MODULE=fav4 DISABLE_LLVM_OPT=disable-machine-sink \
+FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python bench.py --seqlen 16320
@@ -329,7 +336,7 @@ started. This is the same motivation as
 kernels the unroll exists to make loop-carried buffers land in the same registers each time
 around, not to reduce loop overhead.
 
-## 5. `fav3` → `fav4`: getting under the budget
+## 5. `fmha_v3` → `fmha_v4`: getting under the budget
 
 Start by pricing the softmax against §2's budget. Each Gluon op below expands to a fixed number
 of machine instructions per wave per tile — the score tile is 32 × 64 over 64 lanes, so 32
@@ -346,7 +353,7 @@ registers, and the accumulator is 32 × 128, so 64:
 
 The packed column is the same work at half the issue cost — and it is a trap here, because a packed
 op cannot go in an MFMA's shadow at all (§2). Halving the cost only helps for work that was never
-going to be hidden, which is why the column matters for `fav3` and not for `fav4`, and why §6 has
+going to be hidden, which is why the column matters for `fmha_v3` and not for `fmha_v4`, and why §6 has
 to decide the two forms per instruction rather than globally. Read the cycles column as the price
 of work you intend to hide.
 
@@ -354,20 +361,20 @@ Two items dominate, and they are the two that scale with a *whole tile* rather t
 the `exp2` burst and the accumulator rescale. Totalled per cluster against the 384 cycles each
 one has to spend:
 
-![fav3's softmax priced against the shadow](images/budget_fav3.svg)
+![fmha_v3's softmax priced against the shadow](images/budget_fmha_v3.svg)
 
 These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
-backend adds address arithmetic, and `fav3`'s scheduler leaves some work packed, which halves
+backend adds address arithmetic, and `fmha_v3`'s scheduler leaves some work packed, which halves
 its instruction count — so §9's ceilings are computed from the compiled inventory rather than
 from this table. The shape of the argument is the same either way.
 
-**`fav3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
+**`fmha_v3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
 issued in the open and lands directly on the loop's cycle count. Note this is a budget
 statement, not a scheduling one: no ordering of these instructions can help, because there are
 simply more cycles of vector work than there is shadow to hide it in.
 
 **Lazy rescaling** is what removes the larger of the two. Softmax is shift-invariant, so the
-running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fav4`
+running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fmha_v4`
 lets it **lag**: the max is bumped, and `acc` rescaled, only when a tile's max exceeds the
 running max by more than a log2 threshold of 8 — a 256× safety margin, trivially inside fp32's
 range. When the max is stable, which is the common case after the first few tiles, `p` is
@@ -451,9 +458,9 @@ be scalar, and work that will be left over should be packed** — and which is w
 until the assignment is done.
 
 Both kernels therefore start from **packed** math, which is what Gluon emits anyway, and the
-decision is made where the budget is known. `fav3` has genuine leftovers: its over-capacity path
+decision is made where the budget is known. `fmha_v3` has genuine leftovers: its over-capacity path
 splits only the ops it managed to cover and leaves the remainder packed, halving their issue cost
-since they are going to be exposed either way. `fav4` has no leftovers, so everything it declares
+since they are going to be exposed either way. `fmha_v4` has no leftovers, so everything it declares
 gets covered and everything gets split.
 
 The split itself is performed by LLVM's `SIPreEmitPeephole`, which finds a packed op sitting in an
@@ -487,7 +494,7 @@ result with `sched_group_barrier` — a sequence of "N instructions of this clas
 which AMDGPU's IGroupLP builds in the machine scheduler. When the region fits it spreads the work
 evenly; when it does not, it covers the ops that cannot be packed first, spends what window is
 left on packable ops split into scalars, and leaves the remainder packed — which is what gets
-`fav3` close to its 91.4% ceiling despite being over capacity in both clusters.
+`fmha_v3` close to its 91.4% ceiling despite being over capacity in both clusters.
 
 Declaring rather than reordering is the load-bearing choice, and `sched_barrier` is the
 alternative that does not work:
@@ -538,7 +545,7 @@ than a quantity.
 
 **`SCALE_ON_Q` removes the ops.** Folding `qk_scale` into `Q` before the loop turns every
 `fma(qk, qk_scale, −m_new)` into a plain `sub`, so those stop competing for the register file at
-all. It is visible in a count of 3-source VALU in `fav4`'s loop body: **98 with the fold off, 34
+all. It is visible in a count of 3-source VALU in `fmha_v4`'s loop body: **98 with the fold off, 34
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
@@ -546,20 +553,20 @@ Measured at `B=1, S=16320, H=64, fp16` on GPU[0] — TFLOPS and in-loop MFMA eff
 (A different shape and dtype from §9, so read the two tables separately; the *deltas* are what
 matter here.)
 
-| | `fav3` | `fav4` |
+| | `fmha_v3` | `fmha_v4` |
 |---|---|---|
 | no `s_nop`, no fold | 1165 / 83.9% | 1223 / 89.5% |
 | `MEMNOP=2` | 1169 / 85.3% | 1233 / 92.4% |
 | `MEMNOP=2` + `SCALE_ON_Q` | **1177 / 86.2%** | **1243 / 93.8%** |
 
-Each step is worth well under a percent of throughput, and together about 1% on `fav3` and 1.6% on
-`fav4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
+Each step is worth well under a percent of throughput, and together about 1% on `fmha_v3` and 1.6% on
+`fmha_v4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
 same op count leaving the same cluster in both, so a mechanism tied to that op count should pay the
 same, and it does. The efficiency column moves further than the throughput column for the reason
 §9 gives — a denser MFMA stream costs clock on a power-capped part.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
-goes from 3.05e-05 to 1.22e-04 on `fav3`, and from 6.10e-05 to the same 1.22e-04 on `fav4`. All
+goes from 3.05e-05 to 1.22e-04 on `fmha_v3`, and from 6.10e-05 to the same 1.22e-04 on `fmha_v4`. All
 are far inside the 1e-3 tolerance, and `--scale-on-q 0` restores the tighter numerics on either
 kernel.
 
@@ -594,9 +601,9 @@ per region:   capacity = (number of MFMAs in the region) × 24 cycles
 per loop body: ceiling = mfma_cycles / (mfma_cycles + Σ exposed over all regions)
 ```
 
-That ceiling is the best MFMA efficiency any schedule of that kernel can reach. `fav3`'s four dot
+That ceiling is the best MFMA efficiency any schedule of that kernel can reach. `fmha_v3`'s four dot
 clusters leave 48 cycles exposed each against 2048 cycles of MFMA, which is where §9's 91.4% comes
-from; `fav4` leaves none, so its ceiling is 100%. The calculation costs ten minutes and it decides
+from; `fmha_v4` leaves none, so its ceiling is 100%. The calculation costs ten minutes and it decides
 which of the sections above you are in — §5 if you are over the budget, §6 if you are under it and
 still not reaching the ceiling.
 
@@ -653,44 +660,44 @@ equally. Every row here is stable to about 2 TFLOPS.
 | | TFLOPS | MFMA eff / SIMD |
 |---|---:|---:|
 | *ROCm/FlyDSL* — its own tuned config | *1320* | 84.7% |
-| **`fav4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1318** | **94.5%** |
-| **`fav3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1243** | 86.2% |
-| `fav4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
-| `fav3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1318** | **94.5%** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1243** | 86.2% |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
 
 **What the compiler work is worth** is the distance between the tuned rows and the stock ones:
-**+10.0%** of throughput on `fav4` and **+8.9%** on `fav3`, and in efficiency terms **+26.0** and
+**+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms **+26.0** and
 **+18.4 points**. Everything in §5 and §6 lives in that gap.
 
 **Stock LLVM cannot tell the two kernels apart** where it counts — 68.5% against 67.8%. Without a
-scheduler, `fav4`'s lazy rescale barely moves the loop at all; the 8.3-point efficiency gap
+scheduler, `fmha_v4`'s lazy rescale barely moves the loop at all; the 8.3-point efficiency gap
 between the tuned rows is the scheduler exploiting budget headroom that lazy rescaling created,
 not the algorithm on its own. A design that creates headroom only pays if something downstream
 spends it.
 
-**The ceilings from §5 still frame the tuned rows.** `fav4`'s demand fits its window, so its
-ceiling is 100% and it reaches 94.5%. `fav3` leaves 4 × 48 = 192 cycles exposed per loop body
+**The ceilings from §5 still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
+ceiling is 100% and it reaches 94.5%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
 against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.2%. The two are
-8.3 points apart while their ceilings are 8.6 apart — so the whole difference is work `fav3`'s
+8.3 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
 budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
 own ceiling.
 
 **On the FlyDSL row.** This is its published configuration, and its published figure of 1320
-TFLOPS reproduces exactly (1319.4 / 1319.6 / 1320.2). `fav4` ties it — 0.2% apart, well inside
-any spread — and `fav3` is 5.8% behind.
+TFLOPS reproduces exactly (1319.4 / 1319.6 / 1320.2). `fmha_v4` ties it — 0.2% apart, well inside
+any spread — and `fmha_v3` is 5.8% behind.
 
 The interesting part is *how* they tie, because the two kernels are strong in different places.
-`fav4` needs about 10% fewer cycles for the same work (94.5% against 84.7%). FlyDSL spends more of
+`fmha_v4` needs about 10% fewer cycles for the same work (94.5% against 84.7%). FlyDSL spends more of
 its time in the loop (94.1% against our 88.3% — its pipeline fill and drain are cheaper than our
 four-stage one) and clocks **5.2% higher** at comparable power. Those cancel:
 
 ```
-fav4 cycle advantage    (0.945 x 0.8833) / (0.847 x 0.9413)  = +4.8%
+fmha_v4 cycle advantage    (0.945 x 0.8833) / (0.847 x 0.9413)  = +4.8%
 FlyDSL clock advantage   1650.9 MHz / 1569.8 MHz             = +5.2%
 ```
 
 **And the ranking is shape-dependent, so treat one number with care.** At `B=1, S=16384` the board
-runs pinned to its ~1400 W cap; there cycles are what matter and `fav4` leads FlyDSL by 9.3%. At
+runs pinned to its ~1400 W cap; there cycles are what matter and `fmha_v4` leads FlyDSL by 9.3%. At
 the shape above there is power headroom, FlyDSL's clock advantage cashes in, and the two are level.
 Neither shape is *the* answer — that one flatters us, this one flatters them. The quantity that
 does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
@@ -740,13 +747,13 @@ which is enough to invert the top two rows of the table.
   `warp_pipeline_stage` (§4) and behind the metric §9 reports.
 - **Provenance.** Ported from
   [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
-  (`kernels/cdna4/fa/`). `fav3.py` is the upstream rotated-4-cluster kernel reduced to the
+  (`kernels/cdna4/fa/`). `fmha_v3.py` is the upstream rotated-4-cluster kernel reduced to the
   single best config for this shape — the per-`(D, BLOCK_N, warps)` layout dispatch,
   causal/masked-tail scheduling, non-pipelined fallbacks, head-dim padding and the multi-config
   autotune space were removed and the pipelined loop inlined into one flat `gluon_attn_fwd`.
   `common.py` came over with it and has since been cut down to what these two
   kernels and `bench.py` actually call: the non-pipelined `attn_fwd_inner` and its building
   blocks, the arch dispatch, the ragged/`thd` paths and the results-table plumbing are all gone
-  with the features that used them. The full version is upstream and in git history. `fav3.py`
-  and `fav4.py` are still excluded from this repo's black/ruff (see `pyproject.toml`) to keep
+  with the features that used them. The full version is upstream and in git history. `fmha_v3.py`
+  and `fmha_v4.py` are still excluded from this repo's black/ruff (see `pyproject.toml`) to keep
   them diffable against upstream; everything else here is linted.

@@ -7,7 +7,7 @@ tutorial copy is simplified to the single most-performant path: non-causal, head
 dim 128, K length a multiple of ``BLOCK_N`` (64).
 
 This is the *eager* rescale variant: the online-softmax correction ``acc *= alpha``
-is applied on every tile. ``fav4.py`` is the same pipeline with that correction made
+is applied on every tile. ``fmha_v4.py`` is the same pipeline with that correction made
 lazy, which is what gets it under the co-execution budget.
 
 The design behind this file -- why the softmax has to ride in the MFMA clusters,
@@ -522,7 +522,7 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData, scale_on_q: bool = True)
     N_CTX must be a multiple of BLOCK_N (64), and the head dim must be a power of
     two (used directly as BLOCK_DMODEL, no padding). All hold for the tutorial.
     """
-    assert not metadata.causal, "simplified FAV3 tutorial kernel supports non-causal only"
+    assert not metadata.causal, "simplified FMHA v3 tutorial kernel supports non-causal only"
     assert metadata.max_seqlens_k % 64 == 0, "K seqlen must be a multiple of BLOCK_N (64)"
     assert metadata.max_seqlens_q == metadata.max_seqlens_k, "combined N_CTX requires Q seqlen == K seqlen"
     batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q, k, metadata)

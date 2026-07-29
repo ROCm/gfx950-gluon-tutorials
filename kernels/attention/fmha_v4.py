@@ -1,7 +1,7 @@
 """
-FAv4: CDNA4 (gfx950) Flash Attention forward kernel with LAZY softmax rescaling.
+FMHA v4: CDNA4 (gfx950) Flash Attention forward kernel with LAZY softmax rescaling.
 
-This is fav3.py with one algorithmic change: the online-softmax accumulator
+This is fmha_v3.py with one algorithmic change: the online-softmax accumulator
 correction (``acc *= alpha``) is applied *lazily*. Softmax is shift-invariant --
 subtracting the running max only exists to keep the exp2 argument bounded -- so
 the running max is allowed to LAG: it is only bumped (and the accumulator
@@ -766,7 +766,7 @@ def run_gluon_attention(q, k, v, o, metadata: MetaData, scale_on_q: bool = True)
     N_CTX must be a multiple of BLOCK_N (64), and the head dim must be a power of
     two (used directly as BLOCK_DMODEL, no padding). All hold for the tutorial.
     """
-    assert not metadata.causal, "simplified FAv4 tutorial kernel supports non-causal only"
+    assert not metadata.causal, "simplified FMHA v4 tutorial kernel supports non-causal only"
     assert metadata.max_seqlens_k % 64 == 0, "K seqlen must be a multiple of BLOCK_N (64)"
     assert metadata.max_seqlens_q == metadata.max_seqlens_k, "combined N_CTX requires Q seqlen == K seqlen"
     batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q, k, metadata)

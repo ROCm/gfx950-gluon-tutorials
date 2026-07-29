@@ -47,7 +47,7 @@ every point on the sweep -- `bench.py`'s reference comparison is the control. A 
 merely shuffled text would produce NaN and reintroduce a data-dependent power term, which
 is the confound this module exists to remove.
 
-    FA_SCHED_VALU=0.5 FA_MODULE=fav4 DISABLE_LLVM_OPT=disable-machine-sink \
+    FA_SCHED_VALU=0.5 FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
       AMDGCN_SCALARIZE_PACKED_FOPS=1 python bench.py --seqlen 8192
 
 `FA_SCHED_DUMP=<prefix>` writes the before/after assembly. `--report` on the command line
@@ -624,7 +624,7 @@ def relax_vmcnt(lines, lo, hi):
     consumer -- then restores a full drain at the end of the region, so nothing that used to
     be covered by the blanket wait is left uncovered.
 
-    Used on the prologue, where `fav4` spends 3512 cycles per wave on one such wait: the Q
+    Used on the prologue, where `fmha_v4` spends 3512 cycles per wave on one such wait: the Q
     tile, which `SCALE_ON_Q` must have in registers before it can be scaled and stored to
     LDS.
     """
