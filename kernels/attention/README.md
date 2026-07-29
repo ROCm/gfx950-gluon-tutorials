@@ -13,13 +13,6 @@ behind it on how much of the matrix pipe's time goes to matrix work. The other b
 the same kernel source built without the scheduling plugin. [§9](#9-results) works through what separates all
 five, and what each step costs.
 
-**On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
-implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
-decode-shaped MQA/GQA designs) will sit beside them rather than inside them. `v3` and `v4` track
-the softmax-rescale generation, not a file version: `fmha_v3` rescales the accumulator on every
-tile, `fmha_v4` defers it ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)). Note the *layouts* MQA and GQA are already handled here via
-`--hk` — what a future kernel would change is the pipeline, not the head mapping.
-
 **Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
 intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
 structure these kernels are built on. This also assumes you know the flash-attention algorithm
