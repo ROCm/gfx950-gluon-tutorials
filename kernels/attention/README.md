@@ -6,22 +6,12 @@ they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-The chart holds two comparisons, and each one has a price.
-
-**Lazy rescaling.** `fmha_v4` defers the accumulator rescale instead of paying it on every tile:
-**+5.0%** on stock LLVM, **+6.0%** tuned. Its price is that it cannot be written in stock Gluon —
-skipping the rescale per wave needs `gl.warp_predicate` — and that removing it unbalances the two
-dot clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
-
-**Scheduling.** The same kernel source built with the llirSched plugin instead of stock LLVM:
-**+8.9%** on `fmha_v3` and **+10.0%** on `fmha_v4`, worth **+18.4** and **+26.0 points** of MFMA
-efficiency. Its price is that the interleave has to be *declared* — every vector op assigned to a
-specific MFMA's shadow, emitted as a `sched_group_barrier` sequence — rather than left to the
-machine scheduler ([§6](#6-making-the-compiler-co-operate)).
-
-Together they put `fmha_v4` level with ROCm/FlyDSL's published figure, 1318 against 1320, from
-94.5% MFMA efficiency against its 84.7%. [§9](#9-results) takes that apart — how two kernels tie on throughput
-while ten points apart on cycles, and why the ranking moves with the shape.
+Tuned, `fmha_v4` reaches **1318 TFLOPS** at **94.5%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1243 at 86.2%. The reference point is ROCm/FlyDSL, whose published configuration reaches
+**1320** on this shape from **84.7%** efficiency — level with `fmha_v4` on throughput, ten points
+behind it on how much of the matrix pipe's time goes to matrix work. The other bar in each group is
+the same kernel source built without the scheduling plugin. [§9](#9-results) works through what separates all
+five, and what each step costs.
 
 **On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
 implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
@@ -653,15 +643,23 @@ equally. Every row here is stable to about 2 TFLOPS.
 | `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
 | `fmha_v3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
 
-**What the compiler work is worth** is the distance between the tuned rows and the stock ones:
-**+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms **+26.0** and
-**+18.4 points**. Everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and [§6](#6-making-the-compiler-co-operate) lives in that gap.
+**What lazy rescaling is worth** is the distance across the two groups: **+5.0%** on stock LLVM
+(1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency column says something the
+throughput column does not, though. Stock LLVM cannot tell the two kernels apart where it counts —
+67.8% against 68.5%, **+0.7 points** — while the tuned rows are **8.3 points** apart. Lazy
+rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
+downstream that spends that budget converts it into cycles. A design that creates headroom only
+pays if something spends it. **Its price** is that `fmha_v4` cannot be written in stock Gluon —
+skipping the rescale per wave needs `gl.warp_predicate` — and that removing the rescale unbalances
+the two dot clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
-**Stock LLVM cannot tell the two kernels apart** where it counts — 68.5% against 67.8%. Without a
-scheduler, `fmha_v4`'s lazy rescale barely moves the loop at all; the 8.3-point efficiency gap
-between the tuned rows is the scheduler exploiting budget headroom that lazy rescaling created,
-not the algorithm on its own. A design that creates headroom only pays if something downstream
-spends it.
+**What the scheduling is worth** is the distance within each group, from the stock build to the
+tuned one: **+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms
+**+26.0** and **+18.4 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
+[§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
+to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
+`sched_group_barrier` sequence for IGroupLP to construct — and the ops then kept in the cluster
+they were assigned to ([§6](#6-making-the-compiler-co-operate)).
 
 **The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
 ceiling is 100% and it reaches 94.5%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
