@@ -71,9 +71,13 @@ Two things are genuinely different on CDNA3, and they drive the whole design:
 
 4. LDS layout.  gfx950 uses `PaddedSharedLayout([[512, 16]])`; padding is not
    affordable here (the four slots already fill LDS to the byte), so both
-   operands use `SwizzledSharedLayout(8, 2, 8)`.  That combination is
-   bank-conflict free in *both* directions -- see the `ds_read`/`ds_write`
-   analysis in README.md.
+   operands use `SwizzledSharedLayout(8, 1, 8)`.  **per_phase=1, not 2**: the
+   global-load layout has consecutive lanes walking consecutive rows, so lanes
+   0-15 of a b128 access cover two adjacent rows, and per_phase=2 gives those
+   two rows the same swizzle phase -- they hit the same 32 banks and every
+   access replays.  Measured with SQ_LDS_BANK_CONFLICT: (8,2,8) is 0.667 replay
+   cycles per useful cycle (13.33 cyc/LDS instr), (8,1,8) is exactly 0
+   (8.00 cyc).  See tools/lds_conflict.py --sweep.
 
 Register budget (per lane, 1 wave/SIMD so 256 VGPR + 256 AGPR are available):
     C accumulators   4 x [128x128] f32  = 256   -> AGPR (amdgpu-agpr-alloc=256)
@@ -106,6 +110,13 @@ GROUP_SIZE_M = 4
 # main loop runs range(0, iterMax - 2) and two K-steps are peeled
 MIN_K = 4 * BLOCK_K
 KERNEL_NAME = "a16w16_intra_wave_gfx942"
+
+# SwizzledSharedLayout(vec, per_phase, max_phase); see tools/lds_conflict.py.
+# gl.constexpr instances because a @gluon.jit body may only read globals that
+# are already constexpr.
+SWZ_VEC = gl.constexpr(int(os.environ.get("GFX942_SWZ_VEC", 8)))
+SWZ_PER_PHASE = gl.constexpr(int(os.environ.get("GFX942_SWZ_PER_PHASE", 1)))
+SWZ_MAX_PHASE = gl.constexpr(int(os.environ.get("GFX942_SWZ_MAX_PHASE", 8)))
 
 
 @gluon.jit
@@ -157,12 +168,18 @@ def a16w16_intra_wave_gfx942(
     )
 
     # ---- shared layouts ------------------------------------------------------
-    # swizzle(vec=8, per_phase=2, max_phase=8): the 16 B chunk index inside a
-    # 128 B row is xored with (row/2) % 8.  Conflict-free for the dot-operand
-    # ds_read_b128 *and* for the ds_write above.  Costs no LDS (unlike padding),
-    # which matters because the four slots below are exactly 64 KB.
-    sharedLayoutA: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, order=[1, 0])
-    sharedLayoutB: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, order=[0, 1])
+    # swizzle(vec=8, per_phase=1, max_phase=8): the 16 B chunk index inside a
+    # 128 B row is xored with row % 8.  Measured conflict-free in both
+    # directions; per_phase=2 (which an earlier version of this kernel used, and
+    # which tools/layout_check.py's model wrongly reports as clean) costs 67%
+    # extra LDS cycles.  Costs no LDS unlike padding, which matters because the
+    # four slots below are exactly 64 KB.
+    sharedLayoutA: gl.constexpr = gl.SwizzledSharedLayout(
+        SWZ_VEC, SWZ_PER_PHASE, SWZ_MAX_PHASE, order=[1, 0]
+    )
+    sharedLayoutB: gl.constexpr = gl.SwizzledSharedLayout(
+        SWZ_VEC, SWZ_PER_PHASE, SWZ_MAX_PHASE, order=[0, 1]
+    )
 
     # ---- mfma / dot-operand layouts -----------------------------------------
     mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
