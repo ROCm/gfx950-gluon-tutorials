@@ -30,20 +30,25 @@ with `rocprofv3 --kernel-trace`. Efficiency from ATT.
 
 | | TFLOPS | cyc/iter | mfma/iter/wave | **in-loop MFMA eff** |
 |---|---|---|---|---|
-| fp16 | **611.3** | 4587.6 | 256 | **89.28%** |
-| bf16 | **655.1** | — | 256 | — |
+| fp16 | **614.3** | 4587.7 | 256 | **89.28%** |
+| bf16 | **638.4** | 4586.9 | 256 | **89.30%** |
 
 At 1 wave/SIMD the per-wave and per-SIMD figures are the same number, unlike
 [`inter_wave`](../inter_wave/).
 
-All tested shapes (`bench.py`, `do_bench`, correctness checked against fp32):
+All tested shapes, same methodology (M=4096, N=4864; `torch` is hipBLASLt
+through the same harness):
 
-| M | N | K | fp16 | bf16 | torch fp16 |
-|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 594.7 | 618.6 | 586.2 |
-| 4096 | 4864 | 4160 | 645.4 | 676.6 | 625.2 |
-| 4096 | 4864 | 8256 | 577.5 | 669.7 | 572.1 |
-| 4096 | 4864 | 16448 | 631.7 | 684.7 | 589.3 |
+| K | fp16 TF | fp16 eff | bf16 TF | bf16 eff | torch fp16 | torch bf16 |
+|---|---|---|---|---|---|---|
+| 2112 | 586.4 | 87.10% | 612.7 | 87.10% | 583.4 | 618.7 |
+| 4160 | 603.9 | 88.57% | 642.5 | 88.56% | 581.9 | 626.6 |
+| 8256 | 614.3 | 89.28% | 638.4 | 89.30% | 579.6 | 620.8 |
+| 16448 | 629.0 | 89.63% | 678.6 | 89.63% | 589.8 | 627.2 |
+
+Ahead of hipBLASLt on 7 of 8 points; it loses bf16 K=2112 (612.7 vs 618.7).
+[`../inter_wave`](../inter_wave/) is faster on 7 of 8 — this kernel's ~10-point
+efficiency deficit is the `ds_write` ceiling described below.
 
 Codegen: **256 arch VGPR + 256 AGPR, 0 spills, 1 wave/SIMD** (LDS-bound),
 65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly **0**.

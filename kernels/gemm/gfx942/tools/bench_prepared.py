@@ -26,6 +26,7 @@ Re-execs itself as `--_driver` under rocprofv3, like `run_att.py`.
 """
 
 import argparse
+import collections
 import csv
 import glob
 import json
@@ -41,6 +42,12 @@ REPO = os.path.join(ROOT, "..", "..", "..")
 KERNEL_REGEX = {
     "intra_wave": "a16w16_intra_wave_gfx942",
     "inter_wave": "a16w16_inter_wave_gfx942",
+    # "torch" runs torch.matmul (hipBLASLt) through the identical harness so the
+    # reference number is comparable: same GPU, same rotating sets, same
+    # rocprofv3 --kernel-trace, same mean-of-last-N. hipBLASLt picks its kernel
+    # by shape so the name is not knowable up front; the parent falls back to the
+    # most frequent kernel name in the trace.
+    "torch": None,
 }
 
 
@@ -75,6 +82,9 @@ def _driver_main(argv):
 
     import torch
     import triton
+
+    if args.kernel == "torch":
+        return _driver_torch(args, torch, triton)
 
     sys.path.insert(0, os.path.join(REPO, "scripts"))
     from prepared_kernel import PreparedKernel
@@ -166,6 +176,30 @@ def _driver_main(argv):
     return 0
 
 
+def _driver_torch(args, torch, triton):
+    """hipBLASLt reference through the same rotating-set / dispatch-count harness."""
+    dt = {"fp16": torch.float16, "bf16": torch.bfloat16}[args.dtype]
+    device = triton.runtime.driver.active.get_active_torch_device()
+    M, N, K = args.M, args.N, args.K
+    torch.manual_seed(0)
+    sets = []
+    for _ in range(args.sets):
+        a = torch.randn((M, K), device=device, dtype=dt) * 0.1
+        b = torch.randn((K, N), device=device, dtype=dt) * 0.1
+        c = torch.empty((M, N), device=device, dtype=dt)
+        sets.append((a, b, c))
+    for i in range(args.warmup):
+        a, b, c = sets[i % args.sets]
+        torch.matmul(a, b, out=c)
+    torch.cuda.synchronize()
+    for i in range(args.iters):
+        a, b, c = sets[i % args.sets]
+        torch.matmul(a, b, out=c)
+    torch.cuda.synchronize()
+    print(f"[driver] torch {M}x{N}x{K} {args.dtype} sets={args.sets} iters={args.iters}")
+    return 0
+
+
 def time_one_gpu(args, gpu, out):
     """Run the driver once under rocprofv3 --kernel-trace; return (tflops, us, n)."""
     if os.path.exists(out):
@@ -209,9 +243,18 @@ def time_one_gpu(args, gpu, out):
     if not csvs:
         raise RuntimeError(f"no kernel trace csv under {out}")
     rows = []
+    if args.kernel == "torch":
+        # hipBLASLt's kernel name depends on the shape; take the modal name.
+        names = collections.Counter()
+        with open(csvs[0], newline="") as f:
+            for row in csv.DictReader(f):
+                names[row["Kernel_Name"]] += 1
+        match = names.most_common(1)[0][0]
+    else:
+        match = KERNEL_REGEX[args.kernel]
     with open(csvs[0], newline="") as f:
         for row in csv.DictReader(f):
-            if KERNEL_REGEX[args.kernel] in row["Kernel_Name"]:
+            if match in row["Kernel_Name"]:
                 rows.append(int(row["End_Timestamp"]) - int(row["Start_Timestamp"]))
     if len(rows) < args.avg_last:
         raise RuntimeError(f"only {len(rows)} dispatches, need {args.avg_last}")

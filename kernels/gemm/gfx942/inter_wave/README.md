@@ -24,8 +24,8 @@ with `rocprofv3 --kernel-trace`. Efficiency from ATT.
 
 | | TFLOPS | cyc/iter | mfma/iter/wave | per-wave | **per-SIMD MFMA eff** |
 |---|---|---|---|---|---|
-| fp16 | **606.8** | 4192.5 | 128 | 48.85% | **97.70%** |
-| bf16 | **648.1** | 4158.2 | 128 | 49.25% | **98.51%** |
+| fp16 | **598.3** | 4187.7 | 128 | 48.91% | **97.81%** |
+| bf16 | **647.3** | 4188.9 | 128 | 48.89% | **97.78%** |
 
 Per-SIMD is the meaningful figure: the matrix unit is a per-SIMD resource, so for
 a 2-wave-per-SIMD kernel it is the per-wave fraction × 2. At ~98% the loop is
@@ -37,7 +37,7 @@ fires):
 
 | | cyc/iter | per-SIMD | TFLOPS | MFMA | clock |
 |---|---|---|---|---|---|
-| **this kernel** | **4192.5** | **97.70%** | **606.8** | `16x16x16` | 1.20–1.26 GHz |
+| **this kernel** | **4187.7** | **97.81%** | **598.3** | `16x16x16` | 1.20–1.26 GHz |
 | Triton pingpong | 4273.8 | 95.84% | 543.0 | `32x32x8` | 1.023 GHz |
 
 Ahead on both cycles and efficiency, and further ahead on wall clock because
@@ -45,14 +45,19 @@ Ahead on both cycles and efficiency, and further ahead on wall clock because
 the reference's denser MFMA stream clocks itself down. **Compare cycles, not
 microseconds** — see [../README.md](../README.md) §3.3.
 
-All tested shapes (`bench.py`, `do_bench`, correctness checked against fp32):
+All tested shapes, same methodology (M=4096, N=4864; `torch` is hipBLASLt
+through the same harness):
 
-| M | N | K | fp16 | bf16 | torch fp16 |
-|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 620.1 | 660.8 | 554.6 |
-| 4096 | 4864 | 4160 | 677.2 | 702.5 | 626.1 |
-| 4096 | 4864 | 8256 | 586.3 | 635.2 | 570.1 |
-| 4096 | 4864 | 16448 | 640.6 | 684.2 | 588.2 |
+| K | fp16 TF | fp16 eff | bf16 TF | bf16 eff | torch fp16 | torch bf16 |
+|---|---|---|---|---|---|---|
+| 2112 | 620.0 | 96.71% | 644.4 | 96.71% | 583.4 | 618.7 |
+| 4160 | 618.5 | 98.25% | 658.3 | 98.26% | 581.9 | 626.6 |
+| 8256 | 598.3 | 97.81% | 647.3 | 97.78% | 579.6 | 620.8 |
+| 16448 | 641.1 | 99.42% | 689.9 | 99.42% | 589.8 | 627.2 |
+
+Ahead of hipBLASLt on all 8 points. Efficiency rises with K (more loop
+iterations per prologue, better L2 reuse on the global loads) and is
+dtype-independent to three digits, since the codegen is identical.
 
 Codegen: **240 VGPR, 0 AGPR, 0 spills, 2 waves/SIMD, 64 KB LDS**, and
 `SQ_LDS_BANK_CONFLICT` measures exactly **0**.
@@ -63,7 +68,7 @@ How it got here:
 |---|---|---|---|
 | initial port (4 quadrants × 2 K-slices, 16 regions) | 4770.6 | 85.86% | 16 |
 | 8-region redesign | 4651.0 | 88.06% | 8 |
-| **+ conflict-free swizzle** | **4192.5** | **97.70%** | 8 |
+| **+ conflict-free swizzle** | **4187.7** | **97.81%** | 8 |
 
 ## Design
 
