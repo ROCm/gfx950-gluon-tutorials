@@ -57,12 +57,12 @@ groups = [
     (
         "fmha_v3",
         "eager rescale",
-        [("stock", 1141, 67.8), ("tuned", 1243, 86.2)],
+        [("stock", 1139, 67.3), ("tuned", 1249, 86.3)],
     ),
     (
         "fmha_v4",
         "lazy rescale",
-        [("stock", 1198, 68.5), ("tuned", 1318, 94.5), ("ref", 1320, 84.7)],
+        [("stock", 1204, 69.1), ("tuned", 1323, 94.2), ("ref", 1322, 84.7)],
     ),
 ]
 COLOR = {"stock": C_STOCK, "tuned": C_TUNED, "ref": C_REF}

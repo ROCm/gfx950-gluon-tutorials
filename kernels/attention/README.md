@@ -6,15 +6,15 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1318 TFLOPS** at **94.5%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1243 at 86.2%. The reference point is ROCm/FlyDSL, whose published configuration reaches
-**1320** on this shape from **84.7%** efficiency — level with `fmha_v4` on throughput, ten points
-behind it on how much of the matrix pipe's time goes to matrix work. The orange bar in each group is
-the same kernel source built without the scheduling plugin. [§9](#9-results) works through what separates all
-five, and what each step costs.
+Tuned, `fmha_v4` reaches **1323 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1249 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
+**1322** on this shape from **84.7%** efficiency — a dead heat with `fmha_v4` on throughput, nine
+and a half points behind it on how much of the matrix pipe's time goes to matrix work. The orange
+bar in each group is the same kernel source built without the scheduling plugin. [§9](#9-results) works through
+what separates all five, and what each step costs.
 
-That efficiency number is what the rest of this document is about. 94.5% means the matrix pipe
-takes a new MFMA in 94.5% of the loop's cycles, and the missing 5.5% is time the SIMD spent
+That efficiency number is what the rest of this document is about. 94.2% means the matrix pipe
+takes a new MFMA in 94.2% of the loop's cycles, and the missing 5.8% is time the SIMD spent
 issuing something it could not hide behind one. So the design question is what *else* an FMHA
 kernel has to issue, and where that work can go.
 
@@ -644,64 +644,74 @@ rest on.
 
 `B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[0] — ROCm/FlyDSL's published
 benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
-`AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency is the
-in-loop per-SIMD figure from an ATT instruction trace. The five configurations were run
+`AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
+fraction come from an ATT instruction trace of one dispatch. The five configurations were run
 **interleaved** — one of each, three times round — so any drift in the board hits every row
-equally. Every row here is stable to about 2 TFLOPS.
+equally. Round-to-round spread was 0.5 to 4.5 TFLOPS.
 
-| | TFLOPS | MFMA eff / SIMD |
-|---|---:|---:|
-| *ROCm/FlyDSL* — its own tuned config | *1320* | 84.7% |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1318** | **94.5%** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1243** | 86.2% |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1198 | 68.5% |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1141 | 67.8% |
+| | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
+|---|---:|---:|---:|---:|
+| *ROCm/FlyDSL* — its own tuned config | *1322* | 84.7% | 94.2% | 4837 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1323** | **94.2%** | 90.5% | **4349** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1249** | 86.3% | 91.5% | 4745 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1204 | 69.1% | 91.8% | 5924 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1139 | 67.3% | 92.3% | 6084 |
 
-**What lazy rescaling is worth** is the distance between the two kernels: **+5.0%** on stock LLVM
-(1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency column says something the
-throughput column does not, though. Stock LLVM cannot tell the two kernels apart where it counts —
-67.8% against 68.5%, **+0.7 points** — while the tuned rows are **8.3 points** apart. Lazy
-rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
-downstream that spends that budget converts it into cycles. A design that creates headroom only
-pays if something spends it. **Its price** is that `fmha_v4` cannot be written in stock Gluon —
-skipping the rescale per wave needs `gl.warp_predicate` — and that removing the rescale unbalances
-the two dot clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
+**What lazy rescaling is worth** is the distance between the two kernels: **+5.7%** on stock LLVM
+(1139 → 1204) and **+5.9%** tuned (1249 → 1323). The efficiency column says something the throughput
+column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 67.3%
+against 69.1%, **+1.8 points** — while the tuned rows are **7.9 points** apart, four times as far.
+Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
+downstream that spends that budget converts it into cycles. A design that creates headroom only pays
+if something spends it. **Its price** is that `fmha_v4` cannot be written in stock Gluon — skipping
+the rescale per wave needs `gl.warp_predicate` — and that removing the rescale unbalances the two dot
+clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
-tuned one: **+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms
-**+26.0** and **+18.4 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
+tuned one: **+9.7%** of throughput on `fmha_v3` and **+9.9%** on `fmha_v4`, and in efficiency terms
+**+19.0** and **+25.1 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
 `sched_group_barrier` sequence for IGroupLP to construct — and the ops then kept in the cluster
 they were assigned to ([§6](#6-making-the-compiler-co-operate)).
 
 **The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
-ceiling is 100% and it reaches 94.5%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
-against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.2%. The two are
-8.3 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
+ceiling is 100% and it reaches 94.2%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
+against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.3%. The two are
+7.9 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
 budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
-own ceiling.
+own ceiling (5.8 and 5.1).
 
 **On the FlyDSL row.** This is its published configuration, and its published figure of 1320
-TFLOPS reproduces exactly (1319.4 / 1319.6 / 1320.2). `fmha_v4` ties it — 0.2% apart, well inside
-any spread — and `fmha_v3` is 5.8% behind.
+TFLOPS reproduces (1321.1 / 1321.3 / 1322.6). `fmha_v4` and it are a dead heat — 1323 against 1322,
+0.1% apart on a metric whose round-to-round spread is larger than that — and `fmha_v3` is 5.5%
+behind.
 
-The interesting part is *how* they tie, because the two kernels are strong in different places.
-`fmha_v4` needs about 10% fewer cycles for the same work (94.5% against 84.7%). FlyDSL spends more of
-its time in the loop (94.1% against our 88.3% — its pipeline fill and drain are cheaper than our
-four-stage one) and clocks **5.2% higher** at comparable power. Those cancel:
+The interesting part is *how* they tie, because the two are strong in different places. `fmha_v4`
+needs **10% fewer cycles** for the same work: 4349 per loop iteration against 4837, which is the
+94.2%-against-84.7% efficiency gap restated. FlyDSL spends more of its time in the loop (94.2%
+against our 90.5% — its pipeline fill and drain are cheaper than our four-stage one) and clocks
+**8.7% higher** while drawing 25 W more. Those two effects run in opposite directions and mostly
+offset:
 
 ```
-fmha_v4 cycle advantage    (0.945 x 0.8833) / (0.847 x 0.9413)  = +4.8%
-FlyDSL clock advantage   1650.9 MHz / 1569.8 MHz             = +5.2%
+fmha_v4 cycle advantage   (0.942 x 0.9048) / (0.847 x 0.9417)  = +6.9%
+FlyDSL  clock advantage    1676.6 MHz / 1542.6 MHz             = +8.7%
 ```
+
+They do not cancel exactly: taken at face value that arithmetic predicts FlyDSL about 1.8% ahead,
+where the measurement is a dead heat. Do not over-read the residual — the clock and power figures
+are sampled at 1 Hz over a longer run than the timed window, and the cycle figures come from a
+single traced dispatch, so the two halves are not measured under identical conditions. The robust
+statement is the qualitative one: `fmha_v4` wins on cycles, FlyDSL wins on clock, and at this shape
+they land on top of each other.
 
 **And the ranking is shape-dependent, so treat one number with care.** At `B=1, S=16384` the board
-runs pinned to its ~1400 W cap; there cycles are what matter and `fmha_v4` leads FlyDSL by 9.3%. At
-the shape above there is power headroom, FlyDSL's clock advantage cashes in, and the two are level.
-Neither shape is *the* answer — that one flatters us, this one flatters them. The quantity that
-does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
-the scheduler actually controls.
+runs pinned to its ~1400 W cap; there cycles are what matter and `fmha_v4` leads FlyDSL by **12.1%**
+(1326 against 1184). At the shape above there is power headroom, FlyDSL's clock advantage cashes in,
+and the two are level. Neither shape is *the* answer — that one flatters us, this one flatters them.
+The quantity that does not move between them is the in-loop MFMA efficiency, which is the only thing
+in this table the scheduler actually controls.
 
 **Before trusting any cross-implementation row, check that the work was handed out the same way** —
 a difference in grid or occupancy would confound the whole table. It does not here: both sides
@@ -723,10 +733,11 @@ what a scheduling change moves — but it carries no information a cycle count d
 
 **Cycles and TFLOPS disagree, and both are honest about different things.** A denser MFMA stream
 draws more power, and against a power cap that buys back a lower clock — so a change can be worth
-several percent of cycles and under one percent of wall time. bf16 is the cleanest example: it
-measures 3–7% faster than fp16 at *identical* cycle counts and identical in-loop efficiency, with
-the whole difference coming from clock, because its narrower mantissa toggles less of the
-multiplier array. Judge a scheduling change by cycles; judge a kernel by both.
+several percent of cycles and under one percent of wall time. bf16 is the cleanest example, and it is exact
+rather than approximate: at this shape `fmha_v4` measures **1323** in bf16 against **1241** in fp16,
+**+6.6%**, from cycle counts that agree to **0.006%** (4349.35 against 4349.11 per iteration) and an
+in-loop efficiency identical to two decimals (47.09% both). Every bit of that 6.6% is clock, bought
+because bf16's narrower mantissa toggles less of the multiplier array. Judge a scheduling change by cycles; judge a kernel by both.
 
 Both harnesses were run under one protocol — `scripts/fly_kernel_time.py` builds FlyDSL's
 `flash_attn_dualwave_swp` through its own builder and then times it exactly as
