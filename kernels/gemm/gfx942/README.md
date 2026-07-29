@@ -51,31 +51,55 @@ external `rocprofv3 --kernel-trace` timing.
 
 ## 3. Results
 
-MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`, `do_bench`
-median of 3 runs. `torch` is hipBLASLt via `torch.matmul`.
+MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`. Headline
+numbers are from [`tools/bench_prepared.py`](tools/bench_prepared.py) on GPU 3:
+prepared launch, 3 rotating tensor sets, 1000 dispatches, **mean of the last
+100**, timed with `rocprofv3 --kernel-trace`. In-loop MFMA efficiency is from
+ATT.
+
+| | fp16 TF | bf16 TF | cyc/iter | mfma/iter/wave | **per-SIMD MFMA eff** |
+|---|---|---|---|---|---|
+| intra_wave (4-wave) | 611.3 | 655.1 | 4587.6 | 256 | 89.28% |
+| **inter_wave (8-wave)** | **606.8** | **648.1** | **4192.5** | 128 | **97.70%** |
+
+Per-SIMD is the comparable figure -- the matrix unit is a per-SIMD resource, so
+the 8-wave kernel's per-wave fraction doubles for its two co-resident waves. At
+~98% the 8-wave loop is essentially at the matrix-unit ceiling.
+
+For scale, Triton's own `BlockPingpong` schedule on the same shape
+(`python/tutorials/03-matrix-multiplication.py` at 256x256x64 / `num_warps=8`,
+with the loop-variant K mask removed so the pass fires) reaches 4273.8 cyc/iter
+and 95.84% per-SIMD at 543.0 TFLOPS. It uses `v_mfma_f32_32x32x8_f16`, which is
+more power-dense than the `16x16x16` used here and clocks down to 1.023 GHz for
+it -- so the 8-wave kernel above is ahead on cycles, on efficiency, and by a
+wider margin on wall clock. See §3.5.
+
+Across all tested shapes (`bench.py`, `do_bench` median, correctness checked
+against fp32; `torch` is hipBLASLt via `torch.matmul`):
 
 **fp16**
 
-| M | N | K | intra_wave | inter_wave | torch | inter/torch |
-|---|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 534 | 572 | 579 | 0.99 |
-| 4096 | 4864 | 4160 | 567 | **622** | 620 | 1.00 |
-| 4096 | 4864 | 8256 | 561 | **575** | 572 | 1.01 |
-| 4096 | 4864 | 16448 | 575 | **611** | 586 | 1.04 |
+| M | N | K | intra_wave | inter_wave | torch |
+|---|---|---|---|---|---|
+| 4096 | 4864 | 2112 | 594.7 | **620.1** | 554.6 |
+| 4096 | 4864 | 4160 | 645.4 | **677.2** | 626.1 |
+| 4096 | 4864 | 8256 | 577.5 | **586.3** | 570.1 |
+| 4096 | 4864 | 16448 | 631.7 | **640.6** | 588.2 |
 
 **bf16**
 
-| M | N | K | intra_wave | inter_wave | torch | inter/torch |
-|---|---|---|---|---|---|---|
-| 4096 | 4864 | 2112 | 565 | **609** | 595 | 1.02 |
-| 4096 | 4864 | 4160 | 586 | **651** | 647 | 1.01 |
-| 4096 | 4864 | 8256 | 567 | **609** | 602 | 1.01 |
-| 4096 | 4864 | 16448 | 600 | **659** | 623 | 1.06 |
+| M | N | K | intra_wave | inter_wave | torch |
+|---|---|---|---|---|---|
+| 4096 | 4864 | 2112 | 618.6 | **660.8** | 607.3 |
+| 4096 | 4864 | 4160 | 676.6 | **702.5** | 654.3 |
+| 4096 | 4864 | 8256 | 669.7 | 635.2 | 595.5 |
+| 4096 | 4864 | 16448 | 684.7 | **684.2** | 626.4 |
 
-TFLOPS. The 8-wave kernel matches or beats hipBLASLt on every shape.
+TFLOPS. Both kernels beat hipBLASLt on every shape.
 
-Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills, 1 wave/SIMD; inter_wave 224
-VGPR, 0 AGPR, 0 spills, **2 waves/SIMD**. Both use exactly 65536 B of LDS.
+Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills, 1 wave/SIMD; inter_wave 240
+VGPR, 0 AGPR, 0 spills, **2 waves/SIMD**. Both use exactly 65536 B of LDS, and
+both measure `SQ_LDS_BANK_CONFLICT` = **0**.
 
 ### 3.1 Why these shapes
 
@@ -169,16 +193,23 @@ wave-slot files (4 SE x 4 SIMD x `sl0`); the 8-wave kernel produces 32, adding
 
 | | mfma/iter/wave | cycles/iter/wave | per-wave | **per-SIMD** |
 |---|---|---|---|---|
-| intra_wave | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
-| inter_wave | 128 | 4737 | 43.2% | **86.5%** (2 waves/SIMD) |
+| intra_wave, as first ported | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
+| intra_wave, current | 256 | 4587.6 | 89.3% | **89.3%** |
+| inter_wave, as first ported | 128 | 4770.6 | 42.9% | **85.9%** (2 waves/SIMD) |
+| inter_wave, current | 128 | **4192.5** | 48.9% | **97.7%** |
 
-At matched clock the whole dispatch is 856k cycles / 599 us for intra_wave vs
-715k / 493 us for inter_wave -- **16.5% fewer cycles, 17.8% less wall time.**
+Both kernels moved a long way from the initial port: intra_wave through the
+opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md), inter_wave
+through the 8-region redesign in [`inter_wave/README.md`](inter_wave/README.md).
+The LDS bank-conflict fix in §4.3 is common to both and was worth -9.9% loop
+cycles on the 8-wave kernel.
 
 ### 3.5 The TFLOPS tables understate the 8-wave kernel
 
-That 17.8% does not appear in the do_bench tables in §3, which show the two
-kernels ~2% apart at K=8256. The 750 W cap is why. A first capture pair taken
+The 8-wave kernel is **9.4% fewer cycles per K-step** than the 4-wave one
+(4192.5 vs 4587.6) and 8.4 points better on per-SIMD MFMA efficiency, yet the
+do_bench tables in §3 put them within ~2% at K=8256 and even favour the 4-wave
+kernel in bf16. The 750 W cap is why. A first capture pair taken
 back-to-back without a cooldown recorded:
 
 | | cycles | wall | clock |
@@ -265,8 +296,32 @@ tile is `8 × (64/16) = 32`, which Triton lowers to two K=16 MFMAs.
 
 The tutorial's `PaddedSharedLayout([[512, 16]])` is not affordable — the four
 slots already fill LDS to the byte — so both operands use
-`SwizzledSharedLayout(8, 2, 8)` (`(8, 4, 4)` at `BLOCK_K=32`), which costs no
-LDS and is bank-conflict free in **both** directions.
+`SwizzledSharedLayout(8, 1, 8)`, which costs no LDS.
+
+`per_phase = 1`, **not 2**. The three parameters place element `(r, c)` at column
+`((c / vec) ^ phase) * vec + (c % vec)` with `phase = (r / per_phase) % max_phase`;
+`vec = 8` (8 fp16 = 16 B) is what keeps `ds_read_b128` / `ds_write_b128` legal.
+Because the global-load layout below has consecutive lanes walking consecutive
+rows, lanes 0-15 of a `b128` access cover **two adjacent rows** — and with
+`per_phase = 2` those two rows share a swizzle phase, land on the same 32 banks,
+and every access replays. Measured with
+[`tools/lds_conflict.py`](tools/lds_conflict.py), which reads
+`SQ_LDS_BANK_CONFLICT` and `SQ_LDS_IDX_ACTIVE`:
+
+| | conflict ratio | cyc / LDS instr | intra_wave | inter_wave |
+|---|---|---|---|---|
+| `(8, 2, 8)` | 0.667 / 0.750 | 13.33 / 14.00 | 2.510e9 | 3.514e9 |
+| **`(8, 1, 8)`** | **0.000** | **8.00** | **1.506e9** | **2.008e9** |
+
+8.00 cyc/instr is the floor (1024 B at 128 B/clk). The saving is worth -1.0%
+loop cycles on the 4-wave kernel but **-9.9%** on the 8-wave one, whose LDS duty
+cycle is far higher at 2 waves/SIMD.
+
+> [!WARNING]
+> Earlier versions of this port used `(8, 2, 8)` and described it as
+> "bank-conflict free in both directions", on the strength of
+> `tools/layout_check.py`'s analytical model. **The model is wrong** and still
+> reports `(8, 2, 8)` as clean. Trust the hardware counter.
 
 Getting the `local_store` side conflict-free also required changing the
 global-load layout. The tutorial's layout has lanes 0-7 cover row `M0` and lanes
@@ -277,11 +332,16 @@ a row), giving a fixed 2× conflict. Remapping so consecutive lanes walk
 64 banks exactly once, and improves the global side too (one instruction now
 reads 1024 contiguous bytes).
 
-`gl.bank_conflicts()` asserts on AMD shared layouts in this Triton build, so
-[`tools/layout_check.py`](tools/layout_check.py) reconstructs the same analysis from
-`gl.to_linear_layout()` plus the CDNA3 LDS model (64 banks × 4 B = 256 B/cycle,
-`256/vec_bytes` lanes per phase). Running that file
-sweeps the candidates and is what picked the layouts above.
+`gl.bank_conflicts()` asserts on AMD shared layouts in this Triton build, which
+is why [`tools/layout_check.py`](tools/layout_check.py) reconstructs the analysis
+from `gl.to_linear_layout()` plus a CDNA3 LDS model. That model turned out to be
+unreliable (see the warning above); use
+[`tools/lds_conflict.py`](tools/lds_conflict.py), which measures the hardware
+counter and can sweep `(vec, per_phase, max_phase)` directly:
+
+```bash
+python tools/lds_conflict.py --kernel inter_wave --sweep
+```
 
 ### 4.4 Where the time actually goes (4-wave)
 
@@ -324,24 +384,43 @@ global staging 4 half-tiles                  =  32
                                                256   before addressing
 ```
 
-which compiles to 256 VGPRs **with 28 spill slots** and 279 TFLOPS. Reading the
-operands as K=32 slices of the same `BLOCK_K=64` LDS tile halves the operand
-term to 48, lands at 224 VGPR / 0 spills / 2 waves per SIMD, and takes the kernel
-to 510 TFLOPS. It also doubles the region count to 8, which puts a cluster
-boundary every ~512 cycles — the same barrier cadence as the gfx950 8-wave
-kernel, where 4 regions of a 2×-faster MFMA give the same interval.
+which compiles to 256 VGPRs **with 28 spill slots** and 279 TFLOPS.
+
+The first fix was to read the operands as K=32 slices of the `BLOCK_K=64` LDS
+tile, halving the operand term to 48 (224 VGPR, 0 spills, 510 TFLOPS) at the
+price of 16 regions per K-step. The **current** kernel instead reads full
+`[128×64]` half-tiles but orders the dots `C_tl → C_tr → C_bl → C_br` so that
+`A_t` and `A_b` have non-overlapping liveness and **share one register set**:
+32 (A, shared) + 2 × 16 (B_l, B_r) = 64 rather than 96. That lands at 240 VGPR /
+0 spills and needs only 8 regions, halving the barriers. See
+[`inter_wave/README.md`](inter_wave/README.md) for the full schedule.
 
 ## 5. On the tutorial's out-of-tree plugins
 
 The tutorial's `llirSched` plugin, `TRITON_FORCE_MFMA_AGPR`, and the `amdgcnas`
-peephole were all tried here. `TRITON_FORCE_MFMA_AGPR` is **required** by the
-4-wave kernel (it is what supplies `amdgpu-agpr-alloc=256`; `bench.py` sets it).
-`libLlirSched.so` loads and runs on gfx942 but changes nothing measurable
-(467→472 TFLOPS at 4096²×8192, within noise) — unsurprising, since its throughput model is
-built around CDNA4's MFMA and async-copy anchors, and it has no `local_store`
-anchor class tuned for this pipeline. Closing the remaining gap to hipBLASLt
-would most likely mean an equivalent scheduling pass taught about the
-`buffer_load → local_store → local_load` chain.
+peephole were all tried here.
+
+`TRITON_FORCE_MFMA_AGPR` is **required** by the 4-wave kernel (it is what
+supplies `amdgpu-agpr-alloc=256`; `bench.py` sets it).
+
+`libLlirSched.so` initially appeared to do nothing on gfx942 (467→472 TFLOPS at
+4096²×8192, within noise). It was in fact a **silent no-op**: its MFMA table held
+only CDNA4 shape names, so `getMFMACycles()` returned 0 for
+`mfma.f32.16x16x16f16` and the pass dropped every region. Teaching it the CDNA3
+shapes and deriving the LDS cover from bandwidth (128 B/clk on CDNA3 against
+CDNA4's 256) made it fire, and it is now **required** for the 4-wave numbers in
+§3 — from 69.7% to 76.7% in-loop MFMA efficiency, then 84.0% once surplus MFMAs
+are parked between a region's last `local_load` and its first `local_store`.
+Both changes are in `plugins/llir_scheduler/LlirSchedPlugin.cpp`; see
+[`intra_wave/note.md`](intra_wave/note.md) §1-2. Run it with:
+
+```bash
+LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 python bench.py -k intra_wave
+```
+
+The 8-wave kernel does not use the plugin — its schedule is expressed directly
+with `warp_pipeline_stage`. `amdgcnas` remains untried on gfx942.
 
 ## 6. Layout
 
@@ -352,7 +431,9 @@ kernels/gemm/gfx942/
                                 --sweep-gm, --rocprof
   intra_wave/matmul_kernel.py   4-wave kernel  (+ README.md)
   inter_wave/matmul_kernel.py   8-wave kernel  (+ README.md)
-  tools/layout_check.py         CDNA3 LDS bank-conflict model + layout sweep
+  tools/layout_check.py         analytical LDS layout sweep (model is unreliable,
+                                see 4.3 -- prefer lds_conflict.py)
+  tools/lds_conflict.py         SQ_LDS_BANK_CONFLICT counter + swizzle sweep
   tools/run_att.py              rocprofv3 --att capture, verifies the ui_* dir
   tools/bench_prepared.py       prepared-launch rocprofv3 timing, multi-GPU sweep
 ```
