@@ -2801,3 +2801,60 @@ perturbing allocation and half is the DMA's own pressure change.
 the loop loss outweighs it, and the prize is bounded anyway: a *free* prologue would be 13431
 of 304087 cycles, 4.4% of cycles and ~2.6% of time at 3.28's 60% conversion. Recovering the
 loop means going back into the allocator's behaviour, not into the kernel.
+
+## Reproducing the B=32 headline table
+
+The commands behind the README's results table. Moved out of the README on 2026-07-29 so that
+section could stay at the level of what the numbers mean; these are the current-correct
+invocations and supersede the older recipes above (`LLIRSCHED_WP_SGB` and `LLIRSCHED_WP_MEMNOP=2`
+are defaults now, so neither has to be set).
+
+**Gluon rows:**
+
+```bash
+cd <repo>
+SHAPE="--batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128"   # bf16 is the default
+
+# tuned
+HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 LLIRSCHED_WP_MEMNOP=2 \
+DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
+
+# stock LLVM: the same command with every variable above removed
+HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 \
+python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
+```
+
+**FlyDSL row** -- needs a checkout of [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL); these numbers
+were taken at commit **`63eb891`** (`v0.2.4-26-g63eb891`):
+
+```bash
+git clone https://github.com/ROCm/FlyDSL && cd FlyDSL && git checkout 63eb891
+pip install -e .            # per FlyDSL's own README
+
+cd <this repo>
+HIP_VISIBLE_DEVICES=<gpu> FLYDSL_ROOT=/path/to/FlyDSL \
+python scripts/fly_kernel_time.py --batch 32 --seqlen 8192 --hq 8 --d 128 \
+  --iters 1000 --last-n 100
+```
+
+`scripts/fly_kernel_time.py` builds `flash_attn_dualwave_swp` through FlyDSL's own
+`build_flash_attn_dualwave_swp_module`, then times it exactly as `fa_kernel_time.py` times ours --
+same rocprofv3 invocation, same serialization, same rotating-buffer rule, same averaging window --
+which is the only reason the two rows can be put in one table. It checks the output against
+`scaled_dot_product_attention` before timing. Its defaults are FlyDSL's own tuned configuration
+(`FLASH_ATTN_FUNC_KERNEL_CONFIG` in that project's `tests/kernels/test_flash_attn_fwd.py`); the
+sweep confirming they are its optimum, and the deep-window requirement, are recorded above.
+
+**Launch geometry.** Worth re-checking before trusting any cross-implementation row: a difference
+in grid or occupancy would confound the whole table. It does not here -- both sides launch
+`(HQ, ceil(S/BLOCK_M), B)` with `BLOCK_M=256`, `BLOCK_N=64`, 8 waves per workgroup, 32 rows per
+wave and `waves_per_eu=2`, so at B=32 S=8192 H=8 both issue `(8, 32, 32)` = 8192 workgroups, one
+resident per CU, 256 at a time, 32 rounds, no tail imbalance. Neither side remaps across XCDs at
+this shape (ours is keyed on `HQ`, and at `HQ=8` against 8 XCDs the map is the identity). Full
+audit in the launch-geometry section above.
+
+One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
+`(n_blocks - 3)` is odd and both kernels run the `ODD_TAIL` tile. FlyDSL has no such constraint.

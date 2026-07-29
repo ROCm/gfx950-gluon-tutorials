@@ -14,7 +14,7 @@ they handle the softmax rescale.
 `fav4` ties the fastest published kernel for this shape while needing about 10% fewer cycles to
 do it. The distance between the first row and the last — **+10.0% of throughput, +26 points of
 efficiency** — is what the design work of §5 and the compiler work of §6 are worth together.
-§8 is the full table with its measurement protocol, the FlyDSL comparison worked through, and
+§9 is the full table with its measurement protocol, the FlyDSL comparison worked through, and
 why that ranking is shape-dependent.
 
 **Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: §3 below uses its
@@ -55,20 +55,28 @@ That question generates this entire document. Answering it needs the SIMD's issu
 gives a cycle budget to spend (§2), places attention in the GEMM tutorial's taxonomy (§3), and
 then determines the loop structure (§4), the difference between the two kernels (§5), and what
 the compiler has to do for them (§6). §7 is an appendix for one conflict too subtle to belong in
-the main line; §8 measures the result and takes the comparison above apart, and §9 is where to
-read further.
+the main line. §8 is the part meant to travel: the rules the kernel author owns, a procedure for
+diagnosing a kernel of your own, and which of these numbers are gfx950's rather than the
+architecture's. §9 measures the result and takes the comparison above apart; §10 is where to read
+further.
 
 ---
 
 ## 1. Three competitors, two issue ports
 
-Start from how a CDNA SIMD issues. Two rules, and everything below is a corollary:
+Start from how a CDNA SIMD issues. Two rules, and everything through §6 is a corollary:
 
 1. A wave issues **at most one instruction per cycle**.
 2. The **VALU** and the **memory pipe** are separate issue ports, so the SIMD can issue one of
    each in the same cycle — but they must come from **different waves**, by rule 1. Note that
    LDS and VMEM *share* the memory port: a `ds_read` and a `buffer_load` cannot pair with each
    other, only with a VALU.
+
+There is a third resource, and it is worth naming now even though nothing needs it until §7:
+behind both ports sits **one register file**. Issuing in the same cycle is necessary for two
+instructions to overlap, not sufficient — a 3-source VALU op wants more read ports in its cycle
+than a 1- or 2-source one, and an arriving LDS return wants the register file to write into. Two
+instructions that issue together can still collide there. §7 is the case where they do.
 
 While an MFMA runs, those ports are free. Work issued there is free too. Work that does not fit
 adds directly to the loop's cycle count. So the question is an allocation question: *the
@@ -129,9 +137,13 @@ What can be spent there, and at what price:
 |---|---|---|
 | VALU (`v_fma`, `v_add`, `v_max3`, `v_cvt`…) | **4 cycles** | 6 fit in one MFMA's window |
 | TRANS (`v_exp_f32`) | **8 cycles** | 3 fit — a transcendental is not un-hideable, just twice the price |
-| packed f32 (`v_pk_*`) | **does not fit** | cannot be placed in the window at all; issuing one pushes the next MFMA past its 32-cycle interval |
+| packed f32 (`v_pk_*`) | **4 cycles for 2 elements** | but **does not fit**: a packed op cannot be placed in the window at all, and issuing one pushes the next MFMA past its 32-cycle interval |
 
 A dot cluster of 16 MFMAs therefore has **16 × 24 = 384 cycles** to spend.
+
+Read the packed row carefully, because it says two things at once. Per element, packed is the
+*cheapest* form on this machine — one issue slot retires two — and it is simultaneously the one
+form that can never be hidden. Those are not in tension; they apply to different work.
 
 > The 32-cycle interval is derived from the public ISA as above. The per-class issue costs are
 > the cost model the scheduler uses and that these kernels were measured against; the
@@ -140,6 +152,11 @@ A dot cluster of 16 MFMAs therefore has **16 × 24 = 384 cycles** to spend.
 > ATT instruction trace timestamps every issue, so the cost of each class, and whether a given
 > op landed inside a shadow or outside it, can be read straight off a trace of your own kernel
 > ([`note.md`](note.md) has the recipe).
+>
+> The formal version of this model — read phase, window, the packed hazard, and a proof that
+> `(MFMA ‖ 6 unpacked) × M, then packed` is the optimal schedule for `M` MFMAs against `N` units
+> of math — is [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md). This section is the
+> part you need to design a kernel; that one is the part you need to argue about a schedule.
 
 The packed-math row has a consequence worth pausing on, because it is counter-intuitive.
 `v_pk_mul` retires two elements in one issue slot, so it is *exactly* what you want for work
@@ -200,6 +217,16 @@ the grid is `(HQ, ceil(S/BLOCK_M), B)`. Per tile there are eight things to do.
 
 ![the eight per-tile operations and their dependencies](images/tile_deps.svg)
 
+These eight names are used by the rest of this document and by the kernels' own comments, so
+they are worth fixing here:
+
+| | |
+|---|---|
+| `ACK` / `ACV` | async copy of the K / V tile, global → LDS |
+| `LRK` / `LRV` | read that tile back, LDS → registers |
+| `DOT1` / `DOT2` | the two MFMA chains: Q·Kᵀ producing the scores, then P·V into the accumulator |
+| `VEC1` / `VEC2` | the two halves of the softmax, split in §4.2 |
+
 ### 4.1 Four pipeline stages, four clusters
 
 Run them in dependency order and the matrix core idles through every copy and every LDS read,
@@ -227,6 +254,11 @@ that a wave in one kind of group always faces a wave in the other. Four clusters
 barrier. With `waves_per_eu=2` the two waves on a SIMD run **one cluster apart**:
 
 ![two waves running the same four clusters, offset by one](images/pingpong.svg)
+
+One naming note, since both conventions appear below and in the code. The clusters are
+`dot1`/`mem1`/`dot2`/`mem2`, and because `dot1` carries the QK MFMA and `dot2` the PV MFMA, this
+document also calls them the **QK cluster** and the **PV cluster**. `dot1` = QK, `dot2` = PV
+throughout.
 
 ### 4.2 How the softmax is split
 
@@ -272,15 +304,16 @@ fp16 since two elements share a register.
 |---|---|---:|---|
 | `Q` | 32 × 128 fp16 | 32×128 / 64 / 2 = **32** | live-in; loaded once, never reloaded |
 | `acc` (O) | 32 × 128 fp32 | 32×128 / 64 = **64** | live-in; the running output |
-| `K` via `LRK` | 128 × 64 fp16 | 128×64 / 64 / 2 = **64** | `regBuf1` |
-| `V` via `LRV` | 64 × 128 fp16 | 64×128 / 64 / 2 = **64** | `regBuf1` — reuses `LRK`'s, they are never live together |
-| score tile, `VEC1` | 32 × 64 fp32 | 32×64 / 64 = **32** | `regBuf2` |
-| score tile, `VEC2` | 32 × 64 fp32 | 32×64 / 64 = **32** | `regBuf0` |
+| `K` via `LRK` | 128 × 64 fp16 | 128×64 / 64 / 2 = **64** | the **operand** buffer |
+| `V` via `LRV` | 64 × 128 fp16 | 64×128 / 64 / 2 = **64** | the same one — K and V are never live together |
+| score tile, `VEC1` writes | 32 × 64 fp32 | 32×64 / 64 = **32** | **score A** |
+| score tile, `VEC2` reads | 32 × 64 fp32 | 32×64 / 64 = **32** | **score B** |
 
 96 VGPRs are live for the whole loop and 128 more are the working set: **224 of 256**, with
-LDS holding 2 × K + 2 × V = 64 KB. `LRK` and `DOT1` are producer and consumer of the same tile,
-so they share a buffer. `VEC1` and `VEC2` are not, so they need two — and that is what forces
-the unroll.
+LDS holding 2 × K + 2 × V = 64 KB. K and V share one buffer because each is consumed by its MFMA
+before the other is read. The two score tiles cannot share: by §4.2's skew, `VEC1` is writing
+tile *j+1*'s scores while `VEC2` is still reading tile *j*'s. Two buffers, and that is what
+forces the unroll.
 
 ![the score buffers swap each tile, and unrolling twice puts them back](images/unroll.svg)
 
@@ -320,7 +353,7 @@ one has to spend:
 
 These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
 backend adds address arithmetic, and `fav3`'s scheduler leaves some work packed, which halves
-its instruction count — so §8's ceilings are computed from the compiled inventory rather than
+its instruction count — so §9's ceilings are computed from the compiled inventory rather than
 from this table. The shape of the argument is the same either way.
 
 **`fav3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
@@ -354,16 +387,13 @@ to be reduced before `m_new` exists, and it is what the subtract depends on.
 
 That leaves the subtract and the `exp2`, and **they have to move as a pair.** Moving the `exp2`
 alone was tried first, and it fails in an instructive way. The subtract stays behind in PV while
-its only consumer is now in the other cluster, and something then drags it out of PV into a mem
-stage — the work leaves the cluster it was meant to leave, but does not arrive in QK either.
-
-The something is **ISel's pre-RA list scheduler**, not `MachineSink`, which is worth being precise
-about because `MachineSink` is already disabled (§6) and disabling it does not help. ISel's *first*
-MIR dump already shows 16 of the 32 subtracts sitting in the mem region, before `MachineSink` ever
-runs; re-running the same IR with `-pre-RA-sched=linearize` keeps all of them in the dot stage. The
-underlying reason is the one from §6's third bullet: a pure `fsub` has no chain edge, so neither
-`s_barrier` nor `sched.barrier` orders it, and a scheduler that sees its consumer downstream is
-free to move it there.
+its only consumer is now in the other cluster — and a scheduler that can see a consumer
+downstream will drag the producer toward it, because a pure `fsub` carries no chain edge and
+therefore no `s_barrier` or `sched.barrier` orders it (§6). Half the subtracts end up in a mem
+stage: the work leaves the cluster it was meant to leave without arriving in the one it was meant
+to reach. *Which* pass does the moving is worth knowing if you are debugging your own kernel — it
+is ISel's pre-RA list scheduler, not `MachineSink`, proved by re-running the same IR under
+`-pre-RA-sched=linearize`; [`note.md`](note.md) has the evidence.
 
 Moving both ops instead removes the opportunity. The **raw** slice is carried across and subtracted
 where it is exponentiated, so the subtract is born in the cluster that consumes it and there is
@@ -383,13 +413,9 @@ have taken. **Three eighths** puts both inside with the two clusters within 8 cy
 and that is why the tile is sliced into eighths rather than halves — the granularity exists to make
 the ratio adjustable.
 
-### Design rules the final kernel embodies
-
-| rule | why the hardware demands it |
-|---|---|
-| **Keep control flow out of the dot clusters.** The rescale's `warp_predicate` block lives in the `mem2` cluster, not in `VEC2` where the arithmetic belongs. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster is issued *before* the first MFMA — the matrix core waits on it. Moving the block to a mem cluster puts that cost against memory latency instead, and lets `dot1` start with the QK MFMA. |
-| **Balance the two dot clusters.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 340 and QK to 348. | 204 against 484 wastes the whole of QK's slack while PV pays for the overflow. Only the totals matter, and both are made of the same elementwise work, so it can be moved. |
-| **Rebalancing must cost nothing.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions at all**. | A distributed-tensor slice normally costs a shuffle. Free slicing is what makes the previous rule affordable, and it is a Gluon technique worth knowing well beyond attention. |
+The three kernel-side rules this section established — keep control flow out of the dot clusters,
+balance the two of them, and make the rebalancing itself free — are collected with the one §6 adds
+in [§8](#8-applying-this-to-your-own-kernel).
 
 ## 6. Making the compiler co-operate
 
@@ -440,11 +466,12 @@ the rest:
 Which is also why one kernel no longer needs a different environment from the other: nothing
 upstream has to normalize the packing first.
 
-The third panel is a detail that belongs to the kernel rather than the compiler. A packed op
-cannot follow an MFMA back to back, so the *first* uncovered packed op in a cluster pays a hazard
-on top of being exposed. Ordering the uncovered work ahead of the cluster's first MFMA removes
-that stall — same instructions, same count, only the order differs. Nothing in the toolchain will
-do it for you, because only the kernel knows which work was never going to be covered.
+The third panel is a detail that belongs to the kernel rather than the compiler, and it is the
+fourth kernel-side rule of §8. A packed op cannot follow an MFMA back to back, so the *first*
+uncovered packed op in a cluster pays a hazard on top of being exposed. Ordering the uncovered
+work ahead of the cluster's first MFMA removes that stall — same instructions, same count, only
+the order differs. Nothing in the toolchain will do it for you, because only the kernel knows
+which work was never going to be covered.
 
 ### Declaring the interleave
 
@@ -510,7 +537,7 @@ with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the t
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
 Measured at `B=1, S=16320, H=64, fp16` on GPU[0] — TFLOPS and in-loop MFMA efficiency per SIMD.
-(A different shape and dtype from §8, so read the two tables separately; the *deltas* are what
+(A different shape and dtype from §9, so read the two tables separately; the *deltas* are what
 matter here.)
 
 | | `fav3` | `fav4` |
@@ -523,14 +550,91 @@ Each step is worth well under a percent of throughput, and together about 1% on 
 `fav4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
 same op count leaving the same cluster in both, so a mechanism tied to that op count should pay the
 same, and it does. The efficiency column moves further than the throughput column for the reason
-§8 gives — a denser MFMA stream costs clock on a power-capped part.
+§9 gives — a denser MFMA stream costs clock on a power-capped part.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
 goes from 3.05e-05 to 1.22e-04 on `fav3`, and from 6.10e-05 to the same 1.22e-04 on `fav4`. All
 are far inside the 1e-3 tolerance, and `--scale-on-q 0` restores the tighter numerics on either
 kernel.
 
-## 8. Results
+## 8. Applying this to your own kernel
+
+Everything above is one worked example. This section is the part meant to survive contact with a
+different kernel: the decisions that stayed with the author, the procedure for finding out which
+of §5–§7 your own stall belongs to, and which numbers you have to re-derive on other hardware.
+
+### 8.1 The four rules the kernel author owns
+
+The compiler cannot make these calls, because each depends on something only the kernel knows.
+
+| rule | why the hardware demands it |
+|---|---|
+| **Keep control flow out of the compute clusters.** The rescale's `warp_predicate` block lives in `mem2`, not in `VEC2` beside the arithmetic it belongs to. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster issues *before* the first MFMA and the matrix core waits on it. In a mem cluster the same cost lands against memory latency instead. |
+| **Balance the clusters that share a budget.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 340 and QK to 348 of 384. | 204 against 484 wastes the whole of one cluster's slack while the other pays for its overflow. Only the per-cluster totals matter, so any work made of the same elementwise pieces can be moved to level them. |
+| **Make the rebalancing itself free.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions**. | A distributed-tensor slice normally costs a shuffle, which would eat the imbalance you were trying to recover. Free slicing is what makes the previous rule affordable — a Gluon technique worth knowing well beyond attention. |
+| **Put work you know will be exposed *before* the first MFMA of its cluster.** | A packed op cannot follow an MFMA back to back, so the first uncovered packed op otherwise pays a hazard on top of already being outside the shadow. Same instructions, same count, only the order differs — and only you know which work was never going to be covered. |
+
+### 8.2 Diagnosing a kernel: budget it, measure it, route the gap
+
+**Budget it, on paper, before measuring anything.** For each region that mixes MFMA with other
+work:
+
+```
+per region:   capacity = (number of MFMAs in the region) × 24 cycles
+              demand   = Σ 4 cycles per VALU op + 8 cycles per TRANS op
+                         (a packed op cannot be covered at all — count it as already exposed)
+              exposed  = max(0, demand − capacity)
+
+per loop body: ceiling = mfma_cycles / (mfma_cycles + Σ exposed over all regions)
+```
+
+That ceiling is the best MFMA efficiency any schedule of that kernel can reach. `fav3`'s four dot
+clusters leave 48 cycles exposed each against 2048 cycles of MFMA, which is where §9's 91.4% comes
+from; `fav4` leaves none, so its ceiling is 100%. The calculation costs ten minutes and it decides
+which of the sections above you are in — §5 if you are over the budget, §6 if you are under it and
+still not reaching the ceiling.
+
+**Then measure.** Take an ATT instruction trace and run
+[`scripts/process_json.py`](../../scripts/process_json.py); it prints in-loop MFMA efficiency
+**per wave**, so double it for the per-SIMD figure when two waves share the SIMD. (`note.md` has
+the full recipe, including `scripts/att_pick_cu.py` — ATT silently records nothing if you aim it
+at a CU that does not exist on your die.)
+
+**Then route the gap.** What you see, what it means, and where in this document it is worked
+through:
+
+| symptom | what it means | section |
+|---|---|---|
+| demand exceeds capacity in a region | no ordering can win; the work itself has to shrink or move to another region | §5 |
+| demand fits, but measured efficiency sits far under the ceiling and windows are visibly empty | the ops are not where you put them — a pass moved them, or the request you made was unsatisfiable | §6 |
+| a stage's tail is vector work while the matrix pipe is idle | the interleave was requested but never constructed | §6 — declare it, don't pin it |
+| efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock | §9 — power cap |
+| a small delay at a stage head changes things sharply and non-monotonically | a phase relationship between two waves, not a quantity | §7 — sweep it, bisection will mislead you |
+| two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | §6 and `note.md` |
+| in-loop numbers are good but whole-dispatch throughput is not | prologue and drain are not amortizing — short loops, or too many pipeline stages | §9 |
+
+The habit underneath all of it: **judge a scheduling change by cycles, and a kernel by both cycles
+and wall time.** They disagree for real reasons (§9), and a change that improves one while flat on
+the other is usually still the right change.
+
+### 8.3 What is gfx950-specific, and what is not
+
+Re-derive these on another part; do not assume them.
+
+| structural — expect it to hold across CDNA | specific to gfx950, and to this MFMA shape |
+|---|---|
+| an MFMA occupies the matrix pipe for a fixed number of passes, during which other pipes are free | `PASS = 4 cycles`, and `V_MFMA_F32_32X32X16_F16` takes 8 of them → a **32-cycle** issue interval |
+| there is a read phase at the head of an MFMA in which nothing co-issues | that phase is **8 cycles**, leaving a **24-cycle** window |
+| VALU and memory are separate issue ports, one instruction per wave per cycle | VALU **4** cycles, TRANS **8**, so **6** VALU or **3** TRANS per window |
+| some instruction classes cannot co-issue with the matrix pipe at all | on gfx950 that class is packed f32 (`v_pk_*`) — and packed is *also* the cheapest form per element |
+| the register file is shared behind both ports | 3-source VALU against an LDS return is where it shows up here (§7) |
+| waves per SIMD determines whether inter-wave overlap is available | `waves_per_eu=2` here; with one wave per SIMD every region becomes intra-wave (see `gemm/intra_wave`) |
+
+The pass count for your instruction is in your ISA document. The window, and the per-class costs,
+are read off an ATT trace of your own kernel — which is the same evidence this document's numbers
+rest on.
+
+## 9. Results
 
 `B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[0] — ROCm/FlyDSL's published
 benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
@@ -585,23 +689,15 @@ Neither shape is *the* answer — that one flatters us, this one flatters them. 
 does not move between them is the in-loop MFMA efficiency, which is the only thing in this table
 the scheduler actually controls. `note.md` works the comparison through in full.
 
-**The launch geometry is identical on both sides**, which is worth checking before trusting any
-of the above — a difference in grid or occupancy would confound the whole table. FlyDSL builds its
-grid as `(NUM_HEADS_Q, ceil(S/BLOCK_M), batch)` from `BLOCK_M=256`, `BLOCK_N=64`, 8 waves per
-workgroup, 32 rows per wave and `waves_per_eu=2` — the same three axes in the same order, and the
-same numbers, as ours. At this shape both launch `(8, 32, 32)` = 8192 workgroups of 8 waves, one
-workgroup resident per CU, 256 at a time, 32 rounds with no tail imbalance. So the differences in
-the table are what happens inside the loop, and power — not how the work was handed out.
-
-Neither side remaps workgroups across XCDs here, though for different reasons. FlyDSL's GEMM and
-MoE kernels do (`xcd_remap_bx_by`, behind an `xcd_swizzle` knob) but its attention kernels do not.
-Ours calls `remap_xcd` on the head index — and at `HQ=8` against 8 XCDs that map is exactly the
-identity, so it does nothing at this shape. It *is* active at `B=1, HQ=64`, which is one more
-reason the two shapes are not interchangeable.
-
-One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
-`(n_blocks − 3)` is odd and both kernels run the `ODD_TAIL` path — one unpipelined tile in the
-drain. FlyDSL has no such constraint.
+**Before trusting any cross-implementation row, check that the work was handed out the same way** —
+a difference in grid or occupancy would confound the whole table. It does not here: both sides
+launch `(HQ, ceil(S/BLOCK_M), B)` with `BLOCK_M=256`, `BLOCK_N=64`, 8 waves per workgroup, 32 rows
+per wave and `waves_per_eu=2`, so both issue 8192 workgroups, one resident per CU, 32 rounds, no
+tail imbalance. The differences in the table are what happens inside the loop, and power. One
+caveat runs against the Gluon rows rather than for them: `S=8192` makes `(n_blocks − 3)` odd, so
+both kernels run an unpipelined `ODD_TAIL` tile in the drain and FlyDSL has no such constraint.
+The full audit — XCD remapping on both sides, the FlyDSL config sweep, the die-to-die and thermal
+caveats, and the commands that reproduce every row — is in [`note.md`](note.md).
 
 Two things about the metrics themselves, worth knowing before quoting either:
 
@@ -617,54 +713,14 @@ measures 3–7% faster than fp16 at *identical* cycle counts and identical in-lo
 the whole difference coming from clock, because its narrower mantissa toggles less of the
 multiplier array. Judge a scheduling change by cycles; judge a kernel by both.
 
-**Reproducing the Gluon rows:**
+Both harnesses were run under one protocol — `scripts/fly_kernel_time.py` builds FlyDSL's
+`flash_attn_dualwave_swp` through its own builder and then times it exactly as
+`scripts/fa_kernel_time.py` times ours, same rocprofv3 invocation, serialization, rotating-buffer
+rule and averaging window. That is the only reason the rows can share a table, and it matters more
+than it sounds: measured with its own shallower window, FlyDSL reads up to 7% high on a cool die.
+The commands for every row are in [`note.md`](note.md).
 
-```bash
-cd <repo>
-SHAPE="--batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128"   # bf16 is the default
-
-# tuned
-HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 LLIRSCHED_WP_MEMNOP=2 \
-DISABLE_LLVM_OPT=disable-machine-sink \
-LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
-
-# stock LLVM: the same command with every variable above removed
-HIP_VISIBLE_DEVICES=<gpu> FA_MODULE=fav4 \
-python scripts/fa_kernel_time.py $SHAPE --iters 1000 --last-n 100 --scale-on-q 1
-```
-
-**Reproducing the FlyDSL row** needs a checkout of [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL);
-these numbers were taken at commit **`63eb891`** (`v0.2.4-26-g63eb891`):
-
-```bash
-git clone https://github.com/ROCm/FlyDSL && cd FlyDSL && git checkout 63eb891
-pip install -e .            # per FlyDSL's own README
-
-cd <this repo>
-HIP_VISIBLE_DEVICES=<gpu> FLYDSL_ROOT=/path/to/FlyDSL \
-python scripts/fly_kernel_time.py --batch 32 --seqlen 8192 --hq 8 --d 128 \
-  --iters 1000 --last-n 100
-```
-
-`scripts/fly_kernel_time.py` builds `flash_attn_dualwave_swp` through FlyDSL's own
-`build_flash_attn_dualwave_swp_module`, then times it exactly as `fa_kernel_time.py` times ours —
-same rocprofv3 invocation, same serialization, same rotating-buffer rule, same averaging window —
-which is the only reason the two rows can be put in one table. It checks the output against
-`scaled_dot_product_attention` before timing. The window depth matters: at `B=1` FlyDSL's own
-shallower window leaves the kernel in its thermal transient and six consecutive runs of one config
-read 1236.9, 1242.8, 1165.9, 1167.7, 1159.3, 1157.5. At the shape above both harnesses are steady.
-
-Its defaults are FlyDSL's own tuned configuration (`FLASH_ATTN_FUNC_KERNEL_CONFIG` in that
-project's `tests/kernels/test_flash_attn_fwd.py`): lazy rescale, `setprio`, stagger, and
-`waves_per_eu=2`. Sweeping those confirms the defaults are its optimum — disabling stagger costs
-15%, disabling `setprio` 3%, `waves_per_eu=1` is indistinguishable, and `--eager-rescale` (the
-`fav3`-equivalent path) costs far more. Note the builder defaults to `causal=True` while this
-script passes `causal=False` to match the Gluon kernels; `--causal 1` measures the causal path
-against half the FLOPs, which comes out lower still.
-
-## 9. Where to go deeper
+## 10. Where to go deeper
 
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
@@ -680,7 +736,7 @@ against half the FLOPs, which comes out lower still.
   — how the scheduler classifies a region, and how it packs or triages the windows.
 - [`../../docs/warp_pipelining.md`](../../docs/warp_pipelining.md) and
   [`../../docs/mfma_efficiency.md`](../../docs/mfma_efficiency.md) — the theory behind
-  `warp_pipeline_stage` (§4) and behind the metric §8 reports.
+  `warp_pipeline_stage` (§4) and behind the metric §9 reports.
 - **Provenance.** Ported from
   [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
   (`kernels/cdna4/fa/`). `f16_fa_gfx950_common.py` is verbatim; `fav3.py` is the upstream
