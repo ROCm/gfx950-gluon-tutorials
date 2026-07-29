@@ -2782,6 +2782,9 @@ different assignment across the whole function, and three things follow in the l
 3. **Two hazard `s_nop` become unnecessary** because the new assignment changes which
    MFMA/VALU pairs are close enough to need padding.
 
+The `v_add_u32` has a second, larger cause of its own -- Q's shared memory can no longer be
+overlaid with K/V, doubling the LDS allocation. See 3.29.4.
+
 **And the packed op is not the cause of the slowdown.** Forcing it back apart with
 `AMDGCN_SCALARIZE_PACKED_FOPS=1` makes things *worse*, not better:
 
@@ -2858,3 +2861,52 @@ audit in the launch-geometry section above.
 
 One caveat runs against the Gluon rows rather than for them: `S=8192` gives `n_blocks = 128`, so
 `(n_blocks - 3)` is odd and both kernels run the `ODD_TAIL` tile. FlyDSL has no such constraint.
+
+### 3.29.4 The extra `v_add_u32` in the loop: LDS liveness, not the unroll
+
+A reasonable reading of the `v_add_u32_e32` that 3.29.3 found in the loop is that something is
+updating a `ds_read` address per iteration, which the 2x unroll should make unnecessary --
+`BUF_DEPTH` is 2 and the unroll is 2, so each unrolled body's slot is fixed at compile time
+and every LDS address in the loop is a constant. That reading is right, and **the shipped
+kernel already does exactly that**:
+
+| loop, committed default | |
+|---|---|
+| integer / address VALU | **0** |
+| `ds_read_b128` | 32, all off **one** address register `v152` |
+| their `offset:` immediates | 34752 .. 52128, all inside the 16-bit field |
+
+`v152` is set before the loop and never touched in it. Nothing to fix.
+
+The add exists only under `FA_Q_DIRECT_LDS=1`, and the cause is not addressing arithmetic but
+**LDS liveness**:
+
+| | default | `FA_Q_DIRECT_LDS=1` |
+|---|---:|---:|
+| shared memory allocated | **68016 B** | **134560 B** |
+| `ds_read_b128` address registers | 1 (`v152`) | 2 (`v177`, `v65`) |
+| their `offset:` immediates | 34752 .. 52128 | 0 .. 736 |
+| integer adds in the loop | 0 | 1 (`v_add_u32_e32 v65, 0x1d880, v174`) |
+
+134560 - 68016 = 66544, which is Q's padded allocation (66560 B) almost exactly. **Triton was
+overlaying `q_smem` with `kt_smem`/`v_smem` and now cannot.** On the register path `q_dot` is
+read immediately after the store, before the K/V buffers are allocated, so `q_smem` is dead by
+then and the allocator reuses its 64 KB. The DMA path defers the read until after
+`wait_group(2)` -- which is the entire point, so Q's latency is covered -- and that extends
+`q_smem`'s live range across the K/V allocation, so the two cannot share.
+
+From there the rest follows mechanically. With LDS nearly doubled the K/V bases sit past
+0x10000, `0x1d880` = 120960 bytes is well beyond the 65535 a `ds_read` `offset:` field can
+hold, so the base has to be materialised in a register -- two of them, with small immediates,
+plus one add per iteration to form the second.
+
+So the DMA experiment has **two** costs, not one: the register-allocation knock-on of 3.29.3,
+and this. And they point in opposite directions on the fix, which is what makes it awkward:
+
+- read `q_dot` early, before the K/V allocation, and the LDS overlay is restored -- but then
+  Q's DMA must be waited for early, which is the blanket wait the change exists to remove;
+- read it late, and the wait is covered but LDS doubles and the loop pays an address add.
+
+The way out is to let `q_smem` alias the K/V buffers explicitly rather than relying on the
+allocator's liveness analysis -- Q is dead once `q_dot` is in registers, and it is only the
+*schedule* that hides that. Not attempted.
