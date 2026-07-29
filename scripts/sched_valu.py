@@ -82,9 +82,13 @@ def _operands(line):
         return []
     # drop trailing instruction modifiers, which are `key:value` and never registers
     body = re.sub(r"\b\w+:\[[^\]]*\]", "", parts[1])
-    body = re.sub(r"\b(?:offset|offset0|offset1|op_sel\w*|blgp|cbsz|abid|neg\w*|clamp|"
-                  r"mul|div|bound_ctrl|row_mask|bank_mask|dpp\w*|sdwa|glc|slc|nt|sc0|sc1)"
-                  r"(?::-?\w+)?", "", body)
+    body = re.sub(
+        r"\b(?:offset|offset0|offset1|op_sel\w*|blgp|cbsz|abid|neg\w*|clamp|"
+        r"mul|div|bound_ctrl|row_mask|bank_mask|dpp\w*|sdwa|glc|slc|nt|sc0|sc1)"
+        r"(?::-?\w+)?",
+        "",
+        body,
+    )
     return [o.strip() for o in body.split(",") if o.strip()]
 
 
@@ -113,20 +117,80 @@ def _regs(operand):
 # writes both, and reading it as "writes v96, reads v97" let the scheduler hoist a consumer
 # of v97 above it. That produced a kernel that ran 15% faster and returned NaN.
 _SIMPLE_DEST = (
-    "v_mfma", "v_mov_b32", "v_mov_b64", "v_add_f", "v_sub_f", "v_subrev_f", "v_mul_f",
-    "v_fma_f", "v_fmaak", "v_fmamk", "v_max_f", "v_min_f", "v_maximum", "v_minimum",
-    "v_max3", "v_min3", "v_med3", "v_cmp_", "v_cndmask", "v_cvt_", "v_exp_f", "v_log_f",
-    "v_rcp_", "v_rsq_", "v_sqrt_", "v_trunc_", "v_floor_", "v_ceil_", "v_rndne_",
-    "v_ldexp_", "v_and_b", "v_or_b", "v_xor_b", "v_not_b", "v_bfe_", "v_bfi_", "v_lshl",
-    "v_lshr", "v_ashr", "v_alignbit", "v_alignbyte", "v_perm_b32", "v_sad_", "v_pack_",
-    "v_pk_add", "v_pk_sub", "v_pk_mul", "v_pk_fma", "v_pk_max", "v_pk_min",
-    "v_readfirstlane", "v_readlane", "v_bcnt_", "v_ffbl_", "v_ffbh_", "v_cvt_pk",
+    "v_mfma",
+    "v_mov_b32",
+    "v_mov_b64",
+    "v_add_f",
+    "v_sub_f",
+    "v_subrev_f",
+    "v_mul_f",
+    "v_fma_f",
+    "v_fmaak",
+    "v_fmamk",
+    "v_max_f",
+    "v_min_f",
+    "v_maximum",
+    "v_minimum",
+    "v_max3",
+    "v_min3",
+    "v_med3",
+    "v_cmp_",
+    "v_cndmask",
+    "v_cvt_",
+    "v_exp_f",
+    "v_log_f",
+    "v_rcp_",
+    "v_rsq_",
+    "v_sqrt_",
+    "v_trunc_",
+    "v_floor_",
+    "v_ceil_",
+    "v_rndne_",
+    "v_ldexp_",
+    "v_and_b",
+    "v_or_b",
+    "v_xor_b",
+    "v_not_b",
+    "v_bfe_",
+    "v_bfi_",
+    "v_lshl",
+    "v_lshr",
+    "v_ashr",
+    "v_alignbit",
+    "v_alignbyte",
+    "v_perm_b32",
+    "v_sad_",
+    "v_pack_",
+    "v_pk_add",
+    "v_pk_sub",
+    "v_pk_mul",
+    "v_pk_fma",
+    "v_pk_max",
+    "v_pk_min",
+    "v_readfirstlane",
+    "v_readlane",
+    "v_bcnt_",
+    "v_ffbl_",
+    "v_ffbh_",
+    "v_cvt_pk",
     # integer address arithmetic: single destination, like the float forms. Leaving these out
     # sent them to the conservative branch, which reports their *sources* as written too --
     # enough to make a loop-invariant address add look loop-variant.
-    "v_add_u32", "v_add_nc_u32", "v_sub_u32", "v_subrev_u32", "v_add_co_u32",
-    "v_add3_u32", "v_lshl_add_u32", "v_lshl_or_b32", "v_mad_u32", "v_mul_lo_u32",
-    "v_mul_hi_u32", "v_min_u32", "v_max_u32", "v_min_i32", "v_max_i32",
+    "v_add_u32",
+    "v_add_nc_u32",
+    "v_sub_u32",
+    "v_subrev_u32",
+    "v_add_co_u32",
+    "v_add3_u32",
+    "v_lshl_add_u32",
+    "v_lshl_or_b32",
+    "v_mad_u32",
+    "v_mul_lo_u32",
+    "v_mul_hi_u32",
+    "v_min_u32",
+    "v_max_u32",
+    "v_min_i32",
+    "v_max_i32",
 )
 # Accumulate-in-place forms read their destination as well.
 _ACC_DEST = ("v_fmac", "v_mac_", "v_pk_fmac", "v_dot", "v_mad_mix", "v_fma_mix")
@@ -135,15 +199,24 @@ _ACC_DEST = ("v_fmac", "v_mac_", "v_pk_fmac", "v_dot", "v_mad_mix", "v_fma_mix")
 # MFMA: a consumer issued too soon after one reads a register that is not written yet, and
 # the compiler covers it with whatever independent work already sat in the gap rather than
 # an `s_nop`. Drain that gap and the kernel returns NaN while staying correctly ordered.
-_TRANS = ("v_exp_", "v_log_", "v_rcp_", "v_rsq_", "v_sqrt_", "v_sin_", "v_cos_",
-          "v_tanh_", "v_rcp_iflag")
+_TRANS = (
+    "v_exp_",
+    "v_log_",
+    "v_rcp_",
+    "v_rsq_",
+    "v_sqrt_",
+    "v_sin_",
+    "v_cos_",
+    "v_tanh_",
+    "v_rcp_iflag",
+)
 
 # Cross-lane ops read the whole wave's copy of their source, and a VALU write feeding one
 # needs a wait state that nothing in the dataflow expresses. FlyDSL pairs every
 # `v_mov / v_permlane32_swap_b32` with an `s_nop 1`; ours does the same.
 _XLANE = ("v_permlane", "v_ds_permute", "v_ds_bpermute", "v_mov_b32_dpp")
-_XLANE_WS = 2   # GCNHazardRecognizer::checkPermlaneHazards, VALUWritesVDstWaitStates
-_M0_WS = 1      # s_mov to m0 -> an instruction that reads m0
+_XLANE_WS = 2  # GCNHazardRecognizer::checkPermlaneHazards, VALUWritesVDstWaitStates
+_M0_WS = 1  # s_mov to m0 -> an instruction that reads m0
 
 
 def defs_uses(line):
@@ -162,10 +235,34 @@ def defs_uses(line):
             w |= _regs(o)
             r |= _regs(o)
         return w, r
-    if op.startswith(("v_", "ds_read", "buffer_load", "global_load", "flat_load", "s_load",
-                      "v_readfirstlane", "s_mov", "s_add", "s_sub", "s_mul", "s_and",
-                      "s_or", "s_xor", "s_lshl", "s_lshr", "s_ashr", "s_min", "s_max",
-                      "s_cselect", "s_bfe", "s_not", "s_pack", "s_cvt")):
+    if op.startswith(
+        (
+            "v_",
+            "ds_read",
+            "buffer_load",
+            "global_load",
+            "flat_load",
+            "s_load",
+            "v_readfirstlane",
+            "s_mov",
+            "s_add",
+            "s_sub",
+            "s_mul",
+            "s_and",
+            "s_or",
+            "s_xor",
+            "s_lshl",
+            "s_lshr",
+            "s_ashr",
+            "s_min",
+            "s_max",
+            "s_cselect",
+            "s_bfe",
+            "s_not",
+            "s_pack",
+            "s_cvt",
+        )
+    ):
         w |= _regs(ops[0])
         for o in ops[1:]:
             r |= _regs(o)
@@ -188,8 +285,9 @@ def defs_uses(line):
         # stores, barriers, branches, waitcnt, exec manipulation: read everything named
         for o in ops:
             r |= _regs(o)
-        if op.startswith(("s_and_saveexec", "s_or_b", "s_mov_b64", "s_mov_b32",
-                          "s_andn2", "s_cbranch", "s_cmp")):
+        if op.startswith(
+            ("s_and_saveexec", "s_or_b", "s_mov_b64", "s_mov_b32", "s_andn2", "s_cbranch", "s_cmp")
+        ):
             w |= _regs(ops[0]) if ops else set()
     if op.startswith(("s_cmp", "v_cmp")):
         w.add(("special", "scc" if op.startswith("s_") else "vcc"))
@@ -252,13 +350,24 @@ def analyse(lines, lo, hi, verbose=False):
             if (r & mw) or (w & mw):
                 continue
             free.append(i)
-        rep.append(dict(a=a, b=b, mfma=len(mfma), valu=len(valu), free=len(free),
-                        per=len(valu) / len(mfma), pinned=len(set(valu) & pin)))
+        rep.append(
+            dict(
+                a=a,
+                b=b,
+                mfma=len(mfma),
+                valu=len(valu),
+                free=len(free),
+                per=len(valu) / len(mfma),
+                pinned=len(set(valu) & pin),
+            )
+        )
         if verbose:
             r = rep[-1]
-            print(f"  region {a}..{b}: {r['mfma']:3d} mfma  {r['valu']:3d} valu "
-                  f"({r['per']:.2f}/shadow, capacity {SHADOW_SLOTS})  "
-                  f"movable {r['free']:3d}  pinned-by-exec {r['pinned']}")
+            print(
+                f"  region {a}..{b}: {r['mfma']:3d} mfma  {r['valu']:3d} valu "
+                f"({r['per']:.2f}/shadow, capacity {SHADOW_SLOTS})  "
+                f"movable {r['free']:3d}  pinned-by-exec {r['pinned']}"
+            )
     return rep
 
 
@@ -317,8 +426,11 @@ def _deps(items, movable):
     fixed = [i for i in range(n) if i not in movable]
     for a, b in zip(fixed, fixed[1:]):
         edges.add((a, b))
-    walls = [i for i, (_, l) in enumerate(items)
-             if opcode(l).startswith(("s_nop", "s_waitcnt", "s_barrier"))]
+    walls = [
+        i
+        for i, (_, l) in enumerate(items)
+        if opcode(l).startswith(("s_nop", "s_waitcnt", "s_barrier"))
+    ]
     for w in walls:
         for m in movable:
             edges.add((m, w) if m < w else (w, m))
@@ -335,8 +447,8 @@ def _deps(items, movable):
 # (MFMA = 32, VALU = 4) made the repair below preserve distances of several hundred, which
 # it padded with `s_nop` chains that cost more than the whole reorder gained: in-loop MFMA
 # efficiency fell from 80.8% to 32.8%.
-_MAX_MFMA_WS = 19   # GCNHazardRecognizer MaxWaitStates, SMFMA 32x32 on gfx950
-_TRANS_WS = 1       # GCNSubtarget::hasTransForwardingHazard(), gfx940 and later
+_MAX_MFMA_WS = 19  # GCNHazardRecognizer MaxWaitStates, SMFMA 32x32 on gfx950
+_TRANS_WS = 1  # GCNSubtarget::hasTransForwardingHazard(), gfx940 and later
 
 
 def _ws(line):
@@ -517,13 +629,16 @@ def relax_vmcnt(lines, lo, hi):
     LDS.
     """
     ins = [i for i in range(lo, hi) if opcode(lines[i])]
-    loads = [i for i in ins
-             if opcode(lines[i]).startswith(("global_load", "buffer_load", "flat_load"))
-             and "lds" not in lines[i].split(";")[0]]
+    loads = [
+        i
+        for i in ins
+        if opcode(lines[i]).startswith(("global_load", "buffer_load", "flat_load"))
+        and "lds" not in lines[i].split(";")[0]
+    ]
     waits = [i for i in ins if opcode(lines[i]) == "s_waitcnt" and "vmcnt(0)" in lines[i]]
     if not loads or not waits:
         return lines, (0, 0)
-    pre = {}                                   # line -> text to insert before it
+    pre = {}  # line -> text to insert before it
     moved = 0
     for w in waits:
         before = [k for k in loads if k < w]
@@ -547,7 +662,7 @@ def relax_vmcnt(lines, lo, hi):
                 owner.pop(r, None)
             if waited >= last:
                 break
-        if waited < 0:                          # nothing consumed: leave it alone
+        if waited < 0:  # nothing consumed: leave it alone
             continue
         if waited < last:
             # some of the loads are not read in this region; the blanket wait covered them,
@@ -635,6 +750,7 @@ def _pin_items(lines, a, b, items):
 def _loop_bounds(lines):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from ablate_valu import _loop_bounds as lb
+
     return lb(lines)
 
 
@@ -676,9 +792,12 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
         if dump:
             open(dump + ".orig.amdgcn", "w").write(asm)
             open(dump + ".sched.amdgcn", "w").write(out)
-        print(f"[sched_valu] frac={_FRAC or 0} moved {moved} VALU between MFMA shadows"
-              + (f", {nops} s_nop inserted to restore hazard distance" if nops else ""),
-              file=sys.stderr, flush=True)
+        print(
+            f"[sched_valu] frac={_FRAC or 0} moved {moved} VALU between MFMA shadows"
+            + (f", {nops} s_nop inserted to restore hazard distance" if nops else ""),
+            file=sys.stderr,
+            flush=True,
+        )
         return out
 
     stages["amdgcn"] = wrapper

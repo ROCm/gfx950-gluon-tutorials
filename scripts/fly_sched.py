@@ -77,13 +77,17 @@ def _unescape(s):
             continue
         n = s[i + 1]
         if n == "n":
-            out.append(0x0A); i += 2
+            out.append(0x0A)
+            i += 2
         elif n == "t":
-            out.append(0x09); i += 2
+            out.append(0x09)
+            i += 2
         elif n in ('"', "\\"):
-            out.append(ord(n)); i += 2
+            out.append(ord(n))
+            i += 2
         else:
-            out.append(int(s[i + 1:i + 3], 16)); i += 3
+            out.append(int(s[i + 1 : i + 3], 16))
+            i += 3
     return bytes(out)
 
 
@@ -153,12 +157,27 @@ def assemble(isa, arch="gfx950"):
         src, obj = os.path.join(d, "k.s"), os.path.join(d, "k.hsaco")
         with open(src, "w") as f:
             f.write(isa)
-        r = subprocess.run([CLANG, "-x", "assembler", "-target", "amdgcn-amd-amdhsa",
-                            f"-mcpu={arch}", "-nogpulib", "-Wl,--no-undefined",
-                            "-o", obj, src], capture_output=True, text=True)
+        r = subprocess.run(
+            [
+                CLANG,
+                "-x",
+                "assembler",
+                "-target",
+                "amdgcn-amd-amdhsa",
+                f"-mcpu={arch}",
+                "-nogpulib",
+                "-Wl,--no-undefined",
+                "-o",
+                obj,
+                src,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if r.returncode != 0:
-            raise RuntimeError("fly_sched: assembling the rewritten ISA failed:\n"
-                               + (r.stderr or r.stdout)[-2000:])
+            raise RuntimeError(
+                "fly_sched: assembling the rewritten ISA failed:\n" + (r.stderr or r.stdout)[-2000:]
+            )
         with open(obj, "rb") as f:
             return f.read()
 
@@ -176,7 +195,8 @@ def patch():
     # each fraction its own cache namespace.
     base = os.environ.get("FLYDSL_RUNTIME_CACHE_DIR") or os.path.expanduser("~/.flydsl/cache")
     os.environ["FLYDSL_RUNTIME_CACHE_DIR"] = os.path.join(
-        base, f"fly_sched_{frac}_{'-'.join(strip) or 'none'}")
+        base, f"fly_sched_{frac}_{'-'.join(strip) or 'none'}"
+    )
 
     from flydsl._mlir import ir
     from flydsl._mlir.passmanager import PassManager
@@ -190,8 +210,9 @@ def patch():
         backend.lower_compile_hints(module, compile_hints=hints)
         cfg = J._pipeline_fragments_for_mode(backend, compile_hints=hints)
         if cfg.external:
-            raise RuntimeError("fly_sched: FLYDSL_COMPILE_LLVM_DIR external codegen is not "
-                               "supported; unset it")
+            raise RuntimeError(
+                "fly_sched: FLYDSL_COMPILE_LLVM_DIR external codegen is not " "supported; unset it"
+            )
         pre, binfrag = cfg.fragments[:-1], cfg.fragments[-1]
         if not binfrag.strip().startswith("gpu-module-to-binary"):
             raise RuntimeError(f"fly_sched: unexpected final pipeline fragment {binfrag!r}")
@@ -202,8 +223,9 @@ def patch():
         # 1. the ISA, from a clone so the real module is untouched
         clone = ir.Module.parse(pre_asm, context=module.context)
         pm = PassManager.parse(
-            "builtin.module(gpu-module-to-binary{format=isa opts=\"\" section= toolkit=})",
-            context=module.context)
+            'builtin.module(gpu-module-to-binary{format=isa opts="" section= toolkit=})',
+            context=module.context,
+        )
         pm.run(clone.operation)
         m = _ISA_RE.search(clone.operation.get_asm(enable_debug_info=False))
         if not m:
@@ -226,16 +248,21 @@ def patch():
             raise RuntimeError("fly_sched: no `bin = ...` in the gpu.binary output")
         old = _unescape(mb.group(1))
         if not old.startswith(b"\x7fELF"):
-            raise RuntimeError("fly_sched: gpu.binary holds something other than a bare ELF; "
-                               "substitution would need unbundling")
+            raise RuntimeError(
+                "fly_sched: gpu.binary holds something other than a bare ELF; "
+                "substitution would need unbundling"
+            )
         if dump:
             open(dump + ".stock.hsaco", "wb").write(old)
-        asm = asm[:mb.start(1)] + _escape(obj) + asm[mb.end(1):]
+        asm = asm[: mb.start(1)] + _escape(obj) + asm[mb.end(1) :]
         out = ir.Module.parse(asm, context=module.context)
         same = " (byte-identical to FlyDSL's own)" if obj == old else ""
-        print(f"[fly_sched] frac={frac} strip={strip or '()'} moved {moved} VALU, {nops} s_nop, "
-              f"code object {len(old)} -> {len(obj)} bytes{same}",
-              file=sys.stderr, flush=True)
+        print(
+            f"[fly_sched] frac={frac} strip={strip or '()'} moved {moved} VALU, {nops} s_nop, "
+            f"code object {len(old)} -> {len(obj)} bytes{same}",
+            file=sys.stderr,
+            flush=True,
+        )
         return out
 
     J.MlirCompiler.compile = classmethod(compile_patched)
@@ -243,26 +270,41 @@ def patch():
 
 def _selftest():
     import torch
+
     frac = float(os.environ.get("FLY_SCHED_VALU", "0") or 0)
     sys.path.insert(0, os.environ.get("FLYDSL_ROOT", "/root/FlyDSL"))
     patch()
     from kernels.attention.flash_attn_gfx950 import build_flash_attn_dualwave_swp_module
+
     launch = build_flash_attn_dualwave_swp_module(
-        num_heads=8, head_dim=128, causal=False, dtype_str="bf16", waves_per_eu=2,
-        daz=True, dualwave_swp_lazy_rescale=True, dualwave_swp_setprio=True,
-        dualwave_swp_enable_stagger=True)
+        num_heads=8,
+        head_dim=128,
+        causal=False,
+        dtype_str="bf16",
+        waves_per_eu=2,
+        daz=True,
+        dualwave_swp_lazy_rescale=True,
+        dualwave_swp_setprio=True,
+        dualwave_swp_enable_stagger=True,
+    )
     B, S, H, D = 2, 2048, 8, 128
-    mk = lambda: torch.randn(B, S, H, D, dtype=torch.bfloat16, device="cuda")
+
+    def mk():
+        return torch.randn(B, S, H, D, dtype=torch.bfloat16, device="cuda")
+
     q, k, v = mk(), mk(), mk()
     o = torch.empty_like(q)
     launch(q, k, v, o, B, S)
     torch.cuda.synchronize()
     qr, kr, vr = (t.transpose(1, 2) for t in (q, k, v))
     ref = torch.nn.functional.scaled_dot_product_attention(
-        qr.float(), kr.float(), vr.float(), is_causal=False, scale=D ** -0.5)
+        qr.float(), kr.float(), vr.float(), is_causal=False, scale=D**-0.5
+    )
     err = (o.transpose(1, 2).float() - ref).abs().max().item()
-    print(f"[fly_sched selftest] frac={frac} max_err={err:.3e} "
-          f"{'OK' if err < 1e-2 else 'MISMATCH'}")
+    print(
+        f"[fly_sched selftest] frac={frac} max_err={err:.3e} "
+        f"{'OK' if err < 1e-2 else 'MISMATCH'}"
+    )
     return 0 if err < 1e-2 else 1
 
 
@@ -274,6 +316,7 @@ if __name__ == "__main__":
         b = loop_bounds(lines)
         print(f"inner loop lines {b[0]}..{b[1]}")
         import sched_valu as S
+
         S.analyse(lines, b[0], b[1], verbose=True)
     else:
         sys.exit("usage: fly_sched.py --selftest | <isa.s> --report")

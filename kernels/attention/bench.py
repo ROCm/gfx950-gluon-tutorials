@@ -61,7 +61,9 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 # assembly to time the MFMA-only ceiling. The kernel then computes garbage -- this is a
 # timing probe, so the correctness check below is expected to fail and must be ignored.
 if os.environ.get("FA_ABLATE_VALU"):
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
+    )
     import ablate_valu  # noqa: E402
     from triton import knobs  # noqa: E402
 
@@ -69,7 +71,9 @@ if os.environ.get("FA_ABLATE_VALU"):
 
 # Hoist a loop-invariant LDS base address out of the loop (scripts/hoist_lds_addr.py).
 if os.environ.get("FA_HOIST_LDS_ADDR"):
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
+    )
     import hoist_lds_addr  # noqa: E402
     from triton import knobs  # noqa: E402
 
@@ -80,7 +84,9 @@ if os.environ.get("FA_HOIST_LDS_ADDR"):
 # throughput from the power effect of changing the instruction count. Dependency-checked,
 # so the correctness check below still applies and is the control for the experiment.
 if os.environ.get("FA_SCHED_VALU"):
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
+    )
     import sched_valu  # noqa: E402
     from triton import knobs  # noqa: E402
 
@@ -324,8 +330,10 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
             # launcher-equivalence check compares NaN against NaN and cannot pass. The
             # ablation is a timing probe; skip the check rather than the measurement.
             if os.environ.get("FA_ABLATE_VALU"):
-                print("[FAV3] ablation active: launcher-equivalence check skipped "
-                      "(output is garbage by design)")
+                print(
+                    "[FAV3] ablation active: launcher-equivalence check skipped "
+                    "(output is garbage by design)"
+                )
             else:
                 sys.exit(1)
 

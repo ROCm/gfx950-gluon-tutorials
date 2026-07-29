@@ -55,8 +55,9 @@ KERNEL = "flash_attn_dualwave_swp"
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--flydsl-root", default=os.environ.get("FLYDSL_ROOT", "/root/FlyDSL"))
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64)
@@ -68,8 +69,11 @@ def parse_args():
     p.add_argument("--warmup", type=int, default=10)
     p.add_argument("--rotating-buffer-size", type=int, default=512)
     p.add_argument("--causal", type=int, default=0)
-    p.add_argument("--eager-rescale", action="store_true",
-                   help="dualwave_swp_lazy_rescale=False, the fav3-equivalent path")
+    p.add_argument(
+        "--eager-rescale",
+        action="store_true",
+        help="dualwave_swp_lazy_rescale=False, the fav3-equivalent path",
+    )
     p.add_argument("--setprio", type=int, default=1)
     p.add_argument("--stagger", type=int, default=1)
     p.add_argument("--waves-per-eu", type=int, default=2)
@@ -95,20 +99,27 @@ def dispatch_loop(a):
 
     dt = torch.float16 if a.dtype == "fp16" else torch.bfloat16
     launch = build_flash_attn_dualwave_swp_module(
-        num_heads=a.hq, head_dim=a.d, causal=bool(a.causal),
+        num_heads=a.hq,
+        head_dim=a.d,
+        causal=bool(a.causal),
         dtype_str="f16" if a.dtype == "fp16" else "bf16",
-        waves_per_eu=a.waves_per_eu, daz=bool(a.daz),
+        waves_per_eu=a.waves_per_eu,
+        daz=bool(a.daz),
         dualwave_swp_lazy_rescale=not a.eager_rescale,
         dualwave_swp_setprio=bool(a.setprio),
-        dualwave_swp_enable_stagger=bool(a.stagger))
+        dualwave_swp_enable_stagger=bool(a.stagger),
+    )
 
     # Match bench.py: cycle enough (q,k,v,o) sets that the loop's footprint exceeds cache.
     elem = torch.empty(0, dtype=dt).element_size()
     per_set = 4 * a.batch * a.hq * a.seqlen * a.d * elem
     n_sets = max(1, -(-(a.rotating_buffer_size * 1024 * 1024) // per_set))
     sets = []
+
+    def mk():
+        return torch.randn(a.batch, a.seqlen, a.hq, a.d, dtype=dt, device="cuda")
+
     for _ in range(n_sets):
-        mk = lambda: torch.randn(a.batch, a.seqlen, a.hq, a.d, dtype=dt, device="cuda")
         q, k, v = mk(), mk(), mk()
         sets.append((q, k, v, torch.empty_like(q)))
 
@@ -118,10 +129,14 @@ def dispatch_loop(a):
     torch.cuda.synchronize()
     qr, kr, vr = (t.transpose(1, 2) for t in (q, k, v))
     ref = torch.nn.functional.scaled_dot_product_attention(
-        qr.float(), kr.float(), vr.float(), is_causal=bool(a.causal), scale=a.d ** -0.5)
+        qr.float(), kr.float(), vr.float(), is_causal=bool(a.causal), scale=a.d**-0.5
+    )
     err = (o.transpose(1, 2).float() - ref).abs().max().item()
-    print(f"[FlyDSL] causal={bool(a.causal)} lazy={not a.eager_rescale} "
-          f"max_err={err:.2e} {'OK' if err < 1e-2 else 'MISMATCH'}", flush=True)
+    print(
+        f"[FlyDSL] causal={bool(a.causal)} lazy={not a.eager_rescale} "
+        f"max_err={err:.2e} {'OK' if err < 1e-2 else 'MISMATCH'}",
+        flush=True,
+    )
     del ref, qr, kr, vr
     torch.cuda.empty_cache()
 
@@ -146,11 +161,24 @@ def main():
 
     trace = os.path.join(HERE, f".fly_kt_{os.getpid()}")
     shutil.rmtree(trace, ignore_errors=True)
-    cmd = ["rocprofv3", "--kernel-trace", "-f", "csv", "--kernel-include-regex", KERNEL,
-           "-d", trace, "--", sys.executable, os.path.abspath(__file__), "--_inner"]
+    cmd = [
+        "rocprofv3",
+        "--kernel-trace",
+        "-f",
+        "csv",
+        "--kernel-include-regex",
+        KERNEL,
+        "-d",
+        trace,
+        "--",
+        sys.executable,
+        os.path.abspath(__file__),
+        "--_inner",
+    ]
     cmd += [x for x in sys.argv[1:] if x != "--_inner"]
-    proc = subprocess.run(cmd, capture_output=True, text=True,
-                          env={**os.environ, "AMD_SERIALIZE_KERNEL": "3"})
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, env={**os.environ, "AMD_SERIALIZE_KERNEL": "3"}
+    )
     for line in proc.stdout.splitlines():
         if "[FlyDSL]" in line:
             print("   ", line.strip())
@@ -166,8 +194,10 @@ def main():
     flops = 2 * (2.0 * a.batch * a.hq * a.seqlen * a.seqlen * a.d)
     if a.causal:
         flops *= 0.5
-    print(f"    {count} dispatches, final-{a.last_n} avg={avg_ns / 1e3:.2f} us "
-          f"-> {flops / avg_ns * 1e-3:.1f} TFLOPS")
+    print(
+        f"    {count} dispatches, final-{a.last_n} avg={avg_ns / 1e3:.2f} us "
+        f"-> {flops / avg_ns * 1e-3:.1f} TFLOPS"
+    )
 
 
 if __name__ == "__main__":

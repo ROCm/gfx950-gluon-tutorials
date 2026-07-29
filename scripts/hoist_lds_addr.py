@@ -76,13 +76,14 @@ def hoist(text):
     # the candidate: an integer add whose source is not written in the loop
     cand = None
     for i in body:
-        m = re.match(r"^\s*v_add_u32_e32\s+v(\d+),\s+(\S+),\s+v(\d+)\s*$",
-                     lines[i].split(";")[0].rstrip())
+        m = re.match(
+            r"^\s*v_add_u32_e32\s+v(\d+),\s+(\S+),\s+v(\d+)\s*$", lines[i].split(";")[0].rstrip()
+        )
         if not m:
             continue
         dst, imm, src = int(m.group(1)), m.group(2), int(m.group(3))
         if src in written:
-            continue                      # not invariant
+            continue  # not invariant
         cand = (i, dst, imm, src)
         break
     if cand is None:
@@ -110,20 +111,21 @@ def hoist(text):
             break
     if nfv is None:
         return text, (0, None)
-    new = nfv[1]                          # v0..v(nfv-1) are in use, so v(nfv) is free
+    new = nfv[1]  # v0..v(nfv-1) are in use, so v(nfv) is free
 
     out = list(lines)
     ind = re.match(r"\s*", lines[at]).group(0) or "\t"
     for i in uses:
         out[i] = re.sub(r"(ds_\S+\s+[^,]+,\s+)v%d\b" % dst, r"\g<1>v%d" % new, out[i])
-    out[at] = None                        # drop the in-loop add
+    out[at] = None  # drop the in-loop add
     # Place it immediately after its source is defined, not "just before the loop label".
     # The label is not reached by fall-through: a forward `s_branch` jumps to it over the
     # preceding lines, so anything put there is skipped and the base register stays
     # uninitialised (max_err 2.88 with a small mean -- part of the output reading the wrong
     # LDS). The def of the source dominates the loop by construction, since the loop reads it.
-    defs = [i for i in range(0, lo)
-            if ("v", src) in S.defs_uses(lines[i])[0] and opcode_of(lines[i])]
+    defs = [
+        i for i in range(0, lo) if ("v", src) in S.defs_uses(lines[i])[0] and opcode_of(lines[i])
+    ]
     if not defs:
         return text, (0, None)
     site = defs[-1]
@@ -172,12 +174,16 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
         out, (n, info) = hoist(asm)
         if info:
             dst, new, imm, s, old_nfv, nfv = info
-            print(f"[hoist_lds_addr] v{dst} = {imm} + v{s} hoisted to v{new} "
-                  f"({n} ds_read redirected, VGPRs {old_nfv} -> {nfv})",
-                  file=sys.stderr, flush=True)
+            print(
+                f"[hoist_lds_addr] v{dst} = {imm} + v{s} hoisted to v{new} "
+                f"({n} ds_read redirected, VGPRs {old_nfv} -> {nfv})",
+                file=sys.stderr,
+                flush=True,
+            )
         else:
-            print("[hoist_lds_addr] no loop-invariant LDS base add found",
-                  file=sys.stderr, flush=True)
+            print(
+                "[hoist_lds_addr] no loop-invariant LDS base add found", file=sys.stderr, flush=True
+            )
         return out
 
     stages["amdgcn"] = wrapper

@@ -113,6 +113,7 @@ def _thin(lines, lo, hi, frac):
     Even spacing matters: dropping a contiguous run would empty some MFMA windows while
     leaving others full, which is a different experiment from scaling the load uniformly.
     """
+
     def opcode(line):
         t = line.split(";")[0].strip()
         return t.split()[0] if t and not t.startswith((".", "/")) else ""
@@ -121,7 +122,8 @@ def _thin(lines, lo, hi, frac):
     for line in lines[lo:hi]:
         cur.append(line)
         if opcode(line) == "s_barrier":
-            regions.append(cur); cur = []
+            regions.append(cur)
+            cur = []
     regions.append(cur)
 
     out, removed = [], 0
@@ -138,7 +140,8 @@ def _thin(lines, lo, hi, frac):
                 kill.add(vidx[min(len(vidx) - 1, int((k + 0.5) * len(vidx) / n_rm))])
         # if rounding collided, top up from the front
         for i in vidx:
-            if len(kill) >= n_rm: break
+            if len(kill) >= n_rm:
+                break
             kill.add(i)
         for i, l in enumerate(rl):
             if i in kill:
@@ -181,8 +184,10 @@ def _fill(lines, lo, hi, total):
     # fillers are mutually INDEPENDENT. A single-register chain
     # (v_fma vX, vX, vX, vX) serialises on its own result and costs far more than an
     # issue slot -- measured 83% efficiency where 100% was expected.
-    fillers = [f"\tv_fma_f32 v{dest}, v{a}, v{b}, v{c}"
-               for a, b, c in zip(srcs, srcs[1:] + srcs[:1], srcs[2:] + srcs[:2])]
+    fillers = [
+        f"\tv_fma_f32 v{dest}, v{a}, v{b}, v{c}"
+        for a, b, c in zip(srcs, srcs[1:] + srcs[:1], srcs[2:] + srcs[:2])
+    ]
 
     def opcode(line):
         t = line.split(";")[0].strip()
@@ -206,7 +211,7 @@ def _fill(lines, lo, hi, total):
         # k-th mfma carries floor((k+1)*total/n) - floor(k*total/n) fillers: as even as
         # integer division allows, and exactly `total` in sum.
         n = len(idx)
-        share = [ (k + 1) * total // n - k * total // n for k in range(n) ]
+        share = [(k + 1) * total // n - k * total // n for k in range(n)]
         pos = {i: share[k] for k, i in enumerate(idx)}
         for i, l in enumerate(reg_lines):
             out.append(l)
@@ -224,8 +229,9 @@ def _force_skip_rescale(lines):
     """
     out, killed = [], 0
     for i, line in enumerate(lines):
-        m = re.match(r"^(\s*)s_and_saveexec_(b64|b32)\s+(\S+),\s*(\S+)\s*$",
-                     line.split(";")[0].rstrip())
+        m = re.match(
+            r"^(\s*)s_and_saveexec_(b64|b32)\s+(\S+),\s*(\S+)\s*$", line.split(";")[0].rstrip()
+        )
         if m:
             body = []
             for j in range(i + 1, min(i + 120, len(lines))):
@@ -309,8 +315,10 @@ def ablate(text, mode=None):
 
 
 def get_key():
-    return (f"ablate_valu:{_MODE}:fill{os.environ.get('FA_FILL_VALU', '0')}"
-            f":frac{os.environ.get('FA_ABLATE_FRAC', '')}")
+    return (
+        f"ablate_valu:{_MODE}:fill{os.environ.get('FA_FILL_VALU', '0')}"
+        f":frac{os.environ.get('FA_ABLATE_FRAC', '')}"
+    )
 
 
 def get_hash():
@@ -336,10 +344,14 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             with open(dump + ".ablated.amdgcn", "w") as f:
                 f.write(out)
         import sys
-        print(f"[ablate_valu] mode={_MODE or 'dot'} removed {n} VALU from the loop"
-              + (f", forced {nresc} rescale block(s) to skip" if nresc else "")
-              + (f", inserted {nfill} filler VALU" if nfill else ""),
-              file=sys.stderr, flush=True)
+
+        print(
+            f"[ablate_valu] mode={_MODE or 'dot'} removed {n} VALU from the loop"
+            + (f", forced {nresc} rescale block(s) to skip" if nresc else "")
+            + (f", inserted {nfill} filler VALU" if nfill else ""),
+            file=sys.stderr,
+            flush=True,
+        )
         return out
 
     stages["amdgcn"] = wrapper
