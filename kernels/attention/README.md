@@ -13,11 +13,11 @@ instead of paying it on every tile, and it leads `fmha_v3` on both builds: **+5.
 LLVM (1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency numbers say something the
 throughput numbers do not, though. On stock LLVM the two kernels are indistinguishable — 67.8%
 against 68.5%, **+0.7 points** — while tuned they are **8.3 points** apart. Lazy rescaling does
-not make the loop faster by itself. It *frees budget* (§5), and only something downstream that
+not make the loop faster by itself. It *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something downstream that
 spends that budget converts it into cycles. **The price:** `fmha_v4` cannot be written in stock
 Gluon. Skipping the rescale per wave needs `gl.warp_predicate`, which is why these kernels want a
 newer Triton than the GEMM ones; and removing the rescale unbalances the two dot clusters badly
-enough that a measured fraction of the softmax has to be moved between them by hand — §5's 3/8
+enough that a measured fraction of the softmax has to be moved between them by hand — [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)'s 3/8
 slice split.
 
 **Within each group — what the scheduling buys.** Same kernel source, two builds: **+8.9%** on
@@ -25,29 +25,29 @@ slice split.
 **+26.0 points**). This is the larger of the two effects, and most of this document is about it.
 **The price:** the interleave has to be *declared* rather than left to the machine scheduler.
 llirSched assigns every vector op to a specific MFMA's shadow and emits a `sched_group_barrier`
-sequence for AMDGPU's IGroupLP to construct (§6) — and the ops then have to be kept in the cluster
+sequence for AMDGPU's IGroupLP to construct ([§6](#6-making-the-compiler-co-operate)) — and the ops then have to be kept in the cluster
 they were assigned to, which is what `disable-machine-sink` is for.
 
 **And the reference.** ROCm/FlyDSL at its own tuned configuration reaches 1320, a dead heat with
 `fmha_v4`'s 1318, from 84.7% efficiency against 94.5%. `fmha_v4` needs about 10% fewer cycles for
-the same work and hands the difference back as clock, on a part already at its power cap. §9 works
+the same work and hands the difference back as clock, on a part already at its power cap. [§9](#9-results) works
 that through, including why the ranking is shape-dependent.
 
 **On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
 implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
 decode-shaped MQA/GQA designs) will sit beside them rather than inside them. `v3` and `v4` track
 the softmax-rescale generation, not a file version: `fmha_v3` rescales the accumulator on every
-tile, `fmha_v4` defers it (§5). Note the *layouts* MQA and GQA are already handled here via
+tile, `fmha_v4` defers it ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)). Note the *layouts* MQA and GQA are already handled here via
 `--hk` — what a future kernel would change is the pipeline, not the head mapping.
 
-**Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: §3 below uses its
+**Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
 intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
 structure these kernels are built on. This also assumes you know the flash-attention algorithm
 — the streaming softmax that carries a running max `m`, a running sum `l` and an unnormalized
 accumulator `acc`, and rebases them with `alpha = exp2(m − m_new)` as the max moves. The term
 to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kernel, so rescaling
 it every tile is 64 vector instructions that are pure overhead whenever the row max did not
-actually move. §5 is the story of removing them.
+actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
 
 **Toolchain.** These kernels need Triton built from the
 [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
@@ -68,7 +68,7 @@ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python bench.py --seqlen 16320
 ```
 
-Those three variables are not tuning knobs — they are what §6 is about, and dropping them
+Those three variables are not tuning knobs — they are what [§6](#6-making-the-compiler-co-operate) is about, and dropping them
 measures the stock-LLVM row above instead.
 
 ---
@@ -84,20 +84,20 @@ MFMA chain depends on. So:
 
 > **Where does the third one go?**
 
-That question generates this entire document. Answering it needs the SIMD's issue rules (§1),
-gives a cycle budget to spend (§2), places attention in the GEMM tutorial's taxonomy (§3), and
-then determines the loop structure (§4), the difference between the two kernels (§5), and what
-the compiler has to do for them (§6). §7 is an appendix for one conflict too subtle to belong in
-the main line. §8 is the part meant to travel: the rules the kernel author owns, a procedure for
+That question generates this entire document. Answering it needs the SIMD's issue rules ([§1](#1-three-competitors-two-issue-ports)),
+gives a cycle budget to spend ([§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)), places attention in the GEMM tutorial's taxonomy ([§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region)), and
+then determines the loop structure ([§4](#4-designing-the-loop)), the difference between the two kernels ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and what
+the compiler has to do for them ([§6](#6-making-the-compiler-co-operate)). [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) is an appendix for one conflict too subtle to belong in
+the main line. [§8](#8-applying-this-to-your-own-kernel) is the part meant to travel: the rules the kernel author owns, a procedure for
 diagnosing a kernel of your own, and which of these numbers are gfx950's rather than the
-architecture's. §9 measures the result and takes the comparison above apart; §10 is where to read
+architecture's. [§9](#9-results) measures the result and takes the comparison above apart; [§10](#10-where-to-go-deeper) is where to read
 further.
 
 ---
 
 ## 1. Three competitors, two issue ports
 
-Start from how a CDNA SIMD issues. Two rules, and everything through §6 is a corollary:
+Start from how a CDNA SIMD issues. Two rules, and everything through [§6](#6-making-the-compiler-co-operate) is a corollary:
 
 1. A wave issues **at most one instruction per cycle**.
 2. The **VALU** and the **memory pipe** are separate issue ports, so the SIMD can issue one of
@@ -105,11 +105,11 @@ Start from how a CDNA SIMD issues. Two rules, and everything through §6 is a co
    LDS and VMEM *share* the memory port: a `ds_read` and a `buffer_load` cannot pair with each
    other, only with a VALU.
 
-There is a third resource, and it is worth naming now even though nothing needs it until §7:
+There is a third resource, and it is worth naming now even though nothing needs it until [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster):
 behind both ports sits **one register file**. Issuing in the same cycle is necessary for two
 instructions to overlap, not sufficient — a 3-source VALU op wants more read ports in its cycle
 than a 1- or 2-source one, and an arriving LDS return wants the register file to write into. Two
-instructions that issue together can still collide there. §7 is the case where they do.
+instructions that issue together can still collide there. [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) is the case where they do.
 
 While an MFMA runs, those ports are free. Work issued there is free too. Work that does not fit
 adds directly to the loop's cycle count. So the question is an allocation question: *the
@@ -184,13 +184,13 @@ form that can never be hidden. Those are not in tension; they apply to different
 > here as behaviour rather than mechanism. You do not have to take them on faith either — an
 > ATT instruction trace timestamps every issue, so the cost of each class, and whether a given
 > op landed inside a shadow or outside it, can be read straight off a trace of your own kernel.
-> §8.2 is how.
+> [§8.2](#82-diagnosing-a-kernel-budget-it-measure-it-route-the-gap) is how.
 
 The packed-math row has a consequence worth pausing on, because it is counter-intuitive.
 `v_pk_mul` retires two elements in one issue slot, so it is *exactly* what you want for work
 that has to be exposed — and it is unusable for work you were hoping to hide. Whether to emit
 packed or scalar is therefore a per-instruction decision that depends on whether that
-instruction won a window slot. §6 is about making that decision.
+instruction won a window slot. [§6](#6-making-the-compiler-co-operate) is about making that decision.
 
 [isa]: https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/instruction-set-architectures/amd-instinct-cdna4-instruction-set-architecture.pdf
 
@@ -217,7 +217,7 @@ Read that way, the GEMM table falls out as a consequence rather than an assertio
 | **attention** | 2 | `mem` \| **`mfma` + VALU** | mem: inter-wave, **dot: intra-wave** | **co-execution** |
 
 Attention is **inter-wave between memory and compute, and intra-wave inside each compute
-cluster.** §1 forced both halves of that: memory has to live in the other wave so it can pair
+cluster.** [§1](#1-three-competitors-two-issue-ports) forced both halves of that: memory has to live in the other wave so it can pair
 with a VALU in one cycle, and the VALU has to live with the MFMA, which puts two categories in
 one wave and hands the dot clusters to the compiler.
 
@@ -232,7 +232,7 @@ markedly harder question.
 That distinction is exactly how the scheduler is built. The
 [llirSched](../../plugins/llir_scheduler/llir_scheduler.html) plugin classifies every region
 and routes it: `mfma` + `mem` to the throughput model, `mfma` + VALU to the co-execution model
-of §6. Regions mixing all three do not arise here, and on gfx950 they should not: §1 showed that
+of [§6](#6-making-the-compiler-co-operate). Regions mixing all three do not arise here, and on gfx950 they should not: [§1](#1-three-competitors-two-issue-ports) showed that
 putting VALU and memory in one wave wastes shadow cycles, so an FA kernel has no reason to
 build such a region. It is a question for future parts, where a different issue rule could make
 a three-category region worth scheduling — at which point the two models would have to be
@@ -253,7 +253,7 @@ they are worth fixing here:
 | `ACK` / `ACV` | async copy of the K / V tile, global → LDS |
 | `LRK` / `LRV` | read that tile back, LDS → registers |
 | `DOT1` / `DOT2` | the two MFMA chains: Q·Kᵀ producing the scores, then P·V into the accumulator |
-| `VEC1` / `VEC2` | the two halves of the softmax, split in §4.2 |
+| `VEC1` / `VEC2` | the two halves of the softmax, split in [§4.2](#42-how-the-softmax-is-split) |
 
 ### 4.1 Four pipeline stages, four clusters
 
@@ -273,7 +273,7 @@ to work on yet, and three at the end are finishing tiles with no copies left to 
 straight-line code outside the loop, which is why a trace reports them separately as the prologue
 and epilogue. A four-stage pipeline costs three of each.
 
-§1 then fixes how the slice is subdivided: every group must pair matrix work with memory so
+[§1](#1-three-competitors-two-issue-ports) then fixes how the slice is subdivided: every group must pair matrix work with memory so
 that a wave in one kind of group always faces a wave in the other. Four clusters do it.
 
 ![the loop body split into four alternating clusters](images/clusters.svg)
@@ -310,7 +310,7 @@ above is that cut applied to the whole tile.
 What makes the balance tunable is that the tile is a set of independent **column slices**, and each
 slice can be cut in a different place. A slice cut after `exp2` leaves its subtract and exponential
 in VEC1; a slice cut *before* the subtract is carried across raw and has both computed in VEC2.
-§5 tunes how many slices go each way — which is balancing two clusters without ever breaking the
+[§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) tunes how many slices go each way — which is balancing two clusters without ever breaking the
 chain.
 
 The consequence to hold on to while reading the code: `VEC1` runs in `dot2` on tile *j+1* while
@@ -339,7 +339,7 @@ fp16 since two elements share a register.
 
 96 VGPRs are live for the whole loop and 128 more are the working set: **224 of 256**, with
 LDS holding 2 × K + 2 × V = 64 KB. K and V share one buffer because each is consumed by its MFMA
-before the other is read. The two score tiles cannot share: by §4.2's skew, `VEC1` is writing
+before the other is read. The two score tiles cannot share: by [§4.2](#42-how-the-softmax-is-split)'s skew, `VEC1` is writing
 tile *j+1*'s scores while `VEC2` is still reading tile *j*'s. Two buffers, and that is what
 forces the unroll.
 
@@ -354,7 +354,7 @@ around, not to reduce loop overhead.
 
 ## 5. `fmha_v3` → `fmha_v4`: getting under the budget
 
-Start by pricing the softmax against §2's budget. Each Gluon op below expands to a fixed number
+Start by pricing the softmax against [§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)'s budget. Each Gluon op below expands to a fixed number
 of machine instructions per wave per tile — the score tile is 32 × 64 over 64 lanes, so 32
 registers, and the accumulator is 32 × 128, so 64:
 
@@ -368,8 +368,8 @@ registers, and the accumulator is 32 × 128, so 64:
 | rescale the accumulator | 64 × `v_mul` | VALU | **256** | 32 × `v_pk_mul` = **128** | QK |
 
 The packed column is the same work at half the issue cost — and it is a trap here, because a packed
-op cannot go in an MFMA's shadow at all (§2). Halving the cost only helps for work that was never
-going to be hidden, which is why the column matters for `fmha_v3` and not for `fmha_v4`, and why §6 has
+op cannot go in an MFMA's shadow at all ([§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)). Halving the cost only helps for work that was never
+going to be hidden, which is why the column matters for `fmha_v3` and not for `fmha_v4`, and why [§6](#6-making-the-compiler-co-operate) has
 to decide the two forms per instruction rather than globally. Read the cycles column as the price
 of work you intend to hide.
 
@@ -381,7 +381,7 @@ one has to spend:
 
 These are the Gluon-level counts. The compiled kernels land near but not exactly on them — the
 backend adds address arithmetic, and `fmha_v3`'s scheduler leaves some work packed, which halves
-its instruction count — so §9's ceilings are computed from the compiled inventory rather than
+its instruction count — so [§9](#9-results)'s ceilings are computed from the compiled inventory rather than
 from this table. The shape of the argument is the same either way.
 
 **`fmha_v3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
@@ -417,7 +417,7 @@ That leaves the subtract and the `exp2`, and **they have to move as a pair.** Mo
 alone was tried first, and it fails in an instructive way. The subtract stays behind in PV while
 its only consumer is now in the other cluster — and a scheduler that can see a consumer
 downstream will drag the producer toward it, because a pure `fsub` carries no chain edge and
-therefore no `s_barrier` or `sched.barrier` orders it (§6). Half the subtracts end up in a mem
+therefore no `s_barrier` or `sched.barrier` orders it ([§6](#6-making-the-compiler-co-operate)). Half the subtracts end up in a mem
 stage: the work leaves the cluster it was meant to leave without arriving in the one it was meant
 to reach. *Which* pass does the moving is worth knowing if you are debugging your own kernel — it
 is ISel's pre-RA list scheduler, not `MachineSink`: its very first MIR dump already shows the
@@ -443,18 +443,18 @@ and that is why the tile is sliced into eighths rather than halves — the granu
 the ratio adjustable.
 
 The three kernel-side rules this section established — keep control flow out of the dot clusters,
-balance the two of them, and make the rebalancing itself free — are collected with the one §6 adds
+balance the two of them, and make the rebalancing itself free — are collected with the one [§6](#6-making-the-compiler-co-operate) adds
 in [§8](#8-applying-this-to-your-own-kernel).
 
 ## 6. Making the compiler co-operate
 
-The budget in §5 says the work *fits*. Getting it actually issued inside the shadow is the
-compiler's job, and by §3 the dot clusters are intra-wave regions, so it needs help in three
+The budget in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) says the work *fits*. Getting it actually issued inside the shadow is the
+compiler's job, and by [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) the dot clusters are intra-wave regions, so it needs help in three
 places.
 
 ### Keeping each op in the cluster it was assigned to
 
-§5's whole argument is an assignment of vector ops to clusters — this `exp2` belongs beside the
+[§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)'s whole argument is an assignment of vector ops to clusters — this `exp2` belongs beside the
 PV MFMA, that subtract beside the QK MFMA. `MachineSink` runs on MIR, long after any IR pass,
 and undoes it: it moves an op toward its consumer, and since `VEC1` of one tile feeds `VEC2` of
 the next, "toward its consumer" means *out of its cluster and into the following one*. An
@@ -468,7 +468,7 @@ it is a placement decision being *preserved* so that scheduling has something to
 
 ### Packed or scalar: whose job is it?
 
-§2's rule makes this a real decision. A packed op cannot go in the shadow, but retires two
+[§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)'s rule makes this a real decision. A packed op cannot go in the shadow, but retires two
 elements per issue when it is outside. So the ideal is precise: **work that will be covered should
 be scalar, and work that will be left over should be packed** — and which is which is not known
 until the assignment is done.
@@ -496,7 +496,7 @@ Which is also why one kernel no longer needs a different environment from the ot
 upstream has to normalize the packing first.
 
 The third panel is a detail that belongs to the kernel rather than the compiler, and it is the
-fourth kernel-side rule of §8. A packed op cannot follow an MFMA back to back, so the *first*
+fourth kernel-side rule of [§8](#8-applying-this-to-your-own-kernel). A packed op cannot follow an MFMA back to back, so the *first*
 uncovered packed op in a cluster pays a hazard on top of being exposed. Ordering the uncovered
 work ahead of the cluster's first MFMA removes that stall — same instructions, same count, only
 the order differs. Nothing in the toolchain will do it for you, because only the kernel knows
@@ -504,7 +504,7 @@ which work was never going to be covered.
 
 ### Declaring the interleave
 
-The out-of-tree **llirSched** plugin does the assignment itself. It classifies each region (§3),
+The out-of-tree **llirSched** plugin does the assignment itself. It classifies each region ([§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region)),
 and for a dot cluster it walks the vector ops against the MFMA windows, then *declares* the
 result with `sched_group_barrier` — a sequence of "N instructions of this class, then M of that"
 which AMDGPU's IGroupLP builds in the machine scheduler. When the region fits it spreads the work
@@ -539,7 +539,7 @@ Two settings in these kernels are worth about a percent each and are easy to mis
 noise. They are not — they attack the same hardware conflict from opposite ends, and the numbers
 behave the way the explanation predicts.
 
-By §1's design, a wave in a dot cluster always faces a wave in a mem cluster, and its VALU shares
+By [§1](#1-three-competitors-two-issue-ports)'s design, a wave in a dot cluster always faces a wave in a mem cluster, and its VALU shares
 each cycle with that wave's `ds_read`. That pairing is the whole point. But not every VALU is
 equally cheap to pair: a **3-source** op needs more register-file read ports in its cycle than a
 1- or 2-source one, and an LDS return needs the register file too. Where the two coincide, they
@@ -566,7 +566,7 @@ with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the t
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
 Measured at `B=1, S=16320, H=64, fp16` on GPU[0] — TFLOPS and in-loop MFMA efficiency per SIMD.
-(A different shape and dtype from §9, so read the two tables separately; the *deltas* are what
+(A different shape and dtype from [§9](#9-results), so read the two tables separately; the *deltas* are what
 matter here.)
 
 | | `fmha_v3` | `fmha_v4` |
@@ -579,7 +579,7 @@ Each step is worth well under a percent of throughput, and together about 1% on 
 `fmha_v4`. Both kernels gain the same ~0.8% from the fold, which is the check that matters: it is the
 same op count leaving the same cluster in both, so a mechanism tied to that op count should pay the
 same, and it does. The efficiency column moves further than the throughput column for the reason
-§9 gives — a denser MFMA stream costs clock on a power-capped part.
+[§9](#9-results) gives — a denser MFMA stream costs clock on a power-capped part.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to fp16 before the loop, so max error
 goes from 3.05e-05 to 1.22e-04 on `fmha_v3`, and from 6.10e-05 to the same 1.22e-04 on `fmha_v4`. All
@@ -590,7 +590,7 @@ kernel.
 
 Everything above is one worked example. This section is the part meant to survive contact with a
 different kernel: the decisions that stayed with the author, the procedure for finding out which
-of §5–§7 your own stall belongs to, and which numbers you have to re-derive on other hardware.
+of [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)–[§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) your own stall belongs to, and which numbers you have to re-derive on other hardware.
 
 ### 8.1 The four rules the kernel author owns
 
@@ -618,9 +618,9 @@ per loop body: ceiling = mfma_cycles / (mfma_cycles + Σ exposed over all region
 ```
 
 That ceiling is the best MFMA efficiency any schedule of that kernel can reach. `fmha_v3`'s four dot
-clusters leave 48 cycles exposed each against 2048 cycles of MFMA, which is where §9's 91.4% comes
+clusters leave 48 cycles exposed each against 2048 cycles of MFMA, which is where [§9](#9-results)'s 91.4% comes
 from; `fmha_v4` leaves none, so its ceiling is 100%. The calculation costs ten minutes and it decides
-which of the sections above you are in — §5 if you are over the budget, §6 if you are under it and
+which of the sections above you are in — [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) if you are over the budget, [§6](#6-making-the-compiler-co-operate) if you are under it and
 still not reaching the ceiling.
 
 **Then measure.** Take an ATT instruction trace and run
@@ -635,16 +635,16 @@ through:
 
 | symptom | what it means | section |
 |---|---|---|
-| demand exceeds capacity in a region | no ordering can win; the work itself has to shrink or move to another region | §5 |
-| demand fits, but measured efficiency sits far under the ceiling and windows are visibly empty | the ops are not where you put them — a pass moved them, or the request you made was unsatisfiable | §6 |
-| a stage's tail is vector work while the matrix pipe is idle | the interleave was requested but never constructed | §6 — declare it, don't pin it |
-| efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock | §9 — power cap |
-| a small delay at a stage head changes things sharply and non-monotonically | a phase relationship between two waves, not a quantity | §7 — sweep it, bisection will mislead you |
-| two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | §6 |
-| in-loop numbers are good but whole-dispatch throughput is not | prologue and drain are not amortizing — short loops, or too many pipeline stages | §9 |
+| demand exceeds capacity in a region | no ordering can win; the work itself has to shrink or move to another region | [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) |
+| demand fits, but measured efficiency sits far under the ceiling and windows are visibly empty | the ops are not where you put them — a pass moved them, or the request you made was unsatisfiable | [§6](#6-making-the-compiler-co-operate) |
+| a stage's tail is vector work while the matrix pipe is idle | the interleave was requested but never constructed | [§6](#6-making-the-compiler-co-operate) — declare it, don't pin it |
+| efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock | [§9](#9-results) — power cap |
+| a small delay at a stage head changes things sharply and non-monotonically | a phase relationship between two waves, not a quantity | [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) — sweep it, bisection will mislead you |
+| two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | [§6](#6-making-the-compiler-co-operate) |
+| in-loop numbers are good but whole-dispatch throughput is not | prologue and drain are not amortizing — short loops, or too many pipeline stages | [§9](#9-results) |
 
 The habit underneath all of it: **judge a scheduling change by cycles, and a kernel by both cycles
-and wall time.** They disagree for real reasons (§9), and a change that improves one while flat on
+and wall time.** They disagree for real reasons ([§9](#9-results)), and a change that improves one while flat on
 the other is usually still the right change.
 
 ### 8.3 What is gfx950-specific, and what is not
@@ -657,7 +657,7 @@ Re-derive these on another part; do not assume them.
 | there is a read phase at the head of an MFMA in which nothing co-issues | that phase is **8 cycles**, leaving a **24-cycle** window |
 | VALU and memory are separate issue ports, one instruction per wave per cycle | VALU **4** cycles, TRANS **8**, so **6** VALU or **3** TRANS per window |
 | some instruction classes cannot co-issue with the matrix pipe at all | on gfx950 that class is packed f32 (`v_pk_*`) — and packed is *also* the cheapest form per element |
-| the register file is shared behind both ports | 3-source VALU against an LDS return is where it shows up here (§7) |
+| the register file is shared behind both ports | 3-source VALU against an LDS return is where it shows up here ([§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster)) |
 | waves per SIMD determines whether inter-wave overlap is available | `waves_per_eu=2` here; with one wave per SIMD every region becomes intra-wave (see `gemm/intra_wave`) |
 
 The pass count for your instruction is in your ISA document. The window, and the per-class costs,
@@ -683,7 +683,7 @@ equally. Every row here is stable to about 2 TFLOPS.
 
 **What the compiler work is worth** is the distance between the tuned rows and the stock ones:
 **+10.0%** of throughput on `fmha_v4` and **+8.9%** on `fmha_v3`, and in efficiency terms **+26.0** and
-**+18.4 points**. Everything in §5 and §6 lives in that gap.
+**+18.4 points**. Everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and [§6](#6-making-the-compiler-co-operate) lives in that gap.
 
 **Stock LLVM cannot tell the two kernels apart** where it counts — 68.5% against 67.8%. Without a
 scheduler, `fmha_v4`'s lazy rescale barely moves the loop at all; the 8.3-point efficiency gap
@@ -691,7 +691,7 @@ between the tuned rows is the scheduler exploiting budget headroom that lazy res
 not the algorithm on its own. A design that creates headroom only pays if something downstream
 spends it.
 
-**The ceilings from §5 still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
+**The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
 ceiling is 100% and it reaches 94.5%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
 against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.2%. The two are
 8.3 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
@@ -753,14 +753,14 @@ which is enough to invert the top two rows of the table.
 
 ## 10. Where to go deeper
 
-- [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
+- [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
   ping-pong that attention builds on.
 - [`../../plugins/llir_scheduler/llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html)
   — how the scheduler classifies a region, and how it packs or triages the windows.
 - [`../../docs/warp_pipelining.md`](../../docs/warp_pipelining.md) and
   [`../../docs/mfma_efficiency.md`](../../docs/mfma_efficiency.md) — the theory behind
-  `warp_pipeline_stage` (§4) and behind the metric §9 reports.
+  `warp_pipeline_stage` ([§4](#4-designing-the-loop)) and behind the metric [§9](#9-results) reports.
 - **Provenance.** Ported from
   [`AMD-Triton/gluon-kernels`](https://github.com/AMD-Triton/gluon-kernels)
   (`kernels/cdna4/fa/`). `fmha_v3.py` is the upstream rotated-4-cluster kernel reduced to the
