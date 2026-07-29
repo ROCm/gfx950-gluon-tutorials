@@ -92,8 +92,20 @@ def _driver_main(argv):
         c = torch.empty((M, N), device=device, dtype=dt)
         per_set = sum(t.numel() * t.element_size() for t in (a, b_t, c))
         runtime_sets.append(
-            (a, b_t, c, M, N, K, a.stride(0), a.stride(1),
-             b_t.stride(1), b_t.stride(0), c.stride(0), c.stride(1))
+            (
+                a,
+                b_t,
+                c,
+                M,
+                N,
+                K,
+                a.stride(0),
+                a.stride(1),
+                b_t.stride(1),
+                b_t.stride(0),
+                c.stride(0),
+                c.stride(1),
+            )
         )
 
     jit_kernel = getattr(mod, KERNEL_REGEX[args.kernel])
@@ -112,14 +124,17 @@ def _driver_main(argv):
 
     compiler_options = {"num_warps": mod.NUM_WARPS}
     if hasattr(mod, "_agpr_attrs"):
-        attrs = mod._agpr_attrs()          # intra_wave: env-gated agpr-alloc=256
+        attrs = mod._agpr_attrs()  # intra_wave: env-gated agpr-alloc=256
     else:
         attrs = (("amdgpu-agpr-alloc", "0,0"),)  # inter_wave pins no-AGPR itself
     if attrs:
         compiler_options["llvm_fn_attrs"] = attrs
     prepared = PreparedKernel.create(
-        jit_kernel, (grid_mn, 1), runtime_sets,
-        constexprs=constexprs, compiler_options=compiler_options,
+        jit_kernel,
+        (grid_mn, 1),
+        runtime_sets,
+        constexprs=constexprs,
+        compiler_options=compiler_options,
     )
 
     for i in range(args.warmup):
@@ -143,9 +158,11 @@ def _driver_main(argv):
         prepared(i % args.sets)
     torch.cuda.synchronize()
 
-    print(f"[driver] {args.kernel} {M}x{N}x{K} {args.dtype} sets={args.sets} "
-          f"({per_set / 1024 ** 2:.1f} MiB/set) warmup={args.warmup} iters={args.iters} "
-          f"prepared_launch=True")
+    print(
+        f"[driver] {args.kernel} {M}x{N}x{K} {args.dtype} sets={args.sets} "
+        f"({per_set / 1024 ** 2:.1f} MiB/set) warmup={args.warmup} iters={args.iters} "
+        f"prepared_launch=True"
+    )
     return 0
 
 
@@ -158,14 +175,35 @@ def time_one_gpu(args, gpu, out):
     env["HIP_VISIBLE_DEVICES"] = str(gpu)
     env.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
     cmd = [
-        "rocprofv3", "--kernel-trace", "--output-format", "csv", "-d", out, "--",
-        sys.executable, os.path.abspath(__file__), "--_driver", args.kernel,
-        "--M", str(args.M), "--N", str(args.N), "--K", str(args.K),
-        "--dtype", args.dtype, "--sets", str(args.sets),
-        "--warmup", str(args.warmup), "--iters", str(args.iters),
+        "rocprofv3",
+        "--kernel-trace",
+        "--output-format",
+        "csv",
+        "-d",
+        out,
+        "--",
+        sys.executable,
+        os.path.abspath(__file__),
+        "--_driver",
+        args.kernel,
+        "--M",
+        str(args.M),
+        "--N",
+        str(args.N),
+        "--K",
+        str(args.K),
+        "--dtype",
+        args.dtype,
+        "--sets",
+        str(args.sets),
+        "--warmup",
+        str(args.warmup),
+        "--iters",
+        str(args.iters),
     ]
-    subprocess.run(cmd, env=env, check=True, cwd=out,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        cmd, env=env, check=True, cwd=out, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     csvs = glob.glob(os.path.join(out, "**", "*kernel_trace.csv"), recursive=True)
     if not csvs:
@@ -177,7 +215,7 @@ def time_one_gpu(args, gpu, out):
                 rows.append(int(row["End_Timestamp"]) - int(row["Start_Timestamp"]))
     if len(rows) < args.avg_last:
         raise RuntimeError(f"only {len(rows)} dispatches, need {args.avg_last}")
-    tail = rows[-args.avg_last:]
+    tail = rows[-args.avg_last :]
     ns = sum(tail) / len(tail)
     tflops = 2 * args.M * args.N * args.K / (ns * 1e-9) / 1e12
     return tflops, ns / 1e3, len(rows)
@@ -187,8 +225,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--_driver":
         return _driver_main(sys.argv[2:])
 
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--kernel", choices=sorted(KERNEL_REGEX), default="intra_wave")
     p.add_argument("--M", type=int, default=4096)
     p.add_argument("--N", type=int, default=4864)
@@ -197,20 +236,22 @@ def main():
     p.add_argument("--sets", type=int, default=3, help="rotating tensor sets")
     p.add_argument("--warmup", type=int, default=50)
     p.add_argument("--iters", type=int, default=1000)
-    p.add_argument("--avg-last", type=int, default=100,
-                   help="average the final N dispatches")
+    p.add_argument("--avg-last", type=int, default=100, help="average the final N dispatches")
     p.add_argument("--gpus", default="all", help="'all', or a comma list like 0,3,5")
     p.add_argument("--out", default="/tmp/bench_prepared_gfx942")
     args = p.parse_args()
 
     if args.gpus == "all":
         import torch
+
         gpus = list(range(torch.cuda.device_count()))
     else:
         gpus = [int(g) for g in args.gpus.split(",")]
 
-    print(f"{args.kernel} {args.M}x{args.N}x{args.K} {args.dtype} | prepared launch, "
-          f"{args.sets} rotating sets | {args.iters} dispatches, mean of last {args.avg_last}")
+    print(
+        f"{args.kernel} {args.M}x{args.N}x{args.K} {args.dtype} | prepared launch, "
+        f"{args.sets} rotating sets | {args.iters} dispatches, mean of last {args.avg_last}"
+    )
     print(f"{'GPU':>4} {'TFLOPS':>10} {'us/dispatch':>13} {'dispatches':>11}")
     results = {}
     for g in gpus:
@@ -222,9 +263,11 @@ def main():
             print(f"{g:>4} {'FAILED':>10}   {e}")
     if results:
         best = max(results, key=results.get)
-        print(f"\nfastest: GPU {best} at {results[best]:.1f} TFLOPS "
-              f"(slowest {min(results.values()):.1f}, spread "
-              f"{100 * (results[best] / min(results.values()) - 1):.1f}%)")
+        print(
+            f"\nfastest: GPU {best} at {results[best]:.1f} TFLOPS "
+            f"(slowest {min(results.values()):.1f}, spread "
+            f"{100 * (results[best] / min(results.values()) - 1):.1f}%)"
+        )
         print(json.dumps({"best_gpu": best, "tflops": results}))
     return 0
 

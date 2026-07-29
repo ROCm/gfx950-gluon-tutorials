@@ -57,14 +57,35 @@ def collect(kernel, gpu, M, N, K, dtype, iters, out, swz=None):
     env["HIP_VISIBLE_DEVICES"] = str(gpu)
     env["TRITON_CACHE_DIR"] = os.path.join(out, "tcache")
     if swz:
-        env["GFX942_SWZ_VEC"], env["GFX942_SWZ_PER_PHASE"], env["GFX942_SWZ_MAX_PHASE"] = \
-            (str(v) for v in swz)
+        env["GFX942_SWZ_VEC"], env["GFX942_SWZ_PER_PHASE"], env["GFX942_SWZ_MAX_PHASE"] = (
+            str(v) for v in swz
+        )
 
     cmd = [
-        "rocprofv3", "-i", cfg, "--output-format", "csv", "-d", out, "--",
-        sys.executable, os.path.join(HERE, "bench_prepared.py"), "--_driver", kernel,
-        "--M", str(M), "--N", str(N), "--K", str(K), "--dtype", dtype,
-        "--iters", str(iters), "--warmup", "5",
+        "rocprofv3",
+        "-i",
+        cfg,
+        "--output-format",
+        "csv",
+        "-d",
+        out,
+        "--",
+        sys.executable,
+        os.path.join(HERE, "bench_prepared.py"),
+        "--_driver",
+        kernel,
+        "--M",
+        str(M),
+        "--N",
+        str(N),
+        "--K",
+        str(K),
+        "--dtype",
+        dtype,
+        "--iters",
+        str(iters),
+        "--warmup",
+        "5",
     ]
     # rocprofv3 exits non-zero even on success here, so judge by the artifact and
     # by the driver's own FATAL guard rather than by the return code.
@@ -93,14 +114,17 @@ def report(tag, v):
     bc, idx, insts = v["SQ_LDS_BANK_CONFLICT"], v["SQ_LDS_IDX_ACTIVE"], v["SQ_INSTS_LDS"]
     useful = idx - bc
     ratio = bc / useful if useful > 0 else float("nan")
-    print(f"  {tag:<22s} conflict={ratio:7.4f}  bank_conflict={bc:14,.0f} "
-          f"idx_active={idx:14,.0f}  cyc/LDS_instr={idx / insts if insts else 0:6.2f}")
+    print(
+        f"  {tag:<22s} conflict={ratio:7.4f}  bank_conflict={bc:14,.0f} "
+        f"idx_active={idx:14,.0f}  cyc/LDS_instr={idx / insts if insts else 0:6.2f}"
+    )
     return ratio
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--kernel", choices=sorted(KERNEL_REGEX), default="inter_wave")
     p.add_argument("--gpu", type=int, default=3)
     p.add_argument("--M", type=int, default=4096)
@@ -116,28 +140,43 @@ def main():
     print("  conflict = SQ_LDS_BANK_CONFLICT / (SQ_LDS_IDX_ACTIVE - SQ_LDS_BANK_CONFLICT)\n")
 
     if not a.sweep:
-        report("as-committed", collect(a.kernel, a.gpu, a.M, a.N, a.K, a.dtype, a.iters,
-                                      os.path.join(a.out, "base")))
+        report(
+            "as-committed",
+            collect(a.kernel, a.gpu, a.M, a.N, a.K, a.dtype, a.iters, os.path.join(a.out, "base")),
+        )
         return 0
 
     # vec must keep the 16 B (8 x fp16) dwordx4 access width usable; per_phase x
     # max_phase spans the swizzle period in rows.
-    grid = [(v, pp, mp)
-            for v, pp, mp in itertools.product([4, 8], [1, 2, 4], [4, 8, 16])
-            if pp * mp <= 64]
+    grid = [
+        (v, pp, mp)
+        for v, pp, mp in itertools.product([4, 8], [1, 2, 4], [4, 8, 16])
+        if pp * mp <= 64
+    ]
     results = {}
     for swz in grid:
         tag = f"vec={swz[0]} per={swz[1]} max={swz[2]}"
         try:
-            v = collect(a.kernel, a.gpu, a.M, a.N, a.K, a.dtype, a.iters,
-                        os.path.join(a.out, "swz_%d_%d_%d" % swz), swz=swz)
+            v = collect(
+                a.kernel,
+                a.gpu,
+                a.M,
+                a.N,
+                a.K,
+                a.dtype,
+                a.iters,
+                os.path.join(a.out, "swz_%d_%d_%d" % swz),
+                swz=swz,
+            )
             results[swz] = report(tag, v)
         except Exception as e:
             print(f"  {tag:<22s} FAILED: {str(e)[:90]}")
     if results:
         best = min(results, key=results.get)
-        print(f"\n  lowest conflict: vec={best[0]} per_phase={best[1]} max_phase={best[2]} "
-              f"-> {results[best]:.4f}")
+        print(
+            f"\n  lowest conflict: vec={best[0]} per_phase={best[1]} max_phase={best[2]} "
+            f"-> {results[best]:.4f}"
+        )
     return 0
 
 
