@@ -1,7 +1,7 @@
 # 1 FAv3 gfx950 — MFMA/VALU co-issue scheduling exploration
 
-Companion to `mfma_coissue_scheduling.md` (the formal cycle-cost proof). What we
-tried to better overlap VALU with MFMA in the rotated-4-cluster gluon kernel.
+What we tried to better overlap VALU with MFMA in the rotated-4-cluster gluon
+kernel.
 
 **Setup.** `gluon_attn_fwd`, 1×16320 bshd fp16 non-causal, 32×32×16 MFMA,
 BLOCK_M=256 BLOCK_N=64 nw=8. Mechanism: emit `rocdl.sched.group.barrier` groups
@@ -1343,7 +1343,6 @@ but the ODD_TAIL numbers below are measurements, and they are why this is worth 
 | `f16_fa_gfx950_common.py` | shared helpers (`input_helper`, `sdpa_reference`, `compute_flops`, layout/stride plumbing) |
 | `bench.py` | correctness against torch SDPA + `do_bench` TFLOPS; `--rocprof` / `--prepared` dispatch loops for external timing |
 | `note.md` | this file |
-| `mfma_coissue_scheduling.md` | the co-issue cycle model as a formal scheduling problem, with the optimal schedule and its proof |
 | `att_attn*.json` | `rocprofv3` ATT (instruction-trace) configurations |
 
 ```bash

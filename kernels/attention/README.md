@@ -152,11 +152,6 @@ form that can never be hidden. Those are not in tension; they apply to different
 > ATT instruction trace timestamps every issue, so the cost of each class, and whether a given
 > op landed inside a shadow or outside it, can be read straight off a trace of your own kernel.
 > §8.2 is how.
->
-> The formal version of this model — read phase, window, the packed hazard, and a proof that
-> `(MFMA ‖ 6 unpacked) × M, then packed` is the optimal schedule for `M` MFMAs against `N` units
-> of math — is [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md). This section is the
-> part you need to design a kernel; that one is the part you need to argue about a schedule.
 
 The packed-math row has a consequence worth pausing on, because it is counter-intuitive.
 `v_pk_mul` retires two elements in one issue slot, so it is *exactly* what you want for work
@@ -728,9 +723,6 @@ which is enough to invert the top two rows of the table.
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. §3 above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave
   ping-pong that attention builds on.
-- [`mfma_coissue_scheduling.md`](mfma_coissue_scheduling.md) — §2's budget as a formal
-  scheduling problem: the machine model, the optimal schedule for `M` MFMAs against `N` units
-  of math, and a matching-lower-bound proof that it is optimal.
 - [`../../plugins/llir_scheduler/llir_scheduler.html`](../../plugins/llir_scheduler/llir_scheduler.html)
   — how the scheduler classifies a region, and how it packs or triages the windows.
 - [`../../docs/warp_pipelining.md`](../../docs/warp_pipelining.md) and
