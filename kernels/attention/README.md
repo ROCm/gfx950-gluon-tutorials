@@ -6,32 +6,22 @@ they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Two comparisons run through that chart, and each one has a price.
+The chart holds two comparisons, and each one has a price.
 
-**Across the groups — what lazy rescaling buys.** `fmha_v4` defers the accumulator rescale
-instead of paying it on every tile, and it leads `fmha_v3` on both builds: **+5.0%** on stock
-LLVM (1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency numbers say something the
-throughput numbers do not, though. On stock LLVM the two kernels are indistinguishable — 67.8%
-against 68.5%, **+0.7 points** — while tuned they are **8.3 points** apart. Lazy rescaling does
-not make the loop faster by itself. It *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something downstream that
-spends that budget converts it into cycles. **The price:** `fmha_v4` cannot be written in stock
-Gluon. Skipping the rescale per wave needs `gl.warp_predicate`, which is why these kernels want a
-newer Triton than the GEMM ones; and removing the rescale unbalances the two dot clusters badly
-enough that a measured fraction of the softmax has to be moved between them by hand — [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)'s 3/8
-slice split.
+**Lazy rescaling.** `fmha_v4` defers the accumulator rescale instead of paying it on every tile:
+**+5.0%** on stock LLVM, **+6.0%** tuned. Its price is that it cannot be written in stock Gluon —
+skipping the rescale per wave needs `gl.warp_predicate` — and that removing it unbalances the two
+dot clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
-**Within each group — what the scheduling buys.** Same kernel source, two builds: **+8.9%** on
-`fmha_v3` (1141 → 1243, **+18.4 points** of efficiency) and **+10.0%** on `fmha_v4` (1198 → 1318,
-**+26.0 points**). This is the larger of the two effects, and most of this document is about it.
-**The price:** the interleave has to be *declared* rather than left to the machine scheduler.
-llirSched assigns every vector op to a specific MFMA's shadow and emits a `sched_group_barrier`
-sequence for AMDGPU's IGroupLP to construct ([§6](#6-making-the-compiler-co-operate)) — and the ops then have to be kept in the cluster
-they were assigned to, which is what `disable-machine-sink` is for.
+**Scheduling.** The same kernel source built with the llirSched plugin instead of stock LLVM:
+**+8.9%** on `fmha_v3` and **+10.0%** on `fmha_v4`, worth **+18.4** and **+26.0 points** of MFMA
+efficiency. Its price is that the interleave has to be *declared* — every vector op assigned to a
+specific MFMA's shadow, emitted as a `sched_group_barrier` sequence — rather than left to the
+machine scheduler ([§6](#6-making-the-compiler-co-operate)).
 
-**And the reference.** ROCm/FlyDSL at its own tuned configuration reaches 1320, a dead heat with
-`fmha_v4`'s 1318, from 84.7% efficiency against 94.5%. `fmha_v4` needs about 10% fewer cycles for
-the same work and hands the difference back as clock, on a part already at its power cap. [§9](#9-results) works
-that through, including why the ranking is shape-dependent.
+Together they put `fmha_v4` level with ROCm/FlyDSL's published figure, 1318 against 1320, from
+94.5% MFMA efficiency against its 84.7%. [§9](#9-results) takes that apart — how two kernels tie on throughput
+while ten points apart on cycles, and why the ranking moves with the shape.
 
 **On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
 implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
@@ -49,27 +39,9 @@ to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kern
 it every tile is 64 vector instructions that are pure overhead whenever the row max did not
 actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
 
-**Toolchain.** These kernels need Triton built from the
-[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
-tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag introduces.
-Build it with default symbol visibility so the scheduler plugin can resolve LLVM symbols:
-
-```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.0 /tmp/triton
-cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
-```
-
-**To build and run**, from this directory:
-
-```bash
-FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
-LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-python bench.py --seqlen 16320
-```
-
-Those three variables are not tuning knobs — they are what [§6](#6-making-the-compiler-co-operate) is about, and dropping them
-measures the stock-LLVM row above instead.
+**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag
+introduces. [§9](#9-results) has the build and run commands.
 
 ---
 
@@ -750,6 +722,31 @@ Both harnesses were run under one protocol — `scripts/fly_kernel_time.py` buil
 rule and averaging window. That is the only reason the rows can share a table, and it matters more
 than it sounds: measured with its own shallower window, FlyDSL reads up to 7% high on a cool die,
 which is enough to invert the top two rows of the table.
+
+### Building and running
+
+The kernels need Triton built from the
+[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag introduces.
+Build it with default symbol visibility so the scheduler plugin can resolve LLVM symbols:
+
+```bash
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.0 /tmp/triton
+cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
+```
+
+Then, from `kernels/attention/`:
+
+```bash
+FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
+python bench.py --seqlen 16320
+```
+
+Those three variables are not tuning knobs — they are what [§6](#6-making-the-compiler-co-operate) is about, and dropping
+them measures the stock-LLVM bars of the chart above instead. `scripts/fa_kernel_time.py` takes the
+same environment and reports the kernel-time TFLOPS this table quotes.
 
 ## 10. Where to go deeper
 
