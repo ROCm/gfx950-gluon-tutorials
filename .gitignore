@@ -22,3 +22,6 @@ gpucore.*
 
 # per-kernel Triton cache (TRITON_CACHE_DIR)
 cache/
+# Private counter-collection work — kept locally, deliberately not tracked
+kernels/attention/att_stall_counters.yaml
+kernels/attention/private_counter_collection_recipe.md
