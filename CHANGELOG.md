@@ -5,6 +5,28 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-29 — Re-pin to `gfx950-tutorial-v2.0` (Gluon `warp_predicate`, warp-pipeline barriers)
+
+The pinned Triton tag moves from `gfx950-tutorial-v1.1` to
+[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0),
+two commits on top of `v1.1`:
+
+- **`gl.warp_predicate`** — a per-wave masked-skip region lowering to `s_and_saveexec` +
+  `s_cbranch_execz`, with no cross-wave reduction and no barrier. `kernels/attention/fav4.py`
+  does not compile without it: it is what lets a wavefront skip the accumulator rescale when
+  none of its own rows advanced their running max.
+- **warp-pipeline barriers** — always emit LOCAL cluster barriers rather than the minimal set,
+  place the loop-carried wrap-around barrier at the top of the loop body, and force a hard LDS
+  drain there with `amdgpu.memory_counter_wait(ds = 0)`. Together these keep `s_waitcnt lgkmcnt`
+  out of the MFMA stages.
+
+- **LLVM pin unchanged (`850a2b1b`).** Both tags carry the same LLVM, so the out-of-tree
+  LLIR-scheduler plugin (`plugins/llir_scheduler/libLlirSched.so`) is **not** rebuilt.
+- **No GEMM impact.** The barrier change fires for every warp-pipeline kernel, so it was A/B'd
+  against `v1.1`: all four `inter_wave` kernels (a16w16 fp16/bf16, a8w8, a4w4) pass their
+  correctness checks and compile to **byte-identical assembly**, as do both attention kernels.
+  The GEMM numbers recorded in this file and in the kernel READMEs therefore stand as measured.
+
 ## 2026-07-29 — Flash Attention forward kernels (`kernels/attention/`)
 
 Adds the first non-GEMM section of the tutorial: `fav3` (eager softmax rescale) and `fav4`
@@ -24,9 +46,8 @@ through as an MFMA ↔ VALU **co-execution** budget.
   `scripts/att_pick_cu.py`.
 
 > [!IMPORTANT]
-> These kernels need a Triton **newer than `gfx950-tutorial-v1.1`** — `fav4` does not compile
-> without `gl.warp_predicate`. The re-pin is a separate change; until it lands, the pin
-> recorded below is the one the GEMM kernels are built against.
+> These kernels need `gfx950-tutorial-v2.0` — `fav4` does not compile without
+> `gl.warp_predicate`. See the re-pin entry above.
 
 ## 2026-07-14 — Re-pin to `gfx950-tutorial-v1.1` (upstream merge of the warp-pipeline barrier PR)
 

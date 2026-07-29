@@ -88,7 +88,7 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag, rocprof
+Measured on a single MI355X (gfx950) with Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
 scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
@@ -105,6 +105,8 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
 > FP16 optimization journey's near-optimal headline (1421 TFLOPS on `gfx950-tutorial-v1.1`) is
 > documented in [`a16w16/`](intra_wave/a16w16/).
+
+The tutorial now pins Triton to [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0), which the attention kernels require; it compiles these GEMM kernels to byte-identical assembly, so the numbers above stand.
 
 The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 
