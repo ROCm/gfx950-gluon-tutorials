@@ -4,18 +4,34 @@ Forward flash-attention kernels for gfx950 (MI350 / MI355X), written in Triton E
 **Gluon**. Two kernels, `fmha_v3` and `fmha_v4`, share one pipeline architecture and differ in how
 they handle the softmax rescale.
 
-![TFLOPS and in-loop MFMA efficiency for both kernels, tuned and on stock LLVM, against ROCm/FlyDSL](images/results.svg)
+![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Read the two numbers on each bar against each other, because they disagree. On **throughput**
-the tuned `fmha_v4` and ROCm/FlyDSL are a dead heat — 1318 against 1320, well inside any spread.
-On **MFMA efficiency** they are 9.8 points apart: `fmha_v4` does the same work in about 10% fewer
-cycles and hands the difference back as clock, on a part already at its power cap (§9).
+Two comparisons run through that chart, and each one has a price.
 
-The gap that this document is actually about is the one inside each group — **+10.0% of throughput
-and +26 points of efficiency** between a tuned build and a stock one, from the same kernel source.
-That is what the design work of §5 and the compiler work of §6 are worth. Note also that stock
-LLVM cannot tell the two kernels apart at all (68.5% against 67.8%): the lazy rescale of `fmha_v4`
-only pays once something downstream spends the headroom it creates.
+**Across the groups — what lazy rescaling buys.** `fmha_v4` defers the accumulator rescale
+instead of paying it on every tile, and it leads `fmha_v3` on both builds: **+5.0%** on stock
+LLVM (1141 → 1198) and **+6.0%** tuned (1243 → 1318). The efficiency numbers say something the
+throughput numbers do not, though. On stock LLVM the two kernels are indistinguishable — 67.8%
+against 68.5%, **+0.7 points** — while tuned they are **8.3 points** apart. Lazy rescaling does
+not make the loop faster by itself. It *frees budget* (§5), and only something downstream that
+spends that budget converts it into cycles. **The price:** `fmha_v4` cannot be written in stock
+Gluon. Skipping the rescale per wave needs `gl.warp_predicate`, which is why these kernels want a
+newer Triton than the GEMM ones; and removing the rescale unbalances the two dot clusters badly
+enough that a measured fraction of the softmax has to be moved between them by hand — §5's 3/8
+slice split.
+
+**Within each group — what the scheduling buys.** Same kernel source, two builds: **+8.9%** on
+`fmha_v3` (1141 → 1243, **+18.4 points** of efficiency) and **+10.0%** on `fmha_v4` (1198 → 1318,
+**+26.0 points**). This is the larger of the two effects, and most of this document is about it.
+**The price:** the interleave has to be *declared* rather than left to the machine scheduler.
+llirSched assigns every vector op to a specific MFMA's shadow and emits a `sched_group_barrier`
+sequence for AMDGPU's IGroupLP to construct (§6) — and the ops then have to be kept in the cluster
+they were assigned to, which is what `disable-machine-sink` is for.
+
+**And the reference.** ROCm/FlyDSL at its own tuned configuration reaches 1320, a dead heat with
+`fmha_v4`'s 1318, from 84.7% efficiency against 94.5%. `fmha_v4` needs about 10% fewer cycles for
+the same work and hands the difference back as clock, on a part already at its power cap. §9 works
+that through, including why the ranking is shape-dependent.
 
 **On the name.** Flash attention is a *technique*, not a kernel. `fmha` is the kernel these two
 implement — flash **multi-head** attention — and other flash-attention kernels (MLA, and the
