@@ -113,9 +113,16 @@ def input_helper(Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD, dtype, layout, requires_gr
 
 
 def sdpa_reference(q, k, v, causal=False, sm_scale=None):
-    """Reference attention with GQA/MQA support. Expects a bhsd frame."""
+    """Reference attention with GQA/MQA support, in fp32. Expects a bhsd frame.
+
+    Computed and returned in fp32 even for fp16/bf16 inputs, so the reference does
+    not carry the output format's own rounding error. That makes the comparison in
+    _check_output measure only what the kernel did. torch picks a memory-efficient
+    backend for fp32, so the [S, S] score matrix is never materialized.
+    """
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(q.shape[-1])
+    q, k, v = q.float(), k.float(), v.float()
     if q.shape[1] != k.shape[1]:
         r = q.shape[1] // k.shape[1]
         k = k.repeat_interleave(r, dim=1)
@@ -125,33 +132,38 @@ def sdpa_reference(q, k, v, causal=False, sm_scale=None):
             q, k, v, is_causal=False, scale=sm_scale
         )
     M, N = q.shape[2], k.shape[2]
-    scores = torch.matmul(q.float(), k.float().transpose(-2, -1)) * sm_scale
+    scores = torch.matmul(q, k.transpose(-2, -1)) * sm_scale
     mask = torch.tril(torch.ones(M, N, device=q.device, dtype=torch.bool), diagonal=N - M)
     scores.masked_fill_(~mask, float("-inf"))
-    p = torch.softmax(scores, dim=-1)
-    p = torch.nan_to_num(p)
-    return torch.matmul(p, v.float()).to(q.dtype)
+    p = torch.nan_to_num(torch.softmax(scores, dim=-1))
+    return torch.matmul(p, v)
 
 
 def _check_output(o, o_ref, atol=1e-3, rtol=1e-3):
-    """Compare against the torch reference, with the floor in units of the output format.
+    """Compare against the fp32 reference, with the floor in units of the output format.
 
     A fixed absolute tolerance is the wrong test for this kernel. The FA output is a
     convex combination of the value rows, so its magnitude falls as ~1/sqrt(S): a short
-    sequence produces *larger* numbers and therefore larger absolute rounding error,
-    even though its relative accuracy is identical. Measured, the max error is exactly
-    one ULP of the output dtype at the largest output element, at every length -- so a
-    constant atol makes the verdict turn on which side of a power of two that one
-    element happens to land, which is not a correctness signal.
+    sequence produces *larger* numbers and therefore larger absolute rounding error even
+    though its relative accuracy is identical. With a constant atol the verdict ends up
+    turning on which side of a power of two the single largest element lands, which is
+    not a correctness signal -- it made bf16 fail at S=1024 and S=4096 but pass at 2048.
 
-    Scale the floor with the reference instead: a few ULP at the top of the range. That
-    tests what we actually mean -- no element is off by more than a few rounding steps
-    of the format the kernel writes.
+    So the floor scales with the reference instead. sdpa_reference returns fp32, so the
+    only rounding in the comparison is the kernel's own, and the measured max error is
+    0.5-0.95 ULP of the output dtype at every length in both dtypes -- i.e. the kernel
+    is accurate to within one rounding step of the format it writes. Two ULP at the top
+    of the range is a ~3x margin on that, and orders of magnitude under any real bug.
     """
+    out_dtype = o.dtype
+    o, o_ref = o.float(), o_ref.float()
     scale = o_ref.abs().max().item()
     if scale > 0 and math.isfinite(scale):
-        # finfo().eps is the relative spacing at 1.0: 2**-7 bf16, 2**-10 fp16.
-        atol = max(atol, 4 * torch.finfo(o_ref.dtype).eps * scale)
+        # finfo().eps is the relative spacing at 1.0: 2**-7 bf16, 2**-10 fp16. The
+        # reference is fp32, so the only rounding left is the kernel's own store to
+        # out_dtype -- at most half an ULP. Two ULP at the top of the range is a
+        # 4x margin on that, and still an order of magnitude under any real bug.
+        atol = max(atol, 2 * torch.finfo(out_dtype).eps * scale)
     diff = (o - o_ref).abs()
     max_diff = diff.max().item()
     mean_diff = diff.mean().item()
