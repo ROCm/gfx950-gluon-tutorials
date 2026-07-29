@@ -6,14 +6,20 @@ It contains the Gluon kernel, its single autotune config, and the host launcher
 tutorial copy is simplified to the single most-performant path: non-causal, head
 dim 128, K length a multiple of ``BLOCK_N`` (64).
 
-This kernel matches the pipeline architecture of the kernel from the “FAV3 Unmatched” series, but translated to Gluon instead of Triton.
+This is the *eager* rescale variant: the online-softmax correction ``acc *= alpha``
+is applied on every tile. ``fav4.py`` is the same pipeline with that correction made
+lazy, which is what gets it under the co-execution budget.
 
-To get close to matching the LLIR from the original kernel in its docker container with modified Triton and LLVM, we can apply these environment variables:
+The design behind this file -- why the softmax has to ride in the MFMA clusters,
+how the loop is cut into four warp-pipeline clusters, and what the compiler has to
+be told so the vector work lands inside an MFMA's shadow -- is written up in
+``README.md`` in this directory.
 
-(Note that comparison and measurement used b1 d128 hq64 sq16384 causal0, BLOCK_M=256 BLOCK_N=64 NUM_STAGES=4 num_warps=8):
-
-- ``DISABLE_LLVM_OPT=disable-vector-combine`` -- needed to match the LLIR, but also better performance in some environments.
-- ``AMDGCN_SCALARIZE_PACKED_FOPS=1`` -- emits one scalar fp op per element instead of packed ``v2f16`` ops, so the LLIR/AMDGCN reads op-per-element and diffs cleanly against the docker environment dumps.  Readability/IR-match only; no perf effect.
+Build environment: both kernels want the llirSched plugin loaded and MachineSink
+disabled (see the README). Neither needs a kernel-specific environment variable,
+and in particular neither needs ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from
+packed math and the plugin declares its groups in instructions, so the backend
+peephole splits whatever lands in a shadow.
 """
 
 import os
@@ -60,8 +66,6 @@ from triton.experimental.gluon.language._layouts import (
 
 from f16_fa_gfx950_common import (
     compute_dot1_qk,
-    compute_dot2_pv,
-    compute_softmax,
     get_shape_from_layout,
     get_strides_from_layout,
     MetaData,

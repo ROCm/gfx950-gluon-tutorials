@@ -120,7 +120,7 @@ def parse_args():
         type=int,
         default=1,
         choices=[0, 1],
-        help="fav4 only: 0 applies qk_scale per element inside VEC1 instead of pre-scaling Q",
+        help="0 applies qk_scale per element inside VEC1 instead of pre-scaling Q",
     )
     p.add_argument(
         "--launch",

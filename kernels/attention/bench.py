@@ -104,9 +104,9 @@ from f16_fa_gfx950_common import (
 _FA_MODULE = os.environ.get("FA_MODULE", "fav3")
 run_gluon_attention = importlib.import_module(_FA_MODULE).run_gluon_attention  # noqa: E402
 
-# Where the softmax scale is applied is a fav4 knob (SCALE_ON_Q: pre-scale Q outside
-# the loop, so VEC1's per-element fma becomes a sub). fav3 has no such parameter, so
-# forward it only when the selected kernel accepts it.
+# Where the softmax scale is applied (SCALE_ON_Q: pre-scale Q outside the loop, so
+# VEC1's per-element fma becomes a sub). Both kernels take it, but forward it only
+# when the selected kernel's launcher actually accepts the parameter.
 import inspect  # noqa: E402
 
 _SCALE_ON_Q_ARG = "scale_on_q" in inspect.signature(run_gluon_attention).parameters
@@ -169,7 +169,7 @@ def parse_args():
         type=int,
         default=1,
         choices=[0, 1],
-        help="fav4 only: 1 (default) pre-scales Q before the loop so VEC1 does a sub; "
+        help="1 (default) pre-scales Q before the loop so VEC1 does a sub; "
         "0 applies qk_scale per element inside VEC1 as an fma",
     )
     p.add_argument(
