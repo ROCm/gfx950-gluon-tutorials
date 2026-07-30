@@ -15,9 +15,34 @@ this repository's gfx950 kernels:
 > §4 below is entirely about what those two facts force to change.
 
 Both keep the tutorial's core design — the 256×256 output tile sliced into a 2×2
-grid of 128×128 quadrants, the `B_left → A_top → A_bot → B_right` region order,
-and the XCD-aware PID remap with `GROUP_SIZE_M` swizzling — and change only what
-CDNA3 forces them to change.
+grid of 128×128 quadrants and the XCD-aware PID remap with `GROUP_SIZE_M`
+swizzling — and change only what CDNA3 forces them to change.
+
+## How to read this
+
+**Start here, then pick a kernel.** This file is the shared material: how to
+build and run, every performance number for both kernels, and the CDNA3
+constraints that both of them are shaped by. Neither kernel's design makes much
+sense before §4.
+
+| | |
+|---|---|
+| §1–2 | setup and how to run |
+| **§3** | **all results** — both kernels, both dtypes, all shapes, one methodology |
+| **§4** | **what CDNA3 forces to change** — the constraints common to both kernels |
+| §5–6 | the out-of-tree plugins, and where the files are |
+
+Then read the kernel you care about. Each of those files assumes §4 and covers
+only its own design:
+
+* [**`intra_wave/README.md`**](intra_wave/README.md) — 4 waves, 1 per SIMD. The
+  simpler shape: one wave per SIMD, so the compiler has to interleave memory with
+  MFMA *within* a single instruction stream. Read this one first; it is where the
+  CDNA3 problems are easiest to see.
+* [**`inter_wave/README.md`**](inter_wave/README.md) — 8 waves, 2 per SIMD. The
+  answer to those problems: two wave groups ping-pong so one is on the matrix
+  unit while the other is in memory, which hides the very costs
+  [`intra_wave`](intra_wave/) has to pay in-line.
 
 ## 1. Setup
 
@@ -226,7 +251,7 @@ At K=8256 (all four K values are in §3):
 Both kernels moved a long way from the initial port: intra_wave through the
 opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md), inter_wave
 through the 8-region redesign in [`inter_wave/README.md`](inter_wave/README.md).
-The LDS bank-conflict fix in §4.3 is common to both and was worth -9.9% loop
+The LDS bank-conflict fix in §4.4 is common to both and was worth -9.9% loop
 cycles on the 8-wave kernel.
 
 ### 3.5 Why TFLOPS understates the 8-wave kernel
@@ -257,6 +282,9 @@ the clock is recorded with them (`realtime.json` in every ATT capture carries
 
 ## 4. What CDNA3 forces to change
 
+Everything in this section applies to **both** kernels — it is the platform, not
+the schedule. What each kernel then does about it is in its own README.
+
 ### 4.1 No `buffer_load_to_shared` — the register round-trip
 
 gfx950 streams HBM → LDS with `gl.amd.cdna4.async_copy.buffer_load_to_shared`
@@ -268,157 +296,117 @@ so the path is
 buffer_load  (HBM -> VGPR)  ->  local_store (VGPR -> LDS)  ->  local_load (LDS -> VGPR)  ->  mfma
 ```
 
-Two consequences. It costs 32–64 VGPRs of staging that gfx950 does not pay. And
-the LDS producer/consumer hazard is now closed by real `s_barrier`s inserted by
-Triton's membar pass rather than by an async counter — which turns out to be the
-single largest cost in the 4-wave kernel (§4.4).
+Two consequences, and they drive both kernels:
+
+1. **32–64 VGPRs of staging** that gfx950 does not pay, which is what makes the
+   register budget tight enough to shape the schedule.
+2. **The LDS producer/consumer hazard is closed by real `s_barrier`s** inserted by
+   Triton's membar pass, rather than by an async counter. `wait_group(n)` is a
+   per-wave ordered wait and does not serialise anything; `s_barrier` stops every
+   wave in the CTA. This is the single largest cost CDNA3 adds, and the two
+   kernels differ mainly in how they hide it.
 
 ### 4.2 Half the LDS — 64 KB is exactly one stage
 
 gfx950 has 160 KB of LDS per CU and double-buffers a 256×256×64 stage (2 × 64 KB).
 gfx942 has **64 KB**, i.e. exactly one stage. Double buffering at this tile size
-is impossible.
-
-The kernels do *not* respond by shrinking `BLOCK_K` to 32. Instead each of the
-four half-tiles (`A_top`, `A_bot`, `B_left`, `B_right`) owns a single 16 KB slot
-that is **refilled one region after its last read**:
-
-```
-region 0:  DOT C_tl | LR A_bot(k)    | LW B_left(k+1)  | GR B_left(k+2)
-region 1:  DOT C_bl | LR B_right(k)  | LW A_top(k+1)   | GR A_top(k+2)
-region 2:  DOT C_tr | LR B_left(k+1) | LW A_bot(k+1)   | GR A_bot(k+2)
-region 3:  DOT C_br | LR A_top(k+1)  | LW B_right(k+1) | GR B_right(k+2)
-```
-
-Every slot's write lands strictly between its previous and next read, one region
-apart on both sides, so one barrier per region is sufficient — and this buys the
-same pipeline depth as gfx950's double buffer: `GR(k+2) → LW(k+1)` is a full
-K-step (~4096 cycles) of HBM latency hiding, `LR(k+1) → DOT(k+1)` is one region
-(~1024 cycles) of LDS latency hiding.
+is impossible, so on gfx942 **LDS cannot be the pipeline buffer** — the registers
+holding in-flight global loads are, and LDS is refilled in place. Each kernel
+schedules that refill differently; see their READMEs.
 
 **Why not `BLOCK_K=32` + double buffering?** It fits (8 × 8 KB = 64 KB) and it
-does reduce the barrier count to one per K-step, which is what you would expect
-to want. It is measurably worse — 400 TFLOPS vs 476 — and the reason is global
-coalescing. With `BLOCK_K=64` a row of the tile is 128 B, so eight lanes cover a
-whole cache line and one `buffer_load_dwordx4` touches 8 back-to-back lines. At
+does reduce the barrier count, which is what you would expect to want. It is
+measurably worse — 400 TFLOPS vs 476 — and the reason is global coalescing, not
+LDS. With `BLOCK_K=64` a row of the tile is 128 B, so eight lanes cover a whole
+cache line and one `buffer_load_dwordx4` touches 8 back-to-back lines. At
 `BLOCK_K=32` a row is 64 B, the same instruction touches 16 lines, and TCP
 processing time per instruction roughly doubles. Ablating the `buffer_load`s out
-of a `BLOCK_K=32` kernel moves it from 386 to 503 TFLOPS; ablating them out of
-the `BLOCK_K=64` kernel changes nothing. Deepening the global staging to two
-K-steps did not help either (v4, 400 TFLOPS) — it is the cache-line count, not
-the latency.
+of a `BLOCK_K=32` kernel moves it from 386 to 503 TFLOPS; ablating them out of the
+`BLOCK_K=64` kernel changes nothing. Deepening the global staging to two K-steps
+did not help either (v4, 400 TFLOPS) — it is the cache-line count, not the
+latency. **Both kernels therefore keep `BLOCK_K=64` and slice only on the LDS-read
+side.**
 
-The 8-wave kernel needs `BLOCK_K=32`-sized *operands* for register reasons, and
-gets them without giving up the 128 B loads by keeping the LDS tile at
-`BLOCK_K=64` and slicing only the **read** side (`smem.slice(0, 32, k_dim)`).
-
-### 4.3 MFMA shape and LDS layout
+### 4.3 MFMA shape
 
 CDNA3's widest 16×16 f16/bf16 intrinsic is `v_mfma_f32_16x16x16_f16`
-(`AMDMFMALayout(version=3, instr_shape=[16,16,16])`), 16 cycles, versus CDNA4's
-`..._16x16x32_f16`. `k_width=8` still yields `ds_read_b128`: the dot-operand K
-tile is `8 × (64/16) = 32`, which Triton lowers to two K=16 MFMAs.
+(`AMDMFMALayout(version=3, instr_shape=[16,16,16])`), **16 cycles**, versus CDNA4's
+`..._16x16x32_f16` at 32. `k_width=8` still yields `ds_read_b128`: the dot-operand
+K tile is `8 × (64/16) = 32`, which Triton lowers to two K=16 MFMAs.
 
-The tutorial's `PaddedSharedLayout([[512, 16]])` is not affordable — the four
-slots already fill LDS to the byte — so both operands use
-`SwizzledSharedLayout(8, 1, 8)`, which costs no LDS.
+Same total matrix work, twice the instructions — which matters less than it
+sounds. A K-step is ~2048 cycles of MFMA per wave either way, so the *rate* at
+which a schedule must feed the matrix unit is unchanged; only the instruction
+count inside each region doubles.
 
-`per_phase = 1`, **not 2**. The three parameters place element `(r, c)` at column
-`((c / vec) ^ phase) * vec + (c % vec)` with `phase = (r / per_phase) % max_phase`;
-`vec = 8` (8 fp16 = 16 B) is what keeps `ds_read_b128` / `ds_write_b128` legal.
-Because the global-load layout below has consecutive lanes walking consecutive
-rows, lanes 0-15 of a `b128` access cover **two adjacent rows** — and with
-`per_phase = 2` those two rows share a swizzle phase, land on the same 32 banks,
-and every access replays. Measured with
-[`tools/lds_conflict.py`](tools/lds_conflict.py), which reads
-`SQ_LDS_BANK_CONFLICT` and `SQ_LDS_IDX_ACTIVE`:
+CDNA3's LDS is also **128 B/clk against CDNA4's 256**, so every `ds_read_b128` /
+`ds_write_b128` occupies the port twice as long relative to the same MFMA work.
 
-| | conflict ratio | cyc / LDS instr | intra_wave | inter_wave |
+### 4.4 LDS layout — `SwizzledSharedLayout(8, 1, 8)`
+
+Both kernels use the same shared layout, and both had to co-design it with the
+global-load layout. gfx950's `PaddedSharedLayout([[512, 16]])` spends LDS to
+sidestep bank conflicts; with LDS full to the byte that option is gone, so the
+swizzle has to be exactly right.
+
+The parameters place element `(r, c)` at column
+`((c / vec) ^ phase) * vec + (c % vec)`, with `phase = (r / per_phase) % max_phase`:
+
+* `vec = 8` — swizzle granularity; 8 fp16 = 16 B, which keeps `ds_read_b128` /
+  `ds_write_b128` legal.
+* `per_phase = 1` — one row per phase.
+* `max_phase = 8` — 8 distinct phases before the pattern repeats.
+
+**`per_phase = 1`, not 2.** The global-load layout has consecutive lanes walking
+consecutive rows, so lanes 0–15 of a `b128` access cover *two adjacent rows*. With
+`per_phase = 2` those two rows share a phase, land on the same 32 banks, and every
+access replays. Measured with [`tools/lds_conflict.py`](tools/lds_conflict.py),
+which reads `SQ_LDS_BANK_CONFLICT` and `SQ_LDS_IDX_ACTIVE`:
+
+| | conflict ratio | cyc / LDS instr | intra_wave `IDX_ACTIVE` | inter_wave `IDX_ACTIVE` |
 |---|---|---|---|---|
 | `(8, 2, 8)` | 0.667 / 0.750 | 13.33 / 14.00 | 2.510e9 | 3.514e9 |
 | **`(8, 1, 8)`** | **0.000** | **8.00** | **1.506e9** | **2.008e9** |
 
-8.00 cyc/instr is the floor (1024 B at 128 B/clk). The saving is worth -1.0%
-loop cycles on the 4-wave kernel but **-9.9%** on the 8-wave one, whose LDS duty
-cycle is far higher at 2 waves/SIMD.
+8.00 cyc/instr is the floor (1024 B at 128 B/clk). Worth −1.0% loop cycles on the
+4-wave kernel but **−9.9%** on the 8-wave one, whose LDS duty cycle is far higher
+at 2 waves/SIMD.
+
+Getting the `local_store` side conflict-free also required **changing the
+global-load layout** away from the tutorial's. The gfx950 layout has lanes 0–7
+cover row `M0` and lanes 8–15 cover row `M0+16`; with a 128 B row stride those two
+rows land on the same banks and *no swizzle can separate them*, because the
+swizzle only permutes chunks within a row. Remapping so consecutive lanes walk
+consecutive rows makes lanes 0–15 cover two adjacent 128 B rows = 256 B = all 64
+banks exactly once, and improves the global side too (one instruction now reads
+1024 contiguous bytes).
 
 > [!WARNING]
 > Earlier versions of this port used `(8, 2, 8)` and described it as
 > "bank-conflict free in both directions", on the strength of
-> `tools/layout_check.py`'s analytical model. **The model is wrong** and still
-> reports `(8, 2, 8)` as clean. Trust the hardware counter.
+> [`tools/layout_check.py`](tools/layout_check.py)'s analytical model. **The model
+> is wrong** and still reports `(8, 2, 8)` as clean. Use
+> [`tools/lds_conflict.py`](tools/lds_conflict.py), which measures the hardware
+> counter and can sweep `(vec, per_phase, max_phase)`:
+> ```bash
+> python tools/lds_conflict.py --kernel inter_wave --sweep
+> ```
 
-Getting the `local_store` side conflict-free also required changing the
-global-load layout. The tutorial's layout has lanes 0-7 cover row `M0` and lanes
-8-15 cover row `M0+16`; with a 128 B row stride those two rows land on the same
-banks and no swizzle can separate them (the swizzle only permutes chunks *within*
-a row), giving a fixed 2× conflict. Remapping so consecutive lanes walk
-**consecutive rows** makes lanes 0-15 cover two adjacent 128 B rows = 256 B = all
-64 banks exactly once, and improves the global side too (one instruction now
-reads 1024 contiguous bytes).
+### 4.5 Where the two kernels diverge
 
-`gl.bank_conflicts()` asserts on AMD shared layouts in this Triton build, which
-is why [`tools/layout_check.py`](tools/layout_check.py) reconstructs the analysis
-from `gl.to_linear_layout()` plus a CDNA3 LDS model. That model turned out to be
-unreliable (see the warning above); use
-[`tools/lds_conflict.py`](tools/lds_conflict.py), which measures the hardware
-counter and can sweep `(vec, per_phase, max_phase)` directly:
+Given §4.1–4.4, the remaining question is *who hides the barriers and the LDS
+writes*, and that is the whole difference between the two kernels:
 
-```bash
-python tools/lds_conflict.py --kernel inter_wave --sweep
-```
-
-### 4.4 Where the time actually goes (4-wave)
-
-Ablating the hot loop of the 4-wave kernel (4096²×8192 fp16, the shape used while developing):
-
-| in-loop ops | ms | vs MFMA-only |
+| | [`intra_wave`](intra_wave/) (4 waves, 1/SIMD) | [`inter_wave`](inter_wave/) (8 waves, 2/SIMD) |
 |---|---|---|
-| mfma only | 0.379 | 1.00× |
-| + `local_load` | 0.372 | free |
-| + `buffer_load` | 0.373 | free |
-| + `local_store` | 0.417 | +10% |
-| `local_load` + `local_store` | 0.536 | **+41%** |
-| all three | 0.582 | +54% |
+| hides memory behind | MFMA in the **same** instruction stream | the **other wave group** |
+| needs | the LLIR scheduler plugin to interleave (§5) | `warp_pipeline_stage` and a barrier per region |
+| accumulators | AGPR — separate capacity at 1 wave/SIMD | VGPR — 2 waves split one 512-register file |
+| LDS refill | per half-tile, one region after its last read | whole tensors, late in the body |
+| ceiling | `ds_write` issue cost the MFMA stream cannot absorb | ~98% per-SIMD; barriers and write turnaround |
 
-Neither memory op costs anything on its own. The +41% appears only when both are
-present — i.e. it is entirely the **barriers** that the load/store pair forces
-membar to insert, plus the `s_waitcnt lgkmcnt(0)` each one drags along. In the
-generated assembly the backend clusters the MFMAs and lands two barriers ~6 MFMAs
-apart, so an 8-deep `ds_read` burst has to drain with only ~96 cycles of compute
-to hide it.
-
-Two things that did *not* fix it: regrouping the stores to cut barriers from 3 to
-2 per K-step (worse — 428 TFLOPS, the clustering costs more than the barrier),
-and splitting into 8 shorter regions (worse — 438). What does fix it is the
-8-wave kernel: when one wave group stalls on a barrier the other has MFMA work
-queued, which is the entire point of warp-pipelining.
-
-### 4.5 The 8-wave register wall
-
-Two waves per SIMD split the unified 512-register file, so each wave gets **256
-registers, VGPR and AGPR together** — AGPRs buy no capacity at 2 waves/SIMD,
-which is why the 8-wave kernel runs with `amdgpu-agpr-alloc=0,0` while the 4-wave
-one reserves 256 AGPRs. A 256×256×64 stage at 8 waves needs
-
-```
-accumulators   4 × [128×128] f32 / (8 × 64)  = 128
-dot operands   4 live half-tiles             =  96
-global staging 4 half-tiles                  =  32
-                                               ---
-                                               256   before addressing
-```
-
-which compiles to 256 VGPRs **with 28 spill slots** and 279 TFLOPS.
-
-The first fix was to read the operands as K=32 slices of the `BLOCK_K=64` LDS
-tile, halving the operand term to 48 (224 VGPR, 0 spills, 510 TFLOPS) at the
-price of 16 regions per K-step. The **current** kernel instead reads full
-`[128×64]` half-tiles but orders the dots `C_tl → C_tr → C_bl → C_br` so that
-`A_t` and `A_b` have non-overlapping liveness and **share one register set**:
-32 (A, shared) + 2 × 16 (B_l, B_r) = 64 rather than 96. That lands at 240 VGPR /
-0 spills and needs only 8 regions, halving the barriers. See
-[`inter_wave/README.md`](inter_wave/README.md) for the full schedule.
+The 4-wave kernel is the more instructive read and the 8-wave one is the faster
+kernel. Both READMEs assume this section.
 
 ## 5. On the tutorial's out-of-tree plugins
 
@@ -454,8 +442,12 @@ kernels/gemm/gfx942/
   README.md                     this file
   bench.py                      correctness + TFLOPS for both kernels,
                                 --sweep-gm, --rocprof
-  intra_wave/matmul_kernel.py   4-wave kernel  (+ README.md)
-  inter_wave/matmul_kernel.py   8-wave kernel  (+ README.md)
+  intra_wave/matmul_kernel.py   4-wave kernel
+             README.md          its design + differences from gfx950 v9
+             note.md            the opt1-opt5 optimization log
+  inter_wave/matmul_kernel.py   8-wave kernel
+             README.md          its design + differences from gfx950
+             images/            the pipeline diagram used by that README
   tools/layout_check.py         analytical LDS layout sweep (model is unreliable,
                                 see 4.3 -- prefer lds_conflict.py)
   tools/lds_conflict.py         SQ_LDS_BANK_CONFLICT counter + swizzle sweep

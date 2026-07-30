@@ -4,8 +4,16 @@ Port of the gfx950 tutorial's [`intra_wave/a16w16/v9_beyond_hotloop`](../../intr
 4 warps/CTA = **1 wave/SIMD**, a 256×256 output tile sliced into a 2×2 grid of
 128×128 quadrants, and XCD-aware PID remapping with `GROUP_SIZE_M=4`.
 
-Performance numbers for both gfx942 kernels are in [`../README.md`](../README.md)
-§3. This file is about the design.
+> **Read [`../README.md`](../README.md) first.** It has all the performance
+> numbers (§3) and the CDNA3 constraints this design is a response to (§4) — no
+> async copy, 64 KB of LDS, the 16-cycle MFMA, and the shared
+> `SwizzledSharedLayout(8, 1, 8)`. This file assumes them and covers only this
+> kernel's schedule.
+
+**Start with this kernel.** At 1 wave/SIMD there is nothing to hide behind: the
+memory ops and the MFMAs share one instruction stream, so every cost §4 describes
+lands directly in the schedule. [`../inter_wave`](../inter_wave/) is the answer to
+the problems that are visible here.
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
@@ -86,85 +94,97 @@ The accumulators only fit because AGPRs are separate capacity at 1 wave/SIMD —
 the opposite of [`../inter_wave`](../inter_wave/), where two resident waves split
 one unified 512-register file and AGPRs buy nothing.
 
-### LDS layout — `SwizzledSharedLayout(8, 1, 8)`
+### LDS layout
 
-`per_phase = 1`, **not 2**. The global-load layout has consecutive lanes walking
-consecutive rows, so lanes 0–15 of a `b128` access cover two adjacent rows; with
-`per_phase = 2` those rows share a swizzle phase, land on the same 32 banks, and
-every access replays. Measured with `tools/lds_conflict.py --sweep`:
-
-| | conflict ratio | cyc / LDS instr | `SQ_LDS_IDX_ACTIVE` |
-|---|---|---|---|
-| `(8, 2, 8)` | 0.667 | 13.33 | 2.510e9 |
-| **`(8, 1, 8)`** | **0.000** | **8.00** | **1.506e9** |
-
-Getting the `local_store` side conflict-free also required changing the
-global-load layout away from the tutorial's. The gfx950 layout has lanes 0–7 cover
-row `M0` and lanes 8–15 cover row `M0+16`; with a 128 B row stride those two rows
-land on the same banks and **no swizzle can separate them**, because the swizzle
-only permutes chunks *within* a row. Remapping so consecutive lanes walk
-consecutive rows makes lanes 0–15 cover two adjacent 128 B rows = 256 B = all 64
-banks exactly once, and improves the global side too (one instruction now reads
-1024 contiguous bytes).
-
-The 40% LDS-cycle saving is worth only −1.0% loop cycles here, versus −9.9% in
-`inter_wave`, because at 1 wave/SIMD the LDS duty cycle is far lower. See
-[`../inter_wave/README.md`](../inter_wave/README.md) for the swizzle parameter
-semantics.
-
-> [!WARNING]
-> `tools/layout_check.py`'s analytical model reports `(8, 2, 8)` as
-> conflict-free. It is wrong. Trust `SQ_LDS_BANK_CONFLICT` over the model.
+`SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4
+together with the global-load lane remapping it requires. Making it conflict-free
+is worth only **−1.0% loop cycles** here, against −9.9% in
+[`../inter_wave`](../inter_wave/): at 1 wave/SIMD the LDS duty cycle is low enough
+that a 40% saving in LDS *cycles* barely surfaces in loop cycles. That asymmetry
+is itself the diagnosis — this kernel is not LDS-throughput-bound, it is bound by
+the `ds_write` **issue** cost, below.
 
 ## Differences from the gfx950 kernel
 
-Same 2×2 quadrant slicing, same `B_left → A_top → A_bot → B_right` region order,
-same XCD-aware PID remap and `GROUP_SIZE_M` swizzle as
-[`v9_beyond_hotloop`](../../intra_wave/a16w16/v9_beyond_hotloop). Everything below
-is forced by CDNA3.
+The 2×2 quadrant slicing, the `B_left → A_top → A_bot → B_right` region order and
+the XCD-aware PID remap are all inherited unchanged from
+[`v9_beyond_hotloop`](../../intra_wave/a16w16/v9_beyond_hotloop). The *platform*
+differences — no async copy, 64 KB of LDS, the 16-cycle MFMA, 128 B/clk LDS, the
+swizzle — are in [`../README.md`](../README.md) §4. What changes at the **kernel**
+level is smaller than that list suggests:
 
-| | gfx950 (CDNA4) | **gfx942 (CDNA3)** |
+| | gfx950 v9 | **this kernel** |
 |---|---|---|
-| HBM → LDS | `buffer_load_to_shared` (async, direct) | `buffer_load` → **`local_store`** |
-| synchronisation | `wait_group(n)` on async copies | **`s_barrier`** + `s_waitcnt lgkmcnt` |
-| LDS capacity | 160 KB/CU | 64 KB/CU |
-| LDS buffers | `nBuffers = 2`, double-buffered | **1**, half-tile slot recycling |
-| LDS layout | `PaddedSharedLayout([[512, 16]])` | **`SwizzledSharedLayout(8, 1, 8)`** |
-| global-load lanes | lanes 0–7 row `M0`, 8–15 row `M0+16` | **consecutive lanes → consecutive rows** |
-| LDS bandwidth | 256 B/clk | 128 B/clk |
-| MFMA | `v_mfma_f32_16x16x32_f16`, 32 cyc | `v_mfma_f32_16x16x16_f16`, 16 cyc |
+| LDS pipelining | `nBuffers = 2`, double-buffered | **half-tile slot recycling**, 1 buffer |
 | mfma / K-step / wave | 128 | **256** |
 | loop | 2× unrolled | not unrolled |
 | accumulators | VGPR | **AGPR** (`amdgpu-agpr-alloc=256`) |
 | scheduling | in-tree pipeliner is enough | **LLIR plugin required** |
 
-Three consequences worth spelling out.
+Two of those are worth explaining.
 
-**1. The register round-trip is the whole story.** gfx950 streams HBM → LDS with
-one async instruction. CDNA3 must go `buffer_load` (HBM → VGPR) → `local_store`
-(VGPR → LDS) → `local_load` (LDS → VGPR). That costs 64 VGPRs of staging that
-gfx950 does not spend at all, and it adds 16 `ds_write_b128` per K-step to the LDS
-port. Ablation (see [`note.md`](note.md) §6) shows those writes are **~two thirds
-of all remaining inefficiency**: removing them takes in-loop MFMA efficiency from
-88.6% to 96.3%.
+**Accumulators move to AGPRs** because at 1 wave/SIMD the AGPR file is separate
+capacity rather than a slice of a shared one. The register round-trip costs 64
+VGPRs of staging gfx950 never spends, and adding 256 f32 of accumulator on top
+overflows the VGPR file; `amdgpu-agpr-alloc=256` is what makes the budget close.
+[`../inter_wave`](../inter_wave/) is the exact opposite — two resident waves split
+one unified 512-register file, so AGPRs buy nothing there.
 
-**2. It is a scheduling problem, not a bandwidth problem — and CDNA3 needs help
-with it.** Neither `local_load` nor `buffer_load` costs anything on its own here;
-the cost appears only when both are present, because that is when membar must
-insert barriers. The in-tree pipeliner leaves the memory ops clumped (`R4 … W4 …
-G5` separated by runs of 20–70 MFMAs), so the LLIR scheduler plugin is required to
-spread them — and it had to be taught CDNA3 first, since its MFMA table held only
-CDNA4 shape names and it was silently skipping every region.
+**The LLIR plugin becomes required** because this is a scheduling problem rather
+than a bandwidth one, and CDNA3's in-tree pipeliner does not solve it. It leaves
+the memory ops clumped — `R4 … W4 … G5` separated by runs of 20–70 MFMAs — so an
+8-deep `ds_read` burst has to drain with only ~96 cycles of compute to cover it.
+The plugin spreads them, but it had to be taught CDNA3 first: its MFMA table held
+only CDNA4 shape names, so it returned 0 cycles for `mfma.f32.16x16x16f16` and was
+silently skipping every region.
 
-**3. The `ds_write` issue cost sets a hard ceiling.** A `ds_write_b128` issues in
-~20 cycles (4 for the address, 16 for the data) while a `v_mfma_f32_16x16x16_f16`
-covers only 16 — so **one MFMA cannot hide one LDS write**. 16 × 20 = 320
-unhideable cycles per iteration, against 366.5 measured. On gfx950 the async copy
-means there is no such instruction to hide. This is the limit of the intra_wave
-design on MI300: going further means writing *less* to LDS, which is a different
-pipeline rather than a tuning knob, and it is why
-[`../inter_wave`](../inter_wave/) — which hides its writes behind the other wave
-group — reaches ~98% instead.
+The remaining difference is the one that cannot be scheduled away, and it is the
+subject of the next section.
+
+## Where the time goes, and the ceiling
+
+Ablating the hot loop op-by-op (4096²×8192 fp16, the shape used while developing)
+isolates the cost:
+
+| in-loop ops | ms | vs MFMA-only |
+|---|---|---|
+| mfma only | 0.379 | 1.00× |
+| + `local_load` | 0.372 | free |
+| + `buffer_load` | 0.373 | free |
+| + `local_store` | 0.417 | +10% |
+| `local_load` + `local_store` | 0.536 | **+41%** |
+| all three | 0.582 | +54% |
+
+**Neither memory op costs anything on its own.** The +41% appears only when both
+are present — it is the `s_barrier`s that the load/store pair forces membar to
+insert (§4.1), plus the `s_waitcnt lgkmcnt(0)` each drags along. Two things that
+did *not* fix it: regrouping the stores to cut barriers from 3 per K-step to 2
+(worse, 428 TFLOPS — the resulting clumping costs more than the barrier saved) and
+splitting into 8 shorter regions (worse, 438).
+
+A sharper probe: delete the 16 `ds_write_b128` from the compiled loop and
+reassemble via `TRITON_KERNEL_OVERRIDE`, holding register allocation and
+everything else constant. The result is numerically wrong — it is a timing probe.
+
+| | cyc/iter | MFMA eff |
+|---|---|---|
+| as shipped | 4621.5 | 88.63% |
+| `ds_write` removed | 4255.0 | **96.26%** |
+
+`ds_write` is **~two thirds of all remaining inefficiency**, and it is not
+bandwidth: a `ds_write_b128` issues in ~20 cycles (4 for the address, 16 for the
+data) while a `v_mfma_f32_16x16x16_f16` covers only 16, so **one MFMA cannot hide
+one LDS write**. 16 × 20 = 320 unhideable cycles per iteration, against 366.5
+measured. Full analysis in [`note.md`](note.md) §6.
+
+**This is the limit of the intra_wave design on MI300.** Closing it means writing
+*less* to LDS — a different pipeline, not a tuning knob — or not paying the cost in
+this instruction stream at all. The latter is exactly what
+[`../inter_wave`](../inter_wave/) does, by handing the writes to the other wave
+group while this one is on the matrix unit, and it is why that kernel reaches ~98%
+per-SIMD instead of 89%.
+
+**Next:** [`../inter_wave/README.md`](../inter_wave/README.md).
 
 ## Optimization history
 
