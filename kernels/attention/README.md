@@ -349,8 +349,10 @@ statement, not a scheduling one: no ordering of these instructions can help, bec
 simply more cycles of vector work than there is shadow to hide it in.
 
 **Lazy rescaling** is what removes the larger of the two. The trick is not ours — we took it from
-ROCm/FlyDSL's `dualwave_swp_lazy_rescale` path, which is also where the log2 threshold of 8 comes
-from. Softmax is shift-invariant, so the running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fmha_v4`
+ROCm/FlyDSL's
+[`dualwave_swp_lazy_rescale`](https://github.com/ROCm/FlyDSL/blob/63eb891/kernels/attention/flash_attn_gfx950.py)
+path, which is also where the log2 threshold of 8 comes from. Softmax is shift-invariant, so the
+running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fmha_v4`
 lets it **lag**: the max is bumped, and `acc` rescaled, only when a tile's max exceeds the
 running max by more than a log2 threshold of 8 — a 256× safety margin, trivially inside fp32's
 range. When the max is stable, which is the common case after the first few tiles, `p` is

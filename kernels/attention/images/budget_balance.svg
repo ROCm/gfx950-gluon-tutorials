@@ -16,14 +16,12 @@
   <text class="lbl" x="112" y="52" text-anchor="end">QK</text>
   <rect x="120.0" y="38" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="52" text-anchor="middle">cvt 64</text>
   <rect x="176.7" y="38" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233.3" y="52" text-anchor="middle">sum 128</text>
-  <rect x="290.0" y="38" width="10.6" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="295.3" y="52" text-anchor="middle"></text>
   <rect class="win" x="120" y="38" width="340" height="20"/>
   <text class="ok" x="472.0" y="52">204 — fits</text>
   <text class="lbl" x="112" y="78" text-anchor="end">PV</text>
   <rect x="120.0" y="64" width="56.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="148.3" y="78" text-anchor="middle">max 64</text>
   <rect x="176.7" y="64" width="113.3" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="233.3" y="78" text-anchor="middle">fma 128</text>
   <rect x="290.0" y="64" width="226.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="403.3" y="78" text-anchor="middle">exp 256</text>
-  <rect x="516.7" y="64" width="31.9" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="532.6" y="78" text-anchor="middle">36</text>
   <rect class="win" x="120" y="64" width="340" height="20"/>
   <text class="over" x="560.5" y="78">484 — 100 over</text>
   <text class="note" x="120" y="104">PV over by 100, QK holding 180 idle.</text>
@@ -31,7 +29,6 @@
   <text class="lbl" x="112" y="144" text-anchor="end">QK</text>
   <rect x="120.0" y="130" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="144" text-anchor="middle">cvt 64</text>
   <rect x="176.7" y="130" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233.3" y="144" text-anchor="middle">sum 128</text>
-  <rect x="290.0" y="130" width="10.6" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="295.3" y="144" text-anchor="middle"></text>
   <rect x="300.6" y="130" width="56.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="329.0" y="144" text-anchor="middle">fma 64</text>
   <rect x="357.3" y="130" width="113.3" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="414.0" y="144" text-anchor="middle">exp 128</text>
   <rect class="win" x="120" y="130" width="340" height="20"/>
@@ -40,7 +37,6 @@
   <rect x="120.0" y="156" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="170" text-anchor="middle">max 64</text>
   <rect x="176.7" y="156" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="205.0" y="170" text-anchor="middle">fma 64</text>
   <rect x="233.3" y="156" width="113.3" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="290.0" y="170" text-anchor="middle">exp 128</text>
-  <rect x="346.7" y="156" width="31.9" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="362.6" y="170" text-anchor="middle">36</text>
   <rect class="win" x="120" y="156" width="340" height="20"/>
   <text class="ok" x="472.0" y="170">292 — fits</text>
   <text class="note" x="120" y="196">Overshoots: QK spills, PV now has slack. Imbalance, other side.</text>
@@ -48,7 +44,6 @@
   <text class="lbl" x="112" y="236" text-anchor="end">QK</text>
   <rect x="120.0" y="222" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="236" text-anchor="middle">cvt 64</text>
   <rect x="176.7" y="222" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233.3" y="236" text-anchor="middle">sum 128</text>
-  <rect x="290.0" y="222" width="10.6" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="295.3" y="236" text-anchor="middle"></text>
   <rect x="300.6" y="222" width="28.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="314.8" y="236" text-anchor="middle">fma 32</text>
   <rect x="329.0" y="222" width="56.7" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="357.3" y="236" text-anchor="middle">exp 64</text>
   <rect class="win" x="120" y="222" width="340" height="20"/>
@@ -57,7 +52,6 @@
   <rect x="120.0" y="248" width="56.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="148.3" y="262" text-anchor="middle">max 64</text>
   <rect x="176.7" y="248" width="85.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="219.2" y="262" text-anchor="middle">fma 96</text>
   <rect x="261.7" y="248" width="170.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="346.7" y="262" text-anchor="middle">exp 192</text>
-  <rect x="431.7" y="248" width="31.9" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="447.6" y="262" text-anchor="middle">36</text>
   <rect class="win" x="120" y="248" width="340" height="20"/>
   <text class="over" x="475.5" y="262">388 — 4 over</text>
   <text class="note" x="120" y="288">Not enough: PV still over, QK still holding 84 it could take.</text>
@@ -65,7 +59,6 @@
   <text class="lbl" x="112" y="328" text-anchor="end">QK</text>
   <rect x="120.0" y="314" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="328" text-anchor="middle">cvt 64</text>
   <rect x="176.7" y="314" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233.3" y="328" text-anchor="middle">sum 128</text>
-  <rect x="290.0" y="314" width="10.6" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="295.3" y="328" text-anchor="middle"></text>
   <rect x="300.6" y="314" width="42.5" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="321.9" y="328" text-anchor="middle">fma 48</text>
   <rect x="343.1" y="314" width="85.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="385.6" y="328" text-anchor="middle">exp 96</text>
   <rect class="win" x="120" y="314" width="340" height="20"/>
@@ -74,9 +67,8 @@
   <rect x="120.0" y="340" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="354" text-anchor="middle">max 64</text>
   <rect x="176.7" y="340" width="70.8" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="212.1" y="354" text-anchor="middle">fma 80</text>
   <rect x="247.5" y="340" width="141.7" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="318.3" y="354" text-anchor="middle">exp 160</text>
-  <rect x="389.2" y="340" width="31.9" height="20" fill="#e2e2e2" stroke="#9a9a9a"/><text class="seg" x="405.1" y="354" text-anchor="middle">36</text>
   <rect class="win" x="120" y="340" width="340" height="20"/>
   <text class="ok" x="472.0" y="354">340 — fits</text>
   <text class="note" x="120" y="380">Both inside, within 8 cycles of each other. The shipped ratio.</text>
-  <text class="note" x="120" y="410">Compiled margins. The grey slivers are the backend's own address arithmetic, not softmax work.</text>
+  <text class="note" x="120" y="410">Bars are softmax only; each total adds 12 (QK) / 36 (PV) cycles of backend address arithmetic.</text>
 </svg>
