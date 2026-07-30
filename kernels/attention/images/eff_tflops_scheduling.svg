@@ -38,13 +38,13 @@
 <text class="lg" x="165.7" y="225.1" fill="#d4820a">FlyDSL: 5.9/point</text>
 <line x1="259.0" y1="234.2" x2="259.0" y2="237.2" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="259.0" cy="237.2" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="271.0" y="241.2" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -0.4% off the line</text>
+<text class="lg" x="271.0" y="241.2" fill="#3b7dd8" text-anchor="start">fmha_v4 stock+nosink  -0.4% off the line</text>
 <line x1="379.3" y1="217.7" x2="379.3" y2="195.8" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="379.3" cy="195.8" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
 <text class="lg" x="367.3" y="199.8" fill="#d4820a" text-anchor="end">FlyDSL  +3.3% off the line</text>
 <line x1="589.3" y1="188.9" x2="589.3" y2="189.9" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="589.3" cy="189.9" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="577.3" y="193.9" fill="#2f7d43" text-anchor="end">fav4 best  -0.1% off the line</text>
+<text class="lg" x="577.3" y="193.9" fill="#2f7d43" text-anchor="end">fmha_v4 best  -0.1% off the line</text>
 <circle cx="260.8" cy="234.6" r="3.0" fill="#b9b9b9"/>
 <circle cx="294.9" cy="217.8" r="3.0" fill="#b9b9b9"/>
 <circle cx="312.9" cy="211.2" r="3.0" fill="#b9b9b9"/>
@@ -135,13 +135,13 @@
 <text class="lg" x="147.8" y="524.8" fill="#d4820a">FlyDSL, same line</text>
 <line x1="259.0" y1="500.5" x2="259.0" y2="499.2" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="259.0" cy="499.2" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="271.0" y="503.2" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  +0.2% off the line</text>
+<text class="lg" x="271.0" y="503.2" fill="#3b7dd8" text-anchor="start">fmha_v4 stock+nosink  +0.2% off the line</text>
 <line x1="379.3" y1="463.3" x2="379.3" y2="448.2" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="379.3" cy="448.2" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
 <text class="lg" x="367.3" y="452.2" fill="#d4820a" text-anchor="end">FlyDSL  +2.6% off the line</text>
 <line x1="589.3" y1="398.4" x2="589.3" y2="396.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="589.3" cy="396.7" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="577.3" y="400.7" fill="#2f7d43" text-anchor="end">fav4 best  +0.3% off the line</text>
+<text class="lg" x="577.3" y="400.7" fill="#2f7d43" text-anchor="end">fmha_v4 best  +0.3% off the line</text>
 <circle cx="260.8" cy="491.9" r="3.0" fill="#b9b9b9"/>
 <circle cx="397.2" cy="443.7" r="3.0" fill="#b9b9b9"/>
 <circle cx="546.2" cy="397.0" r="3.0" fill="#b9b9b9"/>
@@ -213,13 +213,13 @@
 <text class="lg" x="434.9" y="812.3" fill="#1a1a1a">one line, both kernels: -11.7 MHz per point (R²=0.92)</text>
 <line x1="259.0" y1="750.9" x2="259.0" y2="766.1" stroke="#3b7dd8" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="259.0" cy="766.1" r="6.4" fill="none" stroke="#3b7dd8" stroke-width="1.8"/>
-<text class="lg" x="271.0" y="770.1" fill="#3b7dd8" text-anchor="start">fav4 stock+nosink  -1.4% off the line</text>
+<text class="lg" x="271.0" y="770.1" fill="#3b7dd8" text-anchor="start">fmha_v4 stock+nosink  -1.4% off the line</text>
 <line x1="379.3" y1="798.3" x2="379.3" y2="796.5" stroke="#d4820a" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="379.3" cy="796.5" r="6.4" fill="none" stroke="#d4820a" stroke-width="1.8"/>
 <text class="lg" x="367.3" y="800.5" fill="#d4820a" text-anchor="end">FlyDSL  +0.2% off the line</text>
 <line x1="589.3" y1="881.2" x2="589.3" y2="870.7" stroke="#2f7d43" stroke-width="1" stroke-dasharray="3 2"/>
 <circle cx="589.3" cy="870.7" r="6.4" fill="none" stroke="#2f7d43" stroke-width="1.8"/>
-<text class="lg" x="577.3" y="874.7" fill="#2f7d43" text-anchor="end">fav4 best  +1.1% off the line</text>
+<text class="lg" x="577.3" y="874.7" fill="#2f7d43" text-anchor="end">fmha_v4 best  +1.1% off the line</text>
 <circle cx="260.8" cy="770.6" r="3.0" fill="#b9b9b9"/>
 <circle cx="397.2" cy="778.7" r="3.0" fill="#b9b9b9"/>
 <circle cx="546.2" cy="793.8" r="3.0" fill="#b9b9b9"/>

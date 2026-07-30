@@ -7,7 +7,7 @@
     .over { font-size: 11px; fill: #c8443c; }
     .win  { fill: none; stroke: #767676; stroke-width: 1.4; }
   </style>
-  <text class="h" x="8" y="16">fav3: what the softmax asks of each dot cluster's 384 cycles of shadow</text>
+  <text class="h" x="8" y="16">fmha_v3: what the softmax asks of each dot cluster's 384 cycles of shadow</text>
   <line x1="460" y1="26" x2="460" y2="106" stroke="#767676" stroke-width="1" stroke-dasharray="3 3"/>
   <text class="lbl" x="460" y="24" text-anchor="middle">384</text>
 
