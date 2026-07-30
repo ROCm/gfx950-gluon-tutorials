@@ -1,5 +1,6 @@
 """
-FMHA v4: CDNA4 (gfx950) Flash Attention forward kernel with LAZY softmax rescaling.
+FMHA v4: a CDNA4 (gfx950) flash multi-head attention forward kernel with LAZY
+softmax rescaling.
 
 This is fmha_v3.py with one algorithmic change: the online-softmax accumulator
 correction (``acc *= alpha``) is applied *lazily*. Softmax is shift-invariant --
@@ -21,8 +22,6 @@ is the point -- a row carrying alpha == 1 is numerically a no-op, but its multip
 still issues and still costs its four cycles, so eliding that VALU needs control
 flow rather than a multiply by one.
 
-This file implements a CDNA4 (gfx950) Flash Attention forward kernel.
-
 It contains the Gluon kernel, its single autotune config, and the host launcher
 (``run_gluon_attention``); correctness and benchmarking live in ``bench.py``. This
 tutorial copy is simplified to the single most-performant path: non-causal, head
@@ -34,10 +33,12 @@ be told so the vector work lands inside an MFMA's shadow -- is written up in
 ``README.md`` in this directory.
 
 Build environment: both kernels want the llirSched plugin loaded and MachineSink
-disabled (see the README). Neither needs a kernel-specific environment variable,
-and in particular neither needs ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from
-packed math and the plugin declares its groups in instructions, so the backend
-peephole splits whatever lands in a shadow.
+disabled (see the README). The two settings the README's numbers use are already
+the defaults -- the plugin paces the mem stages with ``LLIRSCHED_WP_MEMNOP=2``,
+and ``SCALE_ON_Q`` below defaults to True -- so a plain run is the tuned one.
+Neither kernel wants ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from packed
+math and the plugin declares its groups in instructions, so the backend peephole
+splits whatever lands in a shadow.
 """
 
 import os
@@ -93,9 +94,10 @@ from common import (
 
 
 # ---------------------------------------------------------------------------
-# Logical sub-cluster primitives for the matched rotated 4-cluster loop.
+# The eight per-tile operations of the rotated 4-cluster loop.
 #
-# The hot loop is composed from eight named logical sub-clusters:
+# These are the names README.md uses; each of the four warp_pipeline clusters below
+# holds two of them:
 #
 #   dot_qk (DOT1) -- Q * K^T MFMA -> qk scores
 #   dot_pv (DOT2) -- P * V   MFMA -> acc
@@ -141,8 +143,10 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr, SCALE_ON_Q: gl.constexpr):
 
     From the qk scores produced by DOT1 this iteration, computes the (lazily
     updated) running max and the unnormalized probabilities p = exp2(qk*scale -
-    m_new) and rescale factor alpha = exp2(m_run - m_new), carried to the next
-    iteration (consumed by VEC2 and DOT2).
+    m_new), and the rescale factor alpha = exp2(m_run - m_new). Five eighths of p
+    are exponentiated here; the remaining three slices are handed over raw for
+    VEC2 to finish (see the split below). All of it is carried to the next
+    iteration, where VEC2 and DOT2 consume it.
 
     LAZY rescale: instead of always bumping the max to max(m_run, rowmax(qk)),
     the max is only advanced for rows whose tile-max exceeds the running max by
@@ -170,18 +174,19 @@ def sc_vec1(qk, m_run, qk_scale: gl.constexpr, SCALE_ON_Q: gl.constexpr):
     # T0..T7 and split the softmax numerator 5:3 -- sub + exp2 on T0..T4 stay here in
     # VEC1 (DOT2), and BOTH the sub and the exp2 for T5/T6/T7 move to VEC2 (DOT1).
     #
-    # Why 3/8, and why sub and exp2 must move together: the two dot clusters share a
-    # fixed co-execution budget, and moving work between them is the only way to level
-    # them. Halving overshoots (DOT1 goes over while DOT2 is left with slack); a quarter
-    # does not move enough. 3/8 lands both inside, within 8 cycles of each other -- which
-    # is why the tile is cut into eighths rather than halves. Moving the exp2 alone fails:
-    # its subtract is left behind with its only consumer now in the other cluster, and a
-    # scheduler that can see the consumer downstream drags the subtract out of the cluster
-    # entirely (a pure fsub has no chain edge, so no barrier holds it). Carrying the RAW
-    # slices qk_5..qk_7 across means the sub is born in the cluster that consumes it.
+    # Why 3/8: the two dot clusters share a fixed co-execution budget of 384 cycles each,
+    # and moving elementwise work between them is the only way to level them. At 3/8 the
+    # softmax asks 324 cycles of DOT2 and 356 of DOT1, both inside with margin on either
+    # side; eighths are the granularity that makes that ratio reachable. README section 5
+    # sweeps it.
+    #
+    # The sub moves with its exp2. A subtract left behind in VEC1 has its only consumer in
+    # the other cluster, and the scheduler sinks it there -- a pure fsub carries no chain
+    # edge, so no barrier holds it in place. Carrying the RAW slices qk_5..qk_7 across
+    # means the sub is born in the cluster that consumes it.
     #
     # Register-neutral: p_0123 (4 slices) + p_4 + qk_5 + qk_6 + qk_7 carries the same
-    # element count as the full p. Exact, since exp2 is elementwise. README section 5.
+    # element count as the full p, and the result is exact since exp2 is elementwise.
     qk_lo, qk_hi = _split_halves(qk)        # 2 x [256, 32]
     qk_a, qk_b = _split_halves(qk_lo)       # 4 x [256, 16]
     qk_c, qk_d = _split_halves(qk_hi)
@@ -313,11 +318,11 @@ def get_gluon_cdna_autotune_configs():
     # Simplified tutorial baseline: the single most performant config for the
     # focus shape (D=128, non-causal). Full autotune space is in git history.
     #
-    # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs (VGPR-only). By default
-    # the backend parks accumulators in AGPRs and shuffles them with v_accvgpr moves;
-    # with the 2x-unrolled loop that shuffling lands on the critical path and costs
-    # ~50 TFLOPS (~803 VGPR-only vs ~754 with AGPRs), so VGPR-only is required here,
-    # not just cosmetic. Tuple form required: the string form splits "0,0" on its comma.
+    # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs, so the accumulators live in
+    # VGPRs. Left to itself the backend parks them in AGPRs and moves them in and out with
+    # v_accvgpr; in the 2x-unrolled loop those moves land on the critical path and cost
+    # several percent of throughput. The tuple form is required -- as a string, "0,0" is
+    # split on its comma.
     return [
         triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2,
                        'llvm_fn_attrs': (("amdgpu-agpr-alloc", "0,0"),)}, num_warps=8),
@@ -347,7 +352,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
                    BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr,
                    SCALE_ON_Q: gl.constexpr = True):
     """
-    Gluon Flash Attention Forward Kernel (AMD CDNA4 / gfx950).
+    Gluon FMHA forward kernel (AMD CDNA4 / gfx950).
     Grid: (num_heads_q, num_m_blocks, batch)
     """
     num_warps: gl.constexpr = gl.num_warps()
@@ -369,22 +374,21 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     p_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=0, parent=mma_layout, k_width=pv_k_width)
     v_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=1, parent=mma_layout, k_width=pv_k_width)
 
-    # Store layout for the O tile (BLOCK_M x BLOCK_DMODEL = 256 x 128). `threads_per_warp`
-    # is [4, 16], not [16, 4]: with `order=[1, 0]` the D axis is contiguous, so 16 lanes x
-    # `size_per_thread`=8 covers all 128 columns of a row, giving 256 contiguous bytes per
-    # 16 lanes -- one full row per quarter-warp -- and 8 bf16 per lane is exactly the
-    # `dwordx4` the store wants. [16, 4] instead spreads 16 lanes down M and covers only 32
-    # columns per row, so each row is stitched from 4 lanes and the access is strided.
+    # Store layout for the O tile (BLOCK_M x BLOCK_DMODEL = 256 x 128). `order=[1, 0]` puts
+    # the D axis contiguous, and `threads_per_warp=[4, 16]` spreads 16 lanes along it: 16
+    # lanes x `size_per_thread`=8 covers all 128 columns of a row, so a quarter-warp holds
+    # one full row as 256 contiguous bytes, and the 8 bf16 per lane are exactly the
+    # `dwordx4` the store wants.
     blocked_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[4, threads_per_warp // 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
 
-    # The LSE store is 1-D over BLOCK_M and wants consecutive rows on consecutive lanes,
-    # which is the *opposite* of what the O store wants. Slicing dim 1 out of `blocked_layout`
-    # above leaves only `threads_per_warp[0]`=4 lanes along M, so `lse` would go out as 8
-    # stride-4 `global_store_dword` instead of 2 contiguous ones -- invisible at S=8192 where
-    # LSE is 1 KB against O's 64 KB, but a 3% regression at S=2048 where the epilogue is a
-    # third of the dispatch. So keep the M-major arrangement for LSE only.
+    # The LSE store is 1-D over BLOCK_M and wants consecutive rows on consecutive lanes, so
+    # it needs its own M-major arrangement: `threads_per_warp=[16, 4]` puts 16 lanes along M
+    # and `lse` goes out as 2 contiguous `global_store_dword`. Reusing `blocked_layout` for it
+    # would leave 4 lanes along M and 8 stride-4 stores -- invisible at S=8192, where LSE is
+    # 1 KB against O's 64 KB, and a 3% regression at S=2048, where the epilogue is a third of
+    # the dispatch.
     lse_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[threads_per_warp // 4, 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
@@ -742,8 +746,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     o_base  = Out + off_z * stride_oz + off_h_q * stride_oh
     o_ptrs  = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
     o_mask  = offs_m[:, None] < N_CTX
-    # Downcast *before* the layout conversion, not after: `convert_layout` out of the mma
-    # layout goes through LDS, and doing it in bf16 halves the bytes that round trip.
+    # Downcast first, then convert the layout: `convert_layout` out of the mma layout goes
+    # through LDS, and doing it in bf16 halves the bytes that round trip.
     acc_out = acc.to(Out.dtype.element_ty)
     acc_blocked = gl.convert_layout(acc_out, blocked_layout)
     gl.store(o_ptrs, acc_blocked, mask=o_mask)

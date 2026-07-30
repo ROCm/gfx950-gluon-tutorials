@@ -36,7 +36,7 @@ then determines the loop structure ([§4](#4-designing-the-loop)), the differenc
 the compiler has to do for them ([§6](#6-making-the-compiler-co-operate)). [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) is an appendix for one conflict too subtle to belong in
 the main line. [§8](#8-applying-this-to-your-own-kernel) is the part meant to travel: the rules the kernel author owns, a procedure for
 diagnosing a kernel of your own, and which of these numbers are gfx950's rather than the
-architecture's. [§9](#9-results) measures the result and takes the comparison above apart; [§10](#10-where-to-go-deeper) is where to read
+architecture's. [§9](#9-results) measures the result and prices each step of it; [§10](#10-where-to-go-deeper) is where to read
 further.
 
 **Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
@@ -129,6 +129,7 @@ What can be spent there, and at what price:
 |---|---|---|
 | VALU (`v_fma`, `v_add`, `v_max3`, `v_cvt`…) | **4 cycles** | 6 fit in one MFMA's window |
 | TRANS (`v_exp_f32`) | **8 cycles** | 3 fit — a transcendental is not un-hideable, just twice the price |
+| cross-lane (`v_permlane32_swap`) | **20 cycles** | one window holds a permlane and a single 4-cycle op beside it |
 | packed f32 (`v_pk_*`) | **4 cycles for 2 elements** | but **does not fit**: a packed op cannot be placed in the window at all, and issuing one pushes the next MFMA past its 32-cycle interval |
 
 A dot cluster of 16 MFMAs therefore has **16 × 24 = 384 cycles** to spend.
@@ -327,11 +328,12 @@ registers, and the accumulator is 32 × 128, so 64:
 | rescale the accumulator | 64 × `v_mul` | VALU | **256** | 32 × `v_pk_mul` = **128** | QK |
 | finish the reduction across lanes | `v_permlane32_swap` + copies + nop | VALU | 20 | — | one in **each** |
 
-The last row is the tail of the two reductions above it. In the 32 × 32 MFMA layout a lane and
-its partner 32 lanes away hold different columns of the same row, so a row-wise reduction cannot
-finish inside a lane: the per-lane tree ends in one `v_permlane32_swap_b32`. With the copies it
-needs and the wait state the hazard recognizer inserts after it, budget that step at 20 cycles.
-It appears once in PV, closing the row max, and once in QK, closing the row sum.
+The last row is the cross-lane tail of the two reductions above it, at [§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)'s price for that class.
+In the 32 × 32 MFMA layout a lane and its partner 32 lanes away hold different columns of the
+same row, so a row-wise reduction cannot finish inside a lane: the per-lane tree ends in one
+`v_permlane32_swap_b32`, with the copies it needs and the wait state the hazard recognizer
+inserts after it. It appears once in PV, closing the row max, and once in QK, closing the row
+sum — the shuffle [§4.3](#43-register-budget-and-why-the-loop-is-unrolled-2) counted per wave.
 
 The packed column is the same work at half the issue cost — and it is a trap here, because a packed
 op cannot go in an MFMA's shadow at all ([§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)). Halving the cost only helps for work that was never
@@ -501,7 +503,8 @@ wave's `ds_read`s just enough that they arrive past the `max3` block and land on
 sum work instead, which is 1- and 2-source. The kernel is unchanged; only the phase relationship
 between the two waves moves. `MEMNOP=2` is the optimum for both kernels at either `SCALE_ON_Q`
 setting — and the sweep is not smooth, which is what you would expect from a phase effect rather
-than a quantity.
+than a quantity. It is the plugin's `LLIRSCHED_WP_MEMNOP`, and 2 is its default, so the top row
+of the table below is the one that needs an override (`LLIRSCHED_WP_MEMNOP=0`).
 
 **`SCALE_ON_Q` removes the ops.** Folding `qk_scale` into `Q` before the loop turns every
 `fma(qk, qk_scale, −m_new)` into a plain `sub`, so those stop competing for the register file at
@@ -522,7 +525,9 @@ of at most 3 TFLOPS.
 
 Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
 and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
-fold the larger, at **+1.25%** and **+0.91%**.
+fold the larger, at **+1.25%** and **+0.91%**. The bottom row is [§9](#9-results)'s tuned
+configuration, measured again in this sweep; the two readings differ by a single TFLOPS, which is
+what the spread above buys you.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
@@ -553,7 +558,7 @@ work:
 
 ```
 per region:   capacity = (number of MFMAs in the region) × 24 cycles
-              demand   = Σ 4 cycles per VALU op + 8 cycles per TRANS op
+              demand   = Σ 4 cycles per VALU op + 8 per TRANS + 20 per cross-lane op
                          (a packed op cannot be covered at all — count it as already exposed)
               exposed  = max(0, demand − capacity)
 
@@ -664,18 +669,21 @@ git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.0 /tmp/tri
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-Then, from `kernels/attention/`:
+Then, from `kernels/attention/`, at the shape the table above uses:
 
 ```bash
 FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
 LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-python bench.py --seqlen 16320
+python bench.py --batch 32 --hq 8 --hk 8 --seqlen 8192
 ```
 
 Those three variables are not tuning knobs — they are what [§6](#6-making-the-compiler-co-operate) is about, and dropping
-them measures the stock-LLVM bars of the chart above instead. `scripts/fa_kernel_time.py` takes the
-same environment and reports the kernel-time TFLOPS this table quotes.
+them measures the stock-LLVM bars of the chart above instead. The two settings the table names are
+already the defaults: `SCALE_ON_Q` is on unless you pass `--scale-on-q 0`, and the plugin paces the
+mem stages at `LLIRSCHED_WP_MEMNOP=2` on its own. `bench.py` reports `do_bench` wall time;
+`scripts/fa_kernel_time.py` takes the same environment and reports the rocprofv3 kernel-time TFLOPS
+the table quotes.
 
 ## 10. Where to go deeper
 

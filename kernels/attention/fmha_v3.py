@@ -1,5 +1,5 @@
 """
-This file implements a CDNA4 (gfx950) Flash Attention forward kernel.
+FMHA v3: a CDNA4 (gfx950) flash multi-head attention forward kernel.
 
 It contains the Gluon kernel, its single autotune config, and the host launcher
 (``run_gluon_attention``); correctness and benchmarking live in ``bench.py``. This
@@ -16,10 +16,12 @@ be told so the vector work lands inside an MFMA's shadow -- is written up in
 ``README.md`` in this directory.
 
 Build environment: both kernels want the llirSched plugin loaded and MachineSink
-disabled (see the README). Neither needs a kernel-specific environment variable,
-and in particular neither needs ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from
-packed math and the plugin declares its groups in instructions, so the backend
-peephole splits whatever lands in a shadow.
+disabled (see the README). The two settings the README's numbers use are already
+the defaults -- the plugin paces the mem stages with ``LLIRSCHED_WP_MEMNOP=2``,
+and ``SCALE_ON_Q`` below defaults to True -- so a plain run is the tuned one.
+Neither kernel wants ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from packed
+math and the plugin declares its groups in instructions, so the backend peephole
+splits whatever lands in a shadow.
 """
 
 import os
@@ -74,9 +76,10 @@ from common import (
 
 
 # ---------------------------------------------------------------------------
-# Logical sub-cluster primitives for the matched rotated 4-cluster loop.
+# The eight per-tile operations of the rotated 4-cluster loop.
 #
-# The hot loop is composed from eight named logical sub-clusters:
+# These are the names README.md uses; each of the four warp_pipeline clusters below
+# holds two of them:
 #
 #   dot_qk (DOT1) -- Q * K^T MFMA -> qk scores
 #   dot_pv (DOT2) -- P * V   MFMA -> acc
@@ -131,10 +134,12 @@ def sc_vec2(acc, l_i, p, alpha, p_dot_layout: gl.constexpr, out_dtype: gl.conste
     following DOT2. p and alpha were produced by VEC1 in the *previous* iteration
     (the carried previous-tile probabilities).
 
-    Op order: accumulator rescale (acc *= alpha) FIRST, then the row-sum (l_ij),
+    Op order: accumulator rescale (acc *= alpha) first, then the row-sum (l_ij),
     the running-denominator update (l_i = l_i*alpha + l_ij), then the p->fp16 cast.
-    Putting the big acc-rescale VALU block first (with the reverse-6 interleave)
-    front-loads it before the QK MFMAs.
+    The rescale is the block this cluster's budget cannot absorb, so it comes
+    first: that keeps the uncovered remainder contiguous at the head of the QK
+    region, ahead of the MFMAs, where an exposed packed op pays no back-to-back
+    hazard (README section 8.1).
     """
     acc = acc * alpha[:, None]
     l_ij = gl.sum(p, axis=1)
@@ -151,11 +156,11 @@ def get_gluon_cdna_autotune_configs():
     # Simplified tutorial baseline: the single most performant config for the
     # focus shape (D=128, non-causal). Full autotune space is in git history.
     #
-    # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs (VGPR-only). By default
-    # the backend parks accumulators in AGPRs and shuffles them with v_accvgpr moves;
-    # with the 2x-unrolled loop that shuffling lands on the critical path and costs
-    # ~50 TFLOPS (~803 VGPR-only vs ~754 with AGPRs), so VGPR-only is required here,
-    # not just cosmetic. Tuple form required: the string form splits "0,0" on its comma.
+    # llvm_fn_attrs amdgpu-agpr-alloc="0,0" forces 0 AGPRs, so the accumulators live in
+    # VGPRs. Left to itself the backend parks them in AGPRs and moves them in and out with
+    # v_accvgpr; in the 2x-unrolled loop those moves land on the critical path and cost
+    # several percent of throughput. The tuple form is required -- as a string, "0,0" is
+    # split on its comma.
     return [
         triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2,
                        'llvm_fn_attrs': (("amdgpu-agpr-alloc", "0,0"),)}, num_warps=8),
@@ -185,7 +190,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
                    BLOCK_M: gl.constexpr, BLOCK_DMODEL: gl.constexpr, BLOCK_N: gl.constexpr,
                    SCALE_ON_Q: gl.constexpr = True):
     """
-    Gluon Flash Attention Forward Kernel (AMD CDNA4 / gfx950).
+    Gluon FMHA forward kernel (AMD CDNA4 / gfx950).
     Grid: (num_heads_q, num_m_blocks, batch)
     """
     num_warps: gl.constexpr = gl.num_warps()
@@ -207,20 +212,19 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     p_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=0, parent=mma_layout, k_width=pv_k_width)
     v_dot_layout:  gl.constexpr = DotOperandLayout(operand_index=1, parent=mma_layout, k_width=pv_k_width)
 
-    # Store layout for the O tile (BLOCK_M x BLOCK_DMODEL = 256 x 128). `threads_per_warp`
-    # is [4, 16], not [16, 4]: with `order=[1, 0]` the D axis is contiguous, so 16 lanes x
-    # `size_per_thread`=8 covers all 128 columns of a row, giving 256 contiguous bytes per
-    # 16 lanes -- one full row per quarter-warp -- and 8 bf16 per lane is exactly the
-    # `dwordx4` the store wants. [16, 4] instead spreads 16 lanes down M and covers only 32
-    # columns per row, so each row is stitched from 4 lanes and the access is strided.
+    # Store layout for the O tile (BLOCK_M x BLOCK_DMODEL = 256 x 128). `order=[1, 0]` puts
+    # the D axis contiguous, and `threads_per_warp=[4, 16]` spreads 16 lanes along it: 16
+    # lanes x `size_per_thread`=8 covers all 128 columns of a row, so a quarter-warp holds
+    # one full row as 256 contiguous bytes, and the 8 bf16 per lane are exactly the
+    # `dwordx4` the store wants.
     blocked_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[4, threads_per_warp // 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
 
-    # The LSE store is 1-D over BLOCK_M and wants consecutive rows on consecutive lanes,
-    # which is the *opposite* of what the O store wants. Slicing dim 1 out of `blocked_layout`
-    # above leaves only `threads_per_warp[0]`=4 lanes along M, so `lse` would go out as 8
-    # stride-4 `global_store_dword` instead of 2 contiguous ones. Keep M-major for LSE only.
+    # The LSE store is 1-D over BLOCK_M and wants consecutive rows on consecutive lanes, so
+    # it needs its own M-major arrangement: `threads_per_warp=[16, 4]` puts 16 lanes along M
+    # and `lse` goes out as 2 contiguous `global_store_dword`. Reusing `blocked_layout` for it
+    # would leave 4 lanes along M and 8 stride-4 stores.
     lse_layout: gl.constexpr = gl.BlockedLayout(
         size_per_thread=[1, 8], threads_per_warp=[threads_per_warp // 4, 4],
         warps_per_cta=[num_warps, 1], order=[1, 0])
@@ -498,8 +502,8 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     o_base  = Out + off_z * stride_oz + off_h_q * stride_oh
     o_ptrs  = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
     o_mask  = offs_m[:, None] < N_CTX
-    # Downcast *before* the layout conversion, not after: `convert_layout` out of the mma
-    # layout goes through LDS, and doing it in bf16 halves the bytes that round trip.
+    # Downcast first, then convert the layout: `convert_layout` out of the mma layout goes
+    # through LDS, and doing it in bf16 halves the bytes that round trip.
     acc_out = acc.to(Out.dtype.element_ty)
     acc_blocked = gl.convert_layout(acc_out, blocked_layout)
     gl.store(o_ptrs, acc_blocked, mask=o_mask)
