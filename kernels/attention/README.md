@@ -578,14 +578,14 @@ through:
 | demand exceeds capacity in a region | no ordering can win; the work itself has to shrink or move to another region | [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) |
 | demand fits, but measured efficiency sits far under the ceiling and windows are visibly empty | the ops are not where you put them — a pass moved them, or the request you made was unsatisfiable | [§6](#6-making-the-compiler-co-operate) |
 | a stage's tail is vector work while the matrix pipe is idle | the interleave was requested but never constructed | [§6](#6-making-the-compiler-co-operate) — declare it, don't pin it |
-| efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock | [§9](#9-results) — power cap |
+| efficiency is at its ceiling but throughput is flat or worse | you bought cycles and paid for them in clock: a denser MFMA stream draws more power, and against a power cap that buys back frequency | not a scheduling problem — see the note below |
 | a small delay at a stage head changes things sharply and non-monotonically | a phase relationship between two waves, not a quantity | [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) — sweep it, bisection will mislead you |
 | two regions that should be identical report different op counts to the scheduler | something is being counted that never gets emitted (source modifiers like `fneg`, folded `max3`) | [§6](#6-making-the-compiler-co-operate) |
 | in-loop numbers are good but whole-dispatch throughput is not | prologue and drain are not amortizing — short loops, or too many pipeline stages | [§9](#9-results) |
 
 The habit underneath all of it: **judge a scheduling change by cycles, and a kernel by both cycles
-and wall time.** They disagree for real reasons ([§9](#9-results)), and a change that improves one while flat on
-the other is usually still the right change.
+and wall time.** They disagree for real reasons — the power row above is one — and a change that
+improves one while flat on the other is usually still the right change.
 
 ### 8.3 What is gfx950-specific, and what is not
 
@@ -646,69 +646,11 @@ against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.
 budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
 own ceiling (5.8 and 5.1).
 
-**On the FlyDSL row.** This is its published configuration, and its published figure of 1320
-TFLOPS reproduces (1321.1 / 1321.3 / 1322.6). `fmha_v4` and it are a dead heat — 1323 against 1322,
-0.1% apart on a metric whose round-to-round spread is larger than that — and `fmha_v3` is 5.5%
-behind.
-
-The interesting part is *how* they tie, because the two are strong in different places. `fmha_v4`
-needs **10% fewer cycles** for the same work: 4349 per loop iteration against 4837, which is the
-94.2%-against-84.7% efficiency gap restated. FlyDSL spends more of its time in the loop (94.2%
-against our 90.5% — its pipeline fill and drain are cheaper than our four-stage one) and clocks
-**8.7% higher** while drawing 25 W more. Those two effects run in opposite directions and mostly
-offset:
-
-```
-fmha_v4 cycle advantage   (0.942 x 0.9048) / (0.847 x 0.9417)  = +6.9%
-FlyDSL  clock advantage    1676.6 MHz / 1542.6 MHz             = +8.7%
-```
-
-They do not cancel exactly: taken at face value that arithmetic predicts FlyDSL about 1.8% ahead,
-where the measurement is a dead heat. Do not over-read the residual — the clock and power figures
-are sampled at 1 Hz over a longer run than the timed window, and the cycle figures come from a
-single traced dispatch, so the two halves are not measured under identical conditions. The robust
-statement is the qualitative one: `fmha_v4` wins on cycles, FlyDSL wins on clock, and at this shape
-they land on top of each other.
-
-**And the ranking is shape-dependent, so treat one number with care.** At `B=1, S=16384` the board
-runs pinned to its ~1400 W cap; there cycles are what matter and `fmha_v4` leads FlyDSL by **12.1%**
-(1326 against 1184). At the shape above there is power headroom, FlyDSL's clock advantage cashes in,
-and the two are level. Neither shape is *the* answer — that one flatters us, this one flatters them.
-The quantity that does not move between them is the in-loop MFMA efficiency, which is the only thing
-in this table the scheduler actually controls.
-
-**Before trusting any cross-implementation row, check that the work was handed out the same way** —
-a difference in grid or occupancy would confound the whole table. It does not here: both sides
-launch `(HQ, ceil(S/BLOCK_M), B)` with `BLOCK_M=256`, `BLOCK_N=64`, 8 waves per workgroup, 32 rows
-per wave and `waves_per_eu=2`, so both issue 8192 workgroups, one resident per CU, 32 rounds, no
-tail imbalance. The differences in the table are what happens inside the loop, and power. One
-caveat runs against the Gluon rows rather than for them: `S=8192` makes `(n_blocks − 3)` odd, so
-both kernels run an unpipelined `ODD_TAIL` tile in the drain and FlyDSL has no such constraint.
-Two more were checked the same way and are also clean: neither side remaps workgroups across XCDs
-at this shape, and FlyDSL's shipped configuration is its own optimum, so nothing here is a
-strawman of it.
-
-Two things about the metrics themselves, worth knowing before quoting either:
-
-**MFMA efficiency is derived from the cycle count**, not measured independently: it is
-`mfma_count × 32 / loop_cycles` per wave, doubled for the per-SIMD figure because two waves share
-the matrix unit. It is the right metric for judging a *scheduling* change, since that is exactly
-what a scheduling change moves — but it carries no information a cycle count does not.
-
-**Cycles and TFLOPS disagree, and both are honest about different things.** A denser MFMA stream
-draws more power, and against a power cap that buys back a lower clock — so a change can be worth
-several percent of cycles and under one percent of wall time. bf16 is the cleanest example, and it is exact
-rather than approximate: at this shape `fmha_v4` measures **1323** in bf16 against **1241** in fp16,
-**+6.6%**, from cycle counts that agree to **0.006%** (4349.35 against 4349.11 per iteration) and an
-in-loop efficiency identical to two decimals (47.09% both). Every bit of that 6.6% is clock, bought
-because bf16's narrower mantissa toggles less of the multiplier array. Judge a scheduling change by cycles; judge a kernel by both.
-
-Both harnesses were run under one protocol — `scripts/fly_kernel_time.py` builds FlyDSL's
-`flash_attn_dualwave_swp` through its own builder and then times it exactly as
-`scripts/fa_kernel_time.py` times ours, same rocprofv3 invocation, serialization, rotating-buffer
-rule and averaging window. That is the only reason the rows can share a table, and it matters more
-than it sounds: measured with its own shallower window, FlyDSL reads up to 7% high on a cool die,
-which is enough to invert the top two rows of the table.
+**On the FlyDSL row.** ROCm/FlyDSL at
+[`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
+`build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
+[`scripts/fly_kernel_time.py`](../../scripts/fly_kernel_time.py) under the same protocol as our
+rows: **1322 TFLOPS** (1321.1 / 1321.3 / 1322.6), reproducing its published 1320.
 
 ### Building and running
 
