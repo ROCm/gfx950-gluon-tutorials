@@ -2,14 +2,24 @@
 
 Helper scripts for profiling and benchmarking the tutorial's Triton/Gluon kernels.
 
-Most of the scripts below drive the GEMM kernels. Three are specific to
-[`kernels/attention/`](../kernels/attention/README.md):
+The first group drives the GEMM kernels. The rest belong to
+[`kernels/attention/`](../kernels/attention/README.md), and split into three kinds:
 
 | script | what it does |
 |---|---|
-| `fa_kernel_time.py` | the reported FA metric: `rocprofv3 --kernel-trace` TFLOPS with a prepared launch, averaging the last N of 1000 dispatches. The FA counterpart of `run_perf_table.py --rocprof` |
-| `fly_kernel_time.py` | times ROCm/FlyDSL's `flash_attn_dualwave_swp` under the *same* protocol, so its numbers can share a table with ours |
-| `att_pick_cu.py` | picks an `att_target_cu` that exists on the current die. Parts harvest one CU per shader array, and `rocprofv3 --att` aimed at a harvested CU exits 0 and records nothing |
+| **Measurement** | |
+| [`fa_kernel_time.py`](#fa_kernel_timepy) | the reported FA metric — `rocprofv3` kernel time with a prepared launch |
+| [`fly_kernel_time.py`](#fly_kernel_timepy) | times ROCm/FlyDSL under *our* protocol, so the two can share a table |
+| **ATT tracing** | |
+| [`att_pick_cu.py`](#att_pick_cupy) | pick an `att_target_cu` that exists on this die — aiming at a harvested one records nothing, silently |
+| [`att_cu_census.cpp`](#att_pick_cupy) | the HIP probe `att_pick_cu.py` compiles to find out which CUs actually run waves |
+| **Assembly probes** | measurement instruments, not optimizations to ship |
+| [`ablate_valu.py`](#ablate_valupy) | delete the loop's VALU to time the MFMA-only ceiling (output is garbage by design) |
+| [`sched_valu.py`](#sched_valupy) | re-balance VALU across the MFMA shadows without changing the instruction mix |
+| [`hoist_lds_addr.py`](#hoist_lds_addrpy) | hoist one loop-invariant LDS address, to price what the compiler left behind |
+| [`fly_sched.py`](#fly_schedpy) | apply the `sched_valu.py` rewrite to FlyDSL's assembly, which has no assembly stage |
+| **Figures** | |
+| [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
 
 ## install_att_decoder.sh
 
@@ -288,3 +298,136 @@ Max    : 248.91 us
 ```
 
 To convert to TFLOPS: `TFLOPS = 2 × M × N × K / (time_in_seconds × 10^12)`
+
+---
+
+# Attention scripts
+
+Everything below belongs to [`kernels/attention/`](../kernels/attention/README.md). All of
+them want that section's environment in front of them — the llirSched plugin and
+`disable-machine-sink` — and `FA_MODULE=fmha_v3` (default) or `fmha_v4` to pick the kernel.
+
+## fa_kernel_time.py
+
+The reported FA throughput metric, and the counterpart of `run_perf_table.py --rocprof` on
+the GEMM side: `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, averaging the final
+N of 1000 dispatches and dividing the FLOP count by that. Kernel timestamps rather than
+`do_bench` wall time, because wall time charges the kernel for host-side launch gaps — and
+those gaps idle the GPU, which lets the clock drift between dispatches.
+
+```bash
+FA_MODULE=fmha_v4 python scripts/fa_kernel_time.py \
+  --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 --iters 1000 --last-n 100
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--batch` / `--seqlen` / `--hq` / `--hk` / `--d` | `1 / 16320 / 64 / 64 / 128` | problem shape; `--hq != --hk` is GQA/MQA |
+| `--dtype` | `bf16` | `bf16` or `fp16` |
+| `--layout` | `bhsd` | `bhsd` or `bshd` |
+| `--iters` / `--last-n` | `1000` / `100` | measured dispatches, and how many of the final ones to average |
+| `--launch` | `prepared` | `prepared` binds arguments once and re-enters the launch stub; `jit` / `both` attribute a delta to the launch path itself |
+| `--scale-on-q` | `1` | `0` applies `qk_scale` per element inside VEC1 instead of pre-scaling Q |
+| `--rotating-buffer-size` | `512` MB | working set spread across rotating tensor sets, so dispatches read cold data rather than MALL-resident data |
+| `--no-serialize` | off | leave `AMD_SERIALIZE_KERNEL` unset and let dispatches queue back to back |
+
+## fly_kernel_time.py
+
+Times ROCm/FlyDSL's `flash_attn_dualwave_swp` under *this* repo's protocol, which is the only
+reason its numbers can share a table with ours. FlyDSL's own benchmark averages a shallower
+window, which leaves the kernel in its thermal transient: six consecutive runs of one config
+measured 1236.9, 1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. Same `rocprofv3`
+invocation, same serialization, same rotating-buffer rule and same averaging window as
+`fa_kernel_time.py`. Checks the output against `scaled_dot_product_attention` before timing.
+
+```bash
+FLYDSL_ROOT=/path/to/FlyDSL python scripts/fly_kernel_time.py \
+  --batch 32 --seqlen 8192 --hq 8 --d 128 --iters 1000 --last-n 100
+```
+
+Needs a [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL) checkout (`pip install -e .` per its own
+README). `--eager-rescale` selects the `fmha_v3`-equivalent path; `--setprio`, `--stagger`,
+`--waves-per-eu` and `--causal` expose its builder's knobs, whose shipped defaults are its
+optimum. Note the builder defaults to `causal=True` while this script passes `causal=False`
+to match our kernels.
+
+## att_pick_cu.py
+
+Picks an `att_target_cu` that exists on the die you are about to trace. A shader array exposes
+9 CU slots but enables 8 — one is harvested for yield, and *which* index differs per die.
+`rocprofv3` takes a single `att_target_cu` and **does not validate it**: aim at a harvested CU
+and you get exit 0, a few KB of `.att`, no wave files, and `process_json.py` then dies with
+`'NoneType' object is not iterable`. There is no "any CU" mode.
+
+```bash
+python scripts/att_pick_cu.py --template kernels/attention/att_attn_se0.json --out /tmp/att.json
+python scripts/att_pick_cu.py --se-mask 0x1 --print-cu    # just the index
+python scripts/att_pick_cu.py --report                    # per-array census
+```
+
+It discovers the answer rather than assuming it, by compiling and running
+**`att_cu_census.cpp`** — a HIP kernel in which every workgroup reports its `(XCC, SE, CU)`
+from `HW_REG_HW_ID` and `HW_REG_XCC_ID`, so slots that never appear are harvested. The
+enabled sets are intersected over every array the SE mask selects, which matters: one die
+here harvests CU0 in XCC0, CU7 in XCC1 and CU8 in XCC2–7, so only the intersection is safe.
+Results are cached per die by PCI bus id, costing one sub-second launch per machine.
+
+## Assembly probes
+
+These four rewrite the **final assembly** and exist to *price* something rather than to improve
+it. None is an optimization to ship, and the first deliberately breaks correctness. The first
+three define an `inspect_stages_hook` that `bench.py` installs as
+`knobs.runtime.add_stages_inspection_hook`, so each is enabled by one environment variable and
+needs no rebuild; `fly_sched.py` cannot use that route and says why below.
+
+### ablate_valu.py
+
+Deletes the hot loop's vector ALU to measure the MFMA-only ceiling. §5–§7 of the attention
+README are about fitting softmax VALU into the MFMA shadows; this asks the complement — what
+would the loop cost if that VALU were free? What remains is memory traffic, barriers and the
+MFMA issue rate. **The kernel then computes garbage**: it is an upper bound to compare a real
+schedule against, correctness checks are expected to fail, and `bench.py` skips its
+launcher-equivalence check when the probe is active.
+
+```bash
+FA_ABLATE_VALU=dot FA_MODULE=fmha_v4 python bench.py --seqlen 16320   # from kernels/attention/
+```
+
+### sched_valu.py
+
+Sweeps the same efficiency axis as `ablate_valu.py` but by *reordering* rather than deleting,
+which is the point: deleting VALU also cuts power, so a kernel issuing 60% fewer VALU per
+second is granted more clock and the throughput reading is confounded with a power reading.
+Reordering leaves the instruction mix, register traffic and arithmetic identical, so placement
+is the only variable. `FA_SCHED_VALU=<f>` from −1.0 to 1.0: 0.0 leaves the assembly untouched,
+positive spreads each region's VALU across its MFMA shadows, negative crowds it into the
+earliest shadow each can reach and leaves later MFMAs bare.
+
+### hoist_lds_addr.py
+
+Hoists one loop-invariant LDS base address into a dedicated VGPR. With `FA_Q_DIRECT_LDS=1`
+the loop keeps a `v_add_u32` forming an LDS base whose `ds_read` offsets no longer fit the
+16-bit `offset:` field; its input is never written in the loop, so the compiler is
+*rematerialising* it rather than spending a register. This moves the add to the preheader and
+grows `.amdhsa_next_free_vgpr` by one. `FA_HOIST_LDS_ADDR=1`. The point is to price it — one
+VALU per iteration against ~4460 cycles — not to ship it.
+
+### fly_sched.py
+
+Applies the `sched_valu.py` rewrite to FlyDSL's kernel, to see whether it obeys the same
+cycle law our kernels do (it sits +3.7% above it). FlyDSL has no assembly stage to hook: it
+goes MLIR → LLVM IR → code object entirely inside `mlir-opt`'s `gpu-module-to-binary`. The way
+in is that the pass accepts `format=isa`, which stops at ISA text, and the `gpu.binary` op it
+otherwise emits carries a bare HSA code object as an escaped string attribute — so the
+pipeline can be cloned, stopped at ISA, rewritten, reassembled and spliced back.
+
+## plot_fmha_summary.py
+
+Regenerates `kernels/attention/images/results.png`, the summary chart at the top of the
+attention README. Same shape as `plot_perf_summary.py` for GEMM: grouped TFLOPS bars with the
+per-SIMD in-loop MFMA efficiency in red inside each bar. The numbers live in a `groups` table
+at the top of the file — edit it when they change and re-run.
+
+```bash
+python scripts/plot_fmha_summary.py
+```
