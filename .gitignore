@@ -29,3 +29,8 @@ kernels/attention/private_counter_collection_recipe.md
 # tracked att_attn_se0.json is the one the documented recipes use.
 kernels/attention/att_attn.json
 kernels/attention/att_attn_simd0.json
+# The optimization notebook and the two figures only it used: kept locally,
+# deliberately not published
+kernels/attention/note.md
+kernels/attention/images/eff_tflops_curve.svg
+kernels/attention/images/eff_tflops_scheduling.svg

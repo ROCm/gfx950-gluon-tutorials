@@ -126,9 +126,9 @@ LAZY_RESCALE_THRESHOLD = tl.constexpr(8.0)
 #
 #   - deferring the `q_dot` read past the K/V allocation extends `q_smem`'s live range, so
 #     Triton can no longer overlay it with `kt_smem`/`v_smem`; LDS goes 68016 -> 134560 B and
-#     the K/V offsets stop fitting a `ds_read`'s 16-bit `offset:` field (note.md 3.29.4);
+#     the K/V offsets stop fitting a `ds_read`'s 16-bit `offset:` field;
 #   - the lower register pressure makes the allocator reassign across the whole function, and
-#     the llirSched interleave lands differently on the result (3.29.3).
+#     the llirSched interleave lands differently on the result.
 #
 # Picking it up means addressing one of those, not this code. With the switch off, the
 # generated prologue, loop and epilogue are byte-identical to the build before this existed.
@@ -409,7 +409,7 @@ def gluon_attn_fwd(Q, K, V, SM_SCALE: gl.constexpr, L, Out,
     # `s_waitcnt vmcnt(0)` disappears. A buffer DMA has no per-element mask, and the kernel's
     # shape scope only guarantees `N_CTX % BLOCK_N == 0`, so a partial M tile falls back.
     # Everything below is gated: with the switch off this is the register path, byte for
-    # byte. See note.md 3.29 -- the DMA wins the prologue and loses more in the loop.
+    # byte. The DMA wins the prologue and loses more in the loop.
     Q_DMA: gl.constexpr = Q_DIRECT_TO_LDS and N_CTX % BLOCK_M == 0
 
     if Q_DMA:
