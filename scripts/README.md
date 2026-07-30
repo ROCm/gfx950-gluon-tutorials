@@ -13,11 +13,6 @@ The first group drives the GEMM kernels. The rest belong to
 | **ATT tracing** | |
 | [`att_pick_cu.py`](#att_pick_cupy) | pick an `att_target_cu` that exists on this die — aiming at a harvested one records nothing, silently |
 | [`att_cu_census.cpp`](#att_pick_cupy) | the HIP probe `att_pick_cu.py` compiles to find out which CUs actually run waves |
-| **Assembly probes** | measurement instruments, not optimizations to ship |
-| [`ablate_valu.py`](#ablate_valupy) | delete the loop's VALU to time the MFMA-only ceiling (output is garbage by design) |
-| [`sched_valu.py`](#sched_valupy) | re-balance VALU across the MFMA shadows without changing the instruction mix |
-| [`hoist_lds_addr.py`](#hoist_lds_addrpy) | hoist one loop-invariant LDS address, to price what the compiler left behind |
-| [`fly_sched.py`](#fly_schedpy) | apply the `sched_valu.py` rewrite to FlyDSL's assembly, which has no assembly stage |
 | **Figures** | |
 | [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
 
@@ -371,55 +366,6 @@ from `HW_REG_HW_ID` and `HW_REG_XCC_ID`, so slots that never appear are harveste
 enabled sets are intersected over every array the SE mask selects, which matters: one die
 here harvests CU0 in XCC0, CU7 in XCC1 and CU8 in XCC2–7, so only the intersection is safe.
 Results are cached per die by PCI bus id, costing one sub-second launch per machine.
-
-## Assembly probes
-
-These four rewrite the **final assembly** and exist to *price* something rather than to improve
-it. None is an optimization to ship, and the first deliberately breaks correctness. The first
-three define an `inspect_stages_hook` that `bench.py` installs as
-`knobs.runtime.add_stages_inspection_hook`, so each is enabled by one environment variable and
-needs no rebuild; `fly_sched.py` cannot use that route and says why below.
-
-### ablate_valu.py
-
-Deletes the hot loop's vector ALU to measure the MFMA-only ceiling. §5–§7 of the attention
-README are about fitting softmax VALU into the MFMA shadows; this asks the complement — what
-would the loop cost if that VALU were free? What remains is memory traffic, barriers and the
-MFMA issue rate. **The kernel then computes garbage**: it is an upper bound to compare a real
-schedule against, correctness checks are expected to fail, and `bench.py` skips its
-launcher-equivalence check when the probe is active.
-
-```bash
-FA_ABLATE_VALU=dot FA_MODULE=fmha_v4 python bench.py --seqlen 16320   # from kernels/attention/
-```
-
-### sched_valu.py
-
-Sweeps the same efficiency axis as `ablate_valu.py` but by *reordering* rather than deleting,
-which is the point: deleting VALU also cuts power, so a kernel issuing 60% fewer VALU per
-second is granted more clock and the throughput reading is confounded with a power reading.
-Reordering leaves the instruction mix, register traffic and arithmetic identical, so placement
-is the only variable. `FA_SCHED_VALU=<f>` from −1.0 to 1.0: 0.0 leaves the assembly untouched,
-positive spreads each region's VALU across its MFMA shadows, negative crowds it into the
-earliest shadow each can reach and leaves later MFMAs bare.
-
-### hoist_lds_addr.py
-
-Hoists one loop-invariant LDS base address into a dedicated VGPR. With `FA_Q_DIRECT_LDS=1`
-the loop keeps a `v_add_u32` forming an LDS base whose `ds_read` offsets no longer fit the
-16-bit `offset:` field; its input is never written in the loop, so the compiler is
-*rematerialising* it rather than spending a register. This moves the add to the preheader and
-grows `.amdhsa_next_free_vgpr` by one. `FA_HOIST_LDS_ADDR=1`. The point is to price it — one
-VALU per iteration against ~4460 cycles — not to ship it.
-
-### fly_sched.py
-
-Applies the `sched_valu.py` rewrite to FlyDSL's kernel, to see whether it obeys the same
-cycle law our kernels do (it sits +3.7% above it). FlyDSL has no assembly stage to hook: it
-goes MLIR → LLVM IR → code object entirely inside `mlir-opt`'s `gpu-module-to-binary`. The way
-in is that the pass accepts `format=isa`, which stops at ISA text, and the `gpu.binary` op it
-otherwise emits carries a bare HSA code object as an escaped string attribute — so the
-pipeline can be cloned, stopped at ISA, rewritten, reassembled and spliced back.
 
 ## plot_fmha_summary.py
 

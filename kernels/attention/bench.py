@@ -57,41 +57,6 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
     knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
 
-# VALU ablation (scripts/ablate_valu.py): delete the loop's vector ALU from the final
-# assembly to time the MFMA-only ceiling. The kernel then computes garbage -- this is a
-# timing probe, so the correctness check below is expected to fail and must be ignored.
-if os.environ.get("FA_ABLATE_VALU"):
-    sys.path.insert(
-        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
-    )
-    import ablate_valu  # noqa: E402
-    from triton import knobs  # noqa: E402
-
-    knobs.runtime.add_stages_inspection_hook = ablate_valu.inspect_stages_hook
-
-# Hoist a loop-invariant LDS base address out of the loop (scripts/hoist_lds_addr.py).
-if os.environ.get("FA_HOIST_LDS_ADDR"):
-    sys.path.insert(
-        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
-    )
-    import hoist_lds_addr  # noqa: E402
-    from triton import knobs  # noqa: E402
-
-    knobs.runtime.add_stages_inspection_hook = hoist_lds_addr.inspect_stages_hook
-
-# VALU rescheduling (scripts/sched_valu.py): re-balance the loop's vector ALU across the
-# MFMA shadows without adding or removing any, to separate the scheduling effect on
-# throughput from the power effect of changing the instruction count. Dependency-checked,
-# so the correctness check below still applies and is the control for the experiment.
-if os.environ.get("FA_SCHED_VALU"):
-    sys.path.insert(
-        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts")
-    )
-    import sched_valu  # noqa: E402
-    from triton import knobs  # noqa: E402
-
-    knobs.runtime.add_stages_inspection_hook = sched_valu.inspect_stages_hook
-
 # Ported FMHA kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Select the kernel implementation: FA_MODULE=fmha_v3 (default, eager rescale) or
@@ -326,16 +291,7 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
             f"{'✅ match' if ok else '❌ MISMATCH'} (max={max_diff:.2e})"
         )
         if not ok:
-            # Under FA_ABLATE_VALU the kernel computes garbage by construction, so this
-            # launcher-equivalence check compares NaN against NaN and cannot pass. The
-            # ablation is a timing probe; skip the check rather than the measurement.
-            if os.environ.get("FA_ABLATE_VALU"):
-                print(
-                    "[FMHA] ablation active: launcher-equivalence check skipped "
-                    "(output is garbage by design)"
-                )
-            else:
-                sys.exit(1)
+            sys.exit(1)
 
         for i in range(args.n_warmup):
             prepared(i)

@@ -87,14 +87,6 @@ def dispatch_loop(a):
     import torch
 
     sys.path.insert(0, a.flydsl_root)
-    # `FLY_SCHED_VALU` re-schedules the in-loop VALU of FlyDSL's own assembly and runs the
-    # kernel from the result -- see scripts/fly_sched.py. Installed before the module is
-    # built, since it replaces the compile step.
-    if os.environ.get("FLY_SCHED_VALU"):
-        sys.path.insert(0, HERE)
-        import fly_sched  # noqa: E402
-
-        fly_sched.patch()
     from kernels.attention.flash_attn_gfx950 import build_flash_attn_dualwave_swp_module
 
     dt = torch.float16 if a.dtype == "fp16" else torch.bfloat16
