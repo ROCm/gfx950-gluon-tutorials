@@ -50,7 +50,6 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Apply the same design to FP8                             | `kernels/gemm/intra_wave/a8w8/`        |
 | Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/intra_wave/a4w4/`        |
 | Optimize Flash Attention, where vector math competes with the MFMA | `kernels/attention/`        |
-| Work out why *your* kernel's matrix pipe stalls          | `kernels/attention/` §8     |
 | Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |
