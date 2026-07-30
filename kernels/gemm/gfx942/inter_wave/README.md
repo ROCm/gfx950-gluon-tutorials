@@ -195,21 +195,3 @@ Interestingly the region *cadence* ends up identical: gfx950 gets 4 regions of
 16 × 32-cycle MFMA per K-step, gfx942 gets 4 dot regions of 32 × 16-cycle MFMA —
 512 cycles either way. CDNA3's narrower MFMA does not change how often the wave
 groups swap; it only doubles the instruction count inside each region.
-
-## Where the remaining time goes
-
-Per wave per iteration, from ATT, against Triton's `BlockPingpong` reference on
-the same shape (see [`../README.md`](../README.md) §3):
-
-| | this kernel | Triton pingpong |
-|---|---|---|
-| mfma | 1972.0 | 1969.9 |
-| `s_barrier` | 801.9 | 631.6 |
-| `ds_write` | 529.9 | 293.9 |
-| `ds_read` | 284.2 | 560.4 |
-| `s_waitcnt` | 282.8 | 356.1 |
-
-`ds_read` is half the reference's. `ds_write` is still 1.8× it: the reference's
-store region is *pure*, whereas regions 4 and 6 here mix reads with writes and pay
-LDS read/write turnaround. Isolating all 8 `ds_write`s into one read-free region
-is the obvious next experiment.
