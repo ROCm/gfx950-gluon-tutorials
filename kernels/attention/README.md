@@ -325,6 +325,13 @@ registers, and the accumulator is 32 × 128, so 64:
 | row sum | 32 × `v_add` | VALU | 128 | 16 × `v_pk_add` = **64** | QK |
 | downcast `p` to fp16 | 16 × `v_cvt_pk` | VALU | 64 | already packed | QK |
 | rescale the accumulator | 64 × `v_mul` | VALU | **256** | 32 × `v_pk_mul` = **128** | QK |
+| finish the reduction across lanes | `v_permlane32_swap` + copies + nop | VALU | 20 | — | one in **each** |
+
+The last row is the tail of the two reductions above it. In the 32 × 32 MFMA layout a lane and
+its partner 32 lanes away hold different columns of the same row, so a row-wise reduction cannot
+finish inside a lane: the per-lane tree ends in one `v_permlane32_swap_b32`. With the copies it
+needs and the wait state the hazard recognizer inserts after it, budget that step at 20 cycles.
+It appears once in PV, closing the row max, and once in QK, closing the row sum.
 
 The packed column is the same work at half the issue cost — and it is a trap here, because a packed
 op cannot go in an MFMA's shadow at all ([§2](#2-the-budget-what-fits-before-the-next-mfma-can-issue)). Halving the cost only helps for work that was never
@@ -343,7 +350,7 @@ backend adds address arithmetic, and `fmha_v3`'s scheduler leaves some work pack
 its instruction count — so [§9](#9-results)'s ceilings are computed from the compiled inventory rather than
 from this table. The shape of the argument is the same either way.
 
-**`fmha_v3` is over capacity in both clusters** — 448 against 384, twice. Whatever does not fit is
+**`fmha_v3` is over capacity in both clusters** — 468 against 384, twice. Whatever does not fit is
 issued in the open and lands directly on the loop's cycle count. Note this is a budget
 statement, not a scheduling one: no ordering of these instructions can help, because there are
 simply more cycles of vector work than there is shadow to hide it in.
@@ -366,8 +373,8 @@ not advance carry `alpha == 1`, which leaves their values unchanged — but the 
 issues and still costs its four cycles, which is exactly why the skip has to be a real branch
 rather than a multiply by one.
 
-That empties the QK cluster to 192 of 384 — and leaves PV untouched at 448. The kernel is now
-badly unbalanced rather than uniformly over: 192 cycles of QK shadow go unused while PV pays 64
+That empties the QK cluster to 212 of 384 — and leaves PV untouched at 468. The kernel is now
+badly unbalanced rather than uniformly over: 172 cycles of QK shadow go unused while PV pays 84
 cycles for its overflow.
 
 **Balancing them is the final piece.** Only the totals matter, so move work from PV to QK until
@@ -388,18 +395,17 @@ where it is exponentiated, so the subtract is born in the cluster that consumes 
 nothing left downstream to be pulled toward.
 
 So the score tile is sliced along N and the subtract + `exp2` for some fraction of the slices is
-computed in `dot1` instead. The fraction was found by bisection, not derived — and from here the
-numbers are the **compiled** ones rather than the table's, because the margins are what the decision
-turns on and the backend's own address arithmetic is part of them. Measured, the two clusters start
-at 204 and 484 rather than the table's 192 and 448:
+computed in `dot1` instead. Sweeping that fraction against the same table:
 
 ![sweeping the fraction moved from PV to QK](images/budget_balance.svg)
 
 A half overshoots — QK goes over while PV is left with slack, the same imbalance with the sides
-swapped. A quarter does not move enough: PV is still over, and QK is still holding cycles it could
-have taken. **Three eighths** puts both inside with the two clusters within 8 cycles of each other,
-and that is why the tile is sliced into eighths rather than halves — the granularity exists to make
-the ratio adjustable.
+swapped. A quarter is the interesting near-miss: both clusters technically fit, but PV clears the
+window by 12 cycles, which is three instructions. Nothing in the table is exact to three
+instructions — the backend adds address arithmetic the table does not price, and a margin that
+thin is consumed by any of it. **Three eighths** keeps both inside with 28 and 60 cycles of room,
+enough that the fit survives what the compiler adds, and that is why the tile is sliced into
+eighths rather than halves: the granularity exists to make the ratio adjustable.
 
 The three kernel-side rules this section established — keep control flow out of the dot clusters,
 balance the two of them, and make the rebalancing itself free — are collected with the one [§6](#6-making-the-compiler-co-operate) adds
@@ -536,7 +542,7 @@ The compiler cannot make these calls, because each depends on something only the
 | rule | why the hardware demands it |
 |---|---|
 | **Keep control flow out of the compute clusters.** The rescale's `warp_predicate` block lives in `mem2`, not in `VEC2` beside the arithmetic it belongs to. | Control-flow instructions are scheduled ahead of everything else in their region, so a branch inside a dot cluster issues *before* the first MFMA and the matrix core waits on it. In a mem cluster the same cost lands against memory latency instead. |
-| **Balance the clusters that share a budget.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 340 and QK to 348 of 384. | 204 against 484 wastes the whole of one cluster's slack while the other pays for its overflow. Only the per-cluster totals matter, so any work made of the same elementwise pieces can be moved to level them. |
+| **Balance the clusters that share a budget.** The score tile is sliced along N and the subtract + `exp2` for 3/8 of the slices is computed in the *other* cluster, bringing PV to 324 and QK to 356 of 384. | 212 against 468 wastes the whole of one cluster's slack while the other pays for its overflow. Only the per-cluster totals matter, so any work made of the same elementwise pieces can be moved to level them. |
 | **Make the rebalancing itself free.** `gl.amd.slice` takes a register-only view of a distributed tensor: the slice keeps the source layout, so it is a partition of each lane's own registers and emits **no instructions**. | A distributed-tensor slice normally costs a shuffle, which would eat the imbalance you were trying to recover. Free slicing is what makes the previous rule affordable — a Gluon technique worth knowing well beyond attention. |
 | **Put work you know will be exposed *before* the first MFMA of its cluster.** | A packed op cannot follow an MFMA back to back, so the first uncovered packed op otherwise pays a hazard on top of already being outside the shadow. Same instructions, same count, only the order differs — and only you know which work was never going to be covered. |
 

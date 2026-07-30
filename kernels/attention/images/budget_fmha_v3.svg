@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 150" width="760" height="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 168" width="760" height="168" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
   <style>
     .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
     .lbl  { font-size: 11.5px; fill: #767676; }
@@ -7,28 +7,30 @@
     .over { font-size: 11px; fill: #c8443c; }
     .win  { fill: none; stroke: #767676; stroke-width: 1.4; }
   </style>
-  <text class="h" x="8" y="16">fmha_v3: what the softmax asks of each dot cluster's 384 cycles of shadow</text>
-  <line x1="460" y1="26" x2="460" y2="106" stroke="#767676" stroke-width="1" stroke-dasharray="3 3"/>
-  <text class="lbl" x="460" y="24" text-anchor="middle">384</text>
+  <text class="h" x="8" y="16">fmha_v3: what the softmax asks of each dot cluster's 384-cycle shadow</text>
+  <line x1="460" y1="30" x2="460" y2="106" stroke="#767676" stroke-width="1" stroke-dasharray="3 3"/>
 
   <text class="lbl" x="112" y="52" text-anchor="end">QK</text>
-  <rect x="120"   y="38" width="56.7"  height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148" y="52" text-anchor="middle">cvt 64</text>
-  <rect x="176.7" y="38" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233" y="52" text-anchor="middle">sum 128</text>
-  <rect x="290"   y="38" width="226.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="403" y="52" text-anchor="middle">rescale 256</text>
+  <rect x="120.0" y="38" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="52" text-anchor="middle">cvt 64</text>
+  <rect x="176.7" y="38" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233.3" y="52" text-anchor="middle">sum 128</text>
+  <rect x="290.0" y="38" width="17.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="298.9" y="52" text-anchor="middle">20</text>
+  <rect x="307.7" y="38" width="226.7" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="421.0" y="52" text-anchor="middle">rescale 256</text>
   <rect class="win" x="120" y="38" width="340" height="20"/>
-  <text class="over" x="528" y="52">448 / 384</text>
+  <text class="over" x="548" y="52">468 / 384</text>
 
   <text class="lbl" x="112" y="82" text-anchor="end">PV</text>
-  <rect x="120"   y="68" width="56.7"  height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148" y="82" text-anchor="middle">max 64</text>
-  <rect x="176.7" y="68" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="233" y="82" text-anchor="middle">fma 128</text>
-  <rect x="290"   y="68" width="226.7" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="403" y="82" text-anchor="middle">exp 256</text>
+  <rect x="120.0" y="68" width="56.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="148.3" y="82" text-anchor="middle">max 64</text>
+  <rect x="176.7" y="68" width="17.7" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="185.5" y="82" text-anchor="middle">20</text>
+  <rect x="194.4" y="68" width="113.3" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="251.0" y="82" text-anchor="middle">fma 128</text>
+  <rect x="307.7" y="68" width="226.7" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="421.0" y="82" text-anchor="middle">exp 256</text>
   <rect class="win" x="120" y="68" width="340" height="20"/>
-  <text class="over" x="528" y="82">448 / 384</text>
+  <text class="over" x="548" y="82">468 / 384</text>
 
   <g transform="translate(120,102)">
-    <rect x="0"   y="0" width="12" height="12" fill="#cfe0f7" stroke="#3b7dd8"/><text class="note" x="18" y="10">VALU, 4 cyc each</text>
-    <rect x="130" y="0" width="12" height="12" fill="#ded3f5" stroke="#7a5ac9"/><text class="note" x="148" y="10">TRANS, 8 cyc each</text>
+    <rect x="0"   y="0" width="12" height="12" fill="#cfe0f7" stroke="#3b7dd8"/><text class="note" x="18" y="10">VALU, 4 cyc per op</text>
+    <rect x="130" y="0" width="12" height="12" fill="#ded3f5" stroke="#7a5ac9"/><text class="note" x="148" y="10">TRANS, 8 cyc per op</text>
     <rect x="270" y="0" width="12" height="12" fill="#f7d2cf" stroke="#c8443c"/><text class="note" x="288" y="10">the accumulator rescale</text>
   </g>
-  <text class="note" x="120" y="140">Both clusters over. No ordering helps: there is more vector work than there is shadow to hide it in.</text>
+  <text class="note" x="120" y="136">The 20-cycle block is the cross-lane reduction step &#8212; one permlane, its copies and a hazard nop.</text>
+  <text class="note" x="120" y="154">Both clusters over. No ordering helps: there is more vector work than there is shadow to hide it in.</text>
 </svg>
