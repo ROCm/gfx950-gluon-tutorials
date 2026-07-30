@@ -118,28 +118,33 @@ level is smaller than that list suggests:
 | LDS pipelining | `nBuffers = 2`, double-buffered | **half-tile slot recycling**, 1 buffer |
 | mfma / K-step / wave | 128 | **256** |
 | loop | 2× unrolled | not unrolled |
-| accumulators | VGPR | **AGPR** (`amdgpu-agpr-alloc=256`) |
-| scheduling | in-tree pipeliner is enough | **LLIR plugin required** |
+| LLIR scheduler | required, works out of the box | required, **had to be taught CDNA3** |
+| `amdgcnas` peephole | used (worth the last 97% → 98%) | **not tried** |
 
-Two of those are worth explaining.
+Several things are deliberately *the same* and worth noting because they are easy
+to assume differ:
 
-**Accumulators move to AGPRs** because at 1 wave/SIMD the AGPR file is separate
-capacity rather than a slice of a shared one. The register round-trip costs 64
-VGPRs of staging gfx950 never spends, and adding 256 f32 of accumulator on top
-overflows the VGPR file; `amdgpu-agpr-alloc=256` is what makes the budget close.
-[`../inter_wave`](../inter_wave/) is the exact opposite — two resident waves split
-one unified 512-register file, so AGPRs buy nothing there.
+* **Accumulators are in AGPRs on both.** v9 carries the identical
+  `amdgpu-agpr-alloc=256` hint gated on `TRITON_FORCE_MFMA_AGPR`. What differs is
+  only how much slack there is: the register round-trip costs 64 VGPRs of staging
+  gfx950 never spends, so the same hint is doing more work here.
+  [`../inter_wave`](../inter_wave/) is the genuine contrast — two resident waves
+  split one unified 512-register file, so AGPRs buy nothing there and it runs with
+  `amdgpu-agpr-alloc=0,0`.
+* **Both need the LLIR scheduler.** The in-tree pipeliner leaves memory clumped on
+  gfx950 too; that is why the plugin exists (v5 introduces it, and it takes v9's
+  MFMA efficiency from 58% to 80%). The difference is that on gfx942 it was a
+  **silent no-op** until extended: its MFMA table held only CDNA4 shape names, so
+  `getMFMACycles()` returned 0 for `mfma.f32.16x16x16f16` and it dropped every
+  region. See [`note.md`](note.md) §1.
 
-**The LLIR plugin becomes required** because this is a scheduling problem rather
-than a bandwidth one, and CDNA3's in-tree pipeliner does not solve it. It leaves
-the memory ops clumped — `R4 … W4 … G5` separated by runs of 20–70 MFMAs — so an
-8-deep `ds_read` burst has to drain with only ~96 cycles of compute to cover it.
-The plugin spreads them, but it had to be taught CDNA3 first: its MFMA table held
-only CDNA4 shape names, so it returned 0 cycles for `mfma.f32.16x16x16f16` and was
-silently skipping every region.
+The one tooling gap is `amdgcnas`, the post-assembly peephole that packs the
+scattered SALU at iteration boundaries and is worth gfx950's last 97% → 98%. It
+has not been tried here, so some of the remaining gap may be the same SALU cost
+rather than anything CDNA3-specific.
 
-The remaining difference is the one that cannot be scheduled away, and it is the
-subject of the next section.
+The difference that cannot be scheduled or tooled away is the subject of the next
+section.
 
 ## Where the time goes, and the ceiling
 

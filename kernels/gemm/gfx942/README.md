@@ -416,8 +416,13 @@ peephole were all tried here.
 `TRITON_FORCE_MFMA_AGPR` is **required** by the 4-wave kernel (it is what
 supplies `amdgpu-agpr-alloc=256`; `bench.py` sets it).
 
-`libLlirSched.so` initially appeared to do nothing on gfx942 (467→472 TFLOPS at
-4096²×8192, within noise). It was in fact a **silent no-op**: its MFMA table held
+`libLlirSched.so` is required on **both** architectures — the in-tree pipeliner
+leaves memory clumped on gfx950 too, which is why the plugin exists (the tutorial
+introduces it at `intra_wave/a16w16/v5_local_prefetch` and it takes v9 from 58% to
+80% MFMA efficiency). What is gfx942-specific is that it did not work.
+
+It initially appeared to do nothing here (467→472 TFLOPS at 4096²×8192, within
+noise). It was in fact a **silent no-op**: its MFMA table held
 only CDNA4 shape names, so `getMFMACycles()` returned 0 for
 `mfma.f32.16x16x16f16` and the pass dropped every region. Teaching it the CDNA3
 shapes and deriving the LDS cover from bandwidth (128 B/clk on CDNA3 against
