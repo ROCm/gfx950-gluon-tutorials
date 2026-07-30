@@ -136,8 +136,11 @@
   <div class="wrap">
     <span class="tag">gfx950 · CDNA4 · out‑of‑tree plugin</span>
     <h1>The LLIR Scheduler</h1>
-    <p>An LLVM‑IR pass that interleaves MFMA matrix‑compute with the LDS / global traffic that feeds it, so the
-       matrix cores stay busy across a GEMM's hot loop.</p>
+    <p>An LLVM‑IR pass that keeps the matrix cores busy, by one of <b>two models chosen per region</b>: interleave
+       MFMA with the LDS / global traffic that feeds it (a <b>throughput</b> ratio — §1–§7, typical of an intra‑wave
+       GEMM hot loop), or fill each MFMA's co‑execution shadow with VALU and declare it with
+       <code>sched_group_barrier</code> (<b>co‑exec</b> — §8–§9, typical of an inter‑wave Flash‑Attention DOT
+       cluster, which is register‑only and has no memory latency to pair against).</p>
   </div>
 </header>
 
@@ -151,9 +154,10 @@
     misched still runs everywhere else (§7). It ships as an <b>out‑of‑tree LLVM pass plugin</b>
     (<code class="mono">libLlirSched.so</code>) and is gfx950‑only: load it with
     <code class="mono">LLVM_PASS_PLUGIN_PATH</code>.</p>
-    <div class="note"><b>Scope.</b> gfx950 (CDNA4) MFMA GEMM kernels. The pass identifies its eligible regions
-      structurally and leaves everything else untouched, so it is safe to enable on any kernel — it simply does
-      nothing on code that doesn't match the matrix‑core hot‑loop shape.</div>
+    <div class="note"><b>Scope.</b> gfx950 (CDNA4) MFMA kernels — GEMM and Flash‑Attention. The pass identifies its
+      eligible regions <i>structurally</i>, from what each region contains rather than from which kernel it came
+      from (§8), and leaves everything else untouched — so it is safe to enable on any kernel: it simply does
+      nothing on code that matches neither shape.</div>
     <nav class="toc">
       <a href="#pipeline">1 · Pipeline</a>
       <a href="#classes">2 · Classification</a>
@@ -162,6 +166,8 @@
       <a href="#budget">5 · MFMA interleaving</a>
       <a href="#cost">6 · Cost model</a>
       <a href="#pinning">7 · Pinning the schedule</a>
+      <a href="#routing">8 · Region routing</a>
+      <a href="#coexec">9 · Co‑exec model</a>
     </nav>
   </section>
 
@@ -428,10 +434,142 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     </table>
   </section>
 
+  <section class="card" id="routing">
+    <h2><span class="num">8</span> Region routing — which model <span style="font-size:13px;color:#ef4444;margin-left:6px">★ key logic</span></h2>
+    <p class="lede">The choice is a property of what a region <b>contains</b>, not of which kernel it came from
+       (<code>WP::classifyRegion</code>). It reuses the same <code>classifySchedInst</code> used in §2, so the two
+       models can never disagree about what counts as memory.</p>
+    <table>
+      <tr><th>Region contains</th><th>Model</th><th>What happens</th></tr>
+      <tr>
+        <td>MFMA + memory <span class="pill" style="background:#dbeafe;color:#1e40af">GR</span>
+            <span class="pill" style="background:#d1fae5;color:#065f46">LR</span>
+            <span class="pill" style="background:#fef3c7;color:#92400e">LW</span>, no VALU</td>
+        <td><b>throughput</b></td>
+        <td>§5's cycle‑paired anchor walk. The intra‑wave GEMM case.</td>
+      </tr>
+      <tr>
+        <td>MFMA + VALU, no memory</td>
+        <td><b>co‑exec</b></td>
+        <td>§9. The inter‑wave FA case — <code>TRITON_WP_DEBUG</code> confirms those DOT clusters carry
+            <i>zero</i> LDS effects, so there is no latency to pair against.</td>
+      </tr>
+      <tr>
+        <td>MFMA + VALU + memory</td>
+        <td><span class="verdict v-skip">not handled</span></td>
+        <td>Skipped with a logged reason. An intra‑wave FA kernel would land here; the two models disagree about
+            what an MFMA is <i>for</i> (covering VALU issue vs covering memory latency), so declining beats
+            guessing.</td>
+      </tr>
+      <tr>
+        <td>no MFMA</td>
+        <td>—</td>
+        <td>Nothing to schedule around. FA's <i>mem</i> stages are this case; <code>LLIRSCHED_WP_MEMNOP</code>
+            paces them separately with <code>s_nop</code> at the stage head.</td>
+      </tr>
+    </table>
+    <div class="note"><b>Inter‑wave GEMM</b> needs no scheduling at all and simply produces no qualifying region.
+      Region boundaries for the co‑exec path come pre‑made: <code>ConvertWarpPipeline</code> lowers every
+      warp‑pipeline stage boundary to <code>llvm.amdgcn.sched.barrier(i32 0)</code>, so a region is the span
+      between two of them.</div>
+  </section>
+
+  <section class="card" id="coexec">
+    <h2><span class="num">9</span> Co‑exec model — <code>sched_group_barrier</code> <span style="font-size:13px;color:#ef4444;margin-left:6px">★ key algorithm</span></h2>
+    <p class="lede">An MFMA occupies the matrix core for many cycles while the vector ALU sits idle beside it.
+       Those two units issue independently, so VALU work placed behind an MFMA <b>co‑executes</b> with it and costs
+       nothing — until the VALU exceeds what the MFMA covers, at which point the surplus is exposed and the matrix
+       core waits. The model's whole job is to decide which VALU goes behind which MFMA.</p>
+
+    <h3>The co‑execution window</h3>
+    <p>An MFMA's window is <i>shorter</i> than its matrix occupancy: a 32×32×16 (32‑cycle) MFMA exposes
+       <b>24 cycles</b> of co‑execution. That is the budget each MFMA offers, and it is derived per region rather
+       than assumed — <code>regionWindowCycles</code> reads the region's actual MFMAs via <code>getMFMACycles</code>
+       (§6) and returns <code>occupancy − 8</code>, taking the <i>shortest</i> when shapes are mixed and bailing out
+       entirely on an unmodelled one. Hardcoding 24 would over‑fill every window by 3× on an FA variant built from
+       16×16×32 MFMAs.</p>
+    <p>Not everything co‑executes. Transcendentals and packed math never issue alongside an MFMA
+       (<code>isNeverCoissue</code>), which is why TRANS carries its own IGroupLP mask and packed ops cost two slots
+       of window.</p>
+
+    <h3>Cost model per op</h3>
+    <p class="small">Cycles a co‑issued op consumes from its window. Six plain VALU fill a 24‑cycle window.</p>
+    <table>
+      <tr><th>Op</th><th>Cycles</th><th>Note</th></tr>
+      <tr><td>plain VALU</td><td>4</td><td>one co‑exec slot; a 24‑cycle window holds 6</td></tr>
+      <tr><td>packed <code>v_pk_*</code></td><td>8</td><td>two slots' worth of window, but declared as <b>one</b> instruction — <code>sched_group_barrier</code> sizes are instruction counts</td></tr>
+      <tr><td>TRANS (<code>v_exp</code>)</td><td>8</td><td>own IGroupLP mask (0x400) — <code>canAddMI</code>'s VALU branch excludes transcendentals</td></tr>
+      <tr><td><code>v_permlane</code></td><td>20</td><td>cross‑lane shuffle; one window hides a permlane plus a single 4‑cycle op</td></tr>
+      <tr><td><code>fneg</code>, <code>llvm.fabs</code></td><td><b>0</b></td><td>not instructions — they fold into the consumer as source modifiers</td></tr>
+    </table>
+
+    <h3>How the schedule is expressed</h3>
+    <p>The pass does not reorder the region; it <b>declares</b> the intended pipeline as
+       <code>[MFMA 1][VALU n]</code> / <code>[MFMA 1][TRANS n]</code> groups and lets AMDGPUIGroupLP <i>build</i> it
+       in the machine scheduler. <code>sched.barrier(0)</code> pinning (§7) is only advisory by comparison — codegen
+       still consolidated the last groups of a stage. Placement is not optional: IGroupLP forms groups scanning
+       <b>upward</b>, so the whole declaration must sit after every real op of the region.</p>
+
+    <h3>① The VALU fits the windows</h3>
+    <p>Classify into <b>dependency‑ordered blocks</b> — VALU independent of the region's TRANS, then TRANS, then the
+       VALU that consumes it — and pack each block into <code>ceil(total/window)</code> groups aimed at the average
+       of what is left. Program order is too fine (FA's PV stage emits 8 alternating <code>sub</code>/<code>exp</code>
+       runs, which do not fit 16 windows), and one flat VALU block is unsatisfiable whenever a VALU consumes a
+       TRANS — IGroupLP abandons the pipeline and leaves ISel's order. Three blocks is a topological order of the
+       class dependency, so it is always satisfiable.</p>
+    <div class="note"><b>This path imposes an order: VALU → TRANS → dependent VALU.</b> Every TRANS‑independent VALU
+      is declared <i>ahead</i> of the first TRANS, even where interleaving them would be equally legal. The order is
+      always dependency‑safe, but it is a <i>choice</i>, and an empirical one — VALU‑first measured 2.3% faster
+      than TRANS‑first on FMHA v3. A kernel whose natural order is TRANS‑first gets reordered accordingly.
+      The over‑capacity path (②) makes the opposite choice: it emits in <b>program order</b> and never reorders
+      classes, which is precisely what lets one window hold a VALU group and a TRANS group together.</div>
+
+    <h3>② The VALU does <i>not</i> fit</h3>
+    <p>fmha_v3 carries 476 and 496 cycles of VALU against 384 of capacity, so no arrangement hides it and the balanced
+       packer merges cheap pairs into 48‑cycle groups. The question changes to <b>which ops get a window and what
+       shape the rest take</b> (<code>declareRegionGroupsOverCap</code>; opt out with
+       <code>LLIRSCHED_WP_NOOVERCAP</code>):</p>
+    <table>
+      <tr><th>#</th><th>Rule</th><th>Why</th></tr>
+      <tr><td>1</td><td>Non‑splittable ops claim windows first — TRANS, the max3 reduction, <code>v_cvt_pk</code>, permlane</td><td>Packing cannot help them, so they have first call on scarce capacity</td></tr>
+      <tr><td>2</td><td>Remaining capacity buys packable ops from the <b>end</b> of the stage backwards</td><td>MFMAs inserted in reverse program order keep the uncovered remainder contiguous, where it already sits</td></tr>
+      <tr><td>3</td><td>Covered packed ops are <b>scalarized</b> by the pass; uncovered ones <b>stay packed</b></td><td>A covered op should co‑issue 4 cycles at a time; an uncovered one is hidden by nothing either way, and one <code>v_pk_mul_f32</code> retires two elements in one issue where two <code>v_mul_f32</code> need two</td></tr>
+      <tr><td>4</td><td>A window may hold groups of <b>different classes</b></td><td><code>[MFMA 1][VALU 1][TRANS 1]</code> puts a sub and an exp2 behind one MFMA. fmha_v3's PV stage ends in exactly that pair and used to spend two windows on 12 cycles of work — worth +0.6%</td></tr>
+    </table>
+    <div class="note"><b>Rule 3 means the pass does its own scalarization</b>, on exactly the ops it decided to
+      cover. A blanket split of every packed op in the region would defeat it — the uncovered ones must stay
+      packed — so this path cannot be combined with one.</div>
+    <div class="note"><b>Where it stops.</b> fmha_v3's PV cannot do better on packed coverage: 368 of its 384 cycles are
+      unpackable, so only 16 cycles (2 <code>v_pk_fma</code>) can ever be bought while rule 1 holds. The 14 that stay
+      packed are arithmetic, not a packing failure.</div>
+
+    <h3>Knobs</h3>
+    <p class="small"><b>None of these is needed for the measured configuration</b> — the two that used to be are now
+       defaults. With no <code>LLIRSCHED_*</code> set, the pass declares via
+       <code>sched_group_barrier</code> and paces mem stages with 2 <code>s_nop</code>, which builds byte‑identical
+       assembly to the old explicit recipe.</p>
+    <table>
+      <tr><th>Env var</th><th>Effect</th></tr>
+      <tr><td><code>LLIRSCHED_WP_NOSGB</code></td><td>fall back to physically reordering + pinning (§7) instead of declaring (§9) — slower, kept for A/B</td></tr>
+      <tr><td><code>LLIRSCHED_WP_MEMNOP=k</code></td><td>override the mem‑stage pacing; default <b>2</b>, <code>0</code> disables</td></tr>
+      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the fitting packer (①) even over capacity — for bisecting a regression to ②</td></tr>
+      <tr><td><code>LLIRSCHED_WP_DEBUG</code></td><td>per‑region model, counts, group sizes and the chosen window</td></tr>
+    </table>
+    <div class="note"><b>Everything else is hardwired to the measured winner.</b> The heuristics that were once
+      env‑selectable — counting the max/min reduction, the 2:1 <code>v_maximum3</code> fold, adaptive group weight,
+      pinning the physical interleave, the legacy error‑diffusion spread, pre‑reordering before a declaration — each
+      had a losing alternative, so the loser is gone rather than left as a flag.</div>
+    <div class="note"><b>Safety.</b> The whole pass is transactional — clone the function, schedule, run
+      <code>verifyFunction</code>, and roll back to the pristine body on failure — so a bad schedule can never reach
+      codegen. It earned its keep: a phi‑led region once rolled back an entire interleave, costing 8%, until the
+      region walk learned to advance past phis.</div>
+  </section>
+
 </main>
 
 <footer>
-  Design reference for the gfx950 <b>LLIR scheduler</b>, an out‑of‑tree LLVM pass plugin
+  Design reference for the gfx950 <b>LLIR scheduler</b> — throughput model (§1–§7) and co‑exec model (§8–§9) —
+  an out‑of‑tree LLVM pass plugin
   (<code>plugins/llir_scheduler/LlirSchedPlugin.cpp</code>, loaded via <code>LLVM_PASS_PLUGIN_PATH</code>).
 </footer>
 

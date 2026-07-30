@@ -5,6 +5,50 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-07-29 — New Triton tag `gfx950-tutorial-v2.0` (Gluon `warp_predicate`, warp-pipeline barriers)
+
+[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+is `gfx950-tutorial-v1.1` plus two commits. **It is the pin for the attention kernels only** —
+the GEMM kernels stay on `v1.1`, and their recorded numbers stay as measured there until they
+are re-measured on `v2.0`.
+
+- **`gl.warp_predicate`** — a per-wave masked-skip region lowering to `s_and_saveexec` +
+  `s_cbranch_execz`, with no cross-wave reduction and no barrier. `kernels/attention/fmha_v4.py`
+  does not compile without it: it is what lets a wavefront skip the accumulator rescale when
+  none of its own rows advanced their running max.
+- **warp-pipeline barriers** — always emit LOCAL cluster barriers rather than the minimal set,
+  place the loop-carried wrap-around barrier at the top of the loop body, and force a hard LDS
+  drain there with `amdgpu.memory_counter_wait(ds = 0)`. Together these keep `s_waitcnt lgkmcnt`
+  out of the MFMA stages.
+
+- **LLVM pin unchanged (`850a2b1b`).** Both tags carry the same LLVM, so the out-of-tree
+  LLIR-scheduler plugin (`plugins/llir_scheduler/libLlirSched.so`) is **not** rebuilt, and the
+  one `.so` works against either tag. This is the first re-pin where that holds.
+- **The barrier change fires for every warp-pipeline kernel**, not just attention, so it was
+  checked against `v1.1` before tagging: all four `inter_wave` GEMM kernels (a16w16 fp16/bf16,
+  a8w8, a4w4) pass their correctness checks on both tags.
+
+## 2026-07-29 — Flash Attention forward kernels (`kernels/attention/`)
+
+Adds the first non-GEMM section of the tutorial: `fmha_v3` (eager softmax rescale) and `fmha_v4`
+(lazy rescale), two Gluon flash-attention forward kernels sharing one 8-wave warp-pipeline
+architecture. They extend the `inter_wave` design to a kernel with a **third** category of
+instruction competing for the SIMD — the softmax's vector math — which the README works
+through as an MFMA ↔ VALU **co-execution** budget.
+
+- **llirSched gains a second scheduling model.** Regions mixing `mfma` with memory keep the
+  existing throughput interleave; regions mixing `mfma` with VALU are instead *declared* with
+  `sched_group_barrier` and built by AMDGPU's IGroupLP, with a separate algorithm for regions
+  whose VALU demand exceeds the available MFMA shadow. Region classification picks between
+  them, so the GEMM kernels are unaffected — their assembly is unchanged.
+- **`amdgcnas` is not used by these kernels.**
+- **Two FA-specific scripts**: `scripts/fa_kernel_time.py` and `scripts/fly_kernel_time.py`
+  (times ROCm/FlyDSL under our protocol for a like-for-like comparison).
+
+> [!IMPORTANT]
+> These kernels need `gfx950-tutorial-v2.0` — `fmha_v4` does not compile without
+> `gl.warp_predicate`. See the re-pin entry above.
+
 ## 2026-07-14 — Re-pin to `gfx950-tutorial-v1.1` (upstream merge of the warp-pipeline barrier PR)
 
 The pinned Triton commit moves from `gfx950-tutorial-v1.0` to `gfx950-tutorial-v1.1`.

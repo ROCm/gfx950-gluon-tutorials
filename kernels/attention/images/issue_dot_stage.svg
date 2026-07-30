@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" width="760" height="240" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 12px; fill: #767676; }
+    .cyc  { font-size: 11px; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .good { font-size: 11.5px; fill: #2f7d43; }
+    .col  { stroke: #c8c8c8; stroke-width: 1; stroke-dasharray: 2 3; }
+  </style>
+
+  <text class="h" x="8" y="16">C. softmax in the dot stage — VALU rides with the MFMA in wave 0, memory stays in wave 1</text>
+
+  <text class="cyc" x="120" y="42">cycle 0</text>
+  <text class="cyc" x="196" y="42">8</text>
+  <text class="cyc" x="258" y="42">12</text>
+  <text class="cyc" x="320" y="42">16</text>
+  <text class="cyc" x="382" y="42">20</text>
+  <text class="cyc" x="444" y="42">24</text>
+  <text class="cyc" x="506" y="42">28</text>
+  <text class="cyc" x="568" y="42">32</text>
+
+  <!-- same-cycle guides -->
+  <line class="col" x1="218" y1="48" x2="218" y2="164"/>
+  <line class="col" x1="280" y1="48" x2="280" y2="164"/>
+  <line class="col" x1="342" y1="48" x2="342" y2="164"/>
+  <line class="col" x1="404" y1="48" x2="404" y2="164"/>
+  <line class="col" x1="466" y1="48" x2="466" y2="164"/>
+  <line class="col" x1="528" y1="48" x2="528" y2="164"/>
+
+  <text class="lbl" x="8" y="66">wave 0</text>
+  <text class="lbl" x="8" y="80">dot stage</text>
+  <rect x="118" y="50" width="56" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="146" y="67" text-anchor="middle">MFMA</text>
+  <rect x="190" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="218" y="67" text-anchor="middle">valu</text>
+  <rect x="252" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="280" y="67" text-anchor="middle">valu</text>
+  <rect x="314" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="342" y="67" text-anchor="middle">valu</text>
+  <rect x="376" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="404" y="67" text-anchor="middle">valu</text>
+  <rect x="438" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="466" y="67" text-anchor="middle">valu</text>
+  <rect x="500" y="50" width="56" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="528" y="67" text-anchor="middle">valu</text>
+  <rect x="562" y="50" width="56" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="590" y="67" text-anchor="middle">MFMA</text>
+  <text class="note" x="626" y="67">same wave</text>
+
+  <text class="lbl" x="8" y="126">wave 1</text>
+  <text class="lbl" x="8" y="140">mem stage</text>
+  <rect x="190" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="218" y="127" text-anchor="middle">ds</text>
+  <rect x="252" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="280" y="127" text-anchor="middle">ds</text>
+  <rect x="314" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="342" y="127" text-anchor="middle">ds</text>
+  <rect x="376" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="404" y="127" text-anchor="middle">ds</text>
+  <rect x="438" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="466" y="127" text-anchor="middle">ds</text>
+  <rect x="500" y="110" width="56" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="528" y="127" text-anchor="middle">ds</text>
+  <text class="note" x="626" y="127">other wave</text>
+
+  <text class="cyc" x="218" y="158" text-anchor="middle">same cycle</text>
+
+  <text class="good" x="118" y="186">Each dashed column is one cycle issuing a VALU and a memory instruction together.</text>
+  <text class="note" x="118" y="204">They can pair because they come from different waves and use different issue ports.</text>
+  <text class="note" x="118" y="220">Six slots now buy six loads and six VALU — twice the work of option A.</text>
+</svg>

@@ -33,8 +33,11 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 | 4-bit + Scales | Document preshuffling and related optimizations | :calendar: |
 | 8-wave Warp-Pipeline | Ship warp-pipeline (pingpong) GEMM — a16w16, a8w8, a4w4 (`kernels/gemm/*-8wave/`) | :white_check_mark: |
 | **FlashAttention** | | |
-| FAv3 8-Wave | Port existing Triton FAv3 kernel to Gluon | :calendar: |
-| FAv3 8-Wave | Adapt llirSched and amdgcnas for 8-wave solution | :calendar: |
+| FMHA v3 8-Wave | Port the existing Triton FAv3 kernel to Gluon (`kernels/attention/fmha_v3.py`) | :white_check_mark: |
+| FMHA v3 8-Wave | Adapt llirSched for the 8-wave dot clusters (MFMA ↔ VALU co-execution model) | :white_check_mark: |
+| FMHA v4 8-Wave | Lazy softmax rescale, per-wave skip via `gl.warp_predicate` (`fmha_v4.py`) | :white_check_mark: |
+| FMHA 8-Wave | Causal masking and ragged tails (removed from the tutorial cut) | :calendar: |
+| Other FA kernels | MLA, and decode-shaped MQA / GQA — separate pipelines beside `fmha_*` | :calendar: |
 | **Memory-Bound Kernels** | | |
 | GEMM Experiments | Implement experiments to verify the bandwidth model | :calendar: |
 | Decode FA | Implement MLA or PA kernel and optimize based on the bandwidth model | :calendar: |
@@ -46,4 +49,4 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 
 ---
 
-*Last updated: 2026-07-07*
+*Last updated: 2026-07-29*

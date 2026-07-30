@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 150" width="760" height="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11.5px; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .e    { stroke: #909090; stroke-width: 1.3; fill: none; marker-end: url(#ar); }
+  </style>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#909090"/>
+    </marker>
+  </defs>
+
+  <text class="h" x="8" y="16">One tile's work, and what depends on what</text>
+
+  <rect x="18"  y="34" width="80" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="58"  y="51" text-anchor="middle">ACK</text>
+  <rect x="132" y="34" width="80" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="172" y="51" text-anchor="middle">LRK</text>
+  <rect x="246" y="34" width="80" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="286" y="51" text-anchor="middle">DOT1</text>
+  <rect x="360" y="34" width="80" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="400" y="51" text-anchor="middle">VEC1</text>
+  <rect x="474" y="34" width="80" height="26" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="514" y="51" text-anchor="middle">VEC2</text>
+  <rect x="588" y="34" width="80" height="26" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="628" y="51" text-anchor="middle">DOT2</text>
+
+  <rect x="132" y="106" width="80" height="26" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="172" y="123" text-anchor="middle">ACV</text>
+  <rect x="246" y="106" width="80" height="26" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="286" y="123" text-anchor="middle">LRV</text>
+
+  <path class="e" d="M 98,47  L 128,47"/>
+  <path class="e" d="M 212,47 L 242,47"/>
+  <path class="e" d="M 326,47 L 356,47"/>
+  <path class="e" d="M 440,47 L 470,47"/>
+  <path class="e" d="M 554,47 L 584,47"/>
+  <path class="e" d="M 212,119 L 242,119"/>
+  <path class="e" d="M 326,119 C 460,119 500,119 620,66"/>
+
+</svg>

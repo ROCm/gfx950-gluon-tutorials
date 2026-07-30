@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .p { font-size: 12px; font-weight: 600; fill: #1a1a1a; }
+    .lbl { font-size: 11.5px; fill: #767676; }
+    .seg { font-size: 9px; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .over { font-size: 11px; fill: #c8443c; }
+    .ok { font-size: 11px; fill: #2f7d43; }
+    .win { fill: none; stroke: #767676; stroke-width: 1.4; }
+  </style>
+  <text class="h" x="8" y="16">Moving a fraction of the subtract + exp2 from PV to QK; 384-cycle shadow each.</text>
+  <line x1="600" y1="26" x2="600" y2="384" stroke="#767676" stroke-width="1" stroke-dasharray="3 3"/>
+  <text class="lbl" x="605" y="24">384</text>
+  <text class="p" x="8" y="52">move 0</text>
+  <text class="lbl" x="112" y="52" text-anchor="end">QK</text>
+  <rect x="120.0" y="38" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="52" text-anchor="middle">cvt 64</text>
+  <rect x="200.0" y="38" width="160.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="280.0" y="52" text-anchor="middle">sum 128</text>
+  <rect x="360.0" y="38" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="372.5" y="52" text-anchor="middle">20</text>
+  <rect class="win" x="120" y="38" width="480" height="20"/>
+  <text class="ok" x="718" y="52">212 — fits, 172 spare</text>
+  <text class="lbl" x="112" y="78" text-anchor="end">PV</text>
+  <rect x="120.0" y="64" width="80.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="160.0" y="78" text-anchor="middle">max 64</text>
+  <rect x="200.0" y="64" width="25.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="212.5" y="78" text-anchor="middle">20</text>
+  <rect x="225.0" y="64" width="160.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="305.0" y="78" text-anchor="middle">fma 128</text>
+  <rect x="385.0" y="64" width="320.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="545.0" y="78" text-anchor="middle">exp 256</text>
+  <rect class="win" x="120" y="64" width="480" height="20"/>
+  <text class="over" x="718" y="78">468 — 84 over</text>
+  <text class="note" x="120" y="104">PV runs 84 over; QK holds 172 idle.</text>
+  <text class="p" x="8" y="144">move 1/2</text>
+  <text class="lbl" x="112" y="144" text-anchor="end">QK</text>
+  <rect x="120.0" y="130" width="80.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="160.0" y="144" text-anchor="middle">cvt 64</text>
+  <rect x="200.0" y="130" width="160.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="280.0" y="144" text-anchor="middle">sum 128</text>
+  <rect x="360.0" y="130" width="25.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="372.5" y="144" text-anchor="middle">20</text>
+  <rect x="385.0" y="130" width="80.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="425.0" y="144" text-anchor="middle">fma 64</text>
+  <rect x="465.0" y="130" width="160.0" height="20" fill="#f7d2cf" stroke="#c8443c"/><text class="seg" x="545.0" y="144" text-anchor="middle">exp 128</text>
+  <rect class="win" x="120" y="130" width="480" height="20"/>
+  <text class="over" x="718" y="144">404 — 20 over</text>
+  <text class="lbl" x="112" y="170" text-anchor="end">PV</text>
+  <rect x="120.0" y="156" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="170" text-anchor="middle">max 64</text>
+  <rect x="200.0" y="156" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="212.5" y="170" text-anchor="middle">20</text>
+  <rect x="225.0" y="156" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="265.0" y="170" text-anchor="middle">fma 64</text>
+  <rect x="305.0" y="156" width="160.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="385.0" y="170" text-anchor="middle">exp 128</text>
+  <rect class="win" x="120" y="156" width="480" height="20"/>
+  <text class="ok" x="718" y="170">276 — fits, 108 spare</text>
+  <text class="note" x="120" y="196">QK is now 20 over and PV has 108 spare — the same imbalance, mirrored.</text>
+  <text class="p" x="8" y="236">move 1/4</text>
+  <text class="lbl" x="112" y="236" text-anchor="end">QK</text>
+  <rect x="120.0" y="222" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="236" text-anchor="middle">cvt 64</text>
+  <rect x="200.0" y="222" width="160.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="280.0" y="236" text-anchor="middle">sum 128</text>
+  <rect x="360.0" y="222" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="372.5" y="236" text-anchor="middle">20</text>
+  <rect x="385.0" y="222" width="40.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="405.0" y="236" text-anchor="middle">fma 32</text>
+  <rect x="425.0" y="222" width="80.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="465.0" y="236" text-anchor="middle">exp 64</text>
+  <rect class="win" x="120" y="222" width="480" height="20"/>
+  <text class="ok" x="718" y="236">308 — fits, 76 spare</text>
+  <text class="lbl" x="112" y="262" text-anchor="end">PV</text>
+  <rect x="120.0" y="248" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="262" text-anchor="middle">max 64</text>
+  <rect x="200.0" y="248" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="212.5" y="262" text-anchor="middle">20</text>
+  <rect x="225.0" y="248" width="120.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="285.0" y="262" text-anchor="middle">fma 96</text>
+  <rect x="345.0" y="248" width="240.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="465.0" y="262" text-anchor="middle">exp 192</text>
+  <rect class="win" x="120" y="248" width="480" height="20"/>
+  <text class="ok" x="718" y="262">372 — fits, 12 spare</text>
+  <text class="note" x="120" y="288">Both fit, but PV clears the window by only 12 cycles.</text>
+  <text class="p" x="8" y="328">move 3/8</text>
+  <text class="lbl" x="112" y="328" text-anchor="end">QK</text>
+  <rect x="120.0" y="314" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="328" text-anchor="middle">cvt 64</text>
+  <rect x="200.0" y="314" width="160.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="280.0" y="328" text-anchor="middle">sum 128</text>
+  <rect x="360.0" y="314" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="372.5" y="328" text-anchor="middle">20</text>
+  <rect x="385.0" y="314" width="60.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="415.0" y="328" text-anchor="middle">fma 48</text>
+  <rect x="445.0" y="314" width="120.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="505.0" y="328" text-anchor="middle">exp 96</text>
+  <rect class="win" x="120" y="314" width="480" height="20"/>
+  <text class="ok" x="718" y="328">356 — fits, 28 spare</text>
+  <text class="lbl" x="112" y="354" text-anchor="end">PV</text>
+  <rect x="120.0" y="340" width="80.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="160.0" y="354" text-anchor="middle">max 64</text>
+  <rect x="200.0" y="340" width="25.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="212.5" y="354" text-anchor="middle">20</text>
+  <rect x="225.0" y="340" width="100.0" height="20" fill="#cfe0f7" stroke="#3b7dd8"/><text class="seg" x="275.0" y="354" text-anchor="middle">fma 80</text>
+  <rect x="325.0" y="340" width="200.0" height="20" fill="#ded3f5" stroke="#7a5ac9"/><text class="seg" x="425.0" y="354" text-anchor="middle">exp 160</text>
+  <rect class="win" x="120" y="340" width="480" height="20"/>
+  <text class="ok" x="718" y="354">324 — fits, 60 spare</text>
+  <text class="note" x="120" y="380">Both fit, 28 and 60 to spare — the shipped ratio.</text>
+  <text class="note" x="120" y="410">Softmax cycles only; the 20-cycle block in each row is that cluster&#8217;s cross-lane reduction (permlane).</text>
+</svg>

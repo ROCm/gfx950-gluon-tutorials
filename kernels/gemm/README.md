@@ -128,6 +128,7 @@ For readers new to Gluon, we recommend the following path:
 
 1. Start with [`intra_wave/a16w16/`](intra_wave/a16w16/) to learn the optimization journey from a naive GEMM to a near-peak implementation.
 2. Continue with [`intra_wave/a8w8/`](intra_wave/a8w8/) and [`intra_wave/a4w4/`](intra_wave/a4w4/) to see how the same design extends to lower-precision kernels.
-3. Finally, study the [`inter_wave/`](inter_wave/README.md) kernels to compare an alternative scheduling model that reaches similar performance through a different system design.
+3. Continue with the [`inter_wave/`](inter_wave/README.md) kernels to compare an alternative scheduling model that reaches similar performance through a different system design.
+4. Finally, read [`../attention/`](../attention/README.md), which builds on the `inter_wave` ping-pong and asks what happens when a *third* category of instruction — the softmax's vector math — competes for the same SIMD. It is where the intra-wave / inter-wave taxonomy above stops being a property of a kernel and becomes a property of a region.
 
 Together, these kernels illustrate two complementary approaches to building high-performance GPU software: moving scheduling intelligence into the compiler, or expressing it directly in the kernel structure.

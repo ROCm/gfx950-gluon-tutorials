@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" width="760" height="200" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 12px; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+  </style>
+
+  <text class="h" x="8" y="16">The slice, split into four clusters — each pairs matrix work with memory for a future tile</text>
+
+  <g transform="translate(8,44)">
+    <rect x="0"   y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="86" y="-8" text-anchor="middle">dot1</text>
+    <rect x="10"  y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="86" y="28" text-anchor="middle">DOT1 [ j+1 ]</text>
+    <rect x="10"  y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="86" y="60" text-anchor="middle">VEC2 [ j ]</text>
+
+    <rect x="188" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="274" y="-8" text-anchor="middle">mem1</text>
+    <rect x="198" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="274" y="28" text-anchor="middle">LRV [ j ]</text>
+    <rect x="198" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="274" y="60" text-anchor="middle">ACK [ j+3 ]</text>
+
+    <rect x="376" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="462" y="-8" text-anchor="middle">dot2</text>
+    <rect x="386" y="12" width="152" height="24" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="462" y="28" text-anchor="middle">DOT2 [ j ]</text>
+    <rect x="386" y="44" width="152" height="24" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="462" y="60" text-anchor="middle">VEC1 [ j+1 ]</text>
+
+    <rect x="564" y="0" width="172" height="80" fill="none" stroke="#767676" stroke-dasharray="3 3"/>
+    <text class="lbl" x="650" y="-8" text-anchor="middle">mem2</text>
+    <rect x="574" y="12" width="152" height="24" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="650" y="28" text-anchor="middle">LRK [ j+2 ]</text>
+    <rect x="574" y="44" width="152" height="24" fill="#f7e0c6" stroke="#d9822b"/><text class="in" x="650" y="60" text-anchor="middle">ACV [ j+2 ]</text>
+  </g>
+
+  <text class="note" x="8" y="156">dot and mem alternate, so whichever cluster a wave is in, the other wave is in the opposite kind.</text>
+  <text class="note" x="8" y="178">VEC1[j+1] in dot2 produces the p that VEC2[j+1] and DOT2[j+1] consume a full turn later.</text>
+</svg>

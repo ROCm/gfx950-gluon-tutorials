@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .st   { font-size: 12px; font-weight: 600; fill: #1a1a1a; }
+    .lbl  { font-size: 11px; fill: #767676; }
+    .in   { font-size: 9.5px; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .bad  { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .clash{ fill: none; stroke: #c8443c; stroke-width: 1.6; stroke-dasharray: 4 3; }
+  </style>
+
+  <text class="h" x="8" y="16">The head of a dot cluster meets the other wave's LDS burst</text>
+
+  <!-- ===== 1. conflict ===== -->
+  <text class="st"   x="8" y="48">1</text>
+  <text class="note" x="22" y="48">as scheduled: 3-source VALU at the stage head, LDS burst arriving in the same cycles</text>
+  <g transform="translate(80,56)">
+    <text class="lbl" x="-72" y="16">wave A</text><text class="lbl" x="-72" y="28">dot</text>
+    <rect x="0"   y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="26" y="15" text-anchor="middle">MFMA</text>
+    <rect x="54"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="71"  y="15" text-anchor="middle">max3</text>
+    <rect x="90"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="107" y="15" text-anchor="middle">max3</text>
+    <rect x="126" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="143" y="15" text-anchor="middle">max3</text>
+    <rect x="162" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="179" y="15" text-anchor="middle">fma</text>
+    <rect x="198" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="215" y="15" text-anchor="middle">fma</text>
+    <rect x="234" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="251" y="15" text-anchor="middle">fma</text>
+    <rect x="272" y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="298" y="15" text-anchor="middle">MFMA</text>
+    <rect x="326" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="343" y="15" text-anchor="middle">exp</text>
+    <rect x="362" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="379" y="15" text-anchor="middle">exp</text>
+
+    <text class="lbl" x="-72" y="52">wave B</text><text class="lbl" x="-72" y="64">mem</text>
+    <rect x="54"  y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="71"  y="51" text-anchor="middle">ds</text>
+    <rect x="90"  y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="107" y="51" text-anchor="middle">ds</text>
+    <rect x="126" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="143" y="51" text-anchor="middle">ds</text>
+    <rect x="162" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="179" y="51" text-anchor="middle">ds</text>
+    <rect x="198" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="215" y="51" text-anchor="middle">ds</text>
+    <rect x="234" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="251" y="51" text-anchor="middle">ds</text>
+    <rect class="clash" x="50" y="-4" width="222" height="66"/>
+    <text class="bad" x="400" y="34">both want the register file</text>
+  </g>
+
+  <!-- ===== 2. MEMNOP ===== -->
+  <text class="st"   x="8" y="164">2</text>
+  <text class="note" x="22" y="164">MEMNOP: a couple of `s_nop`s at the mem-cluster head slide the burst past the 3-source block</text>
+  <g transform="translate(80,172)">
+    <text class="lbl" x="-72" y="16">wave A</text>
+    <rect x="0"   y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="26" y="15" text-anchor="middle">MFMA</text>
+    <rect x="54"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="71"  y="15" text-anchor="middle">max3</text>
+    <rect x="90"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="107" y="15" text-anchor="middle">max3</text>
+    <rect x="126" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="143" y="15" text-anchor="middle">max3</text>
+    <rect x="162" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="179" y="15" text-anchor="middle">fma</text>
+    <rect x="198" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="215" y="15" text-anchor="middle">fma</text>
+    <rect x="234" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="251" y="15" text-anchor="middle">fma</text>
+    <rect x="272" y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="298" y="15" text-anchor="middle">MFMA</text>
+    <rect x="326" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="343" y="15" text-anchor="middle">exp</text>
+    <rect x="362" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="379" y="15" text-anchor="middle">exp</text>
+
+    <text class="lbl" x="-72" y="52">wave B</text>
+    <rect x="54"  y="36" width="70" height="22" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 2"/><text class="in" x="89" y="51" text-anchor="middle">s_nop</text>
+    <rect x="126" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="143" y="51" text-anchor="middle">ds</text>
+    <rect x="162" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="179" y="51" text-anchor="middle">ds</text>
+    <rect x="198" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="215" y="51" text-anchor="middle">ds</text>
+    <rect x="234" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="251" y="51" text-anchor="middle">ds</text>
+    <rect x="272" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="289" y="51" text-anchor="middle">ds</text>
+    <rect x="308" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="325" y="51" text-anchor="middle">ds</text>
+    <text class="ok" x="400" y="50">the burst lands on exp instead</text>
+  </g>
+
+  <!-- ===== 3. SOQ ===== -->
+  <text class="st"   x="8" y="280">3</text>
+  <text class="note" x="22" y="280">SCALE_ON_Q: folding the scale into Q turns every fma into a 2-source sub, so it stops competing</text>
+  <g transform="translate(80,288)">
+    <text class="lbl" x="-72" y="16">wave A</text>
+    <rect x="0"   y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="26" y="15" text-anchor="middle">MFMA</text>
+    <rect x="54"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="71"  y="15" text-anchor="middle">max3</text>
+    <rect x="90"  y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="107" y="15" text-anchor="middle">max3</text>
+    <rect x="126" y="0" width="34" height="22" fill="#f7d2cf" stroke="#c8443c"/><text class="in" x="143" y="15" text-anchor="middle">max3</text>
+    <rect x="162" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="179" y="15" text-anchor="middle">sub</text>
+    <rect x="198" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="215" y="15" text-anchor="middle">sub</text>
+    <rect x="234" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="251" y="15" text-anchor="middle">sub</text>
+    <rect x="272" y="0" width="52" height="22" fill="#cde8d3" stroke="#4c9a5a"/><text class="in" x="298" y="15" text-anchor="middle">MFMA</text>
+    <rect x="326" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="343" y="15" text-anchor="middle">exp</text>
+    <rect x="362" y="0" width="34" height="22" fill="#cfe0f7" stroke="#3b7dd8"/><text class="in" x="379" y="15" text-anchor="middle">exp</text>
+
+    <text class="lbl" x="-72" y="52">wave B</text>
+    <rect x="54"  y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="71"  y="51" text-anchor="middle">ds</text>
+    <rect x="90"  y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="107" y="51" text-anchor="middle">ds</text>
+    <rect x="126" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="143" y="51" text-anchor="middle">ds</text>
+    <rect x="162" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="179" y="51" text-anchor="middle">ds</text>
+    <rect x="198" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="215" y="51" text-anchor="middle">ds</text>
+    <rect x="234" y="36" width="34" height="22" fill="#f7eec6" stroke="#d4a72c"/><text class="in" x="251" y="51" text-anchor="middle">ds</text>
+    <rect class="clash" x="50" y="-4" width="114" height="66"/>
+    <text class="ok" x="400" y="50">only the max3 block still overlaps</text>
+  </g>
+
+  <g transform="translate(80,362)">
+    <rect x="0"   y="0" width="12" height="12" fill="#f7d2cf" stroke="#c8443c"/><text class="note" x="18" y="10">3-source VALU</text>
+    <rect x="120" y="0" width="12" height="12" fill="#cfe0f7" stroke="#3b7dd8"/><text class="note" x="138" y="10">1- or 2-source VALU</text>
+    <rect x="270" y="0" width="12" height="12" fill="#f7eec6" stroke="#d4a72c"/><text class="note" x="288" y="10">ds_read, from the other wave</text>
+  </g>
+</svg>

@@ -1,6 +1,17 @@
 # Scripts
 
-Helper scripts for profiling and benchmarking Triton GEMM kernels.
+Helper scripts for profiling and benchmarking the tutorial's Triton/Gluon kernels.
+
+The first group drives the GEMM kernels. The rest belong to
+[`kernels/attention/`](../kernels/attention/README.md), and split into three kinds:
+
+| script | what it does |
+|---|---|
+| **Measurement** | |
+| [`fa_kernel_time.py`](#fa_kernel_timepy) | the reported FA metric — `rocprofv3` kernel time with a prepared launch |
+| [`fly_kernel_time.py`](#fly_kernel_timepy) | times ROCm/FlyDSL under *our* protocol, so the two can share a table |
+| **Figures** | |
+| [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
 
 ## install_att_decoder.sh
 
@@ -279,3 +290,66 @@ Max    : 248.91 us
 ```
 
 To convert to TFLOPS: `TFLOPS = 2 × M × N × K / (time_in_seconds × 10^12)`
+
+---
+
+# Attention scripts
+
+Everything below belongs to [`kernels/attention/`](../kernels/attention/README.md). All of
+them want that section's environment in front of them — the llirSched plugin and
+`disable-machine-sink` — and `FA_MODULE=fmha_v3` (default) or `fmha_v4` to pick the kernel.
+
+## fa_kernel_time.py
+
+The reported FA throughput metric, and the counterpart of `run_perf_table.py --rocprof` on
+the GEMM side: `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, averaging the final
+N of 1000 dispatches and dividing the FLOP count by that. Kernel timestamps rather than
+`do_bench` wall time, because wall time charges the kernel for host-side launch gaps — and
+those gaps idle the GPU, which lets the clock drift between dispatches.
+
+```bash
+FA_MODULE=fmha_v4 python scripts/fa_kernel_time.py \
+  --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 --iters 1000 --last-n 100
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--batch` / `--seqlen` / `--hq` / `--hk` / `--d` | `1 / 16320 / 64 / 64 / 128` | problem shape; `--hq != --hk` is GQA/MQA |
+| `--dtype` | `bf16` | `bf16` or `fp16` |
+| `--layout` | `bhsd` | `bhsd` or `bshd` |
+| `--iters` / `--last-n` | `1000` / `100` | measured dispatches, and how many of the final ones to average |
+| `--launch` | `prepared` | `prepared` binds arguments once and re-enters the launch stub; `jit` / `both` attribute a delta to the launch path itself |
+| `--scale-on-q` | `1` | `0` applies `qk_scale` per element inside VEC1 instead of pre-scaling Q |
+| `--rotating-buffer-size` | `512` MB | working set spread across rotating tensor sets, so dispatches read cold data rather than MALL-resident data |
+| `--no-serialize` | off | leave `AMD_SERIALIZE_KERNEL` unset and let dispatches queue back to back |
+
+## fly_kernel_time.py
+
+Times ROCm/FlyDSL's `flash_attn_dualwave_swp` under *this* repo's protocol, which is the only
+reason its numbers can share a table with ours. FlyDSL's own benchmark averages a shallower
+window, which leaves the kernel in its thermal transient: six consecutive runs of one config
+measured 1236.9, 1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. Same `rocprofv3`
+invocation, same serialization, same rotating-buffer rule and same averaging window as
+`fa_kernel_time.py`. Checks the output against `scaled_dot_product_attention` before timing.
+
+```bash
+FLYDSL_ROOT=/path/to/FlyDSL python scripts/fly_kernel_time.py \
+  --batch 32 --seqlen 8192 --hq 8 --d 128 --iters 1000 --last-n 100
+```
+
+Needs a [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL) checkout (`pip install -e .` per its own
+README). `--eager-rescale` selects the `fmha_v3`-equivalent path; `--setprio`, `--stagger`,
+`--waves-per-eu` and `--causal` expose its builder's knobs, whose shipped defaults are its
+optimum. Note the builder defaults to `causal=True` while this script passes `causal=False`
+to match our kernels.
+
+## plot_fmha_summary.py
+
+Regenerates `kernels/attention/images/results.png`, the summary chart at the top of the
+attention README. Same shape as `plot_perf_summary.py` for GEMM: grouped TFLOPS bars with the
+per-SIMD in-loop MFMA efficiency in red inside each bar. The numbers live in a `groups` table
+at the top of the file — edit it when they change and re-run.
+
+```bash
+python scripts/plot_fmha_summary.py
+```
