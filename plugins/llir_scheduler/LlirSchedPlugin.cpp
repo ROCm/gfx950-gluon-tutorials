@@ -1508,8 +1508,9 @@ static bool declareRegionGroups(Instruction *Begin, Instruction *End,
   //
   // Cost model per op (cycles / instruction count as IGroupLP counts them):
   //   * plain valu   4 cyc, 1 instruction
-  //   * packed valu  two 4-cyc entries -- ScalarizePackedFOps runs after this pass
-  //                  and splits it, and IGroupLP counts instructions
+  //   * packed valu  8 cyc, 1 instruction -- two slots' worth of window, but ONE
+  //                  entry: sched_group_barrier sizes are instruction counts, and
+  //                  SIPreEmitPeephole splits whatever lands in a shadow later
   //   * v_permlane   20 cyc, 1 instruction (cross-lane shuffle; one window can hide
   //                  a permlane plus a single 4-cycle op and no more)
   //   * TRANS (exp2) 8 cyc, 1 instruction, its own mask
