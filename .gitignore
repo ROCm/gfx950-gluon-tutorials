@@ -34,3 +34,6 @@ kernels/attention/att_attn_simd0.json
 kernels/attention/note.md
 kernels/attention/images/eff_tflops_curve.svg
 kernels/attention/images/eff_tflops_scheduling.svg
+# CU-discovery helpers for ATT: kept locally, deliberately not published
+scripts/att_pick_cu.py
+scripts/att_cu_census.cpp

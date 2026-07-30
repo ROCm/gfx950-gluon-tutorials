@@ -42,9 +42,8 @@ through as an MFMA ↔ VALU **co-execution** budget.
   whose VALU demand exceeds the available MFMA shadow. Region classification picks between
   them, so the GEMM kernels are unaffected — their assembly is unchanged.
 - **`amdgcnas` is not used by these kernels.**
-- **Three FA-specific scripts**: `scripts/fa_kernel_time.py`, `scripts/fly_kernel_time.py`
-  (times ROCm/FlyDSL under our protocol for a like-for-like comparison) and
-  `scripts/att_pick_cu.py`.
+- **Two FA-specific scripts**: `scripts/fa_kernel_time.py` and `scripts/fly_kernel_time.py`
+  (times ROCm/FlyDSL under our protocol for a like-for-like comparison).
 
 > [!IMPORTANT]
 > These kernels need `gfx950-tutorial-v2.0` — `fmha_v4` does not compile without

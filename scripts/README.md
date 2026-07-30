@@ -10,9 +10,6 @@ The first group drives the GEMM kernels. The rest belong to
 | **Measurement** | |
 | [`fa_kernel_time.py`](#fa_kernel_timepy) | the reported FA metric — `rocprofv3` kernel time with a prepared launch |
 | [`fly_kernel_time.py`](#fly_kernel_timepy) | times ROCm/FlyDSL under *our* protocol, so the two can share a table |
-| **ATT tracing** | |
-| [`att_pick_cu.py`](#att_pick_cupy) | pick an `att_target_cu` that exists on this die — aiming at a harvested one records nothing, silently |
-| [`att_cu_census.cpp`](#att_pick_cupy) | the HIP probe `att_pick_cu.py` compiles to find out which CUs actually run waves |
 | **Figures** | |
 | [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
 
@@ -345,27 +342,6 @@ README). `--eager-rescale` selects the `fmha_v3`-equivalent path; `--setprio`, `
 `--waves-per-eu` and `--causal` expose its builder's knobs, whose shipped defaults are its
 optimum. Note the builder defaults to `causal=True` while this script passes `causal=False`
 to match our kernels.
-
-## att_pick_cu.py
-
-Picks an `att_target_cu` that exists on the die you are about to trace. A shader array exposes
-9 CU slots but enables 8 — one is harvested for yield, and *which* index differs per die.
-`rocprofv3` takes a single `att_target_cu` and **does not validate it**: aim at a harvested CU
-and you get exit 0, a few KB of `.att`, no wave files, and `process_json.py` then dies with
-`'NoneType' object is not iterable`. There is no "any CU" mode.
-
-```bash
-python scripts/att_pick_cu.py --template kernels/attention/att_attn_se0.json --out /tmp/att.json
-python scripts/att_pick_cu.py --se-mask 0x1 --print-cu    # just the index
-python scripts/att_pick_cu.py --report                    # per-array census
-```
-
-It discovers the answer rather than assuming it, by compiling and running
-**`att_cu_census.cpp`** — a HIP kernel in which every workgroup reports its `(XCC, SE, CU)`
-from `HW_REG_HW_ID` and `HW_REG_XCC_ID`, so slots that never appear are harvested. The
-enabled sets are intersected over every array the SE mask selects, which matters: one die
-here harvests CU0 in XCC0, CU7 in XCC1 and CU8 in XCC2–7, so only the intersection is safe.
-Results are cached per die by PCI bus id, costing one sub-second launch per machine.
 
 ## plot_fmha_summary.py
 

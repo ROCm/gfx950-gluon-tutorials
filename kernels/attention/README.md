@@ -8,10 +8,9 @@ architecture and differ in how they handle the softmax rescale.
 
 Tuned, `fmha_v4` reaches **1323 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
 `fmha_v3` 1249 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
-**1322** on this shape from **84.7%** efficiency — a dead heat with `fmha_v4` on throughput, nine
-and a half points behind it on how much of the matrix pipe's time goes to matrix work. The orange
-bar in each group is the same kernel source built without the scheduling plugin. [§9](#9-results) works through
-what separates all five, and what each step costs.
+**1322** on this shape from **84.7%** efficiency. The orange bar in each group is the same kernel
+source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
+and what each step costs.
 
 That efficiency number is what the rest of this document is about. 94.2% means the matrix pipe
 takes a new MFMA in 94.2% of the loop's cycles, and the missing 5.8% is time the SIMD spent
@@ -115,8 +114,8 @@ the MFMA, and has to be interleaved into it carefully enough to actually fit.**
 
 ## 2. The budget: what fits before the next MFMA can issue
 
-The useful mental model is not "how long does an MFMA take" — nothing waits for it to finish —
-but **when can the SIMD issue the next instruction**.
+The useful mental model is not "how long does an MFMA take" but **when can the SIMD issue the
+next instruction**.
 
 The public [CDNA4 ISA][isa] gives the two numbers this rests on: `PASS = 4 clock cycles`
 (§7.6), and `V_MFMA_F32_32X32X16_F16` "performs 8 passes". So issue one at cycle 0 and the
@@ -349,8 +348,9 @@ issued in the open and lands directly on the loop's cycle count. Note this is a 
 statement, not a scheduling one: no ordering of these instructions can help, because there are
 simply more cycles of vector work than there is shadow to hide it in.
 
-**Lazy rescaling** is what removes the larger of the two. Softmax is shift-invariant, so the
-running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fmha_v4`
+**Lazy rescaling** is what removes the larger of the two. The trick is not ours — we took it from
+ROCm/FlyDSL's `dualwave_swp_lazy_rescale` path, which is also where the log2 threshold of 8 comes
+from. Softmax is shift-invariant, so the running max does not have to be *tight*; it only has to keep `exp2`'s argument in range. `fmha_v4`
 lets it **lag**: the max is bumped, and `acc` rescaled, only when a tile's max exceeds the
 running max by more than a log2 threshold of 8 — a 256× safety margin, trivially inside fp32's
 range. When the max is stable, which is the common case after the first few tiles, `p` is
@@ -379,10 +379,7 @@ its only consumer is now in the other cluster — and a scheduler that can see a
 downstream will drag the producer toward it, because a pure `fsub` carries no chain edge and
 therefore no `s_barrier` or `sched.barrier` orders it ([§6](#6-making-the-compiler-co-operate)). Half the subtracts end up in a mem
 stage: the work leaves the cluster it was meant to leave without arriving in the one it was meant
-to reach. *Which* pass does the moving is worth knowing if you are debugging your own kernel — it
-is ISel's pre-RA list scheduler, not `MachineSink`: its very first MIR dump already shows the
-subtracts in the mem region, before `MachineSink` runs at all, and re-running the same IR under
-`-pre-RA-sched=linearize` keeps every one of them in the dot cluster.
+to reach.
 
 Moving both ops instead removes the opportunity. The **raw** slice is carried across and subtracted
 where it is exponentiated, so the subtract is born in the cluster that consumes it and there is
@@ -417,9 +414,7 @@ places.
 [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)'s whole argument is an assignment of vector ops to clusters — this `exp2` belongs beside the
 PV MFMA, that subtract beside the QK MFMA. `MachineSink` runs on MIR, long after any IR pass,
 and undoes it: it moves an op toward its consumer, and since `VEC1` of one tile feeds `VEC2` of
-the next, "toward its consumer" means *out of its cluster and into the following one*. An
-`s_barrier` is no obstacle — it is `IntrNoMem`, so it is not a code-motion fence for pure ALU
-ops, and a chain-free `fsub` has no dependency edge on it at all.
+the next, "toward its consumer" means *out of its cluster and into the following one*.
 
 The result is a cluster that was carefully balanced arriving at the scheduler with its work
 somewhere else, and most of a cluster's shadow left empty. Hence
@@ -452,9 +447,6 @@ the rest:
 
 ![a declared group of packed ops becoming issued scalars](images/packed_formation.svg)
 
-Which is also why one kernel no longer needs a different environment from the other: nothing
-upstream has to normalize the packing first.
-
 The third panel is a detail that belongs to the kernel rather than the compiler, and it is the
 fourth kernel-side rule of [§8](#8-applying-this-to-your-own-kernel). A packed op cannot follow an MFMA back to back, so the *first*
 uncovered packed op in a cluster pays a hazard on top of being exposed. Ordering the uncovered
@@ -469,23 +461,7 @@ and for a dot cluster it walks the vector ops against the MFMA windows, then *de
 result with `sched_group_barrier` — a sequence of "N instructions of this class, then M of that"
 which AMDGPU's IGroupLP builds in the machine scheduler. When the region fits it spreads the work
 evenly; when it does not, it covers the ops that cannot be packed first, spends what window is
-left on packable ops split into scalars, and leaves the remainder packed — which is what gets
-`fmha_v3` close to its 91.4% ceiling despite being over capacity in both clusters.
-
-Declaring rather than reordering is the load-bearing choice, and `sched_barrier` is the
-alternative that does not work:
-
-- **It is advisory.** `sched_barrier(0)` asks the machine scheduler not to move instructions
-  across a point; it does not oblige it. We measured codegen consolidating a stage's last two
-  sub-regions anyway. `sched_group_barrier` does not ask the scheduler to preserve an order — it
-  tells IGroupLP to *construct* one.
-- **It does not fence what we care about.** A barrier is a chain node, so it orders memory
-  operations. Chain-free arithmetic — a pure `fsub` — has no edge to it and drifts across freely.
-  This is the same property that lets `MachineSink` move `exp2` over an `s_barrier` above.
-- **Pinning an order throws away the scheduler's knowledge.** Physically reordering the IR and
-  fencing it fixes one order for good, and a fixed order cannot respond to the latencies and
-  register pressure the machine scheduler can see. Declaring says *what* the pipeline should look
-  like and leaves the scheduler to choose which instruction fills each slot.
+left on packable ops split into scalars, and leaves the remainder packed.
 
 One detail worth knowing if you read the plugin: the declaration has to be emitted **after**
 every real instruction of the region, because IGroupLP forms its groups scanning upward. A
@@ -540,27 +516,10 @@ Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmh
 and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
 fold the larger, at **+1.25%** and **+0.91%**.
 
-That the fold pays the two kernels *differently* is worth pausing on, because it is the one thing
-this table says that the same experiment at `B=1, S=16320, fp16` did not. There both kernels gained
-the same ~0.8%, which invited the reading that a mechanism removing the same 64 ops from the same
-cluster should pay the same in both. Here `fmha_v3` gains a third again as much as `fmha_v4`, and the
-[§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) budget explains why: `fmha_v3` is *over* its co-execution budget, so ops that leave the cluster
-come off the exposed remainder and shorten the loop directly, while `fmha_v4` already fits and was
-hiding most of them anyway. The op count is the same; what differs is whether those ops were costing
-cycles.
-
-The efficiency column moves further than the throughput column throughout, for the reason [§9](#9-results)
-gives — a denser MFMA stream costs clock. And it barely moves *between* shapes: against the
-`B=1, S=16320, fp16` run of the same six configurations, five of the six efficiency figures land
-within 0.4 points, which is the cleanest evidence in this document for [§9](#9-results)'s claim that in-loop
-MFMA efficiency is the quantity that does not depend on the shape.
-
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
-to 9.99e-04 on `fmha_v4`, at this shape in bf16. All four are inside tolerance by a wide margin: one bf16
-rounding step at this output magnitude (max |o| = 0.17) is **1.34e-03**, so even the worst of them
-is under a single ULP of the format the kernel writes. `--scale-on-q 0` restores the tighter
-numerics on either kernel.
+to 9.99e-04 on `fmha_v4`, at this shape in bf16. All four are inside tolerance, and
+`--scale-on-q 0` restores the tighter numerics on either kernel.
 
 ## 8. Applying this to your own kernel
 
@@ -601,10 +560,7 @@ still not reaching the ceiling.
 
 **Then measure.** Take an ATT instruction trace and run
 [`scripts/process_json.py`](../../scripts/process_json.py); it prints in-loop MFMA efficiency
-**per wave**, so double it for the per-SIMD figure when two waves share the SIMD. Aim the trace
-with [`scripts/att_pick_cu.py`](../../scripts/att_pick_cu.py): parts harvest one CU per shader
-array, and ATT records nothing at all — exit 0, a trace file with no wave data — if you target a
-CU that does not exist on your die.
+**per wave**, so double it for the per-SIMD figure when two waves share the SIMD.
 
 **Then route the gap.** What you see, what it means, and where in this document it is worked
 through:
