@@ -88,7 +88,8 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag, rocprof
+Measured on a single MI355X (gfx950), Triton built from the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) tag (the pin at the time of
+measurement; the current pin is [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) — these numbers are pending re-measurement, see `CHANGELOG.md`), rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
 scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).

@@ -2,8 +2,26 @@
 
 Helper scripts for profiling and benchmarking the tutorial's Triton/Gluon kernels.
 
-The first group drives the GEMM kernels. The rest belong to
-[`kernels/attention/`](../kernels/attention/README.md), and split into three kinds:
+The first group drives the GEMM kernels; the second belongs to
+[`kernels/attention/`](../kernels/attention/README.md).
+
+**GEMM**
+
+| script | what it does |
+|---|---|
+| [`run_perf_table.py`](#run_perf_tablepy) | the 4-wave (`intra_wave`) perf table — TFLOPS, VGPRs, spills, MFMA efficiency, per compiler config |
+| [`collect_perf.py`](#collect_perfpy) | the 8-wave (`inter_wave`) equivalent — rocprof TFLOPS + ATT per-SIMD MFMA efficiency + VGPR/spill |
+| [`calc_kernel_time.py`](#calc_kernel_timepy) | kernel time from a `rocprofv3 --kernel-trace` CSV |
+| [`process_json.py`](#process_jsonpy) | MFMA efficiency (**per wave**) from a decoded ATT trace |
+| [`run_att.py`](#run_attpy) | drive `rocprofv3` ATT collection and decode |
+| [`run_counter_collection.py`](#run_counter_collectionpy) | hardware counter collection |
+| [`install_att_decoder.sh`](#install_att_decodersh) | fetch the ROCm 7.0-style ATT trace decoder |
+| [`occ.sh`](#occsh) | occupancy / register usage for a compiled kernel |
+| [`gen_performance_chart.py`](#gen_performance_chartpy) | regenerate the a16w16 v0→v9 performance chart |
+| [`plot_perf_summary.py`](#plot_perf_summarypy) | regenerate the GEMM 4-wave-vs-8-wave summary chart |
+| [`plot_scheduling_models.py`](#plot_scheduling_modelspy) | regenerate the three scheduling-model diagrams in `gemm/README.md` |
+
+**Attention**
 
 | script | what it does |
 |---|---|
@@ -12,6 +30,62 @@ The first group drives the GEMM kernels. The rest belong to
 | [`fly_kernel_time.py`](#fly_kernel_timepy) | times ROCm/FlyDSL under *our* protocol, so the two can share a table |
 | **Figures** | |
 | [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
+
+## collect_perf.py
+
+TFLOPS + per-SIMD MFMA efficiency for the **8-wave** (`inter_wave`) GEMM kernels. One tool for
+all three; the 4-wave (`intra_wave`) kernels use [`run_perf_table.py`](#run_perf_tablepy)
+instead.
+
+- **TFLOPS** — `rocprofv3 --kernel-trace` around `bench.py --rocprof` (rotating tensors, cold
+  cache), averaging the last 100 dispatches.
+- **MFMA efficiency** — `rocprofv3 --att` via [`run_att.py`](#run_attpy), decoded by
+  [`process_json.py`](#process_jsonpy), then **scaled x2** for 2 waves/SIMD so the reported
+  figure is per-SIMD (see [`docs/mfma_efficiency.md`](../docs/mfma_efficiency.md)).
+- **VGPR / spills** from the compiled kernel.
+
+Run from the repo root, with no compiler-plugin env vars set:
+
+```bash
+python scripts/collect_perf.py --kernel a16w16 --K 8192  --dtype fp16
+python scripts/collect_perf.py --kernel a8w8   --K 16384
+python scripts/collect_perf.py --kernel a4w4   --version 1 --K 32768
+# large K needs a bigger rotating buffer to stay cold
+python scripts/collect_perf.py --kernel a16w16 --K 32768 --dtype fp16 --rotating-buffer-size 2048
+```
+
+Options: `--kernel {a16w16,a8w8,a4w4}`, `--M/--N/--K`, `--version`,
+`--rotating-buffer-size`, `--skip-trace`, `--skip-att`.
+
+## occ.sh
+
+Occupancy and register usage for a single-kernel script. Compiles the kernel, strips the
+assembly down to the informative parts, and reports VGPR/AGPR/SGPR counts and the resulting
+waves-per-EU. Assumes a CDNA target.
+
+```bash
+./scripts/occ.sh <script-with-one-kernel.py>
+```
+
+## gen_performance_chart.py
+
+Regenerates `kernels/gemm/intra_wave/a16w16/images/performance_chart.png` — the v0 → v9
+optimization-journey chart. Bars are TFLOPS (left axis), the red line is MFMA efficiency (right
+axis), one bar per version. The numbers are a table inside the script; edit it when they change.
+
+## plot_perf_summary.py
+
+Regenerates `kernels/gemm/images/perf_summary.png` — the 4-wave vs 8-wave grouped bar chart in
+[`kernels/gemm/README.md`](../kernels/gemm/README.md), with the per-SIMD loop MFMA efficiency
+printed in red inside each bar. The numbers mirror the README and live in a `rows` table inside
+the script.
+
+## plot_scheduling_models.py
+
+Regenerates the three scheduling-model diagrams in `kernels/gemm/README.md` §1 —
+`sched_intra_wave.png`, `sched_inter_wave.png`, and `sched_warp_spec.png`. All three model the
+same SIMD0 workload (2 regions of 4 MFMA, each needing 2 `ds_read` and issuing 2
+`buffer_load`), so the drawings are directly comparable.
 
 ## install_att_decoder.sh
 

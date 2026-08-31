@@ -2,7 +2,24 @@
 
 ## 1. What is MFMA Efficiency?
 
-MFMA efficiency measures how well a kernel utilizes the matrix core. It is defined as the ratio of cycles spent executing MFMA instructions to the total cycles of the main loop, measured per SIMD.
+MFMA efficiency measures how well a kernel utilizes the matrix core. It is defined as the ratio of cycles spent executing MFMA instructions to the total cycles of the main loop.
+
+> [!IMPORTANT]
+> **Per wave or per SIMD?** The tutorial always quotes the **per-SIMD** figure — the fraction of
+> cycles the SIMD's matrix pipe is busy. But an ATT trace records one *wave*, so the raw number
+> is **per wave**, and the two differ whenever more than one wave shares a SIMD:
+>
+> ```
+> per-SIMD efficiency = per-wave efficiency x waves per SIMD
+> ```
+>
+> - `gemm/intra_wave/` runs **1 wave/SIMD**, so the two are the same number.
+> - `gemm/inter_wave/` and `kernels/attention/` run **2 waves/SIMD** (`waves_per_eu=2`), so the
+>   per-wave figure must be **doubled**.
+>
+> [`process_json.py`](../scripts/process_json.py) prints the **per-wave** figure and does not
+> scale it; [`collect_perf.py`](../scripts/collect_perf.py) applies the x2 itself and reports
+> per-SIMD. Halving or doubling the wrong one is the easiest mistake to make with this metric.
 
 A higher MFMA efficiency means better matrix core utilization. For a compute-bound kernel, the ideal target is close to 100%.
 
@@ -26,7 +43,8 @@ MFMA efficiency is cycle-based and independent of clock frequency, making it mor
    - Identify the loop and epilogue boundaries based on instruction hit counts
    - Compute cycle durations for prologue, loop, and epilogue phases
    - Count MFMA instructions in the loop and calculate total MFMA cycles
-   - Derive MFMA efficiency as `total_mfma_cycles / average_iteration_duration`
+   - Derive MFMA efficiency as `total_mfma_cycles / average_iteration_duration` — this is the
+     **per-wave** figure; multiply by waves/SIMD for the per-SIMD number the tutorial quotes
 
    Example output:
 
@@ -55,7 +73,9 @@ MFMA efficiency is cycle-based and independent of clock frequency, making it mor
 
    The output includes:
    - **Cycle ratios** for prologue, loop, and epilogue phases
-   - **MFMA efficiency** within the main loop
+   - **MFMA efficiency** within the main loop, **per wave**. The `57.00%` above is a
+     1-wave/SIMD (`intra_wave`) trace, so it is also the per-SIMD figure; on a 2-waves/SIMD
+     kernel the same field would have to be doubled (see section 1)
    - **Iteration statistics** for performance analysis
 
    For deeper investigation, ATT Viewer can visualize thread traces and allow you to zoom into specific code regions. For routine performance tracking, the script output is sufficient.

@@ -144,9 +144,9 @@ def parse_args():
     parser.add_argument(
         "--version",
         type=int,
-        default=8,
+        default=9,
         choices=range(0, 10),
-        help="Kernel version to benchmark (default: 8)",
+        help="Kernel version to benchmark (default: 9, the final version)",
     )
     parser.add_argument(
         "--rocprof",

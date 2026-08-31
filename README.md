@@ -17,7 +17,7 @@ cd kernels/gemm/intra_wave/a16w16
 python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
-Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling. Then [`kernels/attention/`](kernels/attention/README.md) takes the same reasoning to Flash Attention, where a third kind of instruction — the softmax's vector math — has to share a SIMD with the matrix pipe.
+Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling. Then [`kernels/attention/`](kernels/attention/README.md) takes the same reasoning to Flash Attention, where a third kind of instruction — the softmax's vector math — has to share a SIMD with the matrix pipe.
 
 > [!TIP]
 > Every version README follows the same shape: **Motivation → Design → Performance Analysis → What Comes Next.** If you only want the fastest FP16 kernel, jump to `v9_beyond_hotloop`. If you want to understand *why* it's fast, start from `v0_naive`.
@@ -28,12 +28,17 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 
 ```
 .
-├── kernels/              # The tutorial — step-by-step kernel implementations
+├── kernels/                  # The tutorial — step-by-step kernel implementations
 │   ├── gemm/
-│   │   ├── a16w16/       # FP16 GEMM, v0 → v9 (start here)
-│   │   ├── a8w8/         # BF8 GEMM — same design, adapted for 8-bit
-│   │   └── a4w4/         # MXFP4 GEMM with per-group microscaling
-│   └── attention/        # Flash Attention forward (fmha_v3, fmha_v4) — MFMA ↔ VALU co-execution
+│   │   ├── intra_wave/       # 4-wave: 1 wave/SIMD, compiler interleaves MFMA + memory
+│   │   │   ├── a16w16/       #   FP16 GEMM, v0 → v9 (start here)
+│   │   │   ├── a8w8/         #   BF8 GEMM — same design, adapted for 8-bit
+│   │   │   └── a4w4/         #   MXFP4 GEMM with per-group microscaling
+│   │   └── inter_wave/       # 8-wave: 2 waves/SIMD ping-pong, no compiler plugins needed
+│   │       ├── a16w16/       #   FP16/BF16 warp-pipeline GEMM
+│   │       ├── a8w8/         #   BF8
+│   │       └── a4w4/         #   MXFP4
+│   └── attention/            # Flash Attention forward (fmha_v3, fmha_v4) — MFMA ↔ VALU co-execution
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
@@ -47,8 +52,9 @@ Once you're comfortable there, the FP8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | If you want to…                                          | Look in                     |
 |----------------------------------------------------------|-----------------------------|
 | Learn the full optimization workflow end to end          | `kernels/gemm/intra_wave/a16w16/`      |
-| Apply the same design to FP8                             | `kernels/gemm/intra_wave/a8w8/`        |
+| Apply the same design to BF8                             | `kernels/gemm/intra_wave/a8w8/`        |
 | Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/intra_wave/a4w4/`        |
+| Compare the 8-wave ping-pong design (2 waves/SIMD, no plugins) | `kernels/gemm/inter_wave/` |
 | Optimize Flash Attention, where vector math competes with the MFMA | `kernels/attention/`        |
 | Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |

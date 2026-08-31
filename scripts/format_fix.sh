@@ -32,11 +32,11 @@ pip install -q black ruff
 
 echo ""
 echo "=== Formatting code with Black ==="
-black kernels/ layout_plot/ experiments/ scripts/
+black kernels/ layout_plot/ experiments/ scripts/ plugins/
 
 echo ""
 echo "=== Auto-fixing with Ruff ==="
-ruff check --fix kernels/ layout_plot/ experiments/ scripts/
+ruff check --fix kernels/ layout_plot/ experiments/ scripts/ plugins/
 
 echo ""
 echo "✅ Code formatting complete!"

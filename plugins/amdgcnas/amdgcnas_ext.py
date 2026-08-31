@@ -22,18 +22,18 @@
 # THE SOFTWARE.
 ##############################################################################
 
-from collections import defaultdict
-from typing import Set, Tuple, Optional
-import re
-import logging
 import argparse
+import logging
+import re
+from collections import defaultdict
+from typing import Optional, Set, Tuple
 
 NO_DEF_OPS = {
-    's_waitcnt',
-    's_nop',
-    's_branch',
-    's_cbranch_scc0',
-    's_cbranch_scc1',
+    "s_waitcnt",
+    "s_nop",
+    "s_branch",
+    "s_cbranch_scc0",
+    "s_cbranch_scc1",
 }
 
 
@@ -41,13 +41,22 @@ NO_DEF_OPS = {
 ## `buffer_load ... lds` needs to be in ALL_USERS, but the broader set below
 ## over-approximates users, which is always safe (it never drops a live def, it
 ## only forgoes some hoists). Tightening it is a known future refinement.
-ALL_USERS = ('s_cmp', 'v_permlane', 'buffer_store', 'ds_write', 'ds_store')
-ALL_DEFS_USES = ('v_permlane', )
-COPY_DATA = ('v_accvgpr_read', 'v_accvgpr_write', 'v_accvgpr_mov', 'v_mov', 'scratch_load', 'scratch_store')
+ALL_USERS = ("s_cmp", "v_permlane", "buffer_store", "ds_write", "ds_store")
+ALL_DEFS_USES = ("v_permlane",)
+COPY_DATA = (
+    "v_accvgpr_read",
+    "v_accvgpr_write",
+    "v_accvgpr_mov",
+    "v_mov",
+    "scratch_load",
+    "scratch_store",
+)
 
 # The full architected register file (gfx950): v0-v255, a0-a255, s0-s101. Used as
 # the universe when computing each block's free registers.
-ALL_REGS = ({('v', i) for i in range(256)} | {('a', i) for i in range(256)} | {('s', i) for i in range(102)})
+ALL_REGS = (
+    {("v", i) for i in range(256)} | {("a", i) for i in range(256)} | {("s", i) for i in range(102)}
+)
 
 
 def setup_logging(debug=False):
@@ -176,7 +185,7 @@ class Instruction:
 
     # ---------- classification ----------
     def is_memory(self):
-        return (self.opcode.startswith("ds_") or self.opcode.startswith("buffer_"))
+        return self.opcode.startswith("ds_") or self.opcode.startswith("buffer_")
 
     def is_control(self):
         return self.opcode.startswith("s_branch") or self.opcode.startswith("s_cbranch")
@@ -191,13 +200,12 @@ class Instruction:
     def is_mfma(self) -> bool:
         return self.opcode.startswith("v_mfma")
 
-
     # ---------- copy inst ----------
     def is_copy(self):
         return self.opcode.startswith(COPY_DATA)
 
     def get_copy_src(self) -> Register | str:
-        '''
+        """
         return the source register of this copy instruction
         src can be
         1. s, a, v
@@ -206,7 +214,7 @@ class Instruction:
            scratch_load_dword off v0, off, off
            l4 means the src of
            scratch_load_dword off v0, off, off offset:4
-        '''
+        """
         assert self.is_copy()
         if self.opcode.startswith("v_"):
             src = self.get_src_regs()
@@ -220,9 +228,9 @@ class Instruction:
         # An 'l' register names a scratch memory location, keyed by its byte offset
         # (0 when the instruction carries no explicit offset).
         off = self.operands[-1]
-        if 'offset' not in off:
-            return Register('l', [0])
-        return Register('l', [int(off.split(':')[1])])
+        if "offset" not in off:
+            return Register("l", [0])
+        return Register("l", [int(off.split(":")[1])])
 
     def get_copy_dst(self) -> Register:
         assert self.is_copy()
@@ -240,16 +248,17 @@ class Instruction:
         if self.opcode in NO_DEF_OPS:
             return
 
-        if 'scratch_load' in self.opcode:
+        if "scratch_load" in self.opcode:
             self.defs |= flatten_regs(self.regs_by_operand[0])
             return
 
-        if 'scratch_store' in self.opcode:
+        if "scratch_store" in self.opcode:
             self.uses |= flatten_regs(self.regs_by_operand[0])
             return
 
-        if self.opcode.startswith(ALL_USERS) or \
-           (self.opcode.startswith('buffer_load') and 'lds' in self.operands):
+        if self.opcode.startswith(ALL_USERS) or (
+            self.opcode.startswith("buffer_load") and "lds" in self.operands
+        ):
             for reg in self.regs_by_operand:
                 self.uses |= flatten_regs(reg)
             return
@@ -295,7 +304,7 @@ class BasicBlock:
     def instructions_before(self, inst, including=False):
         idx = self.instructions.index(inst)
         if including:
-            return self.instructions[:idx + 1]
+            return self.instructions[: idx + 1]
         else:
             return self.instructions[:idx]
 
@@ -348,7 +357,9 @@ class BasicBlock:
         return False
 
     def cleanup_bb(self):
-        self.instructions = [inst for inst in self.instructions if not getattr(inst, "mark_dead", False)]
+        self.instructions = [
+            inst for inst in self.instructions if not getattr(inst, "mark_dead", False)
+        ]
 
     def swap_inst(self, ida, idb):
         s = len(self.instructions)
@@ -356,7 +367,10 @@ class BasicBlock:
             return
         if ida == idb:
             return
-        self.instructions[ida], self.instructions[idb] = self.instructions[idb], self.instructions[ida]
+        self.instructions[ida], self.instructions[idb] = (
+            self.instructions[idb],
+            self.instructions[ida],
+        )
 
     def compute_bb_def_use(self):
         self.defs.clear()
@@ -433,11 +447,11 @@ class Program:
             last = bb.instructions[-1].opcode
             text = bb.instructions[-1].raw_line
 
-            if last == 's_branch':
+            if last == "s_branch":
                 tgt = text.split()[-1]
                 bb.succs.append(label_map[tgt])
 
-            elif last.startswith('s_cbranch'):
+            elif last.startswith("s_cbranch"):
                 tgt = text.split()[-1]
                 bb.succs.append(label_map[tgt])
                 if i + 1 < len(self.blocks):
@@ -472,9 +486,9 @@ class Program:
             for inst in bb.instructions:
                 if inst.mark_dead:
                     continue
-                if 'scratch_load' in inst.opcode:
+                if "scratch_load" in inst.opcode:
                     bb.read_from |= flatten_regs(inst.get_copy_src())
-                if 'scratch_store' in inst.opcode:
+                if "scratch_store" in inst.opcode:
                     bb.write_to |= flatten_regs(inst.get_copy_dst())
 
         dbg("========== update blocks regs done =====", indent)
@@ -517,25 +531,25 @@ class Program:
 
 
 REG_PATTERNS = [
-    r'(?<![A-Za-z0-9_])s\d+(?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])v\d+(?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])a\d+(?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])m0(?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])s\[\d+:\d+\](?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])v\[\d+:\d+\](?![A-Za-z0-9_])',
-    r'(?<![A-Za-z0-9_])a\[\d+:\d+\](?![A-Za-z0-9_])',
+    r"(?<![A-Za-z0-9_])s\d+(?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])v\d+(?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])a\d+(?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])m0(?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])s\[\d+:\d+\](?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])v\[\d+:\d+\](?![A-Za-z0-9_])",
+    r"(?<![A-Za-z0-9_])a\[\d+:\d+\](?![A-Za-z0-9_])",
 ]
 
 REGEXES = [re.compile(p) for p in REG_PATTERNS]
 
 
 def parse_register(text):
-    if text == 'm0':
-        return Register('m', [0])
+    if text == "m0":
+        return Register("m", [0])
 
     kind = text[0]
-    if '[' in text:
-        lo, hi = map(int, text[text.find('[') + 1:text.find(']')].split(':'))
+    if "[" in text:
+        lo, hi = map(int, text[text.find("[") + 1 : text.find("]")].split(":"))
         return Register(kind, list(range(lo, hi + 1)))
     else:
         return Register(kind, [int(text[1:])])
@@ -547,20 +561,20 @@ def split_top_level_commas(text: str) -> list[str]:
     depth = 0
 
     for ch in text:
-        if ch == '[':
+        if ch == "[":
             depth += 1
-        elif ch == ']':
+        elif ch == "]":
             depth -= 1
 
-        if ch == ',' and depth == 0:
-            part = ''.join(cur).strip()
+        if ch == "," and depth == 0:
+            part = "".join(cur).strip()
             if part:
                 parts.append(part)
             cur = []
         else:
             cur.append(ch)
 
-    part = ''.join(cur).strip()
+    part = "".join(cur).strip()
     if part:
         parts.append(part)
 
@@ -573,20 +587,20 @@ def split_by_whitespace(text: str) -> list[str]:
     depth = 0
 
     for ch in text:
-        if ch == '[':
+        if ch == "[":
             depth += 1
-        elif ch == ']':
+        elif ch == "]":
             depth -= 1
 
         if ch.isspace() and depth == 0:
-            tok = ''.join(cur).strip()
+            tok = "".join(cur).strip()
             if tok:
                 tokens.append(tok)
             cur = []
         else:
             cur.append(ch)
 
-    tok = ''.join(cur).strip()
+    tok = "".join(cur).strip()
     if tok:
         tokens.append(tok)
 
@@ -614,11 +628,11 @@ def extract_registers(op: str):
 
 def parse_instruction(line, loc, bb):
     line = line.strip()
-    if not line or line.startswith(';'):
+    if not line or line.startswith(";"):
         return None
 
     # Remove trailing comments
-    line = line.split(';', 1)[0].strip()
+    line = line.split(";", 1)[0].strip()
 
     parts = line.split(None, 1)
     opcode = parts[0]
@@ -651,10 +665,10 @@ def extract_label(line):
     Returns None if no label is present.
     """
     line = line.strip()
-    if ':' not in line:
+    if ":" not in line:
         return None
     # Split at the first colon
-    label = line.split(':', 1)[0]
+    label = line.split(":", 1)[0]
     return label.strip()
 
 
@@ -676,7 +690,7 @@ def parse_asm(text):
             continue
 
         # Detect program end
-        if 's_endpgm' in line:
+        if "s_endpgm" in line:
             if cur_block:
                 inst = parse_instruction(line, cur_loc, cur_block)
                 if inst:
@@ -688,20 +702,20 @@ def parse_asm(text):
         # Before first basic block → header
         if not in_blocks:
             program.header_lines.append(line)
-            if line.strip().startswith('; %bb.') or line.strip().startswith('.LBB'):
+            if line.strip().startswith("; %bb.") or line.strip().startswith(".LBB"):
                 in_blocks = True
                 program.header_lines.pop()  # this line is a BB label
             else:
                 continue
 
         # file directive
-        if line.strip().startswith('.file'):
+        if line.strip().startswith(".file"):
             _, fid, _, name = line.split(maxsplit=3)
             files[int(fid)] = name.strip('"')
             continue
 
         # loc directive
-        if line.strip().startswith('.loc'):
+        if line.strip().startswith(".loc"):
             parts = line.split()
             fid = int(parts[1])
             line_no = int(parts[2])
@@ -710,18 +724,18 @@ def parse_asm(text):
             continue
 
         # ignore debug labels
-        if line.strip().startswith('.Ltmp'):
+        if line.strip().startswith(".Ltmp"):
             continue
 
         # new basic block
-        if line.strip().startswith('; %bb.') or line.strip().startswith('.LBB'):
+        if line.strip().startswith("; %bb.") or line.strip().startswith(".LBB"):
             label = extract_label(line)
             cur_block = BasicBlock(label)
             program.blocks.append(cur_block)
             continue
 
         # sched barrier comment
-        if 'sched_barrier' in line:
+        if "sched_barrier" in line:
             continue
 
         # instruction
@@ -808,8 +822,9 @@ def coalesce_regs(flat_regs):
     return regs
 
 
-def pick_and_remove_contiguous_regs(reg_pool: Set[Tuple[str, int]], x: int,
-                                    myKind: str = None) -> Optional[Set[Tuple[str, int]]]:
+def pick_and_remove_contiguous_regs(
+    reg_pool: Set[Tuple[str, int]], x: int, myKind: str = None
+) -> Optional[Set[Tuple[str, int]]]:
     if x <= 0:
         raise ValueError("x must be positive")
 
@@ -863,7 +878,7 @@ def eliminate_save_restore(bb):
             if save_mov.mark_dead:
                 continue
             # Step 1: Find a v_mov tmp, orig (save instruction)
-            if not save_mov.opcode.startswith('v_mov'):
+            if not save_mov.opcode.startswith("v_mov"):
                 continue
             tmp_reg = save_mov.get_dst_regs()
             src_regs = save_mov.get_src_regs()
@@ -902,8 +917,12 @@ def eliminate_save_restore(bb):
                 candidate = bb.instructions[j]
                 if candidate.mark_dead:
                     continue
-                if (candidate.opcode.startswith('v_mov') and candidate.get_dst_regs() == orig_reg
-                        and candidate.get_src_regs() and candidate.get_src_regs()[0] == tmp_reg):
+                if (
+                    candidate.opcode.startswith("v_mov")
+                    and candidate.get_dst_regs() == orig_reg
+                    and candidate.get_src_regs()
+                    and candidate.get_src_regs()[0] == tmp_reg
+                ):
                     restore_mov = candidate
                     restore_idx = j
                     break
@@ -928,8 +947,10 @@ def eliminate_save_restore(bb):
                 continue
 
             # All conditions met — apply transformation
-            logging.debug(f"eliminate_save_restore: save={save_mov.emit()}, "
-                          f"modify={modify_inst.emit()}, restore={restore_mov.emit()}")
+            logging.debug(
+                f"eliminate_save_restore: save={save_mov.emit()}, "
+                f"modify={modify_inst.emit()}, restore={restore_mov.emit()}"
+            )
 
             # 4a. In modify_inst, swap dst from orig to tmp, and replace use of tmp with orig
             modify_inst.replace_dst(tmp_reg)
@@ -970,9 +991,12 @@ def optimize_buffer_load_m0(bb):
             if not mfma.is_mfma():
                 i += 1
                 continue
-            bb.instructions[idx], bb.instructions[idx + 1] = bb.instructions[idx + 1], bb.instructions[idx]
+            bb.instructions[idx], bb.instructions[idx + 1] = (
+                bb.instructions[idx + 1],
+                bb.instructions[idx],
+            )
             ## remove s_nop
-            if 'nop' in bb.instructions[idx - 1].opcode:
+            if "nop" in bb.instructions[idx - 1].opcode:
                 bb.instructions[idx - 1].mark_dead = True
 
             i += 2
@@ -986,7 +1010,7 @@ def optimize_nops(bb):
     logging.debug("========== optimize no-ops ==========")
 
     for idx, inst in enumerate(bb.instructions):
-        if 'nop' not in inst.opcode:
+        if "nop" not in inst.opcode:
             continue
         ## The only allowed nop is the one between a set-m0 and a buffer_load;
         ## everything else is dead.
@@ -995,7 +1019,7 @@ def optimize_nops(bb):
             continue
         prev_dst = bb.instructions[idx - 1].get_dst_regs()
         suc = bb.instructions[idx + 1]
-        if prev_dst is None or prev_dst.kind != 'm' or 'buffer_load' not in suc.opcode:
+        if prev_dst is None or prev_dst.kind != "m" or "buffer_load" not in suc.opcode:
             inst.mark_dead = True
 
     bb.cleanup_bb()
@@ -1033,18 +1057,18 @@ def find_loop_invariants(bb: BasicBlock):
             if not inst.regs_by_operand:
                 continue
             dst = inst.get_dst_regs()
-            if dst and dst.kind == 'm':
+            if dst and dst.kind == "m":
                 continue
             if inst.mark_dead:
                 continue
-            if 'cndmask' in inst.opcode:
+            if "cndmask" in inst.opcode:
                 ## Here we simply assume cndmask is not loop invariant,
                 ## neither is the dst reg
                 invariant_regs -= flatten_regs(inst.get_dst_regs())
                 continue
 
             if all(r in invariant_regs for r in inst.uses):
-                if 'scratch_load' in inst.opcode:
+                if "scratch_load" in inst.opcode:
                     read_from = flatten_regs(inst.get_copy_src())
                     if read_from & bb.write_to:
                         invariant_regs -= read_from
@@ -1116,7 +1140,9 @@ def can_hoist(inst, bb, invariant_regs):
         for user in inst.users:
             has_match = any(op == def_reg.emit() for op in user.operands)
             if not has_match:
-                logging.debug(f"  cannot rewrite user {user.emit()} (register embedded in wider group), cannot hoist")
+                logging.debug(
+                    f"  cannot rewrite user {user.emit()} (register embedded in wider group), cannot hoist"
+                )
                 return False
 
         free_reg = pick_and_remove_contiguous_regs(bb.free_regs, num, kind)
@@ -1144,9 +1170,13 @@ def hoist_loop_invariants(bb: BasicBlock):
             logging.debug(f"  users: {[u.emit() for u in inst.users]}")
         if can_hoist(inst, bb, invariant_regs):
             hoistable.append(inst)
-            if 'scratch_load' in inst.opcode:
+            if "scratch_load" in inst.opcode:
                 next_inst = bb.next_instruction(inst)
-                if next_inst is not None and next_inst.operands and 'vmcnt(0)' in next_inst.operands[0]:
+                if (
+                    next_inst is not None
+                    and next_inst.operands
+                    and "vmcnt(0)" in next_inst.operands[0]
+                ):
                     logging.debug(f"    Also hoist {next_inst.emit()}")
                     hoistable.append(next_inst)
             logging.debug("  can hoist!!")
@@ -1254,7 +1284,7 @@ def rewrite_next_free_vgpr(text: str) -> str:
     out = []
     for line in text.splitlines(keepends=True):
         stripped = line.lstrip()
-        leading_ws = line[:len(line) - len(stripped)]
+        leading_ws = line[: len(line) - len(stripped)]
         if stripped.startswith(".amdhsa_next_free_vgpr"):
             out.append(f"{leading_ws}.amdhsa_next_free_vgpr {total_vgpr}\n")
         elif stripped.startswith(".amdhsa_accum_offset") and accum_offset is not None:
@@ -1312,21 +1342,23 @@ def rotate_lgkmcnt(program):
     i = 0
     while i < len(insts):
         inst = insts[i]
-        if 's_waitcnt' not in inst.opcode or not any('lgkmcnt' in op for op in inst.operands):
+        if "s_waitcnt" not in inst.opcode or not any("lgkmcnt" in op for op in inst.operands):
             i += 1
             continue
 
         # Check if this waitcnt has a barrier right after
-        if i + 1 < len(insts) and 's_barrier' in insts[i + 1].opcode:
+        if i + 1 < len(insts) and "s_barrier" in insts[i + 1].opcode:
             barrier_inst = insts[i + 1]
 
             # Look backward for a standalone s_waitcnt lgkmcnt(0) in the same region.
             # Stop at any s_barrier (region boundary).
             prev_standalone = None
             for k in range(i - 1, -1, -1):
-                if 's_barrier' in insts[k].opcode:
+                if "s_barrier" in insts[k].opcode:
                     break
-                if 's_waitcnt' in insts[k].opcode and any('lgkmcnt' in op for op in insts[k].operands):
+                if "s_waitcnt" in insts[k].opcode and any(
+                    "lgkmcnt" in op for op in insts[k].operands
+                ):
                     prev_standalone = insts[k]
                     break
 
@@ -1378,7 +1410,9 @@ def rotate_lgkmcnt(program):
     while cbranch_idx >= 0 and not insts[cbranch_idx].is_control():
         cbranch_idx -= 1
     if cbranch_idx >= 0:
-        logging.debug(f"rotate_lgkmcnt: inserting before [{insts[cbranch_idx].emit()}] at idx {cbranch_idx}")
+        logging.debug(
+            f"rotate_lgkmcnt: inserting before [{insts[cbranch_idx].emit()}] at idx {cbranch_idx}"
+        )
         insts.insert(cbranch_idx, _make_inst(barrier_text, loop))
         insts.insert(cbranch_idx, _make_inst(waitcnt_text, loop))
 
@@ -1388,7 +1422,7 @@ def rotate_lgkmcnt(program):
 
 def separate_waitcnt_and_barrier(loop):
     for inst in loop.instructions:
-        if 's_barrier' in inst.opcode:
+        if "s_barrier" in inst.opcode:
             ## pattern
             ## mfma --> waitcnt --> barrier
             ## change to
@@ -1397,10 +1431,10 @@ def separate_waitcnt_and_barrier(loop):
             if idx < 2:
                 continue
             maybe_mfma = loop.instructions[idx - 2]
-            if 'mfma' not in maybe_mfma.opcode:
+            if "mfma" not in maybe_mfma.opcode:
                 continue
             maybe_waitcnt = loop.instructions[idx - 1]
-            if 'waitcnt' not in maybe_waitcnt.opcode:
+            if "waitcnt" not in maybe_waitcnt.opcode:
                 continue
             loop.swap_inst(idx - 2, idx - 1)
 
@@ -1461,7 +1495,7 @@ def optimize_mfma_density(block):
                 while k < n and block[k].is_mfma():
                     k += 1
                 window_end = k - 1
-                window = block[i:window_end + 1]
+                window = block[i : window_end + 1]
                 rewritten = schedule_window(window)
                 out.extend(rewritten)
                 i = window_end + 1
@@ -1477,7 +1511,7 @@ def optimize_mfma_density(block):
             while k < n and not block[k].is_mfma() and not block[k].is_control():
                 k += 1
             window_end = k - 1
-            window = block[start:window_end + 1]
+            window = block[start : window_end + 1]
             rewritten = schedule_window(window)
             out.extend(rewritten)
             i = window_end + 1
@@ -1554,7 +1588,9 @@ def main():
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO, format="%(levelname)s: %(message)s"
+    )
 
     with open(args.input, "r") as f:
         text = f.read()

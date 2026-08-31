@@ -49,8 +49,8 @@ jobs:
 
     - name: Check code formatting with Black
       run: |
-        black --check --diff kernels/ layout_plot/ experiments/ scripts/
+        black --check --diff kernels/ layout_plot/ experiments/ scripts/ plugins/
 
     - name: Lint with Ruff
       run: |
-        ruff check kernels/ layout_plot/ experiments/ scripts/
+        ruff check kernels/ layout_plot/ experiments/ scripts/ plugins/
