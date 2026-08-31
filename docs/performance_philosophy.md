@@ -46,7 +46,7 @@ Today's LLVM pipeline was designed for the discovery model. Its IR has no place 
 
 None of the three is a general-purpose replacement for an LLVM pass. They are **prototypes of what the remaining compiler work looks like once the kernel author has done the block-level design.** On Gluon-shaped kernels they recover the MFMA efficiency the upstream LLVM flow loses; on arbitrary C-like code they would not make sense.
 
-See [kernels/gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the mechanical details of each pass.
+See [kernels/gemm/intra_wave/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the mechanical details of each pass.
 
 ## 5. Collaboration with LLVM
 

@@ -101,13 +101,13 @@ Measured on MI355 with shape 4096×4096×8192, FP16:
 
 Although this directory focuses on **FP16 compute-bound GEMM**, the same optimization strategy applies to other data types. After completing this tutorial, the recommended next steps are:
 
-1. **[a8w8/](../a8w8/)** (FP8): Apply the same design to FP8 — the tile shape and MFMA instruction change, but the pipeline, N-slicing, and scheduling are identical.
+1. **[a8w8/](../a8w8/)** (BF8): Apply the same design to BF8 — the tile shape and MFMA instruction change, but the pipeline, N-slicing, and scheduling are identical.
 2. **[a4w4/](../a4w4/)** (MXFP4): A more complex use case with per-group scaling, LDS round-trips for scale layout conversion, and new hardware challenges (LDS port contention).
 
 | Data Type | Tile Size | Key Difference |
 |-----------|-----------|----------------|
 | FP16      | 256×256×64  | Foundation — all techniques introduced here |
-| FP8       | 256×256×128 | Same design, larger BLOCK_K, 32-cycle MFMA |
+| BF8       | 256×256×128 | Same design, larger BLOCK_K, 32-cycle MFMA |
 | MXFP4     | 256×256×256 | Adds scale pipeline (GR → LW → LR), 16-cycle MFMA |
 
 ## 5. How to Read This

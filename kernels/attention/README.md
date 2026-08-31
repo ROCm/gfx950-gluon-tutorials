@@ -48,7 +48,7 @@ to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kern
 it every tile is 64 vector instructions that are pure overhead whenever the row max did not
 actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
 
-**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)
 tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag
 introduces. [§9](#9-results) has the build and run commands.
 
@@ -660,12 +660,12 @@ rows: **1322 TFLOPS** (1321.1 / 1321.3 / 1322.6), reproducing its published 1320
 ### Building and running
 
 The kernels need Triton built from the
-[`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)
+[`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)
 tag or later — `fmha_v4` does not compile without `gl.warp_predicate`, which that tag introduces.
 Build it with default symbol visibility so the scheduler plugin can resolve LLVM symbols:
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.0 /tmp/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.1 /tmp/triton
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 

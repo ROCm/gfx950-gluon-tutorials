@@ -5,6 +5,43 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-08-31 — Re-pin to `gfx950-tutorial-v2.1` (rebase onto current upstream main)
+
+[`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)
+rebases the tutorial's two carried commits onto current upstream `main` (`c349ce522`), 340
+commits ahead of the v1.1/v2.0 fork point. **It is now the single pin for both the GEMM and the
+attention kernels**, replacing the v1.1 / v2.0 split.
+
+- **Carried forward, unchanged:** the in-tree hooks for the out-of-tree plugins
+  (`TRITON_FORCE_MFMA_AGPR`, `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE`) and `gl.warp_predicate`.
+  Both cherry-picked onto upstream `main` with no conflicts.
+
+- **LLVM pin: `850a2b1b` → `b010a18d`.** The out-of-tree LLIR-scheduler plugin is ABI-locked to
+  the LLVM pin and **has been rebuilt**; `plugins/llir_scheduler/libLlirSched.so` is replaced in
+  this change. The v2.0 `.so` **segfaults** against this pin. The plugin source is unchanged.
+
+- **Dropped: the v2.0 warp-pipeline barrier commit** (always-LOCAL cluster barriers,
+  wrap-around barrier at the loop top, hard LDS drain). `ConvertWarpPipeline.cpp` is pristine
+  upstream at this pin; re-landing that work on top of the current upstream code is follow-up
+  work.
+
+- **Known cost of that drop, attention only.** MI355X, rocprofv3 prepared launch, n=3,
+  `B=32 HQ=8 S=8192 D=128 bf16`, GPU[0]: `fmha_v3` 1249.9 → 1200.1 (**−4.0%**), `fmha_v4`
+  1325.2 → 1279.0 (**−3.5%**). **GEMM is unaffected**: `intra_wave/a16w16` v9 at K=8192 fp16
+  measures 1349.7 vs 1349.4 on the old pin.
+
+- **Verified on this pin.** Both attention kernels produce bit-identical results across five
+  runs and match the old pin's error exactly (7.84e-04 / 9.99e-04); all three `inter_wave` GEMM
+  kernels (a16w16 fp16+bf16, a8w8, a4w4) pass every shape; `intra_wave/a16w16` v9 passes with
+  the full `llir + force-agpr + amdgcnas` stack. `RewriteMFMAFormStage` was already present in
+  the previous LLVM pin, so `force-agpr` is still required.
+
+> [!IMPORTANT]
+> **The performance numbers in this repository have not been re-measured on `v2.1`.** They are
+> the v1.1 (GEMM) and v2.0 (attention) figures, quoted with the tag they were taken on. A
+> follow-up change re-measures everything on this pin using the prepared-launch mechanism added
+> in #50.
+
 ## 2026-07-29 — New Triton tag `gfx950-tutorial-v2.0` (Gluon `warp_predicate`, warp-pipeline barriers)
 
 [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0)

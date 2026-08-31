@@ -30,13 +30,13 @@ each scheduling region and routes it to one of two models:
 
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
-Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) for the GEMM
-kernels and [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0) for the attention kernels.
-**Both tags carry the same LLVM, commit `850a2b1b`** (see `cmake/llvm-info.json`), so the
-one prebuilt `.so` works with either. If the LLVM pin itself moves, **rebuild the `.so`**.
+Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) for both the GEMM and the
+attention kernels. That tag carries **LLVM commit `b010a18d`** (see `cmake/llvm-info.json`);
+the prebuilt `.so` here is built against it. If the LLVM pin moves, **rebuild the `.so`** —
+the v2.0 `.so` (LLVM `850a2b1b`) segfaults against this pin.
 
 ## Build
-Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-850a2b1b-*`):
+Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-b010a18d-*`):
 
 ```bash
 LLVM=$(dirname $(dirname $(find ~/.triton/llvm -name llvm-config | head -1)))

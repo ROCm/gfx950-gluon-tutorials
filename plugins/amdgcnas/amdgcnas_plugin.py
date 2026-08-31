@@ -40,6 +40,7 @@ are the separate force-agpr component, both driven by TRITON_FORCE_MFMA_AGPR:
 amdgpu-agpr-alloc via the kernel's llvm_fn_attrs option, and amdgpu-mfma-vgpr-form
 set in llvm.cc.
 """
+
 import hashlib
 import os
 import pathlib
@@ -80,6 +81,7 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             return amdgcnas_ext.amdgcn_as(asm, verbose)
         except Exception as e:
             import warnings
+
             warnings.warn(f"amdgcnas peephole skipped, using un-optimized assembly: {e!r}")
             return asm
 
