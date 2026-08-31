@@ -5,6 +5,45 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-08-31 — Performance refresh on `gfx950-tutorial-v2.1` (prepared launch)
+
+Every performance number in the tutorial re-measured on the v2.1 pin using the prepared-launch
+mechanism from #50, on a single MI355X die (`rocm-smi` GPU[0], the fastest of the eight by
+12.1%), rocprofv3, 1000 dispatches, last-100 average.
+
+- **The 4-wave numbers rise substantially** — the prepared launcher compiles and binds once and
+  replays the cached launcher, so per-launch host overhead leaves the measurement. a16w16 v9
+  1421 → **1571** (+10.6%), a8w8 3232 → **3381** (+4.6%), a4w4 v1 5185 → **5820** (+12.2%). The
+  8-wave kernels move much less (+0.2% to +2.6%): they already run long enough that launch
+  overhead was negligible. The headline journey is now **523 → 1571 TFLOPS (~3.0x)**.
+
+- **`llir` without `force-agpr` now spills, and this is the significant behavioural change.**
+  a16w16 v6: 129 spills, 227 TFLOPS (was 1166, no spills). a4w4 v0: 186 spills, 699 TFLOPS.
+  a4w4 v1: 12 spills. `force-agpr` clears every one of them (v6 recovers to 1183 / 93.4%).
+  These kernels sit at the 512-VGPR ceiling by construction, and the v2.1 allocator no longer
+  fits them without the AGPR hint. The v6 and v7 narratives are updated accordingly — this
+  *strengthens* v7's motivation, since N-slicing is what puts the budget under the ceiling by
+  design rather than by luck. `docs/performance_philosophy.md` and `intra_wave/README.md` are
+  rewritten: force-agpr is not a 2-3% tuning flag, it is what keeps these kernels from spilling.
+
+- **Attention is down as documented in the re-pin entry below**: fmha_v3 1249 → **1200**,
+  fmha_v4 1325 → **1280**, from the dropped warp-pipeline barrier commit.
+
+- **Added the missing measured tables** for a16w16 v0-v3 and v9 — previously the 523 and 1571
+  endpoints of the journey were asserted in the summary READMEs but measured in none of the
+  version READMEs that own them.
+
+- **Not re-measured, and marked as such in place**: the attention §7 `MEMNOP`/`SCALE_ON_Q`
+  sweep, the ROCm/FlyDSL comparison row, and `inter_wave/a4w4` v2. Their relative structure is
+  unaffected; their absolute TFLOPS are v2.0-pin figures.
+
+> [!NOTE]
+> These numbers come from one die on one machine. Absolute TFLOPS vary across MI350-class parts
+> and ROCm/Triton versions; the relative structure (`base` vs `llir` vs `+force-agpr` vs
+> `+amdgcnas`, and 4-wave vs 8-wave) is what the tutorial is about and is stable.
+
+---
+
 ## 2026-08-31 — Re-pin to `gfx950-tutorial-v2.1` (rebase onto current upstream main)
 
 [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)

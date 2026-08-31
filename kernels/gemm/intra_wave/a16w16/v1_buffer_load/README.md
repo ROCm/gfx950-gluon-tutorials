@@ -103,6 +103,18 @@ This is a common misconception. Register usage is heavily influenced by instruct
 
 We will explore register pressure in more depth in later versions.
 
+## Performance
+
+Measured on MI355X, `rocm-smi` GPU[0], Triton `gfx950-tutorial-v2.1`, rocprofv3 with the
+prepared launcher (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+
+Config: `base` (no compiler plugins).
+
+| Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|-----------------|--------|-------|--------|-----------|
+| v0_naive |    523 |   450 |      0 |    24.72% |
+| v1_buffer_load  |    605 |   512 |      0 |    28.58% |
+
 ## 6. What Comes Next
 
 In `v2_async_copy`, we will introduce asynchronous copy operations to move data directly from global memory to LDS, eliminating the register-to-LDS copy path and further improving codegen.

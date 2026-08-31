@@ -65,7 +65,7 @@ average), `llir+force-agpr+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
-| v0_sliceN  | 4920 | 81.3% |
-| v1_sliceMN | 5189 | 93.9% |
+| v0_sliceN  | 5216 | 82.5% |
+| v1_sliceMN | 5820 | 93.8% |
 
 See each version's README for the full per-config table.

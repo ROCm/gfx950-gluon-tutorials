@@ -138,10 +138,10 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------|--------|-------|--------|-----------|
-| base                     |   2723 |   512 |      0 |    61.11% |
-| llir                     |   3177 |   510 |      0 |    93.75% |
-| llir+force-agpr          |   3231 |   488 |      0 |    98.06% |
-| llir+force-agpr+amdgcnas |   3232 |   488 |      0 |    99.52% |
+| base                     |   2860 |   466 |      0 |    68.04% |
+| llir                     |   3260 |   498 |      0 |    91.98% |
+| llir+force-agpr          |   3307 |   484 |      0 |    98.16% |
+| llir+force-agpr+amdgcnas |   3381 |   484 |      0 |    99.24% |
 
 **M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget: `llir` alone runs spill-free at **3177 TFLOPS / 93.75% MFMA efficiency**.
 

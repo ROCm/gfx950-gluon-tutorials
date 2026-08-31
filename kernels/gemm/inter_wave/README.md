@@ -19,8 +19,8 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 
 ## 2. Performance
 
-Measured on MI355X, gfx950, 4096×4096, Triton `gfx950-tutorial-v1.1` (the pin at the time of
-measurement; pending re-measurement on `gfx950-tutorial-v2.1` — see `CHANGELOG.md`) (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
+Measured on MI355X `rocm-smi` GPU[0], 4096×4096, Triton `gfx950-tutorial-v2.1`, rocprofv3 with
+the prepared launcher (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
 
 | Kernel | K | TFLOPS / MFMA eff | VGPR / spills |
 |---|---|---|---|

@@ -117,7 +117,7 @@ reference (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocpr
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | **1437** | 99.8% | 1425 | 98.7% |
+| 8192  | **1480** | 99.8% | 1505 | 98.2% |
 | 16384 | **1485** | 99.8% | 1460 | 97.7% |
 | 32768 | 1291 | 84.3% | **1305** | 62.7% |
 

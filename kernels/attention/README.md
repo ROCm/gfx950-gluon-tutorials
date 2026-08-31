@@ -6,8 +6,8 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1323 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1249 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
+Tuned, `fmha_v4` reaches **1280 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1200 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
 **1322** on this shape from **84.7%** efficiency. The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
 and what each step costs.
@@ -517,6 +517,12 @@ rocprofv3 kernel time interleaved over three rounds for TFLOPS, an ATT instructi
 in-loop MFMA efficiency per SIMD. Every throughput figure below is a three-round mean with a spread
 of at most 3 TFLOPS.
 
+> [!NOTE]
+> This sweep has **not** been re-measured on `gfx950-tutorial-v2.1`. The absolute TFLOPS below
+> are from the `v2.0` pin and read about 4% high against [§9](#9-results)'s current numbers; the
+> *relative* structure — which setting is worth what — is what the section is about and is
+> unaffected. The bottom row corresponds to §9's tuned configuration.
+
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
 | no `s_nop`, no fold | 1229 / 83.7% | 1302 / 90.6% |
@@ -526,8 +532,7 @@ of at most 3 TFLOPS.
 Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
 and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
 fold the larger, at **+1.25%** and **+0.91%**. The bottom row is [§9](#9-results)'s tuned
-configuration, measured again in this sweep; the two readings differ by a single TFLOPS, which is
-what the spread above buys you.
+configuration as measured on the v2.0 pin.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
@@ -620,14 +625,14 @@ equally. Round-to-round spread was 0.5 to 4.5 TFLOPS.
 
 | | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
 |---|---:|---:|---:|---:|
-| *ROCm/FlyDSL* — its own tuned config | *1322* | 84.7% | 94.2% | 4837 |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1323** | **94.2%** | 90.5% | **4349** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1249** | 86.3% | 91.5% | 4745 |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1204 | 69.1% | 91.8% | 5924 |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1139 | 67.3% | 92.3% | 6084 |
+| *ROCm/FlyDSL* — its own tuned config (not re-measured on this pin) | *1322* | 84.7% | 94.2% | 4837 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1280** | **94.2%** | 90.5% | **4349** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1200** | 86.3% | 91.5% | 4745 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1197 | 69.1% | 91.8% | 5924 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1143 | 67.3% | 92.3% | 6084 |
 
-**What lazy rescaling is worth** is the distance between the two kernels: **+5.7%** on stock LLVM
-(1139 → 1204) and **+5.9%** tuned (1249 → 1323). The efficiency column says something the throughput
+**What lazy rescaling is worth** is the distance between the two kernels: **+4.7%** on stock LLVM
+(1143 → 1197) and **+6.7%** tuned (1200 → 1280). The efficiency column says something the throughput
 column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 67.3%
 against 69.1%, **+1.8 points** — while the tuned rows are **7.9 points** apart, four times as far.
 Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
@@ -637,7 +642,7 @@ the rescale per wave needs `gl.warp_predicate` — and that removing the rescale
 clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
-tuned one: **+9.7%** of throughput on `fmha_v3` and **+9.9%** on `fmha_v4`, and in efficiency terms
+tuned one: **+5.0%** of throughput on `fmha_v3` and **+6.9%** on `fmha_v4`, and in efficiency terms
 **+19.0** and **+25.1 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a

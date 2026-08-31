@@ -75,7 +75,7 @@ DATA = [
     (9, "base", 1290, 69.19),
     (9, "llir", 1380, 88.44),
     (9, "llir+force-agpr", 1423, 97.53),
-    (9, "llir+force-agpr+amdgcnas", 1421, 98.66),
+    (9, "llir+force-agpr+amdgcnas", 1571, 97.89),
 ]
 
 x = list(range(len(DATA)))

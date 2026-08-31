@@ -60,7 +60,23 @@ Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports n
 - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted output is redefined inside the loop.
 - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These scalar instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
-**Relative contributions.** force-agpr and amdgcnas are not equally important across dtypes. On FP16 and BF8, `force-agpr` alone closes 75–85% of the MFMA-efficiency gap between `llir` and `llir+force-agpr+amdgcnas`, landing within 1–2% TFLOPS of the full stack; the amdgcnas peephole adds only ~+2pp on top. MXFP4 leans more on the peephole: on `v1_sliceMN`, `force-agpr` closes only about half the gap (`llir` ~71% → `llir+force-agpr` ~84%), and amdgcnas adds the remaining ~+10pp to reach ~94% — the paired scale loads create denser SALU activity for the peephole to pack. The two therefore have different upstream stories: force-agpr maps to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
+**Relative contributions.** On the `gfx950-tutorial-v2.1` pin the split is stark: **force-agpr
+is the difference between spilling and not**, and amdgcnas is the polish on top.
+
+| kernel | `llir` alone | `llir+force-agpr` | `+amdgcnas` |
+|---|---|---|---|
+| a16w16 v6 | 227 TFLOPS, **129 spills**, 8.8% | 1183, 0 spills, 93.4% | 1164, 93.9% |
+| a16w16 v7 | 1393, 0 spills, 82.1% | 1486, 96.7% | 1505, 98.2% |
+| a8w8      | 3260, 0 spills, 92.0% | 3307, 98.2% | 3381, 99.2% |
+| a4w4 v1   | 3508, **12 spills**, 45.0% | 5611, 89.0% | 5820, 93.8% |
+
+Where a kernel sits at the 512-VGPR ceiling (a16w16 v6, both a4w4 versions), `llir` alone
+spills and throughput collapses — force-agpr recovers 5x on v6 and 1.6x on a4w4 v1. Where the
+kernel has headroom by construction (v7's N-slicing, a8w8's smaller tile), force-agpr is worth
+a more ordinary 3-7% and amdgcnas another 1-3pp of MFMA efficiency. So the two are not
+interchangeable knobs: force-agpr is a correctness-of-budget tool, amdgcnas a scheduling
+polish. Their upstream stories differ accordingly — force-agpr maps to an allocator-policy
+change, while the SALU-level peephole needs a MachineInstr-level pass.
 
 ### 2.2 Running Benchmarks
 
@@ -122,7 +138,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 541 TFLOPS baseline to a near-optimal 1421 TFLOPS implementation—a **~2.6× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 523 TFLOPS baseline to a near-optimal 1571 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

@@ -164,7 +164,26 @@ python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs 
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../../docs/mfma_efficiency.md).
 
-## 4. Summary
+## 4. Performance
+
+Measured on MI355X, `rocm-smi` GPU[0], Triton `gfx950-tutorial-v2.1`, rocprofv3 with the
+prepared launcher (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+
+Config: `llir+force-agpr+amdgcnas` — the shipping stack.
+
+| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------|--------|-------|--------|-----------|
+| v8_sliceMN           |   1534 |   488 |      0 |    97.39% |
+| v9_beyond_hotloop    |   1571 |   488 |      0 |    97.89% |
+
+v9 adds no instructions to the hot loop — the gain is entirely outside it, from the L2
+locality the XCD-aware PID remapping buys. MFMA efficiency is essentially unchanged (the loop
+is the same loop); throughput rises because lower L2 and inter-XCD traffic means lower power,
+and lower power means a higher sustained clock. This is the one version in the series whose
+benefit does **not** show up in the cycle-based metric, which is exactly why both numbers are
+quoted here.
+
+## 5. Summary
 
 This version demonstrates one optimization beyond the hot loop:
 
