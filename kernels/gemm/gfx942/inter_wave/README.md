@@ -143,10 +143,6 @@ single largest win in this kernel — larger than halving the region count.
 
 ## Differences from the gfx950 kernel
 
-Same starting point — [`../../inter_wave/a16w16`](../../inter_wave/a16w16) — same
-tile, same 8 warps, same `warps_per_cta`, same quadrant decomposition, same
-`warp_pipeline_stage` phase shift. Everything in this table is forced by CDNA3.
-
 Same tile, same 8 warps, same `warps_per_cta`, same quadrant decomposition, same
 `warp_pipeline_stage` phase shift as
 [`../../inter_wave/a16w16`](../../inter_wave/a16w16). The *platform* differences
