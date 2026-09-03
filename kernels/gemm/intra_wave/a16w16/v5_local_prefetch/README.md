@@ -147,9 +147,9 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |    966 |   362 |    51.83% |
-| v5             |   1035 |   426 |    57.44% |
-| v5 + llirSched |   1186 |   512 |    68.50% |
+| v4             |    964 |   362 |    51.87% |
+| v5             |   1034 |   426 |    57.67% |
+| v5 + llirSched |   1221 |   512 |    68.56% |
 
 The 3-stage pipeline provides a modest improvement in the baseline case (966 → 1035 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1186 TFLOPS — a **15% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
 

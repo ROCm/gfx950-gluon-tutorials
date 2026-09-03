@@ -108,9 +108,9 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version                          | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler              |   1186 |   512 |      0 |    68.50% |
-| v6 + LLIR scheduler              |    227 |   512 |    129 |     8.80% |
-| v6 + LLIR scheduler + force-agpr |   1183 |   496 |      0 |    93.43% |
+| v5 + LLIR scheduler              |   1221 |   512 |      0 |    68.56% |
+| v6 + LLIR scheduler              |    228 |   512 |    129 |     8.74% |
+| v6 + LLIR scheduler + force-agpr |   1180 |   496 |      0 |    71.82% |
 
 > [!WARNING]
 > **v6 under `llir` alone now spills.** On the `gfx950-tutorial-v2.1` pin the register

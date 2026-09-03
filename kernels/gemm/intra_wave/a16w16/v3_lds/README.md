@@ -294,15 +294,15 @@ Once this mindset is adopted, layout design becomes less mysterious and more pri
 
 ## Performance
 
-Measured on MI355X, `rocm-smi` GPU[0], Triton `gfx950-tutorial-v2.1`, rocprofv3 with the
-prepared launcher (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+Measured on MI355X, `rocm-smi` GPU[7], Triton `gfx950-tutorial-v2.1`, plain rocprofv3 with
+rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v2_async_copy   |    644 |   328 |      0 |    30.09% |
-| v3_lds          |    732 |   358 |      0 |    38.40% |
+| v2_async_copy   |    645 |   328 |      0 |    27.45% |
+| v3_lds          |    738 |   358 |      0 |    32.01% |
 
 ## 6. What Comes Next
 

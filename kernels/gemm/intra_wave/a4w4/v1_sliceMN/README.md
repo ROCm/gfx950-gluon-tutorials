@@ -79,10 +79,10 @@ average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4363 | 4795 | 63.8% |
-| llir | 699 (186 spills) | 3508 (12 spills) | 45.0% |
-| llir+force-agpr | 5166 | 5611 | 89.0% |
-| llir+force-agpr+amdgcnas | 5216 | 5820 | 93.8% |
+| base | 4423 | 5131 | 64.4% |
+| llir | 716 (186 spills) | 3420 (12 spills) | 45.1% |
+| llir+force-agpr | 5429 | 5737 | 88.5% |
+| llir+force-agpr+amdgcnas | 5420 | 5843 | 93.7% |
 
 Under `llir` alone **both** versions now spill: v0_sliceN by 186 registers (its LDS-round-trip
 scale pipeline is register-heavy) collapsing to 699 TFLOPS, and v1_sliceMN by 12, costing it

@@ -67,8 +67,8 @@ is the difference between spilling and not**, and amdgcnas is the polish on top.
 |---|---|---|---|
 | a16w16 v6 | 227 TFLOPS, **129 spills**, 8.8% | 1183, 0 spills, 93.4% | 1164, 93.9% |
 | a16w16 v7 | 1393, 0 spills, 82.1% | 1486, 96.7% | 1505, 98.2% |
-| a8w8      | 3260, 0 spills, 92.0% | 3307, 98.2% | 3381, 99.2% |
-| a4w4 v1   | 3508, **12 spills**, 45.0% | 5611, 89.0% | 5820, 93.8% |
+| a8w8      | 3469, 0 spills, 91.6% | 3487, 98.1% | 3527, 99.2% |
+| a4w4 v1   | 3420, **12 spills**, 45.1% | 5737, 88.5% | 5843, 93.7% |
 
 Where a kernel sits at the 512-VGPR ceiling (a16w16 v6, both a4w4 versions), `llir` alone
 spills and throughput collapses — force-agpr recovers 5x on v6 and 1.6x on a4w4 v1. Where the
@@ -138,7 +138,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 523 TFLOPS baseline to a near-optimal 1571 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 525 TFLOPS baseline to a near-optimal 1587 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

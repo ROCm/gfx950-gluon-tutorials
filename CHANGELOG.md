@@ -5,37 +5,51 @@ compiler / Triton evolution.
 
 ---
 
-## 2026-08-31 — Performance refresh on `gfx950-tutorial-v2.1` (prepared launch)
+## 2026-09-03 — Performance refresh on `gfx950-tutorial-v2.1` (plain rocprofv3)
 
-Every performance number in the tutorial re-measured on the v2.1 pin using the prepared-launch
-mechanism from #50, on a single MI355X die (`rocm-smi` GPU[0], the fastest of the eight by
-12.1%), rocprofv3, 1000 dispatches, last-100 average.
+Every performance number in the tutorial re-measured on a **stock** `gfx950-tutorial-v2.1` build
+(no local LLVM or Triton patches), on a single MI355X die — `rocm-smi` **GPU[7]** — with **plain
+`rocprofv3` and rotating tensors**, 1000 dispatches, last-100 average. **No prepared launch**: the
+prepared launcher is no longer used for any reported number, since kernel-trace timing already
+excludes host launch overhead.
 
-- **The 4-wave numbers rise substantially** — the prepared launcher compiles and binds once and
-  replays the cached launcher, so per-launch host overhead leaves the measurement. a16w16 v9
-  1421 → **1571** (+10.6%), a8w8 3232 → **3381** (+4.6%), a4w4 v1 5185 → **5820** (+12.2%). The
-  8-wave kernels move much less (+0.2% to +2.6%): they already run long enough that launch
-  overhead was negligible. The headline journey is now **523 → 1571 TFLOPS (~3.0x)**.
+- **Headline journey is now 525 → 1587 TFLOPS (~3.0x)** on a16w16 (FP16, K=8192).
+  a8w8 **3527**, a4w4 v1 **5843**, and BF16 v9 **1682**.
 
-- **`llir` without `force-agpr` now spills, and this is the significant behavioural change.**
-  a16w16 v6: 129 spills, 227 TFLOPS (was 1166, no spills). a4w4 v0: 186 spills, 699 TFLOPS.
-  a4w4 v1: 12 spills. `force-agpr` clears every one of them (v6 recovers to 1183 / 93.4%).
-  These kernels sit at the 512-VGPR ceiling by construction, and the v2.1 allocator no longer
-  fits them without the AGPR hint. The v6 and v7 narratives are updated accordingly — this
-  *strengthens* v7's motivation, since N-slicing is what puts the budget under the ceiling by
-  design rather than by luck. `docs/performance_philosophy.md` and `intra_wave/README.md` are
-  rewritten: force-agpr is not a 2-3% tuning flag, it is what keeps these kernels from spilling.
+- **Pick your GPU deliberately.** Across the eight dies on this node the *same binary* spans
+  **1442 - 1589 TFLOPS, a 10.1% spread**, against only 0.2% run-to-run noise on one die. MFMA
+  efficiency is flat (97.4-97.9%) across all eight, so this is achieved clock, not codegen. Every
+  number here is GPU[7]; earlier entries used GPU[0], which measures ~6.6% lower. **Absolute
+  TFLOPS are only comparable between rows taken on the same die.**
 
-- **Attention is down as documented in the re-pin entry below**: fmha_v3 1249 → **1200**,
-  fmha_v4 1325 → **1280**, from the dropped warp-pipeline barrier commit.
+- **`llir` without `force-agpr` spills — the significant behavioural change on this pin.**
+  a16w16 v6: 129 spills, **228 TFLOPS** (was 1166, no spills). a4w4 v0: 186 spills, **716**.
+  a4w4 v1: 12 spills, **3420**. `force-agpr` clears every one. These kernels sit at the 512-VGPR
+  ceiling by construction and the v2.1 allocator no longer fits them without the AGPR hint. This
+  *strengthens* v7's motivation: N-slicing puts the budget under the ceiling by design.
 
-- **Added the missing measured tables** for a16w16 v0-v3 and v9 — previously the 523 and 1571
-  endpoints of the journey were asserted in the summary READMEs but measured in none of the
-  version READMEs that own them.
+  Root cause is now identified: v2.1's `third_party/amd/backend/compiler.py` unconditionally
+  passes **`amdgpu-use-amdgpu-trackers`** for gfx942/gfx950, a flag absent from both `v1.1` and
+  `v2.0`. Not passing it (LLVM's own default) restores every one of these kernels to at or above
+  its published number.
+
+- **`inter_wave/a4w4` v2 now beats v1.** v2 (32x32x64 MFMA) reaches **5159 / 93.80%** against
+  v1's **4885 / 75.10%**, reversing the previous ordering, so v2 is the better 8-wave MXFP4
+  choice on this pin.
+
+- **Attention re-measured in full, including the efficiency columns.** fmha_v4 **1292** at
+  **85.1%** per-SIMD in-loop MFMA, fmha_v3 **1214** at **76.8%**. The previous refresh updated
+  only the TFLOPS column and left MFMA efficiency, in-loop fraction and cyc/iter at their v2.0
+  values; all four columns are now from the same run. Both kernels sit ~15 points below their
+  §5 ceilings, against ~5.5 on v2.0 — the v2.1 toolchain gives up roughly 9 points of in-loop
+  MFMA efficiency on both. A second upstream cause is identified for the 8-wave regressions:
+  the `RegisterClassInfo::computePSetLimit` unsigned underflow fixed by
+  [llvm/llvm-project#216372](https://github.com/llvm/llvm-project/pull/216372), merged 16 days
+  after this pin's LLVM commit.
 
 - **Not re-measured, and marked as such in place**: the attention §7 `MEMNOP`/`SCALE_ON_Q`
-  sweep, the ROCm/FlyDSL comparison row, and `inter_wave/a4w4` v2. Their relative structure is
-  unaffected; their absolute TFLOPS are v2.0-pin figures.
+  sweep rows above the tuned row, the ROCm/FlyDSL comparison row, the `inter_wave` K-sweep rows
+  away from each kernel's headline K, and `v8_sliceMN`'s K=16384 rows.
 
 > [!NOTE]
 > These numbers come from one die on one machine. Absolute TFLOPS vary across MI350-class parts

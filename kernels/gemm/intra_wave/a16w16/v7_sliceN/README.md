@@ -188,10 +188,10 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                                     | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler                         |    227 |   512 |    129 |     8.80% |
-| v7 + LLIR scheduler                         |   1393 |   510 |      0 |    82.05% |
-| v7 + LLIR scheduler + force-agpr            |   1486 |   480 |      0 |    96.68% |
-| v7 + LLIR scheduler + force-agpr + amdgcnas |   1505 |   480 |      0 |    98.24% |
+| v6 + LLIR scheduler                         |    228 |   512 |    129 |     8.74% |
+| v7 + LLIR scheduler                         |   1419 |   510 |      0 |    82.07% |
+| v7 + LLIR scheduler + force-agpr            |   1526 |   480 |      0 |    95.54% |
+| v7 + LLIR scheduler + force-agpr + amdgcnas |   1567 |   480 |      0 |    97.96% |
 
 The first row is the point of this version. On this pin v6 no longer fits: the allocator
 runs out of VGPRs and spills 129 registers, and the kernel collapses to 227 TFLOPS. v7's
@@ -207,8 +207,8 @@ The copy count tracks the efficiency directly. Counting `v_accvgpr_*` instructio
 
 | Config                          | in-loop `v_accvgpr_*` copies | MFMA Eff. |
 |---------------------------------|------------------------------|-----------|
-| v6 + LLIR scheduler + force-agpr |                          39 |    93.43% |
-| v7 + LLIR scheduler              |                         100 |    82.05% |
+| v6 + LLIR scheduler + force-agpr |                          39 |    71.82% |
+| v7 + LLIR scheduler              |                         100 |    82.07% |
 
 v7's N-slicing spreads the operands across more live ranges, so the allocator shuffles accumulators more often — more copies, lower MFMA efficiency. (v6 is compared here with force-agpr, since without it v6 spills and the copy count is not meaningful.) These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
 

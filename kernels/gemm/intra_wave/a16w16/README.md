@@ -39,7 +39,7 @@ This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--v
 
 ## 3. The Optimization Journey
 
-This section tells the story of how we transformed a 523 TFLOPS naive kernel into a 1571 TFLOPS near-optimal implementation—a **~3.0× improvement** through systematic optimization.
+This section tells the story of how we transformed a 525 TFLOPS naive kernel into a 1587 TFLOPS near-optimal implementation—a **~3.0× improvement** through systematic optimization.
 
 | Version | Name | Focus | Key Concept |
 |---------|------|-------|-------------|
@@ -56,7 +56,7 @@ This section tells the story of how we transformed a 523 TFLOPS naive kernel int
 
 ### Act I: Getting the Basics Right (v0–v3)
 
-**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 523 TFLOPS at 24.7% MFMA efficiency. But correctness comes first—this is our foundation.
+**v0 — The Starting Point.** We begin with a kernel that does exactly one thing well: produce correct results. Every layout is explicit, every data movement visible, nothing hidden. Performance? A modest 525 TFLOPS at 22.5% MFMA efficiency. But correctness comes first—this is our foundation.
 
 **v1 — The Branch Problem.** Examining the generated assembly, we find 140 branch instructions. Why? Masked loads generate branches for out-of-bounds checking. The fix is elegant: `buffer_load` handles OOB in hardware. Branches drop from 140 to 4. The lesson: *sometimes the best optimization is choosing the right instruction.*
 

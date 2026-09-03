@@ -19,16 +19,16 @@ Instead of the LLIR scheduler + force-agpr + amdgcnas, they launch **8 warps/CTA
 
 ## 2. Performance
 
-Measured on MI355X `rocm-smi` GPU[0], 4096×4096, Triton `gfx950-tutorial-v2.1`, rocprofv3 with
-the prepared launcher (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
+Measured on MI355X `rocm-smi` GPU[7], 4096×4096, Triton `gfx950-tutorial-v2.1`, plain rocprofv3
+with rotating tensors (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
 
 | Kernel | K | TFLOPS / MFMA eff | VGPR / spills |
 |---|---|---|---|
-| inter_wave/a16w16 (fp16) | 8192 | 1440 / 99.8% | 242 / 0 |
-| inter_wave/a8w8 (BF8) | 16384 | 3117 / 99.8% | 256 / 8 (loop 0) |
-| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4256 / 66.5% | 256 / 29 (loop 0) |
-| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 4930 / 79.5% | 256 / 12 (loop 0) |
-| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 4807 / 98.9% | 246 / 0 |
+| inter_wave/a16w16 (fp16) | 8192 | 1479 / 99.84% | 248 / 0 |
+| inter_wave/a8w8 (BF8) | 16384 | 3151 / 96.22% | 256 / 9 (loop 0) |
+| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4585 / 67.46% | 256 / 30 (loop 0) |
+| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 4885 / 75.10% | 256 / 14 (loop 0) |
+| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 5159 / 93.80% | 244 / 0 |
 
 ## 3. Running
 

@@ -138,12 +138,12 @@ Measured on MI355 with shape 4096×4096×16384, BF8 (e5m2):
 
 | Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------|--------|-------|--------|-----------|
-| base                     |   2860 |   466 |      0 |    68.04% |
-| llir                     |   3260 |   498 |      0 |    91.98% |
-| llir+force-agpr          |   3307 |   484 |      0 |    98.16% |
-| llir+force-agpr+amdgcnas |   3381 |   484 |      0 |    99.24% |
+| base                     |   2949 |   466 |      0 |    68.03% |
+| llir                     |   3469 |   498 |      0 |    91.55% |
+| llir+force-agpr          |   3487 |   484 |      0 |    98.14% |
+| llir+force-agpr+amdgcnas |   3527 |   484 |      0 |    99.20% |
 
-**M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget: `llir` alone runs spill-free at **3177 TFLOPS / 93.75% MFMA efficiency**.
+**M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget: `llir` alone runs spill-free at **3469 TFLOPS / 91.55% MFMA efficiency**.
 
 **force-agpr and amdgcnas reach near-saturation.** `force-agpr` pins the MFMA accumulators into AGPRs, freeing VGPRs (510 → 488) and removing the in-loop `v_accvgpr_*` copies, for 98.06%. `amdgcnas` packs the remaining SALU gaps to reach **99.52% MFMA efficiency** — the hot loop is fully saturated.
 

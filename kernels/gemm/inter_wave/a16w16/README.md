@@ -117,11 +117,11 @@ reference (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocpr
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | **1480** | 99.8% | 1505 | 98.2% |
-| 16384 | **1485** | 99.8% | 1460 | 97.7% |
-| 32768 | 1291 | 84.3% | **1305** | 62.7% |
+| 8192  | **1479** | 99.84% | 1587 | 97.79% |
+| 16384 | **1485** | 99.8% | 1460 | 97.7% | *(not re-measured)*
+| 32768 | 1291 | 84.3% | **1305** | 62.7% | *(not re-measured)*
 
-VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **480 / 0** (both loop-spill-free).
+VGPRs / spills: this kernel **248 / 0**, `intra_wave/v9` **480 / 0** (both loop-spill-free).
 
 The two routes are neck-and-neck. This kernel edges the 4-wave `intra_wave/v9` (LLIR scheduler +
 force-agpr + amdgcnas) on TFLOPS at K ≤ 16384 (**~+1–2%**) and holds ~99.8% loop MFMA there;

@@ -166,15 +166,15 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ## 4. Performance
 
-Measured on MI355X, `rocm-smi` GPU[0], Triton `gfx950-tutorial-v2.1`, rocprofv3 with the
-prepared launcher (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+Measured on MI355X, `rocm-smi` GPU[7], Triton `gfx950-tutorial-v2.1`, plain rocprofv3 with
+rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `llir+force-agpr+amdgcnas` — the shipping stack.
 
 | Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|--------|-------|--------|-----------|
-| v8_sliceMN           |   1534 |   488 |      0 |    97.39% |
-| v9_beyond_hotloop    |   1571 |   488 |      0 |    97.89% |
+| v8_sliceMN           |   1569 |   488 |      0 |    97.40% |
+| v9_beyond_hotloop    |   1587 |   488 |      0 |    97.79% |
 
 v9 adds no instructions to the hot loop — the gain is entirely outside it, from the L2
 locality the XCD-aware PID remapping buys. MFMA efficiency is essentially unchanged (the loop

@@ -97,15 +97,15 @@ The VGPR reduction from 512 to 408 (104 fewer registers) demonstrates the benefi
 
 ## Performance
 
-Measured on MI355X, `rocm-smi` GPU[0], Triton `gfx950-tutorial-v2.1`, rocprofv3 with the
-prepared launcher (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+Measured on MI355X, `rocm-smi` GPU[7], Triton `gfx950-tutorial-v2.1`, plain rocprofv3 with
+rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v1_buffer_load  |    605 |   512 |      0 |    28.58% |
-| v2_async_copy   |    644 |   328 |      0 |    30.09% |
+| v1_buffer_load  |    614 |   512 |      0 |    27.41% |
+| v2_async_copy   |    645 |   328 |      0 |    27.45% |
 
 ## 6. What Comes Next
 

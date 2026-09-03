@@ -6,14 +6,14 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1280 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1200 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
+Tuned, `fmha_v4` reaches **1292 TFLOPS** at **85.1%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1214 at 76.8%. The reference point is ROCm/FlyDSL, whose published configuration reaches
 **1322** on this shape from **84.7%** efficiency. The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
 and what each step costs.
 
-That efficiency number is what the rest of this document is about. 94.2% means the matrix pipe
-takes a new MFMA in 94.2% of the loop's cycles, and the missing 5.8% is time the SIMD spent
+That efficiency number is what the rest of this document is about. 85.1% means the matrix pipe
+takes a new MFMA in 85.1% of the loop's cycles, and the missing 14.9% is time the SIMD spent
 issuing something it could not hide behind one. So the design question is what *else* an FMHA
 kernel has to issue, and where that work can go.
 
@@ -512,7 +512,7 @@ all. It is visible in a count of 3-source VALU in `fmha_v4`'s loop body: **98 wi
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
-Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[0],
+Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[7],
 rocprofv3 kernel time interleaved over three rounds for TFLOPS, an ATT instruction trace for the
 in-loop MFMA efficiency per SIMD. Every throughput figure below is a three-round mean with a spread
 of at most 3 TFLOPS.
@@ -525,9 +525,9 @@ of at most 3 TFLOPS.
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
-| no `s_nop`, no fold | 1229 / 83.7% | 1302 / 90.6% |
-| `MEMNOP=2` | 1234 / 85.0% | 1310 / 92.4% |
-| `MEMNOP=2` + `SCALE_ON_Q` | **1250 / 86.3%** | **1322 / 94.2%** |
+| no `s_nop`, no fold *(v2.0, not re-measured)* | 1229 / 83.7% | 1302 / 90.6% |
+| `MEMNOP=2` *(v2.0, not re-measured)* | 1234 / 85.0% | 1310 / 92.4% |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1214 / 76.8%** | **1292 / 85.1%** |
 
 Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
 and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
@@ -616,7 +616,7 @@ rest on.
 
 ## 9. Results
 
-`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[0] — ROCm/FlyDSL's published
+`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[7] — ROCm/FlyDSL's published
 benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
 `AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
 fraction come from an ATT instruction trace of one dispatch. The five configurations were run
@@ -626,15 +626,15 @@ equally. Round-to-round spread was 0.5 to 4.5 TFLOPS.
 | | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
 |---|---:|---:|---:|---:|
 | *ROCm/FlyDSL* — its own tuned config (not re-measured on this pin) | *1322* | 84.7% | 94.2% | 4837 |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1280** | **94.2%** | 90.5% | **4349** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1200** | 86.3% | 91.5% | 4745 |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1197 | 69.1% | 91.8% | 5924 |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1143 | 67.3% | 92.3% | 6084 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1292** | **85.1%** | 90.3% | **4812** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1214** | 76.8% | 92.1% | 5332 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1190 | 67.6% | 91.9% | 6056 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1143 | 64.7% | 93.4% | 6327 |
 
-**What lazy rescaling is worth** is the distance between the two kernels: **+4.7%** on stock LLVM
-(1143 → 1197) and **+6.7%** tuned (1200 → 1280). The efficiency column says something the throughput
-column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 67.3%
-against 69.1%, **+1.8 points** — while the tuned rows are **7.9 points** apart, four times as far.
+**What lazy rescaling is worth** is the distance between the two kernels: **+4.1%** on stock LLVM
+(1143 → 1190) and **+6.4%** tuned (1214 → 1292). The efficiency column says something the throughput
+column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 64.7%
+against 67.6%, **+2.9 points** — while the tuned rows are **8.3 points** apart, nearly three times as far.
 Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
 downstream that spends that budget converts it into cycles. A design that creates headroom only pays
 if something spends it. **Its price** is that `fmha_v4` cannot be written in stock Gluon — skipping
@@ -643,18 +643,19 @@ clusters enough that part of the softmax has to be moved between them by hand ([
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
 tuned one: **+5.0%** of throughput on `fmha_v3` and **+6.9%** on `fmha_v4`, and in efficiency terms
-**+19.0** and **+25.1 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
+**+12.1** and **+17.5 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
 `sched_group_barrier` sequence for IGroupLP to construct — and the ops then kept in the cluster
 they were assigned to ([§6](#6-making-the-compiler-co-operate)).
 
 **The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
-ceiling is 100% and it reaches 94.2%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
-against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.3%. The two are
-7.9 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
-budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
-own ceiling (5.8 and 5.1).
+ceiling is 100% and it reaches 85.1%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
+against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 76.8%. The two are
+8.3 points apart while their ceilings are 8.6 apart — so the whole difference is still work
+`fmha_v3`'s budget cannot absorb rather than a worse schedule. Both now sit about **15 points**
+below their own ceiling (14.9 and 14.6), against ~5.5 on the `gfx950-tutorial-v2.0` measurement:
+the v2.1 toolchain gives up roughly 9 points of in-loop MFMA efficiency on both kernels.
 
 **On the FlyDSL row.** ROCm/FlyDSL at
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),

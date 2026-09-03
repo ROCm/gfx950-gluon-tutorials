@@ -223,10 +223,10 @@ Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
 | Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------|--------|-------|--------|-----------|
-| base                     |   4357 |   510 |      0 |    51.45% |
-| llir                     |   1454 |   512 |     40 |    21.52% |
-| llir+force-agpr          |   4927 |   492 |      0 |    79.70% |
-| llir+force-agpr+amdgcnas |   4921 |   496 |      0 |    81.00% |
+| base                     |   4423 |   494 |      0 |    55.87% |
+| llir                     |    716 |   512 |    186 |     8.98% |
+| llir+force-agpr          |   5429 |   492 |      0 |    80.26% |
+| llir+force-agpr+amdgcnas |   5420 |   496 |      0 |    81.71% |
 
 See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 

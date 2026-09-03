@@ -88,14 +88,14 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), `rocm-smi` GPU[0], Triton built from the [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) tag, rocprof
+Measured on a single MI355X (gfx950), `rocm-smi` GPU[7], Triton built from the [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
 scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
 
 ![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
 
-Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v1** (combined B-scale, 4948 TFLOPS / 75.1% MFMA); the alternate **v2** (32×32×64 MFMA) trades throughput for occupancy and has not been re-measured on this pin.
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v1** (combined B-scale, 4885 TFLOPS / 75.1% MFMA); on this pin the alternate **v2** (32×32×64 MFMA) is now both *faster and* more efficient at **5159 TFLOPS / 93.8% MFMA**, so v2 — not v1 — is the better 8-wave MXFP4 choice here.
 
 > [!NOTE]
 > The **4-wave** bars are the `gfx950-tutorial-v2.1`-build numbers from
@@ -103,7 +103,7 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
 > (2 waves/SIMD → per-wave fraction × 2).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
-> FP16 optimization journey's near-optimal headline (1571 TFLOPS on `gfx950-tutorial-v2.1`) is
+> FP16 optimization journey's near-optimal headline (1587 TFLOPS on `gfx950-tutorial-v2.1`) is
 > documented in [`a16w16/`](intra_wave/a16w16/).
 
 The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
