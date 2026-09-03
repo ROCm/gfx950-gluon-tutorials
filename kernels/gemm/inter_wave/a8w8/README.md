@@ -52,15 +52,15 @@ epilogue (which carries no MFMA).
 ## 2. Performance
 
 MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000 dispatches;
-`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v1.1`. The 8-wave kernel
+`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.1`, GPU[7]. The 8-wave kernel
 (`scripts/collect_perf.py`, **no-AGPR**) vs the 4-wave `intra_wave/a8w8` reference
 (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
 | K | 8-wave TFLOPS | 8-wave MFMA eff | 4-wave TFLOPS | 4-wave MFMA eff |
 |---|---|---|---|---|
-| 8192  | 2901 | 99.7% | **3043** | 99.5% | *(not re-measured)*
+| 8192  | 2915 | 99.72% | **3365** | 99.25% |
 | 16384 | 3151 | 96.22% | **3527** | 99.20% |
-| 32768 | 3054 | 99.0% | **3059** | 97.6% | *(not re-measured)*
+| 32768 | 3058 | 88.24% | **3090** | 86.43% |
 
 ## 3. Running
 

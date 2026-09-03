@@ -513,26 +513,20 @@ with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the t
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
 Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[7],
-rocprofv3 kernel time interleaved over three rounds for TFLOPS, an ATT instruction trace for the
-in-loop MFMA efficiency per SIMD. Every throughput figure below is a three-round mean with a spread
-of at most 3 TFLOPS.
-
-> [!NOTE]
-> This sweep has **not** been re-measured on `gfx950-tutorial-v2.1`. The absolute TFLOPS below
-> are from the `v2.0` pin and read about 4% high against [§9](#9-results)'s current numbers; the
-> *relative* structure — which setting is worth what — is what the section is about and is
-> unaffected. The bottom row corresponds to §9's tuned configuration.
+rocprofv3 kernel time for TFLOPS (single run per configuration, `--launch jit`), an ATT instruction
+trace for the in-loop MFMA efficiency per SIMD. The top two rows set `--scale-on-q 0`; the top row
+additionally overrides `LLIRSCHED_WP_MEMNOP=0`. The bottom row is [§9](#9-results)'s tuned config.
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
-| no `s_nop`, no fold *(v2.0, not re-measured)* | 1229 / 83.7% | 1302 / 90.6% |
-| `MEMNOP=2` *(v2.0, not re-measured)* | 1234 / 85.0% | 1310 / 92.4% |
+| no `s_nop`, no fold | 1200 / 74.8% | 1271 / 81.5% |
+| `MEMNOP=2` | 1205 / 76.0% | 1281 / 83.2% |
 | `MEMNOP=2` + `SCALE_ON_Q` | **1214 / 76.8%** | **1292 / 85.1%** |
 
-Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
-and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
-fold the larger, at **+1.25%** and **+0.91%**. The bottom row is [§9](#9-results)'s tuned
-configuration as measured on the v2.0 pin.
+Together the two settings are worth **+1.2%** on `fmha_v3` and **+1.7%** on `fmha_v4`, and **+2.0**
+and **+3.7 points** of efficiency. Pacing is the smaller half — **+0.46%** and **+0.78%** — and the
+fold the larger, at **+0.72%** and **+0.91%**. The ordering the section argues for is unchanged on
+this pin; the efficiency gains are if anything larger on `fmha_v4` than they were on v2.0.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04

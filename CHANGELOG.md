@@ -47,9 +47,14 @@ excludes host launch overhead.
   [llvm/llvm-project#216372](https://github.com/llvm/llvm-project/pull/216372), merged 16 days
   after this pin's LLVM commit.
 
-- **Not re-measured, and marked as such in place**: the attention §7 `MEMNOP`/`SCALE_ON_Q`
-  sweep rows above the tuned row, the ROCm/FlyDSL comparison row, the `inter_wave` K-sweep rows
-  away from each kernel's headline K, and `v8_sliceMN`'s K=16384 rows.
+- **The 4-wave route now leads the 8-wave one at every K on a16w16**, reversing the v1.1
+  reading where the 8-wave kernel edged it at K <= 16384. The reversal is on the 4-wave side:
+  those numbers rose sharply on v2.1 while the 8-wave ones barely moved.
+
+- **Not re-measured**: only the ROCm/FlyDSL comparison row, which requires building a separate
+  repo; it is marked in place as a v2.0-pin external reference. Everything else in the tutorial —
+  including the attention §7 `MEMNOP`/`SCALE_ON_Q` sweep, the `inter_wave` K-sweeps and
+  `v8_sliceMN`'s K=16384 rows — is measured on this pin.
 
 > [!NOTE]
 > These numbers come from one die on one machine. Absolute TFLOPS vary across MI350-class parts

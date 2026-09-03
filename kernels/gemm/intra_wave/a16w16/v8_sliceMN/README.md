@@ -246,9 +246,9 @@ The buffer load stall described above is directly measurable. We compare v7 (sli
 | Version                    |     K | TFLOPS | MFMA Eff. |
 |----------------------------|-------|--------|-----------|
 | v7_sliceN + llir+force-agpr+amdgcnas  |  8192 |   1567 |    97.96% |
-| v7_sliceN + llir+force-agpr+amdgcnas  | 16384 |   1401 |    95.96% | *(K=16384 not re-measured)*
+| v7_sliceN + llir+force-agpr+amdgcnas  | 16384 |   1567 |    90.48% |
 | v8_sliceMN + llir+force-agpr+amdgcnas |  8192 |   1569 |    97.40% |
-| v8_sliceMN + llir+force-agpr+amdgcnas | 16384 |   1442 |    96.72% | *(K=16384 not re-measured)*
+| v8_sliceMN + llir+force-agpr+amdgcnas | 16384 |   1579 |    91.15% |
 
 Performance is collected using:
 ```bash
