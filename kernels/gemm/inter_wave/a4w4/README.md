@@ -57,11 +57,11 @@ a8w8's.
 
 ```bash
 # v2 (recommended, and bench.py's default): correctness + do_bench TFLOPS (from this kernel dir)
-python bench.py --version 1 --K 8192
+python bench.py --version 2 --K 8192
 
 # rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill (from the repo root)
-python scripts/collect_perf.py --kernel a4w4 --version 1 --K 8192
-python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 --rotating-buffer-size 2048
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 8192
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-buffer-size 2048
 
 # v0 baseline (the byte-shuffle B scale) for comparison
 python bench.py --version 0 --K 8192

@@ -256,7 +256,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+f
 python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+force-agpr+amdgcnas --K 16384 --dtype fp16 --rocprof
 ```
 
-At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384, v7 slips to 97.04% while v8 holds at 98.05%. The ~1 percentage-point gap in MFMA efficiency is the residual signature of the TCP stall: v7's 16 consecutive buffer loads per wave still press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
+At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 both drop sharply, v7 to 90.48% and v8 to 91.15%. The gap narrows to well under a point, but v8 stays ahead, and the drop itself is the residual signature of the TCP stall: v7's 16 consecutive buffer loads per wave still press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
 
 ## 6. What Comes Next
 

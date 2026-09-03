@@ -80,7 +80,7 @@ def main():
             cx = rect.get_x() + rect.get_width() / 2
             # TFLOPS above the bar
             ax.text(
-                cx, h + 55, f"{int(h)}", ha="center", va="bottom", fontsize=9.5, fontweight="bold"
+                cx, h + 55, f"{round(h)}", ha="center", va="bottom", fontsize=9.5, fontweight="bold"
             )
             # MFMA efficiency inside the bar, near the top (red on a white pill
             # so it stays legible on both the blue and orange fills)
@@ -108,7 +108,7 @@ def main():
     )
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10)
-    ax.set_ylim(0, 5900)
+    ax.set_ylim(0, 6500)
     legend = [
         Patch(facecolor=C4, label="4-wave  (LLIR + force-agpr + amdgcnas)"),
         Patch(facecolor=C8, label="8-wave  (warp-pipeline, no AGPRs)"),

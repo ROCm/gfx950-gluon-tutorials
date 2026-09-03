@@ -76,9 +76,11 @@ The single-dispatch ATT trace (K=16384) shows the near-solid MFMA the wider co-i
 
 ## Conclusion
 
-32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~98% MFMA
-efficiency, spill-free — but clock throttling makes it a **wall-clock wash** with 16×16×128. Kept as the
-reference 32×32×64 kernel; **v1 remains the production choice**.
+32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~94% MFMA
+efficiency, and the only spill-free version of the three. On `gfx950-tutorial-v2.1` the clock throttling
+no longer cancels it: v2 leads v1 on wall-clock at both shapes (**+4.4%** at K=8192, **+5.6%** at
+K=32768), so **v2 is the production choice** here. On the older `v1.1` pin it was a wall-clock wash,
+which is what earlier revisions of this page described.
 
 ```bash
 # correctness + do_bench TFLOPS (from this v2_mfma32x32x64 dir)

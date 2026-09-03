@@ -95,7 +95,7 @@ scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave
 
 ![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
 
-Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v2** (32×32×64 MFMA, 5159 TFLOPS / 93.8% MFMA), which overtook **v1** (4885 / 75.1%) on this pin — each bar is its route's best variant at that shape.
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v2). The MXFP4 8-wave bar is **v2** (32×32×64 MFMA, 5159 TFLOPS / 93.8% MFMA), which overtook **v1** (4885 / 75.1%) on this pin — each bar is its route's best variant at that shape.
 
 > [!NOTE]
 > The **4-wave** bars are the `gfx950-tutorial-v2.1`-build numbers from

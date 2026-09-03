@@ -29,7 +29,7 @@ git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.1 /tmp/tri
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`b010a18d`); if the pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v1.1`; the relative structure (`llir` vs. `llir+force-agpr` vs. `llir+force-agpr+amdgcnas`) is expected to remain stable across later pins.
+Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`b010a18d`); if the pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v2.1` on GPU[7]; the relative structure (`llir` vs. `llir+force-agpr` vs. `llir+force-agpr+amdgcnas`) is expected to remain stable across later pins.
 
 **Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap — all three are targeted for the LLVM backend. The LLIR scheduler will be implemented as a scheduling pass in the LLVM backend; the RA hints will move into the LLVM backend's AMDGPU register allocator (the `RewriteMFMAFormStage` pass — see the force-agpr note above); the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../../docs/performance_philosophy.md#4-llirsched-force-agpr-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -65,8 +65,8 @@ is the difference between spilling and not**, and amdgcnas is the polish on top.
 
 | kernel | `llir` alone | `llir+force-agpr` | `+amdgcnas` |
 |---|---|---|---|
-| a16w16 v6 | 227 TFLOPS, **129 spills**, 8.8% | 1183, 0 spills, 93.4% | 1164, 93.9% |
-| a16w16 v7 | 1393, 0 spills, 82.1% | 1486, 96.7% | 1505, 98.2% |
+| a16w16 v6 | 228 TFLOPS, **129 spills**, 8.7% | 1180, 0 spills, 71.8% | 1186, 94.6% |
+| a16w16 v7 | 1419, 0 spills, 82.1% | 1526, 95.5% | 1567, 98.0% |
 | a8w8      | 3469, 0 spills, 91.6% | 3487, 98.1% | 3527, 99.2% |
 | a4w4 v1   | 3420, **12 spills**, 45.1% | 5737, 88.5% | 5843, 93.7% |
 

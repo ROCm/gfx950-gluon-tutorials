@@ -230,11 +230,11 @@ Measured on MI355 with shape 4096x4096x32768, MXFP4 (e2m1):
 
 See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of the LLIR scheduler**: v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and the scheduler alone spills 40 VGPRs, collapsing the kernel to 1454 TFLOPS / 21.52% MFMA efficiency. The interleaving itself is correct, but with a full register file every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip the scheduler cannot hide.
+**Effect of the LLIR scheduler**: v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and the scheduler alone spills 186 VGPRs, collapsing the kernel to 716 TFLOPS / 8.98% MFMA efficiency. The interleaving itself is correct, but with a full register file every spilled value adds a `scratch_load` / `s_waitcnt vmcnt(0)` round-trip the scheduler cannot hide.
 
-**Effect of force-agpr**: The RA hints (`amdgpu-agpr-alloc=256` and `amdgpu-mfma-vgpr-form=0`, both set by `TRITON_FORCE_MFMA_AGPR=1`) force the MFMA accumulators into AGPRs, freeing VGPRs and clearing all 40 spills. The kernel recovers to 4927 TFLOPS / 79.70% MFMA efficiency.
+**Effect of force-agpr**: The RA hints (`amdgpu-agpr-alloc=256` and `amdgpu-mfma-vgpr-form=0`, both set by `TRITON_FORCE_MFMA_AGPR=1`) force the MFMA accumulators into AGPRs, freeing VGPRs and clearing all 186 spills. The kernel recovers to 5429 TFLOPS / 80.26% MFMA efficiency.
 
-**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.00%.
+**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.71%.
 
 ## 5. How to Run
 

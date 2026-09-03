@@ -85,7 +85,7 @@ average), one config per invocation:
 | llir+force-agpr+amdgcnas | 5420 | 5843 | 93.7% |
 
 Under `llir` alone **both** versions now spill: v0_sliceN by 186 registers (its LDS-round-trip
-scale pipeline is register-heavy) collapsing to 699 TFLOPS, and v1_sliceMN by 12, costing it
+scale pipeline is register-heavy) collapsing to 716 TFLOPS, and v1_sliceMN by 12, costing it
 about a quarter of its throughput. `force-agpr` clears the spills in both cases and is what
 makes the MXFP4 kernels usable at all on this pin — it is not a marginal 2-3% tuning flag here.
 That is the same failure v6 hits in the FP16 series: these kernels sit at the register ceiling,

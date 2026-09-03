@@ -7,7 +7,7 @@ architecture and differ in how they handle the softmax rescale.
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
 Tuned, `fmha_v4` reaches **1294 TFLOPS** at **85.1%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1214 at 76.8%. The reference point is ROCm/FlyDSL, which reaches **1332** on this shape
+`fmha_v3` 1215 at 76.8%. The reference point is ROCm/FlyDSL, which reaches **1332** on this shape
 from **84.8%** efficiency — so on this pin FlyDSL is **~3% ahead**, where on `v2.0` the two were
 level (1323 vs 1322). The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
@@ -525,9 +525,9 @@ additionally overrides `LLIRSCHED_WP_MEMNOP=0`. Those two are single runs; the b
 | `MEMNOP=2` | 1205 / 76.0% | 1281 / 83.2% |
 | `MEMNOP=2` + `SCALE_ON_Q` | **1215 / 76.8%** | **1294 / 85.1%** |
 
-Together the two settings are worth **+1.25%** on `fmha_v3` and **+1.8%** on `fmha_v4`, and **+2.0**
-and **+3.7 points** of efficiency. Pacing is the smaller half — **+0.46%** and **+0.78%** — and the
-fold the larger, at **+0.79%** and **+1.02%**. The ordering the section argues for is unchanged on
+Together the two settings are worth **+1.25%** on `fmha_v3` and **+1.81%** on `fmha_v4`, and **+2.0**
+and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.42%** and **+0.79%** — and the
+fold the larger, at **+0.83%** and **+1.01%**. The ordering the section argues for is unchanged on
 this pin; the efficiency gains are if anything larger on `fmha_v4` than they were on v2.0.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
@@ -638,7 +638,7 @@ the rescale per wave needs `gl.warp_predicate` — and that removing the rescale
 clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
-tuned one: **+5.0%** of throughput on `fmha_v3` and **+6.9%** on `fmha_v4`, and in efficiency terms
+tuned one: **+6.2%** of throughput on `fmha_v3` and **+8.6%** on `fmha_v4`, and in efficiency terms
 **+12.1** and **+17.5 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
@@ -710,7 +710,15 @@ them measures the stock-LLVM bars of the chart above instead. The two settings t
 already the defaults: `SCALE_ON_Q` is on unless you pass `--scale-on-q 0`, and the plugin paces the
 mem stages at `LLIRSCHED_WP_MEMNOP=2` on its own. `bench.py` reports `do_bench` wall time;
 `scripts/fa_kernel_time.py` takes the same environment and reports the rocprofv3 kernel-time TFLOPS
-the table quotes.
+the table quotes — **pass `--launch jit`**, since its default is `prepared` and every number in
+[§9](#9-results) and [§8](#8-applying-this-to-your-own-kernel) was taken with the plain (jit) launch:
+
+```bash
+FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 HIP_VISIBLE_DEVICES=7 \
+python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --launch jit
+```
 
 ## 10. Where to go deeper
 
