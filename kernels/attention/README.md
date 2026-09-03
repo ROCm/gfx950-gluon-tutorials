@@ -6,9 +6,10 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1292 TFLOPS** at **85.1%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1214 at 76.8%. The reference point is ROCm/FlyDSL, whose published configuration reaches
-**1322** on this shape from **84.7%** efficiency. The orange bar in each group is the same kernel
+Tuned, `fmha_v4` reaches **1294 TFLOPS** at **85.1%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1214 at 76.8%. The reference point is ROCm/FlyDSL, which reaches **1332** on this shape
+from **84.8%** efficiency — so on this pin FlyDSL is **~3% ahead**, where on `v2.0` the two were
+level (1323 vs 1322). The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
 and what each step costs.
 
@@ -515,17 +516,18 @@ with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the t
 Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[7],
 rocprofv3 kernel time for TFLOPS (single run per configuration, `--launch jit`), an ATT instruction
 trace for the in-loop MFMA efficiency per SIMD. The top two rows set `--scale-on-q 0`; the top row
-additionally overrides `LLIRSCHED_WP_MEMNOP=0`. The bottom row is [§9](#9-results)'s tuned config.
+additionally overrides `LLIRSCHED_WP_MEMNOP=0`. Those two are single runs; the bottom row is
+[§9](#9-results)'s tuned config and carries its three-round mean.
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
 | no `s_nop`, no fold | 1200 / 74.8% | 1271 / 81.5% |
 | `MEMNOP=2` | 1205 / 76.0% | 1281 / 83.2% |
-| `MEMNOP=2` + `SCALE_ON_Q` | **1214 / 76.8%** | **1292 / 85.1%** |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1215 / 76.8%** | **1294 / 85.1%** |
 
-Together the two settings are worth **+1.2%** on `fmha_v3` and **+1.7%** on `fmha_v4`, and **+2.0**
+Together the two settings are worth **+1.25%** on `fmha_v3` and **+1.8%** on `fmha_v4`, and **+2.0**
 and **+3.7 points** of efficiency. Pacing is the smaller half — **+0.46%** and **+0.78%** — and the
-fold the larger, at **+0.72%** and **+0.91%**. The ordering the section argues for is unchanged on
+fold the larger, at **+0.79%** and **+1.02%**. The ordering the section argues for is unchanged on
 this pin; the efficiency gains are if anything larger on `fmha_v4` than they were on v2.0.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
@@ -615,18 +617,18 @@ benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` 
 `AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
 fraction come from an ATT instruction trace of one dispatch. The five configurations were run
 **interleaved** — one of each, three times round — so any drift in the board hits every row
-equally. Round-to-round spread was 0.5 to 4.5 TFLOPS.
+equally. Round-to-round spread was 1.6 to 3.2 TFLOPS.
 
 | | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
 |---|---:|---:|---:|---:|
-| *ROCm/FlyDSL* — its own tuned config (not re-measured on this pin) | *1322* | 84.7% | 94.2% | 4837 |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1292** | **85.1%** | 90.3% | **4812** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1214** | 76.8% | 92.1% | 5332 |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1190 | 67.6% | 91.9% | 6056 |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1143 | 64.7% | 93.4% | 6327 |
+| *ROCm/FlyDSL* — its own tuned config | *1332* | 84.8% | 94.2% | 4833 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1294** | **85.1%** | 90.3% | **4812** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1215** | 76.8% | 92.1% | 5332 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1191 | 67.6% | 91.9% | 6056 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1144 | 64.7% | 93.4% | 6327 |
 
 **What lazy rescaling is worth** is the distance between the two kernels: **+4.1%** on stock LLVM
-(1143 → 1190) and **+6.4%** tuned (1214 → 1292). The efficiency column says something the throughput
+(1144 → 1191) and **+6.5%** tuned (1215 → 1294). The efficiency column says something the throughput
 column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 64.7%
 against 67.6%, **+2.9 points** — while the tuned rows are **8.3 points** apart, nearly three times as far.
 Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
@@ -655,7 +657,23 @@ the v2.1 toolchain gives up roughly 9 points of in-loop MFMA efficiency on both 
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
 `build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
 [`scripts/fly_kernel_time.py`](../../scripts/fly_kernel_time.py) under the same protocol as our
-rows: **1322 TFLOPS** (1321.1 / 1321.3 / 1322.6), reproducing its published 1320.
+rows: **1332 TFLOPS** (1331.4 / 1331.3 / 1334.3), re-measured on this pin on GPU[7], interleaved
+with the `fmha_v4` rounds (1292.3 / 1293.4 / 1295.5) so the two sides share thermal state.
+Its ATT figures are unchanged from the `v2.0` measurement — 84.8% vs 84.7%, 94.2% loop fraction,
+4833 vs 4837 cyc/iter — which is expected: **FlyDSL does not go through Triton**, so neither v2.1
+regression reaches it. That is what makes it a useful control here.
+
+> [!NOTE]
+> The runtime is the `flydsl==0.2.4` PyPI wheel driving the pinned checkout's kernel source. The
+> pin is 26 commits past the `v0.2.4` tag and four of those touch the attention kernel, so the
+> *kernel* is the pinned one but the *compiler* is v0.2.4. Reproducing the exact `63eb891` build
+> needs a from-source build of its embedded MLIR.
+
+**What this changes.** On `v2.0` `fmha_v4` matched FlyDSL (1323 vs 1322) from a much higher in-loop
+efficiency (94.2% vs 84.7%) — it was doing more per cycle and spending it on a shorter loop
+fraction. On v2.1 `fmha_v4` loses ~9 points of that efficiency and the two kernels now sit level on
+efficiency (85.1% vs 84.8%), at which point FlyDSL's better loop fraction (94.2% vs 90.3%) decides
+it. The gap is a symptom of the v2.1 regression, not a design difference.
 
 ### Building and running
 

@@ -51,10 +51,15 @@ excludes host launch overhead.
   reading where the 8-wave kernel edged it at K <= 16384. The reversal is on the 4-wave side:
   those numbers rose sharply on v2.1 while the 8-wave ones barely moved.
 
-- **Not re-measured**: only the ROCm/FlyDSL comparison row, which requires building a separate
-  repo; it is marked in place as a v2.0-pin external reference. Everything else in the tutorial —
-  including the attention §7 `MEMNOP`/`SCALE_ON_Q` sweep, the `inter_wave` K-sweeps and
-  `v8_sliceMN`'s K=16384 rows — is measured on this pin.
+- **ROCm/FlyDSL re-measured too, and it now leads `fmha_v4` by ~3%** (1332 vs 1294), where on
+  `v2.0` the two were level (1322 vs 1323). FlyDSL's own figures barely moved — 84.8% vs 84.7%
+  MFMA, 4833 vs 4837 cyc/iter — which is expected, since **FlyDSL does not go through Triton** and
+  neither v2.1 regression reaches it. It is therefore a clean control: the gap that opened is
+  `fmha_v4` losing ~9 points of in-loop efficiency, not FlyDSL improving. With the two now level
+  on efficiency (85.1% vs 84.8%), FlyDSL's better loop fraction (94.2% vs 90.3%) decides it.
+
+- **Everything in the tutorial is now measured on this pin.** Nothing is left marked
+  "not re-measured".
 
 > [!NOTE]
 > These numbers come from one die on one machine. Absolute TFLOPS vary across MI350-class parts
