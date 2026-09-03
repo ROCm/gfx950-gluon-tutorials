@@ -48,11 +48,13 @@ C4, C8 = "#4C72B0", "#DD8452"  # 4-wave, 8-wave bar colors
 CMFMA = "#D62728"  # MFMA-efficiency labels (red)
 
 # precision, K, 4-wave (TFLOPS, MFMA%), 8-wave (TFLOPS, MFMA%)
+# Each bar is that route's best variant at the shape: 4-wave MXFP4 = intra a4w4 v1,
+# 8-wave MXFP4 = inter a4w4 v2 (which overtook v1 on the v2.1 pin).
 rows = [
     ("FP16", 8192, 1587, 97.79, 1478.9, 99.84),
     ("BF16", 8192, 1682, 97.46, 1550.5, 99.84),
     ("BF8", 16384, 3527, 99.20, 3150.6, 96.22),
-    ("MXFP4", 32768, 5843, 93.74, 4884.6, 75.10),
+    ("MXFP4", 32768, 5843, 93.74, 5159.0, 93.80),
 ]
 
 

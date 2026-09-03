@@ -82,8 +82,8 @@ gemm/
     ├── a8w8/                              # BF8 — 8-wave warp-pipeline (sliceMN, BLOCK_K=128) — single kernel
     └── a4w4/                              # MXFP4 — 8-wave warp-pipeline
         ├── v0_sliceMN/          #   byte-shuffle B scale (baseline)
-        ├── v1_combineBsc/       #   combined transpose-read B scale (recommended)
-        └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout
+        ├── v1_combineBsc/       #   combined transpose-read B scale
+        └── v2_mfma32x32x64/     #   32×32×64 MFMA + conflict-free LDS layout (recommended)
 ```
 
 ## 3. Performance Summary
@@ -95,7 +95,7 @@ scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave
 
 ![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
 
-Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v1** (combined B-scale, 4885 TFLOPS / 75.1% MFMA); on this pin the alternate **v2** (32×32×64 MFMA) is now both *faster and* more efficient at **5159 TFLOPS / 93.8% MFMA**, so v2 — not v1 — is the better 8-wave MXFP4 choice here.
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v2** (32×32×64 MFMA, 5159 TFLOPS / 93.8% MFMA), which overtook **v1** (4885 / 75.1%) on this pin — each bar is its route's best variant at that shape.
 
 > [!NOTE]
 > The **4-wave** bars are the `gfx950-tutorial-v2.1`-build numbers from

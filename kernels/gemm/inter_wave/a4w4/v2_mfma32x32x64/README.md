@@ -49,16 +49,23 @@ tile reads and keep the MFMA fed.
 
 | kernel | TFLOPS | MFMA eff |
 |---|---|---|
-| v1 | **4923** | 79.6% |
-| v2 | 4800 | **98.9%** |
+| v1 | 4885 | 75.1% |
+| v2 | **5159** | **93.8%** |
 
-MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v1.1`, rocprof cold-rotating.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.1`, GPU[7], rocprof cold-rotating.
 
-The conflict-free layout removes the ds stall → **~98% MFMA efficiency** (the matrix core is nearly
-saturated *in cycles*), and v2 runs the loop in **~20% fewer cycles** than v1. **But the win is
-cycle-based, not wall-clock:** the bigger 32×32×64 MFMAs are power-hungrier, so the GPU
-**frequency-throttles ~21%** — the two effects cancel and wall-clock TFLOPS is essentially even with
-v1 (neck-and-neck at K=8192; at large, loop-dominated K v1's higher datapath peak still wins). This is
+The conflict-free layout removes the ds stall → **~94% MFMA efficiency** (the matrix core is nearly
+saturated *in cycles*), and v2 runs the loop in far fewer cycles than v1. The bigger 32×32×64 MFMAs
+are power-hungrier, so the GPU still **frequency-throttles** — but on `gfx950-tutorial-v2.1` that no
+longer cancels the cycle win: v2 leads on wall-clock at **both** shapes, **+4.4%** at K=8192
+(4336 vs 4155) and **+5.6%** at K=32768 (5159 vs 4885), and is the only spill-free version.
+
+> [!NOTE]
+> On the `v1.1` pin the two effects *did* cancel and this section read "the win is cycle-based, not
+> wall-clock" (4094 vs 4107 at K=8192, 4800 vs 4919 at K=32768). That is no longer the case. The
+> caveat below is still the right lesson about MFMA efficiency — it just no longer applies to v2.
+
+This is
 the [MFMA-efficiency caveat](../../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is
 clock-independent, TFLOPS is not.
 
