@@ -15,7 +15,7 @@ prepared launcher was not buying accuracy, and measured side by side it is not f
 (a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one die.
 
 **Headline: 525 -> 1587 TFLOPS (~3.0x)** on a16w16 FP16 K=8192. a8w8 **3527**, a4w4 v1 **5843**,
-BF16 v9 **1682**. Nothing in the tutorial is left marked "not re-measured".
+BF16 v9 **1682**.
 
 ### Three independent causes, and which kernels each one hits
 
@@ -28,53 +28,40 @@ listed here with what was actually done to confirm each, because the three had b
 | 2 | **`computePSetLimit` unsigned underflow** — LLVM, fix **missing** from the pin | 8-wave `inter_wave` GEMMs | applying LLVM #216372 |
 | 3 | **`ConvertWarpPipeline` head-barrier behaviour changed** — Triton, **narrowed between v2.0 and v2.1** | attention (`fmha_v3` / `fmha_v4`) | building v2.1 with v2.0's `ConvertWarpPipeline.cpp` |
 
-**1. `amdgpu-use-amdgpu-trackers` -> the 4-wave `llir` spill collapses.**
-`third_party/amd/backend/compiler.py` `make_amdgcn()` appends this flag unconditionally for
-gfx942/gfx950. It is **absent from both `v1.1` and `v2.0`** and appears only in v2.1. Under `llir`
-without `force-agpr`: a16w16 v6 spills 129 registers and collapses to **228 TFLOPS** (published
-1166, no spills); a4w4 v0 goes 40 -> **186** spills; a4w4 v1 goes 0 -> **12**. Not passing the flag
-(LLVM's own default is off) restores each of them to at or above its published number, and leaves
-`llir+force-agpr` and the full stack unchanged. It costs the `base` config ~4%, so the fix is to
-gate it, not revert it outright. `force-agpr` independently masks the whole problem, which is why
-the headline full-stack numbers never showed it.
+**1 — `amdgpu-use-amdgpu-trackers`.** `make_amdgcn()` appends it unconditionally for
+gfx942/gfx950; it is **absent from both `v1.1` and `v2.0`**. Under `llir` without `force-agpr`:
+a16w16 v6 spills 129 registers and collapses to **228 TFLOPS** (published 1166, no spills), a4w4 v0
+goes 40 -> **186** spills, a4w4 v1 goes 0 -> **12**. Not passing it (LLVM's default) restores each
+to at or above its published number. It costs the `base` config ~4%, so gate it rather than revert.
+`force-agpr` masks the whole problem, which is why the headline numbers never showed it.
 
-**2. `computePSetLimit` underflow -> the 8-wave `inter_wave` efficiency loss.**
-`RegisterClassInfo::computePSetLimit()` subtracts a reserved-register weight from the target
-pressure-set limit in **unsigned** arithmetic; when the weight exceeds the limit it wraps to a huge
-value and register-pressure checking is silently disabled. Fixed upstream by
-[llvm/llvm-project#216372](https://github.com/llvm/llvm-project/pull/216372) (`1d7d16b94c61`,
-merged 2026-08-19) — **16 days after** this pin's LLVM commit `b010a18d` (2026-08-03). The change
-that *exposes* it, [#213584](https://github.com/llvm/llvm-project/pull/213584) (MachineLICM
-switching to `RegisterClassInfo` limits), **is** in the pin. It bites the `inter_wave` kernels
-because they set `amdgpu-agpr-alloc=0,0`, exactly the restricted-availability case the fix's own
-comment names. Applying the 7-line fix restores MFMA efficiency to published values on
-`inter_wave` a16w16, a8w8, a4w4 v1 and v2 — **but costs `inter_wave` a4w4 v0 ~42% throughput**
-(4473 -> 2599), so it is not a clean cherry-pick.
+**2 — `computePSetLimit` underflow.** The limit is computed in **unsigned** arithmetic and wraps
+when the reserved-register weight exceeds it, silently disabling pressure checking. Fixed by
+[llvm#216372](https://github.com/llvm/llvm-project/pull/216372), merged **16 days after** this
+pin's LLVM commit `b010a18d`; the change that *exposes* it,
+[#213584](https://github.com/llvm/llvm-project/pull/213584), **is** in the pin. It reaches
+`inter_wave` because those kernels set `amdgpu-agpr-alloc=0,0` — the restricted-availability case
+the fix's own comment names. Applying it restores MFMA efficiency to published values on
+`inter_wave` a16w16, a8w8, a4w4 v1 and v2, **but costs a4w4 v0 ~42% throughput** (4473 -> 2599),
+so it is not a clean cherry-pick.
 
-**3. `ConvertWarpPipeline` head-barrier -> the attention regression.**
-`v2.0` placed the loop-carried wrap-around barrier at the **top** of the loop body
-unconditionally, so that barrier's `setprio` primed cluster 0's priority every iteration. `v2.1`
-replaces that with a gated `shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at section
-ends instead. Rebuilding v2.1 with `v2.0`'s `ConvertWarpPipeline.cpp` and `warp_pipeline.py`, and
-changing nothing else, recovers `fmha_v4` from **1294 -> 1327 TFLOPS** and its in-loop MFMA
-efficiency from **85.1% -> 91.7%** (4812 -> 4467 cyc/iter), against the v2.0 published 1323 /
-94.2%; `fmha_v3` recovers 1215 -> 1265. So the attention regression is **this**, not the LLVM
-bugs — an earlier draft of this entry attributed it to #216372, which was never tested on the
-attention kernels and is wrong.
-
-### The FlyDSL control
-
-ROCm/FlyDSL was re-measured on the same die and now **leads `fmha_v4` by ~3%** (1332 vs 1294),
-where on `v2.0` the two were level (1322 vs 1323). Its own figures barely moved — 84.8% vs 84.7%
-MFMA, 4833 vs 4837 cyc/iter — which is the expected result, since **FlyDSL has its own compiler
-stack and never goes through Triton**, so none of the three causes above reaches it. That makes it
-a clean control: the gap that opened is `fmha_v4` losing efficiency, not FlyDSL improving. With
-the two level on efficiency, FlyDSL's better loop fraction (94.2% vs 90.3%) decides it.
+**3 — `ConvertWarpPipeline` head barrier.** `v2.0` placed the loop-carried wrap-around barrier at
+the **top** of the loop body unconditionally, so its `setprio` primed cluster 0's priority every
+iteration; `v2.1` gates that behind `shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at
+section ends. Rebuilding v2.1 with `v2.0`'s `ConvertWarpPipeline.cpp` and `warp_pipeline.py` and
+changing nothing else recovers `fmha_v4` **1294 -> 1327 TFLOPS** and **85.1% -> 91.7%** in-loop
+MFMA (4812 -> 4467 cyc/iter), and `fmha_v3` **1215 -> 1265**, against the v2.0 published
+1323 / 94.2%.
 
 ### Other findings from the refresh
 
 - **`inter_wave/a4w4` v2 now beats v1** — **5159 / 93.80%** against v1's **4885 / 75.10%**,
-  reversing the documented ordering, so v2 is the better 8-wave MXFP4 choice on this pin.
+  reversing the documented ordering. **This is not just v1 regressing.** Both moved, in opposite
+  directions: on one die, v1 went 4930 -> 4798 (-2.7%) while v2 went 4807 -> 4958 (+3.1%). Neither
+  cause restores the old order — applying #216372 lifts v1 to 4885 but v2 to 5007, and building
+  with `v2.0`'s `ConvertWarpPipeline` lifts v1 to 4958 (spills 14 -> 12, its published count) but
+  leaves v2 at 5113. v2 leads in every configuration tested, so **v2 is genuinely the better
+  8-wave MXFP4 choice on this pin**, not an artifact of the regressions.
 
 - **The 4-wave route now leads the 8-wave one at every K on a16w16**, reversing the v1.1 reading
   where the 8-wave kernel edged it at K <= 16384. The reversal is on the 4-wave side: those
@@ -84,10 +71,6 @@ the two level on efficiency, FlyDSL's better loop fraction (94.2% vs 90.3%) deci
   cause 1 or cause 2. No published number exists for that cell, so it is not a regression that can
   be demonstrated — just a broken config.
 
-- **Pick your GPU deliberately.** Across the eight dies on this node the *same binary* spans
-  1442-1589 TFLOPS (10.1%) against 0.2% run-to-run noise on one die, with MFMA efficiency flat at
-  97.4-97.9%, so it is achieved clock rather than codegen. Absolute TFLOPS are only comparable
-  between rows taken on the same die.
 
 ## 2026-08-31 — Re-pin to `gfx950-tutorial-v2.1` (rebase onto current upstream main)
 
