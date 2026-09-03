@@ -653,6 +653,15 @@ against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 76.
 below their own ceiling (14.9 and 14.6), against ~5.5 on the `gfx950-tutorial-v2.0` measurement:
 the v2.1 toolchain gives up roughly 9 points of in-loop MFMA efficiency on both kernels.
 
+**What in v2.1 costs those 9 points: `ConvertWarpPipeline`, not either of the LLVM bugs.** `v2.0`
+placed the loop-carried wrap-around barrier at the **top** of the loop body unconditionally, so
+that barrier's `setprio` primed cluster 0's priority every iteration. `v2.1` gates that behind
+`shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at section ends instead. Rebuilding v2.1
+with `v2.0`'s `ConvertWarpPipeline.cpp` and `warp_pipeline.py` and changing nothing else recovers
+`fmha_v4` to **1327 TFLOPS at 91.7%** in-loop MFMA (4467 cyc/iter) against the v2.0 published
+1323 / 94.2%, and `fmha_v3` to **1265**. The two LLVM bugs recorded in
+[`CHANGELOG.md`](../../CHANGELOG.md) hit the GEMM kernels; neither was shown to affect these.
+
 **On the FlyDSL row.** ROCm/FlyDSL at
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
 `build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
