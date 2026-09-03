@@ -292,6 +292,18 @@ Most importantly, this version reinforces a key mindset:
 
 Once this mindset is adopted, layout design becomes less mysterious and more principled.
 
+## Performance
+
+Measured on MI355X, `rocm-smi` GPU[7], Triton `gfx950-tutorial-v2.1`, plain rocprofv3 with
+rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+
+Config: `base` (no compiler plugins).
+
+| Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|-----------------|--------|-------|--------|-----------|
+| v2_async_copy   |    645 |   328 |      0 |    27.45% |
+| v3_lds          |    738 |   358 |      0 |    32.01% |
+
 ## 6. What Comes Next
 
 In `v4_global_prefetch`, we introduce software pipelining with global data prefetch to hide memory latency.

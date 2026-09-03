@@ -188,23 +188,29 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                                     | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler                         |   1166 |   508 |      0 |    87.07% |
-| v7 + LLIR scheduler                         |   1332 |   512 |      0 |    84.77% |
-| v7 + LLIR scheduler + force-agpr            |   1392 |   468 |      0 |    97.01% |
-| v7 + LLIR scheduler + force-agpr + amdgcnas |   1386 |   468 |      0 |    98.43% |
+| v6 + LLIR scheduler                         |    228 |   512 |    129 |     8.74% |
+| v7 + LLIR scheduler                         |   1419 |   510 |      0 |    82.07% |
+| v7 + LLIR scheduler + force-agpr            |   1526 |   480 |      0 |    95.54% |
+| v7 + LLIR scheduler + force-agpr + amdgcnas |   1567 |   480 |      0 |    97.96% |
+
+The first row is the point of this version. On this pin v6 no longer fits: the allocator
+runs out of VGPRs and spills 129 registers, and the kernel collapses to 228 TFLOPS. v7's
+N-slicing brings the budget under the ceiling **by construction**, and the same `llir` config
+that spills on v6 runs clean on v7 at 1419 TFLOPS. Slicing is not a tuning knob here — it is
+what makes the register budget a design decision instead of an allocator outcome.
 
 ### 4.2. The AGPR↔VGPR copy bottleneck
 
-At 84.77% MFMA efficiency, v7 + LLIR scheduler is well short of the 98% ceiling. The gap is copy traffic inside the main loop. The MFMA accumulators are split between AGPRs and VGPRs, so the register allocator inserts `v_accvgpr_*` copies to move accumulator values into the register file each MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream.
+At 82.07% MFMA efficiency, v7 + LLIR scheduler is well short of the 98% ceiling. The gap is copy traffic inside the main loop. The MFMA accumulators are split between AGPRs and VGPRs, so the register allocator inserts `v_accvgpr_*` copies to move accumulator values into the register file each MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream.
 
 The copy count tracks the efficiency directly. Counting `v_accvgpr_*` instructions in one main-loop body (256 MFMAs each):
 
-| Config              | in-loop `v_accvgpr_*` copies | MFMA Eff. |
-|---------------------|------------------------------|-----------|
-| v6 + LLIR scheduler |                           39 |    87.07% |
-| v7 + LLIR scheduler |                          100 |    84.77% |
+| Config                          | in-loop `v_accvgpr_*` copies | MFMA Eff. |
+|---------------------------------|------------------------------|-----------|
+| v6 + LLIR scheduler + force-agpr |                          39 |    71.82% |
+| v7 + LLIR scheduler              |                         100 |    82.07% |
 
-v7's N-slicing spreads the operands across more live ranges, so the allocator shuffles accumulators more often than in v6 — more copies, slightly lower MFMA efficiency. These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
+v7's N-slicing spreads the operands across more live ranges, so the allocator shuffles accumulators more often — more copies, lower MFMA efficiency. (v6 is compared here with force-agpr, since without it v6 spills and the copy count is not meaningful.) These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
 
 ### 4.3. Register Allocation Workaround: force-agpr
 
@@ -215,7 +221,7 @@ amdgpu-agpr-alloc=256      # reserve 256 AGPRs for accumulators
 amdgpu-mfma-vgpr-form=0    # emit the AGPR form of MFMA
 ```
 
-With every accumulator already in an AGPR, each MFMA reads and writes it in place, so the allocator never needs an in-loop shuffle. The main loop drops to **0** `v_accvgpr_*` copies, which frees VGPRs (512 → 468) and raises MFMA efficiency to **97%**.
+With every accumulator already in an AGPR, each MFMA reads and writes it in place, so the allocator never needs an in-loop shuffle. The main loop drops to **0** `v_accvgpr_*` copies, which frees VGPRs (510 → 480) and raises MFMA efficiency to **95.5%** (**98.0%** with amdgcnas on top).
 
 The tradeoff: forcing all accumulators into AGPRs pushes the AGPR→VGPR reads into the epilogue, where the output `v_cvt` downcast requires VGPR inputs — paid once per kernel instead of every iteration. For compute-bound GEMM with large K (~95% of the time in the main loop), that is a good trade.
 

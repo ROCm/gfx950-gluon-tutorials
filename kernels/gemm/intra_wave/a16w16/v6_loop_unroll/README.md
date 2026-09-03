@@ -106,14 +106,26 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 ## 4. Performance Analysis
 
-| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|----------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler  |   1212 |   512 |      0 |    80.00% |
-| v6 + LLIR scheduler  |   1177 |   508 |      0 |    87.73% |
+| Version                          | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------------------|--------|-------|--------|-----------|
+| v5 + LLIR scheduler              |   1221 |   512 |      0 |    68.56% |
+| v6 + LLIR scheduler              |    228 |   512 |    129 |     8.74% |
+| v6 + LLIR scheduler + force-agpr |   1180 |   496 |      0 |    71.82% |
 
-The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. Removing them tightens the hot loop, and MFMA efficiency rises from 80% to **88%**: the scheduler no longer has to place a copy between the MFMA streams, so more of each iteration is MFMA.
+> [!WARNING]
+> **v6 under `llir` alone now spills.** On the `gfx950-tutorial-v2.1` pin the register
+> allocator pushes v6 past the 512-VGPR ceiling and spills 129 registers, collapsing it to
+> 228 TFLOPS. This is the ceiling problem described below arriving one version early: v6 has
+> no headroom, so it is at the mercy of whatever the allocator decides. Adding **force-agpr**
+> moves the MFMA accumulators into AGPRs and the spills vanish (1180 TFLOPS, 71.8%; adding
+> amdgcnas on top reaches 1186 TFLOPS at 94.6%).
+> On the previous pin the same configuration fit — barely — at 508 VGPRs with no spills.
+> The fix by design is [v7](../v7_sliceN/README.md), which slices along N so the budget is
+> under the ceiling by construction rather than by luck.
 
-The cost lands in register pressure. v6 alternates buffer roles instead of copying — the two operand sets are live concurrently by construction and cannot share registers. The footprint sits right at the ceiling: **508 VGPRs, spill-free.** Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles. The closed-form register accounting, and the design change that opens headroom, is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis).
+The unroll-by-2 in v6 eliminates the per-iteration copy as designed — the copies are gone in the generated assembly, not just in the IR. Removing them tightens the hot loop, and with force-agpr supplying the register headroom MFMA efficiency rises from 62.9% (base) to **71.8%**, and to **94.6%** with amdgcnas: the scheduler no longer has to place a copy between the MFMA streams, so more of each iteration is MFMA.
+
+The cost lands in register pressure. v6 alternates buffer roles instead of copying — the two operand sets are live concurrently by construction and cannot share registers. The footprint sits right at the ceiling: **504 VGPRs, spill-free** in the `base` config — and on this pin it no longer fits under `llir` alone (512 VGPRs, 129 spills), which is what the warning above describes. Throughput holds near v5's, but there is no headroom left for the auxiliary work later kernels need — scales, bias, larger tiles. The closed-form register accounting, and the design change that opens headroom, is in [v7 §2.1, Register Usage Analysis](../v7_sliceN/README.md#21-register-usage-analysis).
 
 Performance is collected using:
 ```bash

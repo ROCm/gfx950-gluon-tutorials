@@ -5,6 +5,73 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-09-03 — Performance refresh on `gfx950-tutorial-v2.1` (plain rocprofv3)
+
+Every performance number in the tutorial re-measured on a **stock** `gfx950-tutorial-v2.1` build
+(no local LLVM or Triton patches), on machine `smci355-ccs-aus-m01-29`, `rocm-smi` **GPU[7]**
+(MI355X / gfx950), with **plain `rocprofv3` and rotating tensors**, 1000 dispatches, last-100
+average. **No prepared launch**: kernel-trace timing already excludes host launch overhead, so the
+prepared launcher was not buying accuracy, and measured side by side it is not faster either
+(a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one die.
+
+**Headline: 525 -> 1587 TFLOPS (~3.0x)** on a16w16 FP16 K=8192. a8w8 **3527**, a4w4 v1 **5843**,
+BF16 v9 **1682**.
+
+### Three independent causes, and which kernels each one hits
+
+The v2.1 pin regresses three different groups of kernels for three unrelated reasons. They are
+listed here with what was actually done to confirm each, because the three had been conflated.
+
+| # | cause | kernels hit | confirmed by |
+|---|---|---|---|
+| 1 | **`amdgpu-use-amdgpu-trackers`** — Triton flag, **new in v2.1** | 4-wave `intra_wave` under `llir` **without** `force-agpr` | not passing the flag |
+| 2 | **`computePSetLimit` unsigned underflow** — LLVM, fix **missing** from the pin | 8-wave `inter_wave` GEMMs | applying LLVM #216372 |
+| 3 | **`ConvertWarpPipeline` head-barrier behaviour changed** — Triton, **narrowed between v2.0 and v2.1** | attention (`fmha_v3` / `fmha_v4`) | building v2.1 with v2.0's `ConvertWarpPipeline.cpp` |
+
+**1 — `amdgpu-use-amdgpu-trackers`.** `make_amdgcn()` appends it unconditionally for
+gfx942/gfx950; it is **absent from both `v1.1` and `v2.0`**. Under `llir` without `force-agpr`:
+a16w16 v6 spills 129 registers and collapses to **228 TFLOPS** (published 1166, no spills), a4w4 v0
+goes 40 -> **186** spills, a4w4 v1 goes 0 -> **12**. Not passing it (LLVM's default) restores each
+to at or above its published number. It costs the `base` config ~4%, so gate it rather than revert.
+`force-agpr` masks the whole problem, which is why the headline numbers never showed it.
+
+**2 — `computePSetLimit` underflow.** The limit is computed in **unsigned** arithmetic and wraps
+when the reserved-register weight exceeds it, silently disabling pressure checking. Fixed by
+[llvm#216372](https://github.com/llvm/llvm-project/pull/216372), merged **16 days after** this
+pin's LLVM commit `b010a18d`; the change that *exposes* it,
+[#213584](https://github.com/llvm/llvm-project/pull/213584), **is** in the pin. It reaches
+`inter_wave` because those kernels set `amdgpu-agpr-alloc=0,0` — the restricted-availability case
+the fix's own comment names. Applying it restores MFMA efficiency to published values on
+`inter_wave` a16w16, a8w8, a4w4 v1 and v2, **but costs a4w4 v0 ~42% throughput** (4473 -> 2599),
+so it is not a clean cherry-pick.
+
+**3 — `ConvertWarpPipeline` head barrier.** `v2.0` placed the loop-carried wrap-around barrier at
+the **top** of the loop body unconditionally, so its `setprio` primed cluster 0's priority every
+iteration; `v2.1` gates that behind `shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at
+section ends. Rebuilding v2.1 with `v2.0`'s `ConvertWarpPipeline.cpp` and `warp_pipeline.py` and
+changing nothing else recovers `fmha_v4` **1294 -> 1327 TFLOPS** and **85.1% -> 91.7%** in-loop
+MFMA (4812 -> 4467 cyc/iter), and `fmha_v3` **1215 -> 1265**, against the v2.0 published
+1323 / 94.2%.
+
+### Other findings from the refresh
+
+- **`inter_wave/a4w4` v2 now beats v1** — **5159 / 93.80%** against v1's **4885 / 75.10%**,
+  reversing the documented ordering. **This is not just v1 regressing.** Both moved, in opposite
+  directions: on one die, v1 went 4930 -> 4798 (-2.7%) while v2 went 4807 -> 4958 (+3.1%). Neither
+  cause restores the old order — applying #216372 lifts v1 to 4885 but v2 to 5007, and building
+  with `v2.0`'s `ConvertWarpPipeline` lifts v1 to 4958 (spills 14 -> 12, its published count) but
+  leaves v2 at 5113. v2 leads in every configuration tested, so **v2 is genuinely the better
+  8-wave MXFP4 choice on this pin**, not an artifact of the regressions.
+
+- **The 4-wave route now leads the 8-wave one at every K on a16w16**, reversing the v1.1 reading
+  where the 8-wave kernel edged it at K <= 16384. The reversal is on the 4-wave side: those
+  numbers rose sharply on v2.1 while the 8-wave ones barely moved.
+
+- **Still unexplained**: a16w16 v5 under `llir+force-agpr` spills ~250 registers regardless of
+  cause 1 or cause 2. No published number exists for that cell, so it is not a regression that can
+  be demonstrated — just a broken config.
+
+
 ## 2026-08-31 — Re-pin to `gfx950-tutorial-v2.1` (rebase onto current upstream main)
 
 [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)

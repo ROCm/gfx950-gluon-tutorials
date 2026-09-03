@@ -79,12 +79,17 @@ average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4357 | 4599 | 61.1% |
-| llir | 1454 | 4883 | 75.2% |
-| llir+force-agpr | 4927 | 5157 | 89.8% |
-| llir+force-agpr+amdgcnas | 4921 | 5185 | 92.3% |
+| base | 4423 | 5131 | 64.4% |
+| llir | 716 (186 spills) | 3420 (12 spills) | 45.1% |
+| llir+force-agpr | 5429 | 5737 | 88.5% |
+| llir+force-agpr+amdgcnas | 5420 | 5843 | 93.7% |
 
-Under `llir` alone, v0_sliceN spills (its LDS-round-trip scale pipeline is register-heavy) and collapses to 1454 TFLOPS, while v1_sliceMN never spills; `force-agpr` clears v0's spill. At K=65536: `llir+force-agpr+amdgcnas` 4985 (v0) / 5298 (v1, 92.2% MFMA eff).
+Under `llir` alone **both** versions now spill: v0_sliceN by 186 registers (its LDS-round-trip
+scale pipeline is register-heavy) collapsing to 716 TFLOPS, and v1_sliceMN by 12, costing it
+about a quarter of its throughput. `force-agpr` clears the spills in both cases and is what
+makes the MXFP4 kernels usable at all on this pin — it is not a marginal 2-3% tuning flag here.
+That is the same failure v6 hits in the FP16 series: these kernels sit at the register ceiling,
+and without the AGPR hint the allocator has nowhere to put the accumulators.
 
 ## 4. How to Run
 

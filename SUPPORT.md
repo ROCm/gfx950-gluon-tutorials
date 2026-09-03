@@ -6,7 +6,7 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-The GEMM performance numbers in this repository are reproduced against the [`gfx950-tutorial-v1.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.1) annotated tag in `triton-lang/triton`; the attention numbers against [`gfx950-tutorial-v2.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.0), which the attention kernels require. the committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration against v1.1 is pending). Those tags are immutable — they will not be moved or deleted. **The current pin is
+The performance numbers in this repository are reproduced against the [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) annotated tag in `triton-lang/triton`, on `rocm-smi` GPU[7] of machine `smci355-ccs-aus-m01-29` (see `CHANGELOG.md`). the committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration against v1.1 is pending). Those tags are immutable — they will not be moved or deleted. **The current pin is
 [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)**; the numbers above have not yet been re-measured against it (see
 `CHANGELOG.md`), so they are quoted with the tag they were taken on. Building Triton from the relevant tag (or any commit reachable from it) reproduces the measurements within run-to-run noise.
 

@@ -12,20 +12,27 @@ kernel versions, and the measured performance.
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
-| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3653 | 4254 | ~66% |
-| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | **combined `[256,8]` → `ds_read_b64_tr_b8`** | **4107** | **4919** | **~80%** |
-| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | 4094 | 4800 | **~98%** |
+| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3820 | 4585 | ~67% |
+| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | combined `[256,8]` → `ds_read_b64_tr_b8` | 4155 | 4885 | ~75% |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4336** | **5159** | **~94%** |
 
-**v1 is the recommended version** (`--version 1`, the default): +12–16% TFLOPS over v0 at
-the same shapes, from eliminating the B-scale `v_perm`. v0 is kept as the pedagogical
-baseline that exposes the problem.
+> [!IMPORTANT]
+> **The recommendation changed on `gfx950-tutorial-v2.1`: v2 is now the one to use.** On the
+> `v1.1` pin v2's cycle win was cancelled by clock throttling and it landed *even with* v1
+> (4094 vs 4107 at K=8192, 4800 vs 4919 at K=32768). On v2.1 v2 leads at **both** shapes —
+> **+4.4%** at K=8192 and **+5.6%** at K=32768 — and is the only spill-free version of the three.
+> `bench.py` already defaults to it (`--version 2`); an earlier revision of this file said v1 was
+> the default, which was never true.
 
-**v2** ([`v2_mfma32x32x64`](v2_mfma32x32x64/README.md)) widens the MFMA
-**16×16×128 → 32×32×64** with a width-matched, bank-conflict-free LDS layout, lifting loop MFMA
-efficiency to **~98%** (spill-free). It is a **cycle-efficiency** result — the wider MFMAs are
-power-hungrier, so the GPU clock-throttles and wall-clock TFLOPS ends up **even with v1** (v1's
-higher datapath peak still edges ahead at large K). v1 stays the recommended default; v2 is the
-near-saturated variant for studying the MFMA efficiency / clock trade.
+**v2** ([`v2_mfma32x32x64`](v2_mfma32x32x64/README.md)) widens the MFMA **16×16×128 → 32×32×64**
+with a width-matched, bank-conflict-free LDS layout. That lifts loop MFMA efficiency to **~94%**
+and keeps it **spill-free at 244 VGPRs**, where v0 and v1 spill 30 and 14. It is still the
+cycle-efficiency result the section describes — the wider MFMAs are power-hungrier and the clock
+throttles — but on this pin the cycle win is no longer cancelled.
+
+**v1** eliminates v0's B-scale `v_perm` and is worth **+9–7%** over v0. It remains the better
+illustration of *that* optimization, and the step v2 builds on; it is simply no longer the fastest.
+**v0** is the pedagogical baseline that exposes the problem.
 
 ## 2. What changes from 16-bit to 4-bit
 
@@ -49,12 +56,12 @@ a8w8's.
 ## 3. Running
 
 ```bash
-# v1 (recommended, default): correctness + do_bench TFLOPS (from this kernel dir)
-python bench.py --version 1 --K 8192
+# v2 (recommended, and bench.py's default): correctness + do_bench TFLOPS (from this kernel dir)
+python bench.py --version 2 --K 8192
 
 # rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill (from the repo root)
-python scripts/collect_perf.py --kernel a4w4 --version 1 --K 8192
-python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 --rotating-buffer-size 2048
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 8192
+python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-buffer-size 2048
 
 # v0 baseline (the byte-shuffle B scale) for comparison
 python bench.py --version 0 --K 8192
@@ -76,6 +83,6 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 - Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
   (`--kernel a4w4 --version N`).
 - `v0_sliceMN/` — baseline kernel (N-sliced B scale) + its README.
-- `v1_combineBsc/` — combined-B-scale kernel (recommended) + its README.
-- `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout variant + its README.
+- `v1_combineBsc/` — combined-B-scale kernel + its README.
+- `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout (**recommended**) + its README.
   All three expose `matmul_kernel_only`, `matmul`, `MIN_K`, `KERNEL_NAME`.

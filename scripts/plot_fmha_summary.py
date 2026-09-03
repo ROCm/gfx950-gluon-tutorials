@@ -34,7 +34,7 @@ the stock-LLVM build leftmost in each so the left-to-right reading is "what the
 scheduler adds". ROCm/FlyDSL sits with fmha_v4 as the external reference.
 
 The numbers mirror section 9 of the attention README (MI355X, gfx950, rocprofv3
-kernel time, prepared launch); edit the `groups` table below when they change.
+kernel time, plain rocprofv3, GPU[7]); edit the `groups` table below when they change.
 
     python scripts/plot_fmha_summary.py
 """
@@ -57,12 +57,12 @@ groups = [
     (
         "fmha_v3",
         "eager rescale",
-        [("stock", 1139, 67.3), ("tuned", 1249, 86.3)],
+        [("stock", 1144, 64.7), ("tuned", 1215, 76.8)],
     ),
     (
         "fmha_v4",
         "lazy rescale",
-        [("stock", 1204, 69.1), ("tuned", 1323, 94.2), ("ref", 1322, 84.7)],
+        [("stock", 1191, 67.6), ("tuned", 1294, 85.1), ("ref", 1332, 84.8)],
     ),
 ]
 COLOR = {"stock": C_STOCK, "tuned": C_TUNED, "ref": C_REF}

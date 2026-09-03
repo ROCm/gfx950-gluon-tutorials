@@ -48,11 +48,13 @@ C4, C8 = "#4C72B0", "#DD8452"  # 4-wave, 8-wave bar colors
 CMFMA = "#D62728"  # MFMA-efficiency labels (red)
 
 # precision, K, 4-wave (TFLOPS, MFMA%), 8-wave (TFLOPS, MFMA%)
+# Each bar is that route's best variant at the shape: 4-wave MXFP4 = intra a4w4 v1,
+# 8-wave MXFP4 = inter a4w4 v2 (which overtook v1 on the v2.1 pin).
 rows = [
-    ("FP16", 8192, 1421, 98.66, 1442, 99.8),
-    ("BF16", 8192, 1514, 98.66, 1534, 99.8),
-    ("BF8", 16384, 3232, 99.52, 3094, 99.9),
-    ("MXFP4", 32768, 5189, 93.86, 4938, 80.0),
+    ("FP16", 8192, 1587, 97.79, 1478.9, 99.84),
+    ("BF16", 8192, 1682, 97.46, 1550.5, 99.84),
+    ("BF8", 16384, 3527, 99.20, 3150.6, 96.22),
+    ("MXFP4", 32768, 5843, 93.74, 5159.0, 93.80),
 ]
 
 
@@ -78,7 +80,7 @@ def main():
             cx = rect.get_x() + rect.get_width() / 2
             # TFLOPS above the bar
             ax.text(
-                cx, h + 55, f"{int(h)}", ha="center", va="bottom", fontsize=9.5, fontweight="bold"
+                cx, h + 55, f"{round(h)}", ha="center", va="bottom", fontsize=9.5, fontweight="bold"
             )
             # MFMA efficiency inside the bar, near the top (red on a white pill
             # so it stays legible on both the blue and orange fills)
@@ -106,7 +108,7 @@ def main():
     )
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10)
-    ax.set_ylim(0, 5900)
+    ax.set_ylim(0, 6500)
     legend = [
         Patch(facecolor=C4, label="4-wave  (LLIR + force-agpr + amdgcnas)"),
         Patch(facecolor=C8, label="8-wave  (warp-pipeline, no AGPRs)"),

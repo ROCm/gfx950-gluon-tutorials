@@ -29,7 +29,7 @@ git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.1 /tmp/tri
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`b010a18d`); if the pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v1.1`; the relative structure (`llir` vs. `llir+force-agpr` vs. `llir+force-agpr+amdgcnas`) is expected to remain stable across later pins.
+Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to this tag's LLVM pin (`b010a18d`); if the pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers and counter values quoted in this tutorial are reproduced against `gfx950-tutorial-v2.1` on GPU[7]; the relative structure (`llir` vs. `llir+force-agpr` vs. `llir+force-agpr+amdgcnas`) is expected to remain stable across later pins.
 
 **Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap — all three are targeted for the LLVM backend. The LLIR scheduler will be implemented as a scheduling pass in the LLVM backend; the RA hints will move into the LLVM backend's AMDGPU register allocator (the `RewriteMFMAFormStage` pass — see the force-agpr note above); the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../../docs/performance_philosophy.md#4-llirsched-force-agpr-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -60,7 +60,23 @@ Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports n
 - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted output is redefined inside the loop.
 - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These scalar instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
-**Relative contributions.** force-agpr and amdgcnas are not equally important across dtypes. On FP16 and BF8, `force-agpr` alone closes 75–85% of the MFMA-efficiency gap between `llir` and `llir+force-agpr+amdgcnas`, landing within 1–2% TFLOPS of the full stack; the amdgcnas peephole adds only ~+2pp on top. MXFP4 leans more on the peephole: on `v1_sliceMN`, `force-agpr` closes only about half the gap (`llir` ~71% → `llir+force-agpr` ~84%), and amdgcnas adds the remaining ~+10pp to reach ~94% — the paired scale loads create denser SALU activity for the peephole to pack. The two therefore have different upstream stories: force-agpr maps to an LLVM allocator-policy change that can land soon; the SALU-level peephole's natural home is a MachineInstr-level pass yet to be written.
+**Relative contributions.** On the `gfx950-tutorial-v2.1` pin the split is stark: **force-agpr
+is the difference between spilling and not**, and amdgcnas is the polish on top.
+
+| kernel | `llir` alone | `llir+force-agpr` | `+amdgcnas` |
+|---|---|---|---|
+| a16w16 v6 | 228 TFLOPS, **129 spills**, 8.7% | 1180, 0 spills, 71.8% | 1186, 94.6% |
+| a16w16 v7 | 1419, 0 spills, 82.1% | 1526, 95.5% | 1567, 98.0% |
+| a8w8      | 3469, 0 spills, 91.6% | 3487, 98.1% | 3527, 99.2% |
+| a4w4 v1   | 3420, **12 spills**, 45.1% | 5737, 88.5% | 5843, 93.7% |
+
+Where a kernel sits at the 512-VGPR ceiling (a16w16 v6, both a4w4 versions), `llir` alone
+spills and throughput collapses — force-agpr recovers 5x on v6 and 1.6x on a4w4 v1. Where the
+kernel has headroom by construction (v7's N-slicing, a8w8's smaller tile), force-agpr is worth
+a more ordinary 3-7% and amdgcnas another 1-3pp of MFMA efficiency. So the two are not
+interchangeable knobs: force-agpr is a correctness-of-budget tool, amdgcnas a scheduling
+polish. Their upstream stories differ accordingly — force-agpr maps to an allocator-policy
+change, while the SALU-level peephole needs a MachineInstr-level pass.
 
 ### 2.2 Running Benchmarks
 
@@ -122,7 +138,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 541 TFLOPS baseline to a near-optimal 1421 TFLOPS implementation—a **~2.6× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 525 TFLOPS baseline to a near-optimal 1587 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

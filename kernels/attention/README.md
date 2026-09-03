@@ -6,14 +6,15 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1323 TFLOPS** at **94.2%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1249 at 86.3%. The reference point is ROCm/FlyDSL, whose published configuration reaches
-**1322** on this shape from **84.7%** efficiency. The orange bar in each group is the same kernel
+Tuned, `fmha_v4` reaches **1294 TFLOPS** at **85.1%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1215 at 76.8%. The reference point is ROCm/FlyDSL, which reaches **1332** on this shape
+from **84.8%** efficiency — so on this pin FlyDSL is **~3% ahead**, where on `v2.0` the two were
+level (1323 vs 1322). The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
 and what each step costs.
 
-That efficiency number is what the rest of this document is about. 94.2% means the matrix pipe
-takes a new MFMA in 94.2% of the loop's cycles, and the missing 5.8% is time the SIMD spent
+That efficiency number is what the rest of this document is about. 85.1% means the matrix pipe
+takes a new MFMA in 85.1% of the loop's cycles, and the missing 14.9% is time the SIMD spent
 issuing something it could not hide behind one. So the design question is what *else* an FMHA
 kernel has to issue, and where that work can go.
 
@@ -512,22 +513,22 @@ all. It is visible in a count of 3-source VALU in `fmha_v4`'s loop body: **98 wi
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
-Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[0],
-rocprofv3 kernel time interleaved over three rounds for TFLOPS, an ATT instruction trace for the
-in-loop MFMA efficiency per SIMD. Every throughput figure below is a three-round mean with a spread
-of at most 3 TFLOPS.
+Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, GPU[7],
+rocprofv3 kernel time for TFLOPS (single run per configuration, `--launch jit`), an ATT instruction
+trace for the in-loop MFMA efficiency per SIMD. The top two rows set `--scale-on-q 0`; the top row
+additionally overrides `LLIRSCHED_WP_MEMNOP=0`. Those two are single runs; the bottom row is
+[§9](#9-results)'s tuned config and carries its three-round mean.
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
-| no `s_nop`, no fold | 1229 / 83.7% | 1302 / 90.6% |
-| `MEMNOP=2` | 1234 / 85.0% | 1310 / 92.4% |
-| `MEMNOP=2` + `SCALE_ON_Q` | **1250 / 86.3%** | **1322 / 94.2%** |
+| no `s_nop`, no fold | 1200 / 74.8% | 1271 / 81.5% |
+| `MEMNOP=2` | 1205 / 76.0% | 1281 / 83.2% |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1215 / 76.8%** | **1294 / 85.1%** |
 
-Together the two settings are worth **+1.7%** on `fmha_v3` and **+1.5%** on `fmha_v4`, and **+2.6**
-and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.4%** and **+0.6%** — and the
-fold the larger, at **+1.25%** and **+0.91%**. The bottom row is [§9](#9-results)'s tuned
-configuration, measured again in this sweep; the two readings differ by a single TFLOPS, which is
-what the spread above buys you.
+Together the two settings are worth **+1.25%** on `fmha_v3` and **+1.81%** on `fmha_v4`, and **+2.0**
+and **+3.6 points** of efficiency. Pacing is the smaller half — **+0.42%** and **+0.79%** — and the
+fold the larger, at **+0.83%** and **+1.01%**. The ordering the section argues for is unchanged on
+this pin; the efficiency gains are if anything larger on `fmha_v4` than they were on v2.0.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
@@ -611,25 +612,25 @@ rest on.
 
 ## 9. Results
 
-`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[0] — ROCm/FlyDSL's published
+`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, `rocm-smi` GPU[7] — ROCm/FlyDSL's published
 benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
 `AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
 fraction come from an ATT instruction trace of one dispatch. The five configurations were run
 **interleaved** — one of each, three times round — so any drift in the board hits every row
-equally. Round-to-round spread was 0.5 to 4.5 TFLOPS.
+equally. Round-to-round spread was 1.6 to 3.2 TFLOPS.
 
 | | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
 |---|---:|---:|---:|---:|
-| *ROCm/FlyDSL* — its own tuned config | *1322* | 84.7% | 94.2% | 4837 |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1323** | **94.2%** | 90.5% | **4349** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1249** | 86.3% | 91.5% | 4745 |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1204 | 69.1% | 91.8% | 5924 |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1139 | 67.3% | 92.3% | 6084 |
+| *ROCm/FlyDSL* — its own tuned config | *1332* | 84.8% | 94.2% | 4833 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1294** | **85.1%** | 90.3% | **4812** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1215** | 76.8% | 92.1% | 5332 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1191 | 67.6% | 91.9% | 6056 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1144 | 64.7% | 93.4% | 6327 |
 
-**What lazy rescaling is worth** is the distance between the two kernels: **+5.7%** on stock LLVM
-(1139 → 1204) and **+5.9%** tuned (1249 → 1323). The efficiency column says something the throughput
-column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 67.3%
-against 69.1%, **+1.8 points** — while the tuned rows are **7.9 points** apart, four times as far.
+**What lazy rescaling is worth** is the distance between the two kernels: **+4.1%** on stock LLVM
+(1144 → 1191) and **+6.5%** tuned (1215 → 1294). The efficiency column says something the throughput
+column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 64.7%
+against 67.6%, **+2.9 points** — while the tuned rows are **8.3 points** apart, nearly three times as far.
 Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
 downstream that spends that budget converts it into cycles. A design that creates headroom only pays
 if something spends it. **Its price** is that `fmha_v4` cannot be written in stock Gluon — skipping
@@ -637,25 +638,51 @@ the rescale per wave needs `gl.warp_predicate` — and that removing the rescale
 clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
-tuned one: **+9.7%** of throughput on `fmha_v3` and **+9.9%** on `fmha_v4`, and in efficiency terms
-**+19.0** and **+25.1 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
+tuned one: **+6.2%** of throughput on `fmha_v3` and **+8.6%** on `fmha_v4`, and in efficiency terms
+**+12.1** and **+17.5 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
 `sched_group_barrier` sequence for IGroupLP to construct — and the ops then kept in the cluster
 they were assigned to ([§6](#6-making-the-compiler-co-operate)).
 
 **The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
-ceiling is 100% and it reaches 94.2%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
-against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 86.3%. The two are
-7.9 points apart while their ceilings are 8.6 apart — so the whole difference is work `fmha_v3`'s
-budget cannot absorb rather than a worse schedule, and each lands within about 5.5 points of its
-own ceiling (5.8 and 5.1).
+ceiling is 100% and it reaches 85.1%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
+against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 76.8%. The two are
+8.3 points apart while their ceilings are 8.6 apart — so the whole difference is still work
+`fmha_v3`'s budget cannot absorb rather than a worse schedule. Both now sit about **15 points**
+below their own ceiling (14.9 and 14.6), against ~5.5 on the `gfx950-tutorial-v2.0` measurement:
+the v2.1 toolchain gives up roughly 9 points of in-loop MFMA efficiency on both kernels.
+
+**What in v2.1 costs those 9 points: `ConvertWarpPipeline`, not either of the LLVM bugs.** `v2.0`
+placed the loop-carried wrap-around barrier at the **top** of the loop body unconditionally, so
+that barrier's `setprio` primed cluster 0's priority every iteration. `v2.1` gates that behind
+`shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at section ends instead. Rebuilding v2.1
+with `v2.0`'s `ConvertWarpPipeline.cpp` and `warp_pipeline.py` and changing nothing else recovers
+`fmha_v4` to **1327 TFLOPS at 91.7%** in-loop MFMA (4467 cyc/iter) against the v2.0 published
+1323 / 94.2%, and `fmha_v3` to **1265**. The two LLVM bugs recorded in
+[`CHANGELOG.md`](../../CHANGELOG.md) hit the GEMM kernels; neither was shown to affect these.
 
 **On the FlyDSL row.** ROCm/FlyDSL at
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
 `build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
 [`scripts/fly_kernel_time.py`](../../scripts/fly_kernel_time.py) under the same protocol as our
-rows: **1322 TFLOPS** (1321.1 / 1321.3 / 1322.6), reproducing its published 1320.
+rows: **1332 TFLOPS** (1331.4 / 1331.3 / 1334.3), re-measured on this pin on GPU[7], interleaved
+with the `fmha_v4` rounds (1292.3 / 1293.4 / 1295.5) so the two sides share thermal state.
+Its ATT figures are unchanged from the `v2.0` measurement — 84.8% vs 84.7%, 94.2% loop fraction,
+4833 vs 4837 cyc/iter — which is expected: **FlyDSL does not go through Triton**, so neither v2.1
+regression reaches it. That is what makes it a useful control here.
+
+> [!NOTE]
+> The runtime is the `flydsl==0.2.4` PyPI wheel driving the pinned checkout's kernel source. The
+> pin is 26 commits past the `v0.2.4` tag and four of those touch the attention kernel, so the
+> *kernel* is the pinned one but the *compiler* is v0.2.4. Reproducing the exact `63eb891` build
+> needs a from-source build of its embedded MLIR.
+
+**What this changes.** On `v2.0` `fmha_v4` matched FlyDSL (1323 vs 1322) from a much higher in-loop
+efficiency (94.2% vs 84.7%) — it was doing more per cycle and spending it on a shorter loop
+fraction. On v2.1 `fmha_v4` loses ~9 points of that efficiency and the two kernels now sit level on
+efficiency (85.1% vs 84.8%), at which point FlyDSL's better loop fraction (94.2% vs 90.3%) decides
+it. The gap is a symptom of the v2.1 regression, not a design difference.
 
 ### Building and running
 
@@ -683,7 +710,15 @@ them measures the stock-LLVM bars of the chart above instead. The two settings t
 already the defaults: `SCALE_ON_Q` is on unless you pass `--scale-on-q 0`, and the plugin paces the
 mem stages at `LLIRSCHED_WP_MEMNOP=2` on its own. `bench.py` reports `do_bench` wall time;
 `scripts/fa_kernel_time.py` takes the same environment and reports the rocprofv3 kernel-time TFLOPS
-the table quotes.
+the table quotes — **pass `--launch jit`**, since its default is `prepared` and every number in
+[§9](#9-results) and [§8](#8-applying-this-to-your-own-kernel) was taken with the plain (jit) launch:
+
+```bash
+FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 HIP_VISIBLE_DEVICES=7 \
+python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --launch jit
+```
 
 ## 10. Where to go deeper
 
