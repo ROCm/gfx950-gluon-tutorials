@@ -34,7 +34,8 @@ pressure. v9 issues 32 MFMA instructions per `mfma()` call and 256 in the hot lo
 - Built with `TRITON_BUILD_PROTON=OFF TRITON_APPEND_CMAKE_ARGS=-DTRITON_BUILD_UT=OFF pip install --no-build-isolation .`
 
 Default Triton flow: no llirSched plugin, no force-agpr, no amdgcnas. Unlike the v2.1 tag, these
-upstream-based commits pass `amdgpu-use-amdgpu-trackers` on gfx950.
+upstream-based commits pass `amdgpu-use-amdgpu-trackers` on gfx950. The llirSched results use the
+plugin source in [plugins/llir_scheduler](../../plugins/llir_scheduler) on this branch.
 
 ## Files
 
@@ -44,8 +45,8 @@ upstream-based commits pass `amdgpu-use-amdgpu-trackers` on gfx950.
   shows only the 16 call sites and the kernel renamed to `v9_cd_regclass`.
 - [`run.py`](run.py): correctness check and `do_bench` timing, 4096×4096×8192 fp16; `--kernel`
   picks the kernel.
-- [`ir_dumps/`](ir_dumps/): the LLVM IR (`.llir`) and gfx950 assembly (`.amdgcn`) Triton generated:
-  `v9_beyond_hotloop.*` for approach 1, `v9_cd_regclass.*` for approach 2.
+- [`ir_dumps/`](ir_dumps/): the LLVM IR (`.llir`) and gfx950 assembly (`.amdgcn`) Triton generated
+  in the default flow: `v9_beyond_hotloop.*` for approach 1, `v9_cd_regclass.*` for approach 2.
 
 ```bash
 python run.py                                     # approach 1
@@ -92,6 +93,23 @@ line 370):
 %731 = tail call <4 x float> asm "", "=a,0"(<4 x float> %730)  ; pin D
 ```
 
+## llirSched with pins
+
+The llirSched plugin on this branch handles these pins (kernels without pins get byte-identical
+output from the plugin before and after this change):
+
+- **Pins move with their MFMA.** When the scheduler moves an MFMA, the pin on its C goes directly
+  before it and the pin on its D directly after it. The scheduler's hoisting of MFMA inputs and
+  sinking of MFMA-result extracts also looks through pins.
+- **Each pinned tile is fenced.** A `sched.barrier` after every D pin stops LLVM's machine scheduler
+  from reordering the pinned MFMAs in the stretches between memory anchors. Without these fences
+  that reordering left 200 copies in the loop: LLVM's post-RA copy-removal pass could not find a
+  free AGPR for 17 of the MFMA chains. With LLVM's machine scheduler switched off instead, the
+  same loop has 0 copies, which is how the fence was found.
+
+Before this change the plugin reverted any block containing the pins, so the loop kept no copies
+but lost its schedule.
+
 ## Results
 
 **The number to look at is the copy instructions inside the hot loop**: `v_accvgpr_read`,
@@ -100,7 +118,8 @@ kernel keeps the accumulators in AGPRs across the whole loop and has none. The h
 body that contains the MFMAs, from its label to its backward branch.
 
 TFLOPS are only a rough reference: `triton.testing.do_bench` (warm cache, not the tutorial's
-cold-cache rocprof methodology) on gfx950, 4096×4096×8192 fp16. All outputs match torch bit for bit.
+cold-cache rocprof methodology) on gfx950, 4096×4096×8192 fp16. Run-to-run spread is about 1%. All
+outputs match torch bit for bit.
 
 Default Triton flow:
 
@@ -118,8 +137,10 @@ With the llirSched plugin (the tutorial's `llir` config) ²:
 | variant | copies in loop | AGPR-form MFMAs in loop (x/y) | `sched.barrier`s placed | TFLOPS (do_bench, reference) |
 |---|---|---|---|---|
 | llir | 119 | 58/256 | 96 | 963 |
-| llir + force-agpr | 0 | 256/256 | 96 | 1055 |
-| llir + approach 2 | 0 | 256/256 | 0 | 947 |
+| llir + force-agpr | 0 | 256/256 | 96 | 1056 |
+| llir + approach 2, plugin before this change | 0 | 256/256 | 0 (blocks reverted) | 947 |
+| llir + approach 2, pins moved with their MFMA only | 200 | 222/256 | 96 | 983 |
+| **llir + approach 2, this plugin (pins moved, pinned tiles fenced)** | **0** | 256/256 | 224 | 1060 |
 
 - **copies in loop**: number of `v_accvgpr_read` / `v_accvgpr_write` / `v_accvgpr_mov` instructions in the hot loop.
 - **AGPR-form MFMAs in loop (x/y)**: x of the y MFMA instructions in the hot loop use the AGPR form,
@@ -135,8 +156,8 @@ With the llirSched plugin (the tutorial's `llir` config) ²:
 (plus `-amdgpu-mfma-vgpr-form=0` for force-agpr, on IR carrying `"amdgpu-agpr-alloc"="256"`) and
 swapped into the launch. On unmodified IR this command reproduces Triton's assembly byte for byte.
 
-² Triton's LLVM IR run through the plugin with `opt -load-pass-plugin libLlirSched.so -passes=llir-sched`
-(see [plugins/llir_scheduler](../../plugins/llir_scheduler)), then compiled and swapped in as in ¹.
+² Triton's LLVM IR run through the plugin with `opt -load-pass-plugin libLlirSched.so -passes=llir-sched`,
+then compiled and swapped in as in ¹.
 
 ## What is going on
 
@@ -148,17 +169,16 @@ swapped into the launch. On unmodified IR this command reproduces Triton's assem
 - **The pins never change instruction selection.** At this LLVM, AGPR-form MFMA needs both
   `amdgpu-mfma-vgpr-form=0` and `amdgpu-agpr-alloc`, so with either approach the MFMAs are selected
   in VGPR form and the pins add AGPR↔VGPR copies. LLVM's copy-removal passes take them all out only
-  when each pin sits next to its MFMA; with approach 1's grouping, 480 remain in the loop.
+  when each pin sits next to its MFMA and the pinned MFMAs are not reordered.
 - **Placement is the whole difference.** Moving approach 1's asm next to each MFMA removes every loop
   copy. Approach 2 does that placement in the compiler and matches force-agpr in the default flow (0
-  copies, all MFMAs in AGPR form) without either force-agpr setting.
+  copies, all MFMAs in AGPR form) without either force-agpr setting. With the llirSched changes above
+  it also matches llir + force-agpr.
 - **Why the single-MFMA example looks fine.** When an `mfma()` call is a single MFMA instruction,
   as in the example on the PR branch, the tensor-level pin sits right next to that instruction by
   construction. The per-call grouping above cannot show up there.
 - **Caveats.**
-  - llirSched reverts any block containing these asm calls, from either approach. With
-    `cd_regclass` the loop has no copies but is unscheduled: 947 against 1055 for llir + force-agpr.
-    llirSched would need to treat a pin and its MFMA as one unit.
-  - The opaque asm makes LLVM insert extra hazard `s_nop`s: 47 in the loop, against 1 without pins.
+  - The opaque asm makes LLVM insert extra hazard `s_nop`s: 47 in the default-flow loop against 1
+    without pins, and 90 in the fenced llirSched loop against 0 for llir + force-agpr.
   - Pinning only D spills (approach 1).
   - `cd_regclass` covers `mfma` only, not `mfma_scaled` yet.
