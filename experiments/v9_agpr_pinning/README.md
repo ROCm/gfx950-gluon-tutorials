@@ -7,6 +7,13 @@ is whether this can replace `force-agpr`, which is the pair of LLVM settings
 `amdgpu-mfma-vgpr-form=0` (process-wide LLVM option) + `amdgpu-agpr-alloc=256` (kernel function
 attribute); see [docs/performance_philosophy.md](../../docs/performance_philosophy.md).
 
+Lei Zhang's example on that branch
+([`test_cdna4_mfma_register_classes.py`](https://github.com/antiagainst/triton/blob/pr-10337-amd-register-classes/test_cdna4_mfma_register_classes.py))
+only has one MFMA. It runs a single wave, and each `mfma()` call is exactly one MFMA instruction
+(the tensors are one 16×16×32 or 32×32×16 tile), repeated 1 or 8 times in a loop, with no register
+pressure. v9 issues 32 MFMA instructions per `mfma()` call and 256 in the hot loop, close to the
+512-register limit.
+
 ## Triton compiler
 
 PR #10337 adds `operand_vec_sizes` / `result_vec_sizes` to `inline_asm_elementwise`; the
@@ -98,6 +105,9 @@ swapped into the launch. On unmodified IR this command reproduces Triton's assem
   removes every loop copy, the same as force-agpr. A Gluon author can't express that placement,
   because `mfma()` works on the whole tensor. It would have to come from the `mfma` op's lowering
   itself, for example a register-class attribute applied per MFMA instruction.
+- **Why the single-MFMA example looks fine.** When an `mfma()` call is a single MFMA instruction,
+  as in the example on the PR branch, the tensor-level pin sits right next to that instruction by
+  construction. The per-call grouping above cannot show up there.
 - **Other caveats.**
   - Pinning only D spills.
   - The llirSched plugin reverts any block containing these asm calls (0 `sched.barrier`s instead of 96).
