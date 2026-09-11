@@ -3,8 +3,9 @@
 This experiment takes the [a16w16 v9 kernel](../../kernels/gemm/intra_wave/a16w16/v9_beyond_hotloop/matmul_kernel.py)
 and pins every MFMA accumulator to AGPRs with inline-asm register-class constraints, the approach
 built on [triton-lang/triton#10337](https://github.com/triton-lang/triton/pull/10337). The question
-is whether this can replace `force-agpr` (`amdgpu-agpr-alloc=256` + `amdgpu-mfma-vgpr-form=0`, see
-[docs/performance_philosophy.md](../../docs/performance_philosophy.md)).
+is whether this can replace `force-agpr`, which is the pair of LLVM settings
+`amdgpu-mfma-vgpr-form=0` (process-wide LLVM option) + `amdgpu-agpr-alloc=256` (kernel function
+attribute); see [docs/performance_philosophy.md](../../docs/performance_philosophy.md).
 
 ## Triton compiler
 
@@ -54,20 +55,34 @@ accumulator (4 fp32 in 4 registers, passed as `i128`).
 
 ## Results
 
-gfx950, 4096×4096×8192 fp16, `do_bench` (warm cache), same Triton build; all outputs match torch
-bit for bit.
+**The number to look at is the copy instructions inside the hot loop**: `v_accvgpr_read`,
+`v_accvgpr_write` and `v_accvgpr_mov`, which move accumulator values between AGPRs and VGPRs. A clean
+kernel keeps the accumulators in AGPRs across the whole loop and has none. The hot loop is the loop
+body that contains the MFMAs, from its label to its backward branch.
 
-| variant | loop MFMAs in AGPR form | loop `v_accvgpr` copies | spills | TFLOPS |
+TFLOPS are only a rough reference: `triton.testing.do_bench` (warm cache, not the tutorial's
+cold-cache rocprof methodology) on gfx950, 4096×4096×8192 fp16, same Triton build. All outputs match
+torch bit for bit.
+
+| variant | copies in loop | AGPR-form MFMAs in loop (x/y) | VGPR spills | TFLOPS (do_bench, reference) |
 |---|---|---|---|---|
-| v9 unchanged | 52/256 | 36 | 0 | 943 |
-| v9 + force-agpr ¹ | 256/256 | 0 | 0 | 942 |
-| **this kernel: C and D pinned** | 176/256 | 480 | 0 | **849** |
-| D pinned only | 118/256 | 712 | 147 | 183 |
-| this kernel's IR with each asm moved next to its MFMA ¹ | 256/256 | 0 | 0 | 950 |
+| v9 unchanged | 36 | 52/256 | 0 | 943 |
+| v9 + force-agpr (`amdgpu-mfma-vgpr-form=0` + `amdgpu-agpr-alloc=256`) ¹ | 0 | 256/256 | 0 | 942 |
+| **this kernel: C and D pinned** | **480** | 176/256 | 0 | 849 |
+| D pinned only | 712 | 118/256 | 147 | 183 |
+| this kernel's IR with each asm moved next to its MFMA ¹ | 0 | 256/256 | 0 | 950 |
+
+- **copies in loop**: number of `v_accvgpr_read` / `v_accvgpr_write` / `v_accvgpr_mov` instructions in the hot loop.
+- **AGPR-form MFMAs in loop (x/y)**: x of the y MFMA instructions in the hot loop use the AGPR form,
+  meaning their accumulator input C and result D are AGPRs, e.g.
+  `v_mfma_f32_16x16x32_f16 a[252:255], v[88:91], v[96:99], a[252:255]`. The other y − x use the VGPR
+  form, where C and D are VGPRs: `v_mfma_f32_16x16x32_f16 v[..], v[..], v[..], v[..]`. C and D always
+  share one register class (the instruction has a single bit for both).
+- **VGPR spills**: `.vgpr_spill_count` from the kernel metadata.
 
 ¹ Compiled from Triton's LLVM IR with the pin's `llc -O3 -mcpu=gfx950 -amdgpu-use-amdgpu-trackers`
-(plus `-amdgpu-mfma-vgpr-form=0` for force-agpr) and swapped into the launch. On unmodified IR this
-command reproduces Triton's assembly byte for byte.
+(plus `-amdgpu-mfma-vgpr-form=0` for force-agpr, on IR carrying `"amdgpu-agpr-alloc"="256"`) and
+swapped into the launch. On unmodified IR this command reproduces Triton's assembly byte for byte.
 
 ## What is going on
 
@@ -78,9 +93,9 @@ command reproduces Triton's assembly byte for byte.
   MFMAs at 888–919, and D pins plus the next call's C pins at 921–1080.
 - **The pins never change instruction selection.** At this LLVM, AGPR-form MFMA needs both
   `amdgpu-mfma-vgpr-form=0` and `amdgpu-agpr-alloc`; the MFMAs stay in VGPR form and the pins only
-  add AGPR↔VGPR copies. LLVM's copy-removal passes clean up part of them, leaving 480 in the loop.
+  add AGPR↔VGPR copies. LLVM's copy-removal passes clean up part of them, leaving 480 copies in the loop.
 - **Placement is the whole difference.** Moving each asm next to its MFMA (same asm, same values)
-  removes every loop copy and matches force-agpr. A Gluon author can't express that placement,
+  removes every loop copy, the same as force-agpr. A Gluon author can't express that placement,
   because `mfma()` works on the whole tensor. It would have to come from the `mfma` op's lowering
   itself, for example a register-class attribute applied per MFMA instruction.
 - **Other caveats.**
