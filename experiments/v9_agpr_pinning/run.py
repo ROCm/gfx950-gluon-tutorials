@@ -1,9 +1,10 @@
-"""Check and time the AGPR-pinned v9 kernels (see README.md).
+"""Check and time the AGPR-pinned v9 kernel (see README.md).
 
-Needs Triton built from the commit listed in README.md for the chosen kernel:
-matmul_kernel (inline-asm pins from Gluon source) or matmul_kernel_cd_regclass
-(`cd_regclass` on `gl.amd.cdna4.mfma`). To regenerate ir_dumps/:
+Needs Triton built from the branch listed in README.md, which adds `cd_regclass`
+to `gl.amd.cdna4.mfma`. To regenerate ir_dumps/:
     TRITON_ALWAYS_COMPILE=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=/tmp/dump python run.py
+To run with the llirSched plugin, set LLVM_PASS_PLUGIN_PATH and
+LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1, as for the tutorial's bench.py.
 """
 
 import argparse
@@ -12,7 +13,13 @@ import os
 import sys
 
 import torch
-import triton
+
+# The llirSched plugin resolves LLVM symbols from libtriton, so libtriton has to
+# be in the global symbol scope before the first `import triton` (as in bench.py).
+if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+
+import triton  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "kernels", "gemm", "utils"))
@@ -20,16 +27,10 @@ sys.path.insert(0, HERE)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Check and time the AGPR-pinned v9 kernels")
-    parser.add_argument(
-        "--kernel",
-        choices=["matmul_kernel", "matmul_kernel_cd_regclass"],
-        default="matmul_kernel",
-        help="kernel module in this directory",
-    )
+    parser = argparse.ArgumentParser(description="Check and time the AGPR-pinned v9 kernel")
     parser.add_argument("--K", type=int, default=8192, help="GEMM K (M = N = 4096)")
     args = parser.parse_args()
-    matmul = importlib.import_module(args.kernel).matmul
+    matmul = importlib.import_module("matmul_kernel_cd_regclass").matmul
 
     torch.manual_seed(0)
     M = N = 4096
