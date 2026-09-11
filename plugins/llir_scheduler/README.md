@@ -21,6 +21,15 @@ each scheduling region and routes it to one of two models:
 > region formation, the MFMA↔memory interleaving budget and its cost model, and how the
 > schedule is pinned with `sched.barrier` instead of disabling misched.
 
+## Register-class pins
+Kernels that pin MFMA accumulators with Triton's experimental `cd_regclass` option
+(`gl.amd.cdna4.mfma(..., cd_regclass="a")`) carry an empty `"=a,0"` / `"=v,0"` inline asm
+on each MFMA tile's C and D. The MFMA ↔ memory model keeps these pins attached: when it moves
+an MFMA, the C pin goes directly before it and the D pin directly after it. It also puts a
+`sched.barrier(0)` after each D pin, so LLVM's machine scheduler cannot reorder the pinned
+MFMAs; otherwise the pins turn into `v_accvgpr` copies. Kernels without pins are scheduled
+exactly as before. See [experiments/v9_agpr_pinning](../../experiments/v9_agpr_pinning/README.md).
+
 ## Files
 - `LlirSchedPlugin.cpp` — the pass, as a new-PassManager plugin (`llvmGetPassPluginInfo`,
   auto-inserted at the `OptimizerLast` extension point).
