@@ -1,8 +1,8 @@
-"""Check and time the AGPR-pinned v9 kernel (see README.md).
+"""Check and time the AGPR-pinned v9 kernels (see README.md).
 
-Needs Triton built from the commit listed in README.md (PR #10337 adds the
-`operand_vec_sizes` / `result_vec_sizes` arguments of `inline_asm_elementwise`).
-To regenerate ir_dumps/:
+Needs Triton built from the commit listed in README.md for the chosen kernel:
+matmul_kernel (inline-asm pins from Gluon source) or matmul_kernel_cd_regclass
+(`cd_regclass` on `gl.amd.cdna4.mfma`). To regenerate ir_dumps/:
     TRITON_ALWAYS_COMPILE=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=/tmp/dump python run.py
 """
 
@@ -20,10 +20,16 @@ sys.path.insert(0, HERE)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Check and time the AGPR-pinned v9 kernel")
+    parser = argparse.ArgumentParser(description="Check and time the AGPR-pinned v9 kernels")
+    parser.add_argument(
+        "--kernel",
+        choices=["matmul_kernel", "matmul_kernel_cd_regclass"],
+        default="matmul_kernel",
+        help="kernel module in this directory",
+    )
     parser.add_argument("--K", type=int, default=8192, help="GEMM K (M = N = 4096)")
     args = parser.parse_args()
-    matmul = importlib.import_module("matmul_kernel").matmul
+    matmul = importlib.import_module(args.kernel).matmul
 
     torch.manual_seed(0)
     M = N = 4096

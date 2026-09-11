@@ -1,0 +1,4636 @@
+	.amdgcn_target "amdgpu9.50-amd-amdhsa-unknown-gfx950"
+	.amdhsa_code_object_version 5
+	.text
+	.globl	v9_cd_regclass                  ; -- Begin function v9_cd_regclass
+	.p2align	8
+	.type	v9_cd_regclass,@function
+v9_cd_regclass:                         ; @v9_cd_regclass
+.Lfunc_begin0:
+	.cfi_sections .debug_frame
+	.cfi_startproc
+; %bb.3:
+	.file	1 "/root/gfx950-gluon-tutorials/experiments/v9_agpr_pinning" "matmul_kernel_cd_regclass.py"
+	.loc	1 44 0 prologue_end             ; matmul_kernel_cd_regclass.py:44:0
+	s_load_dwordx8 s[8:15], s[4:5], 0x0
+	s_waitcnt lgkmcnt(0)
+	s_branch .LBB0_0
+	.loc	1 0 0 is_stmt 0                 ; :0:0
+.Ltmp0:
+	.p2align	8
+; %bb.4:
+.LBB0_0:
+	.cfi_escape 0x0f, 0x04, 0x30, 0x36, 0xe9, 0x02 ; CFA is 0 in private_wave aspace
+	.cfi_undefined 16
+	v_and_b32_e32 v20, 0x3ff, v0
+.Ltmp1:
+	.loc	1 153 15 is_stmt 1              ; matmul_kernel_cd_regclass.py:153:15
+	v_lshlrev_b32_e32 v2, 3, v20
+	.loc	1 397 12                        ; matmul_kernel_cd_regclass.py:397:12
+	v_readfirstlane_b32 s0, v20
+	.loc	1 398 5                         ; matmul_kernel_cd_regclass.py:398:5
+	s_bfe_u32 s6, s0, 0x20006
+.Ltmp2:
+	.file	2 "/tmp/claude-0/-/757d98b0-5e31-4427-a87d-939c5454ebbe/scratchpad/cdreg_site/triton/language" "standard.py"
+	.loc	2 43 13                         ; standard.py:43:13 @[ common.py:50:17 @[ matmul_kernel_cd_regclass.py:76:20 ] ]
+	s_add_i32 s0, s14, 0xff
+	.loc	2 43 12 is_stmt 0               ; standard.py:43:12 @[ common.py:50:17 @[ matmul_kernel_cd_regclass.py:76:20 ] ]
+	s_ashr_i32 s1, s0, 31
+	s_lshr_b32 s1, s1, 24
+	s_add_i32 s0, s0, s1
+.Ltmp3:
+	.loc	2 43 13                         ; standard.py:43:13 @[ common.py:51:17 @[ matmul_kernel_cd_regclass.py:76:20 ] ]
+	s_add_i32 s1, s15, 0xff
+	.loc	2 43 12                         ; standard.py:43:12 @[ common.py:51:17 @[ matmul_kernel_cd_regclass.py:76:20 ] ]
+	s_ashr_i32 s2, s1, 31
+	s_lshr_b32 s2, s2, 24
+	s_add_i32 s1, s1, s2
+	s_ashr_i32 s1, s1, 8
+.Ltmp4:
+	.file	3 "/root/gfx950-gluon-tutorials/experiments/v9_agpr_pinning/../../kernels/gemm/utils" "common.py"
+	.loc	3 76 28 is_stmt 1               ; common.py:76:28 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_lshl_b32 s3, s1, 2
+	.loc	3 77 20                         ; common.py:77:20 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_abs_i32 s7, s3
+	v_cvt_f32_u32_e32 v1, s7
+	.loc	3 65 21                         ; common.py:65:21 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_ashr_i32 s2, s16, 31
+	s_lshr_b32 s2, s2, 29
+	s_add_i32 s2, s16, s2
+	.loc	3 77 20                         ; common.py:77:20 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	v_rcp_f32_e32 v1, v1
+	.loc	3 65 21                         ; common.py:65:21 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_ashr_i32 s2, s2, 3
+	.loc	3 68 19                         ; common.py:68:19 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_lshl_b32 s14, s16, 5
+	.loc	3 77 20                         ; common.py:77:20 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_sub_i32 s15, 0, s7
+	v_mul_f32_e32 v1, 0x4f7ffffe, v1
+	v_cvt_u32_f32_e32 v1, v1
+	.loc	3 68 19                         ; common.py:68:19 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_mulk_i32 s2, 0xff01
+	s_add_i32 s2, s2, s14
+	.loc	3 77 20                         ; common.py:77:20 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_abs_i32 s14, s2
+	v_readfirstlane_b32 s16, v1
+	s_mul_i32 s15, s15, s16
+	s_mul_hi_u32 s15, s16, s15
+	s_add_i32 s16, s16, s15
+	s_mul_hi_u32 s15, s14, s16
+	s_mul_i32 s16, s15, s7
+	s_xor_b32 s1, s2, s1
+	s_sub_i32 s14, s14, s16
+.Ltmp5:
+	.loc	2 43 12                         ; standard.py:43:12 @[ common.py:50:17 @[ matmul_kernel_cd_regclass.py:76:20 ] ]
+	s_ashr_i32 s0, s0, 8
+.Ltmp6:
+	.loc	3 77 20                         ; common.py:77:20 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_ashr_i32 s1, s1, 31
+	s_add_i32 s16, s15, 1
+	s_sub_i32 s17, s14, s7
+	s_cmp_ge_u32 s14, s7
+	s_cselect_b32 s15, s16, s15
+	s_cselect_b32 s14, s17, s14
+	s_add_i32 s16, s15, 1
+	s_cmp_ge_u32 s14, s7
+	s_cselect_b32 s7, s16, s15
+	s_xor_b32 s7, s7, s1
+	s_sub_i32 s1, s7, s1
+	.loc	3 78 23                         ; common.py:78:23 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_lshl_b32 s7, s1, 2
+	.loc	3 79 28                         ; common.py:79:28 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_sub_i32 s0, s0, s7
+	.loc	3 79 24 is_stmt 0               ; common.py:79:24 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_min_i32 s0, s0, 4
+	.loc	3 81 17 is_stmt 1               ; common.py:81:17 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_abs_i32 s14, s0
+	v_cvt_f32_u32_e32 v1, s14
+	s_load_dwordx2 s[16:17], s[4:5], 0x20
+	s_load_dword s19, s[4:5], 0x28
+	s_sub_i32 s4, 0, s14
+	.loc	3 80 33                         ; common.py:80:33 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_mul_i32 s1, s1, s3
+	.loc	3 81 17                         ; common.py:81:17 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	v_rcp_f32_e32 v1, v1
+	.loc	3 80 33                         ; common.py:80:33 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_sub_i32 s1, s2, s1
+	.loc	3 81 17                         ; common.py:81:17 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_abs_i32 s3, s1
+	s_xor_b32 s2, s1, s0
+	v_mul_f32_e32 v1, 0x4f7ffffe, v1
+	v_cvt_u32_f32_e32 v1, v1
+	s_ashr_i32 s2, s2, 31
+.Ltmp7:
+	.loc	1 153 15                        ; matmul_kernel_cd_regclass.py:153:15
+	v_and_b32_e32 v2, 56, v2
+	.loc	1 188 5                         ; matmul_kernel_cd_regclass.py:188:5
+	s_mul_i32 s50, s6, 0x420
+.Ltmp8:
+	.loc	3 81 17                         ; common.py:81:17 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	v_readfirstlane_b32 s5, v1
+	s_mul_i32 s4, s4, s5
+	s_mul_hi_u32 s4, s5, s4
+	s_add_i32 s5, s5, s4
+	s_mul_hi_u32 s4, s3, s5
+	s_mul_i32 s5, s4, s14
+	s_sub_i32 s3, s3, s5
+	s_add_i32 s5, s4, 1
+	s_sub_i32 s15, s3, s14
+	s_cmp_ge_u32 s3, s14
+	s_cselect_b32 s4, s5, s4
+	s_cselect_b32 s3, s15, s3
+	s_add_i32 s5, s4, 1
+	s_cmp_ge_u32 s3, s14
+	s_cselect_b32 s3, s5, s4
+	s_xor_b32 s3, s3, s2
+	s_sub_i32 s2, s3, s2
+	.loc	3 80 32                         ; common.py:80:32 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_mul_i32 s0, s2, s0
+	s_sub_i32 s53, s1, s0
+	.loc	3 80 17 is_stmt 0               ; common.py:80:17 @[ matmul_kernel_cd_regclass.py:76:20 ]
+	s_add_i32 s53, s53, s7
+.Ltmp9:
+	.loc	1 158 22 is_stmt 1              ; matmul_kernel_cd_regclass.py:158:22
+	s_lshl_b32 s15, s53, 8
+	s_waitcnt lgkmcnt(0)
+	s_mul_i32 s0, s15, s16
+	.loc	1 158 14 is_stmt 0              ; matmul_kernel_cd_regclass.py:158:14
+	s_ashr_i32 s1, s0, 31
+	.loc	1 152 15 is_stmt 1              ; matmul_kernel_cd_regclass.py:152:15
+	s_lshl_b32 s18, s6, 6
+	.loc	1 158 14                        ; matmul_kernel_cd_regclass.py:158:14
+	s_lshl_b64 s[0:1], s[0:1], 1
+	s_add_u32 s4, s8, s0
+	s_addc_u32 s5, s9, s1
+	.loc	1 159 22                        ; matmul_kernel_cd_regclass.py:159:22
+	s_lshl_b32 s14, s2, 8
+	s_mul_i32 s0, s14, s17
+	.loc	1 152 15                        ; matmul_kernel_cd_regclass.py:152:15
+	v_lshlrev_b32_e32 v1, 1, v20
+	.loc	1 159 14                        ; matmul_kernel_cd_regclass.py:159:14
+	s_ashr_i32 s1, s0, 31
+	.loc	1 152 15                        ; matmul_kernel_cd_regclass.py:152:15
+	v_and_b32_e32 v1, 0x70, v1
+	.loc	1 159 14                        ; matmul_kernel_cd_regclass.py:159:14
+	s_lshl_b64 s[0:1], s[0:1], 1
+	.loc	1 152 15                        ; matmul_kernel_cd_regclass.py:152:15
+	v_or_b32_e32 v1, s6, v1
+	.loc	1 159 14                        ; matmul_kernel_cd_regclass.py:159:14
+	s_add_u32 s0, s10, s0
+	.loc	1 152 15                        ; matmul_kernel_cd_regclass.py:152:15
+	v_or_b32_e32 v3, 4, v1
+	v_or_b32_e32 v4, 8, v1
+	v_or_b32_e32 v5, 12, v1
+	.loc	1 159 14                        ; matmul_kernel_cd_regclass.py:159:14
+	s_addc_u32 s52, s11, s1
+	.loc	1 163 37                        ; matmul_kernel_cd_regclass.py:163:37
+	s_lshl_b32 s1, s16, 8
+	.loc	1 162 21                        ; matmul_kernel_cd_regclass.py:162:21
+	v_mad_u64_u32 v[10:11], s[2:3], v1, s16, v[2:3]
+	v_mad_u64_u32 v[12:13], s[2:3], v3, s16, v[2:3]
+	v_mad_u64_u32 v[14:15], s[2:3], v4, s16, v[2:3]
+	v_mad_u64_u32 v[16:17], s[2:3], v5, s16, v[2:3]
+	.loc	1 163 37                        ; matmul_kernel_cd_regclass.py:163:37
+	s_ashr_i32 s10, s1, 1
+	.loc	1 164 22                        ; matmul_kernel_cd_regclass.py:164:22
+	v_mad_u64_u32 v[18:19], s[2:3], v1, s17, v[2:3]
+	v_mad_u64_u32 v[22:23], s[2:3], v3, s17, v[2:3]
+	v_mad_u64_u32 v[24:25], s[2:3], v4, s17, v[2:3]
+	v_mad_u64_u32 v[26:27], s[2:3], v5, s17, v[2:3]
+	.loc	1 165 40                        ; matmul_kernel_cd_regclass.py:165:40
+	s_lshl_b32 s1, s17, 8
+	.loc	1 188 5                         ; matmul_kernel_cd_regclass.py:188:5
+	s_add_i32 s11, s50, 0x107c0
+	.loc	1 165 40                        ; matmul_kernel_cd_regclass.py:165:40
+	s_ashr_i32 s35, s1, 1
+	.loc	1 188 5                         ; matmul_kernel_cd_regclass.py:188:5
+	s_and_b32 s1, s52, 0xffff
+	s_mov_b32 s3, 0x27000
+	s_mov_b32 s2, 0x7ffffffe
+	v_lshlrev_b32_e32 v1, 1, v18
+	s_mov_b32 m0, s11
+	s_add_i32 s17, s11, 0x1080
+	buffer_load_dwordx4 v1, s[0:3], 0 offen lds
+	v_lshlrev_b32_e32 v2, 1, v22
+	s_mov_b32 m0, s17
+	s_add_i32 s20, s11, 0x2100
+	buffer_load_dwordx4 v2, s[0:3], 0 offen lds
+	v_lshlrev_b32_e32 v3, 1, v24
+	s_mov_b32 m0, s20
+	s_add_i32 s21, s11, 0x3180
+	buffer_load_dwordx4 v3, s[0:3], 0 offen lds
+	v_lshlrev_b32_e32 v4, 1, v26
+	s_mov_b32 m0, s21
+	.loc	1 190 5                         ; matmul_kernel_cd_regclass.py:190:5
+	s_add_i32 s22, s11, 0xfffef840
+	.loc	1 188 5                         ; matmul_kernel_cd_regclass.py:188:5
+	buffer_load_dwordx4 v4, s[0:3], 0 offen lds
+	.loc	1 190 5                         ; matmul_kernel_cd_regclass.py:190:5
+	s_and_b32 s5, s5, 0xffff
+	s_mov_b32 s6, s2
+	s_mov_b32 s7, s3
+	v_lshlrev_b32_e32 v5, 1, v10
+	s_mov_b32 m0, s22
+	s_add_i32 s23, s11, 0xffff08c0
+	; asyncmark
+	buffer_load_dwordx4 v5, s[4:7], 0 offen lds
+	v_lshlrev_b32_e32 v6, 1, v12
+	s_mov_b32 m0, s23
+	s_add_i32 s24, s11, 0xffff1940
+	buffer_load_dwordx4 v6, s[4:7], 0 offen lds
+	v_lshlrev_b32_e32 v7, 1, v14
+	s_mov_b32 m0, s24
+	s_add_i32 s25, s11, 0xffff29c0
+	buffer_load_dwordx4 v7, s[4:7], 0 offen lds
+	v_lshlrev_b32_e32 v8, 1, v16
+	s_mov_b32 m0, s25
+	.loc	1 192 5                         ; matmul_kernel_cd_regclass.py:192:5
+	s_add_i32 s26, s11, 0xffff7c20
+	.loc	1 190 5                         ; matmul_kernel_cd_regclass.py:190:5
+	buffer_load_dwordx4 v8, s[4:7], 0 offen lds
+	.loc	1 192 5                         ; matmul_kernel_cd_regclass.py:192:5
+	v_add_lshl_u32 v9, v10, s10, 1
+	s_mov_b32 m0, s26
+	s_add_i32 s27, s11, 0xffff8ca0
+	; asyncmark
+	buffer_load_dwordx4 v9, s[4:7], 0 offen lds
+	v_add_lshl_u32 v10, v12, s10, 1
+	s_mov_b32 m0, s27
+	s_add_i32 s28, s11, 0xffff9d20
+	buffer_load_dwordx4 v10, s[4:7], 0 offen lds
+	v_add_lshl_u32 v11, v14, s10, 1
+	s_mov_b32 m0, s28
+	s_add_i32 s29, s11, 0xffffada0
+	buffer_load_dwordx4 v11, s[4:7], 0 offen lds
+	v_add_lshl_u32 v12, v16, s10, 1
+	s_mov_b32 m0, s29
+	.loc	1 194 5                         ; matmul_kernel_cd_regclass.py:194:5
+	s_add_i32 s30, s50, 0x18ba0
+	.loc	1 192 5                         ; matmul_kernel_cd_regclass.py:192:5
+	buffer_load_dwordx4 v12, s[4:7], 0 offen lds
+	.loc	1 194 5                         ; matmul_kernel_cd_regclass.py:194:5
+	v_add_lshl_u32 v13, v18, s35, 1
+	s_mov_b32 m0, s30
+	s_add_i32 s31, s50, 0x19c20
+	; asyncmark
+	buffer_load_dwordx4 v13, s[0:3], 0 offen lds
+	v_add_lshl_u32 v14, v22, s35, 1
+	s_mov_b32 m0, s31
+	s_add_i32 s33, s50, 0x1aca0
+	buffer_load_dwordx4 v14, s[0:3], 0 offen lds
+	v_add_lshl_u32 v15, v24, s35, 1
+	s_mov_b32 m0, s33
+	s_add_i32 s34, s50, 0x1bd20
+	buffer_load_dwordx4 v15, s[0:3], 0 offen lds
+	v_add_lshl_u32 v16, v26, s35, 1
+	s_mov_b32 m0, s34
+	.loc	1 198 5                         ; matmul_kernel_cd_regclass.py:198:5
+	s_add_i32 s35, s50, 0x149c0
+	.loc	1 194 5                         ; matmul_kernel_cd_regclass.py:194:5
+	buffer_load_dwordx4 v16, s[0:3], 0 offen lds
+	.loc	1 198 5                         ; matmul_kernel_cd_regclass.py:198:5
+	v_add_u32_e32 v17, 0x80, v1
+	s_mov_b32 m0, s35
+	s_add_i32 s36, s50, 0x15a40
+	; asyncmark
+	buffer_load_dwordx4 v17, s[0:3], 0 offen lds
+	v_add_u32_e32 v18, 0x80, v2
+	s_mov_b32 m0, s36
+	s_add_i32 s37, s50, 0x16ac0
+	buffer_load_dwordx4 v18, s[0:3], 0 offen lds
+	v_add_u32_e32 v19, 0x80, v3
+	s_mov_b32 m0, s37
+	s_add_i32 s38, s50, 0x17b40
+	buffer_load_dwordx4 v19, s[0:3], 0 offen lds
+	v_add_u32_e32 v25, 0x80, v4
+	s_mov_b32 m0, s38
+	.loc	1 202 5                         ; matmul_kernel_cd_regclass.py:202:5
+	s_add_i32 s39, s50, 0x4200
+	.loc	1 198 5                         ; matmul_kernel_cd_regclass.py:198:5
+	buffer_load_dwordx4 v25, s[0:3], 0 offen lds
+	.loc	1 202 5                         ; matmul_kernel_cd_regclass.py:202:5
+	v_add_u32_e32 v26, 0x80, v5
+	s_mov_b32 m0, s39
+	s_add_i32 s40, s50, 0x5280
+	; asyncmark
+	buffer_load_dwordx4 v26, s[4:7], 0 offen lds
+	v_add_u32_e32 v27, 0x80, v6
+	s_mov_b32 m0, s40
+	s_add_i32 s41, s50, 0x6300
+	buffer_load_dwordx4 v27, s[4:7], 0 offen lds
+	v_add_u32_e32 v28, 0x80, v7
+	s_mov_b32 m0, s41
+	s_add_i32 s42, s50, 0x7380
+	buffer_load_dwordx4 v28, s[4:7], 0 offen lds
+	v_add_u32_e32 v29, 0x80, v8
+	s_mov_b32 m0, s42
+	.loc	1 206 5                         ; matmul_kernel_cd_regclass.py:206:5
+	s_add_i32 s43, s50, 0xc5e0
+	.loc	1 202 5                         ; matmul_kernel_cd_regclass.py:202:5
+	buffer_load_dwordx4 v29, s[4:7], 0 offen lds
+	.loc	1 206 5                         ; matmul_kernel_cd_regclass.py:206:5
+	v_add_u32_e32 v30, 0x80, v9
+	s_mov_b32 m0, s43
+	s_add_i32 s44, s50, 0xd660
+	; asyncmark
+	buffer_load_dwordx4 v30, s[4:7], 0 offen lds
+	v_add_u32_e32 v31, 0x80, v10
+	s_mov_b32 m0, s44
+	s_add_i32 s45, s50, 0xe6e0
+	buffer_load_dwordx4 v31, s[4:7], 0 offen lds
+	v_add_u32_e32 v32, 0x80, v11
+	s_mov_b32 m0, s45
+	s_add_i32 s46, s50, 0xf760
+	buffer_load_dwordx4 v32, s[4:7], 0 offen lds
+	v_add_u32_e32 v33, 0x80, v12
+	s_mov_b32 m0, s46
+	.loc	1 210 5                         ; matmul_kernel_cd_regclass.py:210:5
+	s_add_i32 s47, s50, 0x1cda0
+	.loc	1 206 5                         ; matmul_kernel_cd_regclass.py:206:5
+	buffer_load_dwordx4 v33, s[4:7], 0 offen lds
+	.loc	1 210 5                         ; matmul_kernel_cd_regclass.py:210:5
+	v_add_u32_e32 v34, 0x80, v13
+	s_mov_b32 m0, s47
+	s_add_i32 s48, s50, 0x1de20
+	; asyncmark
+	buffer_load_dwordx4 v34, s[0:3], 0 offen lds
+	v_add_u32_e32 v35, 0x80, v14
+	s_mov_b32 m0, s48
+	s_add_i32 s49, s50, 0x1eea0
+	buffer_load_dwordx4 v35, s[0:3], 0 offen lds
+	v_add_u32_e32 v36, 0x80, v15
+	s_mov_b32 m0, s49
+	s_add_i32 s50, s50, 0x1ff20
+	buffer_load_dwordx4 v36, s[0:3], 0 offen lds
+	v_add_u32_e32 v37, 0x80, v16
+	s_mov_b32 m0, s50
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	v_and_b32_e32 v23, 15, v0
+	.loc	1 210 5                         ; matmul_kernel_cd_regclass.py:210:5
+	buffer_load_dwordx4 v37, s[0:3], 0 offen lds
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	s_and_b32 s10, s18, 64
+	v_lshlrev_b32_e32 v24, 10, v23
+	v_and_b32_e32 v22, 48, v0
+	s_lshl_b32 s1, s10, 1
+	.loc	1 152 15                        ; matmul_kernel_cd_regclass.py:152:15
+	v_and_or_b32 v21, v0, 63, s18
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	v_or3_b32 v38, v22, s1, v24
+	.loc	1 220 13                        ; matmul_kernel_cd_regclass.py:220:13
+	s_movk_i32 s1, 0xb0
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	v_lshlrev_b32_e32 v0, 5, v23
+	.loc	1 220 13                        ; matmul_kernel_cd_regclass.py:220:13
+	v_and_or_b32 v24, v21, s1, v24
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	v_add_u32_e32 v38, v38, v0
+	.loc	1 220 13                        ; matmul_kernel_cd_regclass.py:220:13
+	v_add_u32_e32 v0, v24, v0
+	v_add_u32_e32 v0, 0, v0
+	; asyncmark
+	; wait_asyncmark(6)
+	.loc	1 218 5                         ; matmul_kernel_cd_regclass.py:218:5
+	s_waitcnt vmcnt(24)
+	s_barrier
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	v_add_u32_e32 v39, 0x107c0, v38
+	.loc	1 220 13                        ; matmul_kernel_cd_regclass.py:220:13
+	ds_read_b128 v[60:63], v0 offset:256
+	ds_read_b128 v[64:67], v0 offset:320
+	ds_read_b128 v[68:71], v0
+	ds_read_b128 v[72:75], v0 offset:64
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	ds_read_b128 v[76:79], v39 offset:768
+	ds_read_b128 v[80:83], v39 offset:832
+	ds_read_b128 v[84:87], v39 offset:512
+	ds_read_b128 v[88:91], v39 offset:576
+	ds_read_b128 v[92:95], v39 offset:256
+	ds_read_b128 v[96:99], v39 offset:320
+	ds_read_b128 v[100:103], v39 offset:64
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_add_u32 s51, s0, 0x100
+	s_mul_i32 s0, s16, s53
+	.loc	1 220 13                        ; matmul_kernel_cd_regclass.py:220:13
+	ds_read_b128 v[48:51], v0 offset:512
+	ds_read_b128 v[52:55], v0 offset:576
+	ds_read_b128 v[40:43], v0 offset:768
+	ds_read_b128 v[44:47], v0 offset:832
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_addc_u32 s52, s52, 0
+	s_lshl_b32 s0, s0, 8
+	s_ashr_i32 s1, s0, 31
+	.loc	1 219 14                        ; matmul_kernel_cd_regclass.py:219:14
+	ds_read_b128 v[56:59], v39
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_lshl_b64 s[0:1], s[0:1], 1
+	s_add_u32 s0, s8, s0
+	s_addc_u32 s1, s9, s1
+	s_add_u32 s8, s0, 0x100
+	v_mov_b32_e32 v24, 0
+	s_addc_u32 s9, s1, 0
+	s_mov_b32 s16, -2
+	v_accvgpr_write_b32 a60, v24
+	v_accvgpr_write_b32 a61, v24
+	v_accvgpr_write_b32 a62, v24
+	v_accvgpr_write_b32 a63, v24
+	v_accvgpr_write_b32 a56, v24
+	v_accvgpr_write_b32 a57, v24
+	v_accvgpr_write_b32 a58, v24
+	v_accvgpr_write_b32 a59, v24
+	v_accvgpr_write_b32 a52, v24
+	v_accvgpr_write_b32 a53, v24
+	v_accvgpr_write_b32 a54, v24
+	v_accvgpr_write_b32 a55, v24
+	v_accvgpr_write_b32 a48, v24
+	v_accvgpr_write_b32 a49, v24
+	v_accvgpr_write_b32 a50, v24
+	v_accvgpr_write_b32 a51, v24
+	v_accvgpr_write_b32 a44, v24
+	v_accvgpr_write_b32 a45, v24
+	v_accvgpr_write_b32 a46, v24
+	v_accvgpr_write_b32 a47, v24
+	v_accvgpr_write_b32 a40, v24
+	v_accvgpr_write_b32 a41, v24
+	v_accvgpr_write_b32 a42, v24
+	v_accvgpr_write_b32 a43, v24
+	v_accvgpr_write_b32 a36, v24
+	v_accvgpr_write_b32 a37, v24
+	v_accvgpr_write_b32 a38, v24
+	v_accvgpr_write_b32 a39, v24
+	v_accvgpr_write_b32 a32, v24
+	v_accvgpr_write_b32 a33, v24
+	v_accvgpr_write_b32 a34, v24
+	v_accvgpr_write_b32 a35, v24
+	v_accvgpr_write_b32 a28, v24
+	v_accvgpr_write_b32 a29, v24
+	v_accvgpr_write_b32 a30, v24
+	v_accvgpr_write_b32 a31, v24
+	v_accvgpr_write_b32 a24, v24
+	v_accvgpr_write_b32 a25, v24
+	v_accvgpr_write_b32 a26, v24
+	v_accvgpr_write_b32 a27, v24
+	v_accvgpr_write_b32 a20, v24
+	v_accvgpr_write_b32 a21, v24
+	v_accvgpr_write_b32 a22, v24
+	v_accvgpr_write_b32 a23, v24
+	v_accvgpr_write_b32 a16, v24
+	v_accvgpr_write_b32 a17, v24
+	v_accvgpr_write_b32 a18, v24
+	v_accvgpr_write_b32 a19, v24
+	v_accvgpr_write_b32 a12, v24
+	v_accvgpr_write_b32 a13, v24
+	v_accvgpr_write_b32 a14, v24
+	v_accvgpr_write_b32 a15, v24
+	v_accvgpr_write_b32 a8, v24
+	v_accvgpr_write_b32 a9, v24
+	v_accvgpr_write_b32 a10, v24
+	v_accvgpr_write_b32 a11, v24
+	v_accvgpr_write_b32 a4, v24
+	v_accvgpr_write_b32 a5, v24
+	v_accvgpr_write_b32 a6, v24
+	v_accvgpr_write_b32 a7, v24
+	v_accvgpr_write_b32 a0, v24
+	v_accvgpr_write_b32 a1, v24
+	v_accvgpr_write_b32 a2, v24
+	v_accvgpr_write_b32 a3, v24
+	v_accvgpr_write_b32 a124, v24
+	v_accvgpr_write_b32 a125, v24
+	v_accvgpr_write_b32 a126, v24
+	v_accvgpr_write_b32 a127, v24
+	v_accvgpr_write_b32 a120, v24
+	v_accvgpr_write_b32 a121, v24
+	v_accvgpr_write_b32 a122, v24
+	v_accvgpr_write_b32 a123, v24
+	v_accvgpr_write_b32 a116, v24
+	v_accvgpr_write_b32 a117, v24
+	v_accvgpr_write_b32 a118, v24
+	v_accvgpr_write_b32 a119, v24
+	v_accvgpr_write_b32 a112, v24
+	v_accvgpr_write_b32 a113, v24
+	v_accvgpr_write_b32 a114, v24
+	v_accvgpr_write_b32 a115, v24
+	v_accvgpr_write_b32 a108, v24
+	v_accvgpr_write_b32 a109, v24
+	v_accvgpr_write_b32 a110, v24
+	v_accvgpr_write_b32 a111, v24
+	v_accvgpr_write_b32 a104, v24
+	v_accvgpr_write_b32 a105, v24
+	v_accvgpr_write_b32 a106, v24
+	v_accvgpr_write_b32 a107, v24
+	v_accvgpr_write_b32 a100, v24
+	v_accvgpr_write_b32 a101, v24
+	v_accvgpr_write_b32 a102, v24
+	v_accvgpr_write_b32 a103, v24
+	v_accvgpr_write_b32 a96, v24
+	v_accvgpr_write_b32 a97, v24
+	v_accvgpr_write_b32 a98, v24
+	v_accvgpr_write_b32 a99, v24
+	v_accvgpr_write_b32 a92, v24
+	v_accvgpr_write_b32 a93, v24
+	v_accvgpr_write_b32 a94, v24
+	v_accvgpr_write_b32 a95, v24
+	v_accvgpr_write_b32 a88, v24
+	v_accvgpr_write_b32 a89, v24
+	v_accvgpr_write_b32 a90, v24
+	v_accvgpr_write_b32 a91, v24
+	v_accvgpr_write_b32 a84, v24
+	v_accvgpr_write_b32 a85, v24
+	v_accvgpr_write_b32 a86, v24
+	v_accvgpr_write_b32 a87, v24
+	v_accvgpr_write_b32 a80, v24
+	v_accvgpr_write_b32 a81, v24
+	v_accvgpr_write_b32 a82, v24
+	v_accvgpr_write_b32 a83, v24
+	v_accvgpr_write_b32 a76, v24
+	v_accvgpr_write_b32 a77, v24
+	v_accvgpr_write_b32 a78, v24
+	v_accvgpr_write_b32 a79, v24
+	v_accvgpr_write_b32 a72, v24
+	v_accvgpr_write_b32 a73, v24
+	v_accvgpr_write_b32 a74, v24
+	v_accvgpr_write_b32 a75, v24
+	v_accvgpr_write_b32 a68, v24
+	v_accvgpr_write_b32 a69, v24
+	v_accvgpr_write_b32 a70, v24
+	v_accvgpr_write_b32 a71, v24
+	v_accvgpr_write_b32 a64, v24
+	v_accvgpr_write_b32 a65, v24
+	v_accvgpr_write_b32 a66, v24
+	v_accvgpr_write_b32 a67, v24
+	v_accvgpr_write_b32 a188, v24
+	v_accvgpr_write_b32 a189, v24
+	v_accvgpr_write_b32 a190, v24
+	v_accvgpr_write_b32 a191, v24
+	v_accvgpr_write_b32 a184, v24
+	v_accvgpr_write_b32 a185, v24
+	v_accvgpr_write_b32 a186, v24
+	v_accvgpr_write_b32 a187, v24
+	v_accvgpr_write_b32 a180, v24
+	v_accvgpr_write_b32 a181, v24
+	v_accvgpr_write_b32 a182, v24
+	v_accvgpr_write_b32 a183, v24
+	v_accvgpr_write_b32 a176, v24
+	v_accvgpr_write_b32 a177, v24
+	v_accvgpr_write_b32 a178, v24
+	v_accvgpr_write_b32 a179, v24
+	v_accvgpr_write_b32 a172, v24
+	v_accvgpr_write_b32 a173, v24
+	v_accvgpr_write_b32 a174, v24
+	v_accvgpr_write_b32 a175, v24
+	v_accvgpr_write_b32 a168, v24
+	v_accvgpr_write_b32 a169, v24
+	v_accvgpr_write_b32 a170, v24
+	v_accvgpr_write_b32 a171, v24
+	v_accvgpr_write_b32 a164, v24
+	v_accvgpr_write_b32 a165, v24
+	v_accvgpr_write_b32 a166, v24
+	v_accvgpr_write_b32 a167, v24
+	v_accvgpr_write_b32 a160, v24
+	v_accvgpr_write_b32 a161, v24
+	v_accvgpr_write_b32 a162, v24
+	v_accvgpr_write_b32 a163, v24
+	v_accvgpr_write_b32 a156, v24
+	v_accvgpr_write_b32 a157, v24
+	v_accvgpr_write_b32 a158, v24
+	v_accvgpr_write_b32 a159, v24
+	v_accvgpr_write_b32 a152, v24
+	v_accvgpr_write_b32 a153, v24
+	v_accvgpr_write_b32 a154, v24
+	v_accvgpr_write_b32 a155, v24
+	v_accvgpr_write_b32 a148, v24
+	v_accvgpr_write_b32 a149, v24
+	v_accvgpr_write_b32 a150, v24
+	v_accvgpr_write_b32 a151, v24
+	v_accvgpr_write_b32 a144, v24
+	v_accvgpr_write_b32 a145, v24
+	v_accvgpr_write_b32 a146, v24
+	v_accvgpr_write_b32 a147, v24
+	v_accvgpr_write_b32 a140, v24
+	v_accvgpr_write_b32 a141, v24
+	v_accvgpr_write_b32 a142, v24
+	v_accvgpr_write_b32 a143, v24
+	v_accvgpr_write_b32 a136, v24
+	v_accvgpr_write_b32 a137, v24
+	v_accvgpr_write_b32 a138, v24
+	v_accvgpr_write_b32 a139, v24
+	v_accvgpr_write_b32 a132, v24
+	v_accvgpr_write_b32 a133, v24
+	v_accvgpr_write_b32 a134, v24
+	v_accvgpr_write_b32 a135, v24
+	v_accvgpr_write_b32 a128, v24
+	v_accvgpr_write_b32 a129, v24
+	v_accvgpr_write_b32 a130, v24
+	v_accvgpr_write_b32 a131, v24
+	v_accvgpr_write_b32 a252, v24
+	v_accvgpr_write_b32 a253, v24
+	v_accvgpr_write_b32 a254, v24
+	v_accvgpr_write_b32 a255, v24
+	v_accvgpr_write_b32 a248, v24
+	v_accvgpr_write_b32 a249, v24
+	v_accvgpr_write_b32 a250, v24
+	v_accvgpr_write_b32 a251, v24
+	v_accvgpr_write_b32 a244, v24
+	v_accvgpr_write_b32 a245, v24
+	v_accvgpr_write_b32 a246, v24
+	v_accvgpr_write_b32 a247, v24
+	v_accvgpr_write_b32 a240, v24
+	v_accvgpr_write_b32 a241, v24
+	v_accvgpr_write_b32 a242, v24
+	v_accvgpr_write_b32 a243, v24
+	v_accvgpr_write_b32 a236, v24
+	v_accvgpr_write_b32 a237, v24
+	v_accvgpr_write_b32 a238, v24
+	v_accvgpr_write_b32 a239, v24
+	v_accvgpr_write_b32 a232, v24
+	v_accvgpr_write_b32 a233, v24
+	v_accvgpr_write_b32 a234, v24
+	v_accvgpr_write_b32 a235, v24
+	v_accvgpr_write_b32 a228, v24
+	v_accvgpr_write_b32 a229, v24
+	v_accvgpr_write_b32 a230, v24
+	v_accvgpr_write_b32 a231, v24
+	v_accvgpr_write_b32 a220, v24
+	v_accvgpr_write_b32 a221, v24
+	v_accvgpr_write_b32 a222, v24
+	v_accvgpr_write_b32 a223, v24
+	v_accvgpr_write_b32 a216, v24
+	v_accvgpr_write_b32 a217, v24
+	v_accvgpr_write_b32 a218, v24
+	v_accvgpr_write_b32 a219, v24
+	v_accvgpr_write_b32 a212, v24
+	v_accvgpr_write_b32 a213, v24
+	v_accvgpr_write_b32 a214, v24
+	v_accvgpr_write_b32 a215, v24
+	v_accvgpr_write_b32 a208, v24
+	v_accvgpr_write_b32 a209, v24
+	v_accvgpr_write_b32 a210, v24
+	v_accvgpr_write_b32 a211, v24
+	v_accvgpr_write_b32 a204, v24
+	v_accvgpr_write_b32 a205, v24
+	v_accvgpr_write_b32 a206, v24
+	v_accvgpr_write_b32 a207, v24
+	v_accvgpr_write_b32 a200, v24
+	v_accvgpr_write_b32 a201, v24
+	v_accvgpr_write_b32 a202, v24
+	v_accvgpr_write_b32 a203, v24
+	v_accvgpr_write_b32 a196, v24
+	v_accvgpr_write_b32 a197, v24
+	v_accvgpr_write_b32 a198, v24
+	v_accvgpr_write_b32 a199, v24
+	v_accvgpr_write_b32 a192, v24
+	v_accvgpr_write_b32 a193, v24
+	v_accvgpr_write_b32 a194, v24
+	v_accvgpr_write_b32 a195, v24
+	v_accvgpr_write_b32 a224, v24
+	v_accvgpr_write_b32 a225, v24
+	v_accvgpr_write_b32 a226, v24
+	v_accvgpr_write_b32 a227, v24
+.LBB0_1:                                ; =>This Inner Loop Header: Depth=1
+	; wait_asyncmark(5)
+	.loc	1 236 9                         ; matmul_kernel_cd_regclass.py:236:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 237 17                        ; matmul_kernel_cd_regclass.py:237:17
+	ds_read_b128 v[108:111], v0 offset:33760
+	ds_read_b128 v[112:115], v0 offset:33824
+	ds_read_b128 v[116:119], v0 offset:34016
+	ds_read_b128 v[120:123], v0 offset:34080
+	ds_read_b128 v[124:127], v0 offset:34272
+	ds_read_b128 v[128:131], v0 offset:34336
+	ds_read_b128 v[132:135], v0 offset:34528
+	ds_read_b128 v[136:139], v0 offset:34592
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 239 9                         ; matmul_kernel_cd_regclass.py:239:9
+	s_and_b32 s1, s52, 0xffff
+	s_mov_b32 s0, s51
+	s_mov_b32 m0, s11
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[252:255], v[56:59], v[68:71], a[252:255]
+	.loc	1 239 9                         ; matmul_kernel_cd_regclass.py:239:9
+	buffer_load_dwordx4 v1, s[0:3], 0 offen lds
+	s_mov_b32 m0, s17
+	.loc	1 248 19                        ; matmul_kernel_cd_regclass.py:248:19
+	v_add_u32_e32 v24, 0, v38
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[248:251], v[92:95], v[68:71], a[248:251]
+	.loc	1 239 9                         ; matmul_kernel_cd_regclass.py:239:9
+	buffer_load_dwordx4 v2, s[0:3], 0 offen lds
+	s_mov_b32 m0, s20
+	.loc	1 248 19                        ; matmul_kernel_cd_regclass.py:248:19
+	v_add_u32_e32 v39, 0x18ba0, v24
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[244:247], v[84:87], v[68:71], a[244:247]
+	.loc	1 239 9                         ; matmul_kernel_cd_regclass.py:239:9
+	buffer_load_dwordx4 v3, s[0:3], 0 offen lds
+	s_mov_b32 m0, s21
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	s_and_b32 s5, s9, 0xffff
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[240:243], v[76:79], v[68:71], a[240:243]
+	.loc	1 239 9                         ; matmul_kernel_cd_regclass.py:239:9
+	buffer_load_dwordx4 v4, s[0:3], 0 offen lds
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	s_mov_b32 s4, s8
+	s_mov_b32 s6, s2
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[236:239], v[56:59], v[60:63], a[236:239]
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	s_mov_b32 s7, s3
+	s_mov_b32 m0, s22
+	; asyncmark
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[232:235], v[92:95], v[60:63], a[232:235]
+	; wait_asyncmark(5)
+	.loc	1 247 9                         ; matmul_kernel_cd_regclass.py:247:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[228:231], v[84:87], v[60:63], a[228:231]
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	buffer_load_dwordx4 v5, s[4:7], 0 offen lds
+	s_mov_b32 m0, s23
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[220:223], v[76:79], v[60:63], a[220:223]
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	buffer_load_dwordx4 v6, s[4:7], 0 offen lds
+	s_mov_b32 m0, s24
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[216:219], v[56:59], v[48:51], a[216:219]
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	buffer_load_dwordx4 v7, s[4:7], 0 offen lds
+	s_mov_b32 m0, s25
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[212:215], v[92:95], v[48:51], a[212:215]
+	.loc	1 250 9                         ; matmul_kernel_cd_regclass.py:250:9
+	buffer_load_dwordx4 v8, s[4:7], 0 offen lds
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[208:211], v[84:87], v[48:51], a[208:211]
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[204:207], v[76:79], v[48:51], a[204:207]
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[200:203], v[56:59], v[40:43], a[200:203]
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[196:199], v[92:95], v[40:43], a[196:199]
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[192:195], v[84:87], v[40:43], a[192:195]
+	.loc	1 261 9                         ; matmul_kernel_cd_regclass.py:261:9
+	s_mov_b32 m0, s26
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[224:227], v[76:79], v[40:43], a[224:227]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[188:191], v[56:59], v[108:111], a[188:191]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[184:187], v[92:95], v[108:111], a[184:187]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[180:183], v[84:87], v[108:111], a[180:183]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[176:179], v[76:79], v[108:111], a[176:179]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_add_u32 s51, s51, 0x100
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[172:175], v[56:59], v[116:119], a[172:175]
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_addc_u32 s52, s52, 0
+	s_add_u32 s8, s8, 0x100
+	s_addc_u32 s9, s9, 0
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[168:171], v[92:95], v[116:119], a[168:171]
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_add_i32 s16, s16, 2
+	s_cmpk_lt_u32 s16, 0x7c
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[164:167], v[84:87], v[116:119], a[164:167]
+	v_mfma_f32_16x16x32_f16 a[160:163], v[76:79], v[116:119], a[160:163]
+	v_mfma_f32_16x16x32_f16 a[156:159], v[56:59], v[124:127], a[156:159]
+	v_mfma_f32_16x16x32_f16 a[152:155], v[92:95], v[124:127], a[152:155]
+	v_mfma_f32_16x16x32_f16 a[148:151], v[84:87], v[124:127], a[148:151]
+	v_mfma_f32_16x16x32_f16 a[144:147], v[76:79], v[124:127], a[144:147]
+	v_mfma_f32_16x16x32_f16 a[140:143], v[56:59], v[132:135], a[140:143]
+	v_mfma_f32_16x16x32_f16 a[136:139], v[92:95], v[132:135], a[136:139]
+	v_mfma_f32_16x16x32_f16 a[132:135], v[84:87], v[132:135], a[132:135]
+	v_mfma_f32_16x16x32_f16 a[128:131], v[76:79], v[132:135], a[128:131]
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[252:255], v[100:103], v[72:75], a[252:255]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[248:251], v[96:99], v[72:75], a[248:251]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[244:247], v[88:91], v[72:75], a[244:247]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[240:243], v[80:83], v[72:75], a[240:243]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[236:239], v[100:103], v[64:67], a[236:239]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[232:235], v[96:99], v[64:67], a[232:235]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[228:231], v[88:91], v[64:67], a[228:231]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[220:223], v[80:83], v[64:67], a[220:223]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[216:219], v[100:103], v[52:55], a[216:219]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[212:215], v[96:99], v[52:55], a[212:215]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[208:211], v[88:91], v[52:55], a[208:211]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[204:207], v[80:83], v[52:55], a[204:207]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[200:203], v[100:103], v[44:47], a[200:203]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[196:199], v[96:99], v[44:47], a[196:199]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[192:195], v[88:91], v[44:47], a[192:195]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 234 18                        ; matmul_kernel_cd_regclass.py:234:18
+	v_mfma_f32_16x16x32_f16 a[224:227], v[80:83], v[44:47], a[224:227]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[188:191], v[100:103], v[112:115], a[188:191]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[184:187], v[96:99], v[112:115], a[184:187]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[180:183], v[88:91], v[112:115], a[180:183]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[176:179], v[80:83], v[112:115], a[176:179]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[172:175], v[100:103], v[120:123], a[172:175]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[168:171], v[96:99], v[120:123], a[168:171]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[164:167], v[88:91], v[120:123], a[164:167]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[160:163], v[80:83], v[120:123], a[160:163]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[156:159], v[100:103], v[128:131], a[156:159]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[152:155], v[96:99], v[128:131], a[152:155]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[148:151], v[88:91], v[128:131], a[148:151]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[144:147], v[80:83], v[128:131], a[144:147]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[140:143], v[100:103], v[136:139], a[140:143]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[136:139], v[96:99], v[136:139], a[136:139]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[132:135], v[88:91], v[136:139], a[132:135]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	v_mfma_f32_16x16x32_f16 a[128:131], v[80:83], v[136:139], a[128:131]
+	.loc	1 248 19                        ; matmul_kernel_cd_regclass.py:248:19
+	ds_read_b128 v[76:79], v39
+	ds_read_b128 v[80:83], v39 offset:64
+	ds_read_b128 v[84:87], v39 offset:256
+	ds_read_b128 v[88:91], v39 offset:320
+	ds_read_b128 v[92:95], v39 offset:512
+	ds_read_b128 v[96:99], v39 offset:576
+	ds_read_b128 v[100:103], v39 offset:768
+	ds_read_b128 v[104:107], v39 offset:832
+	; asyncmark
+	; wait_asyncmark(5)
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	s_waitcnt vmcnt(20) lgkmcnt(7)
+	v_mfma_f32_16x16x32_f16 a[124:127], v[76:79], v[68:71], a[124:127]
+	.loc	1 258 9                         ; matmul_kernel_cd_regclass.py:258:9
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[120:123], v[84:87], v[68:71], a[120:123]
+	.loc	1 261 9                         ; matmul_kernel_cd_regclass.py:261:9
+	buffer_load_dwordx4 v9, s[4:7], 0 offen lds
+	s_mov_b32 m0, s27
+	.loc	1 259 18                        ; matmul_kernel_cd_regclass.py:259:18
+	v_add_u32_e32 v39, 0x149c0, v24
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[116:119], v[92:95], v[68:71], a[116:119]
+	.loc	1 261 9                         ; matmul_kernel_cd_regclass.py:261:9
+	buffer_load_dwordx4 v10, s[4:7], 0 offen lds
+	s_mov_b32 m0, s28
+	.loc	1 245 18                        ; matmul_kernel_cd_regclass.py:245:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[112:115], v[100:103], v[68:71], a[112:115]
+	.loc	1 261 9                         ; matmul_kernel_cd_regclass.py:261:9
+	buffer_load_dwordx4 v11, s[4:7], 0 offen lds
+	s_mov_b32 m0, s29
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[108:111], v[76:79], v[60:63], a[108:111]
+	.loc	1 261 9                         ; matmul_kernel_cd_regclass.py:261:9
+	buffer_load_dwordx4 v12, s[4:7], 0 offen lds
+	.loc	1 272 9                         ; matmul_kernel_cd_regclass.py:272:9
+	s_mov_b32 m0, s30
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[104:107], v[84:87], v[60:63], a[104:107]
+	v_mfma_f32_16x16x32_f16 a[100:103], v[92:95], v[60:63], a[100:103]
+	v_mfma_f32_16x16x32_f16 a[96:99], v[100:103], v[60:63], a[96:99]
+	v_mfma_f32_16x16x32_f16 a[92:95], v[76:79], v[48:51], a[92:95]
+	v_mfma_f32_16x16x32_f16 a[88:91], v[84:87], v[48:51], a[88:91]
+	v_mfma_f32_16x16x32_f16 a[84:87], v[92:95], v[48:51], a[84:87]
+	v_mfma_f32_16x16x32_f16 a[80:83], v[100:103], v[48:51], a[80:83]
+	v_mfma_f32_16x16x32_f16 a[76:79], v[76:79], v[40:43], a[76:79]
+	v_mfma_f32_16x16x32_f16 a[72:75], v[84:87], v[40:43], a[72:75]
+	v_mfma_f32_16x16x32_f16 a[68:71], v[92:95], v[40:43], a[68:71]
+	v_mfma_f32_16x16x32_f16 a[64:67], v[100:103], v[40:43], a[64:67]
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[60:63], v[76:79], v[108:111], a[60:63]
+	v_mfma_f32_16x16x32_f16 a[56:59], v[84:87], v[108:111], a[56:59]
+	v_mfma_f32_16x16x32_f16 a[52:55], v[92:95], v[108:111], a[52:55]
+	v_mfma_f32_16x16x32_f16 a[48:51], v[100:103], v[108:111], a[48:51]
+	v_mfma_f32_16x16x32_f16 a[44:47], v[76:79], v[116:119], a[44:47]
+	v_mfma_f32_16x16x32_f16 a[40:43], v[84:87], v[116:119], a[40:43]
+	v_mfma_f32_16x16x32_f16 a[36:39], v[92:95], v[116:119], a[36:39]
+	v_mfma_f32_16x16x32_f16 a[32:35], v[100:103], v[116:119], a[32:35]
+	v_mfma_f32_16x16x32_f16 a[28:31], v[76:79], v[124:127], a[28:31]
+	v_mfma_f32_16x16x32_f16 a[24:27], v[84:87], v[124:127], a[24:27]
+	v_mfma_f32_16x16x32_f16 a[20:23], v[92:95], v[124:127], a[20:23]
+	v_mfma_f32_16x16x32_f16 a[16:19], v[100:103], v[124:127], a[16:19]
+	v_mfma_f32_16x16x32_f16 a[12:15], v[76:79], v[132:135], a[12:15]
+	v_mfma_f32_16x16x32_f16 a[8:11], v[84:87], v[132:135], a[8:11]
+	v_mfma_f32_16x16x32_f16 a[4:7], v[92:95], v[132:135], a[4:7]
+	v_mfma_f32_16x16x32_f16 a[0:3], v[100:103], v[132:135], a[0:3]
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[124:127], v[80:83], v[72:75], a[124:127]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[120:123], v[88:91], v[72:75], a[120:123]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[116:119], v[96:99], v[72:75], a[116:119]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[112:115], v[104:107], v[72:75], a[112:115]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[108:111], v[80:83], v[64:67], a[108:111]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[104:107], v[88:91], v[64:67], a[104:107]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[100:103], v[96:99], v[64:67], a[100:103]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[96:99], v[104:107], v[64:67], a[96:99]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[92:95], v[80:83], v[52:55], a[92:95]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[88:91], v[88:91], v[52:55], a[88:91]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[84:87], v[96:99], v[52:55], a[84:87]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[80:83], v[104:107], v[52:55], a[80:83]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[76:79], v[80:83], v[44:47], a[76:79]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[72:75], v[88:91], v[44:47], a[72:75]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[68:71], v[96:99], v[44:47], a[68:71]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	v_mfma_f32_16x16x32_f16 a[64:67], v[104:107], v[44:47], a[64:67]
+	.loc	1 259 18                        ; matmul_kernel_cd_regclass.py:259:18
+	ds_read_b128 v[44:47], v39
+	ds_read_b128 v[48:51], v39 offset:64
+	ds_read_b128 v[52:55], v39 offset:256
+	ds_read_b128 v[56:59], v39 offset:320
+	ds_read_b128 v[60:63], v39 offset:512
+	ds_read_b128 v[64:67], v39 offset:576
+	ds_read_b128 v[68:71], v39 offset:768
+	ds_read_b128 v[72:75], v39 offset:832
+	; asyncmark
+	; wait_asyncmark(5)
+	.loc	1 269 9                         ; matmul_kernel_cd_regclass.py:269:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 272 9                         ; matmul_kernel_cd_regclass.py:272:9
+	buffer_load_dwordx4 v13, s[0:3], 0 offen lds
+	s_mov_b32 m0, s31
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[60:63], v[80:83], v[112:115], a[60:63]
+	.loc	1 272 9                         ; matmul_kernel_cd_regclass.py:272:9
+	buffer_load_dwordx4 v14, s[0:3], 0 offen lds
+	s_mov_b32 m0, s33
+	.loc	1 299 19                        ; matmul_kernel_cd_regclass.py:299:19
+	v_add_u32_e32 v39, 0x1cda0, v24
+	.loc	1 272 9                         ; matmul_kernel_cd_regclass.py:272:9
+	buffer_load_dwordx4 v15, s[0:3], 0 offen lds
+	s_mov_b32 m0, s34
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[56:59], v[88:91], v[112:115], a[56:59]
+	.loc	1 272 9                         ; matmul_kernel_cd_regclass.py:272:9
+	buffer_load_dwordx4 v16, s[0:3], 0 offen lds
+	.loc	1 288 9                         ; matmul_kernel_cd_regclass.py:288:9
+	s_mov_b32 m0, s35
+	.loc	1 256 18                        ; matmul_kernel_cd_regclass.py:256:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[52:55], v[96:99], v[112:115], a[52:55]
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[48:51], v[104:107], v[112:115], a[48:51]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[44:47], v[80:83], v[120:123], a[44:47]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[40:43], v[88:91], v[120:123], a[40:43]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[36:39], v[96:99], v[120:123], a[36:39]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[32:35], v[104:107], v[120:123], a[32:35]
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[28:31], v[80:83], v[128:131], a[28:31]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[24:27], v[88:91], v[128:131], a[24:27]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[20:23], v[96:99], v[128:131], a[20:23]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[16:19], v[104:107], v[128:131], a[16:19]
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[12:15], v[80:83], v[136:139], a[12:15]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[8:11], v[88:91], v[136:139], a[8:11]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[4:7], v[96:99], v[136:139], a[4:7]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	v_mfma_f32_16x16x32_f16 a[0:3], v[104:107], v[136:139], a[0:3]
+	.loc	1 270 17                        ; matmul_kernel_cd_regclass.py:270:17
+	ds_read_b128 v[76:79], v0 offset:16896
+	ds_read_b128 v[80:83], v0 offset:16960
+	ds_read_b128 v[84:87], v0 offset:17152
+	ds_read_b128 v[88:91], v0 offset:17216
+	ds_read_b128 v[92:95], v0 offset:17408
+	ds_read_b128 v[96:99], v0 offset:17472
+	ds_read_b128 v[100:103], v0 offset:17664
+	ds_read_b128 v[104:107], v0 offset:17728
+	; asyncmark
+	; wait_asyncmark(5)
+	.loc	1 285 9                         ; matmul_kernel_cd_regclass.py:285:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 286 17                        ; matmul_kernel_cd_regclass.py:286:17
+	ds_read_b128 v[108:111], v0 offset:50656
+	ds_read_b128 v[112:115], v0 offset:50720
+	ds_read_b128 v[116:119], v0 offset:50912
+	ds_read_b128 v[120:123], v0 offset:50976
+	ds_read_b128 v[124:127], v0 offset:51168
+	ds_read_b128 v[128:131], v0 offset:51232
+	ds_read_b128 v[132:135], v0 offset:51424
+	ds_read_b128 v[136:139], v0 offset:51488
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[252:255], v[44:47], v[76:79], a[252:255]
+	.loc	1 288 9                         ; matmul_kernel_cd_regclass.py:288:9
+	buffer_load_dwordx4 v17, s[0:3], 0 offen lds
+	s_mov_b32 m0, s36
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[244:247], v[60:63], v[76:79], a[244:247]
+	.loc	1 288 9                         ; matmul_kernel_cd_regclass.py:288:9
+	buffer_load_dwordx4 v18, s[0:3], 0 offen lds
+	s_mov_b32 m0, s37
+	.loc	1 267 18                        ; matmul_kernel_cd_regclass.py:267:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[240:243], v[68:71], v[76:79], a[240:243]
+	.loc	1 288 9                         ; matmul_kernel_cd_regclass.py:288:9
+	buffer_load_dwordx4 v19, s[0:3], 0 offen lds
+	s_mov_b32 m0, s38
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[236:239], v[44:47], v[84:87], a[236:239]
+	.loc	1 288 9                         ; matmul_kernel_cd_regclass.py:288:9
+	buffer_load_dwordx4 v25, s[0:3], 0 offen lds
+	.loc	1 301 9                         ; matmul_kernel_cd_regclass.py:301:9
+	s_mov_b32 m0, s39
+	; asyncmark
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[228:231], v[60:63], v[84:87], a[228:231]
+	; wait_asyncmark(5)
+	.loc	1 298 9                         ; matmul_kernel_cd_regclass.py:298:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[220:223], v[68:71], v[84:87], a[220:223]
+	.loc	1 301 9                         ; matmul_kernel_cd_regclass.py:301:9
+	buffer_load_dwordx4 v26, s[4:7], 0 offen lds
+	s_mov_b32 m0, s40
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[216:219], v[44:47], v[92:95], a[216:219]
+	.loc	1 301 9                         ; matmul_kernel_cd_regclass.py:301:9
+	buffer_load_dwordx4 v27, s[4:7], 0 offen lds
+	s_mov_b32 m0, s41
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[208:211], v[60:63], v[92:95], a[208:211]
+	.loc	1 301 9                         ; matmul_kernel_cd_regclass.py:301:9
+	buffer_load_dwordx4 v28, s[4:7], 0 offen lds
+	s_mov_b32 m0, s42
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[204:207], v[68:71], v[92:95], a[204:207]
+	.loc	1 301 9                         ; matmul_kernel_cd_regclass.py:301:9
+	buffer_load_dwordx4 v29, s[4:7], 0 offen lds
+	.loc	1 314 9                         ; matmul_kernel_cd_regclass.py:314:9
+	s_mov_b32 m0, s43
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[200:203], v[44:47], v[100:103], a[200:203]
+	v_mfma_f32_16x16x32_f16 a[192:195], v[60:63], v[100:103], a[192:195]
+	v_mfma_f32_16x16x32_f16 a[224:227], v[68:71], v[100:103], a[224:227]
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	v_mfma_f32_16x16x32_f16 a[188:191], v[44:47], v[108:111], a[188:191]
+	v_mfma_f32_16x16x32_f16 a[180:183], v[60:63], v[108:111], a[180:183]
+	v_mfma_f32_16x16x32_f16 a[176:179], v[68:71], v[108:111], a[176:179]
+	v_mfma_f32_16x16x32_f16 a[172:175], v[44:47], v[116:119], a[172:175]
+	v_mfma_f32_16x16x32_f16 a[164:167], v[60:63], v[116:119], a[164:167]
+	v_mfma_f32_16x16x32_f16 a[160:163], v[68:71], v[116:119], a[160:163]
+	v_mfma_f32_16x16x32_f16 a[156:159], v[44:47], v[124:127], a[156:159]
+	v_mfma_f32_16x16x32_f16 a[148:151], v[60:63], v[124:127], a[148:151]
+	v_mfma_f32_16x16x32_f16 a[144:147], v[68:71], v[124:127], a[144:147]
+	v_mfma_f32_16x16x32_f16 a[140:143], v[44:47], v[132:135], a[140:143]
+	v_mfma_f32_16x16x32_f16 a[132:135], v[60:63], v[132:135], a[132:135]
+	v_mfma_f32_16x16x32_f16 a[128:131], v[68:71], v[132:135], a[128:131]
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[252:255], v[48:51], v[80:83], a[252:255]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[248:251], v[52:55], v[76:79], a[248:251]
+	v_mfma_f32_16x16x32_f16 a[244:247], v[64:67], v[80:83], a[244:247]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[240:243], v[72:75], v[80:83], a[240:243]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[236:239], v[48:51], v[88:91], a[236:239]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[232:235], v[52:55], v[84:87], a[232:235]
+	v_mfma_f32_16x16x32_f16 a[228:231], v[64:67], v[88:91], a[228:231]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[220:223], v[72:75], v[88:91], a[220:223]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[216:219], v[48:51], v[96:99], a[216:219]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[212:215], v[52:55], v[92:95], a[212:215]
+	v_mfma_f32_16x16x32_f16 a[208:211], v[64:67], v[96:99], a[208:211]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[204:207], v[72:75], v[96:99], a[204:207]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[200:203], v[48:51], v[104:107], a[200:203]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[196:199], v[52:55], v[100:103], a[196:199]
+	v_mfma_f32_16x16x32_f16 a[192:195], v[64:67], v[104:107], a[192:195]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[224:227], v[72:75], v[104:107], a[224:227]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	v_mfma_f32_16x16x32_f16 a[188:191], v[48:51], v[112:115], a[188:191]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[184:187], v[52:55], v[108:111], a[184:187]
+	v_mfma_f32_16x16x32_f16 a[180:183], v[64:67], v[112:115], a[180:183]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[176:179], v[72:75], v[112:115], a[176:179]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[172:175], v[48:51], v[120:123], a[172:175]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[168:171], v[52:55], v[116:119], a[168:171]
+	v_mfma_f32_16x16x32_f16 a[164:167], v[64:67], v[120:123], a[164:167]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[160:163], v[72:75], v[120:123], a[160:163]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[156:159], v[48:51], v[128:131], a[156:159]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[152:155], v[52:55], v[124:127], a[152:155]
+	v_mfma_f32_16x16x32_f16 a[148:151], v[64:67], v[128:131], a[148:151]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[144:147], v[72:75], v[128:131], a[144:147]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[140:143], v[48:51], v[136:139], a[140:143]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[136:139], v[52:55], v[132:135], a[136:139]
+	v_mfma_f32_16x16x32_f16 a[132:135], v[64:67], v[136:139], a[132:135]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[128:131], v[72:75], v[136:139], a[128:131]
+	.loc	1 299 19                        ; matmul_kernel_cd_regclass.py:299:19
+	ds_read_b128 v[44:47], v39
+	ds_read_b128 v[48:51], v39 offset:64
+	ds_read_b128 v[52:55], v39 offset:256
+	ds_read_b128 v[60:63], v39 offset:320
+	ds_read_b128 v[64:67], v39 offset:512
+	ds_read_b128 v[68:71], v39 offset:576
+	ds_read_b128 v[72:75], v39 offset:768
+	ds_read_b128 v[140:143], v39 offset:832
+	; asyncmark
+	; wait_asyncmark(5)
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	s_waitcnt vmcnt(20) lgkmcnt(7)
+	v_mfma_f32_16x16x32_f16 a[124:127], v[44:47], v[76:79], a[124:127]
+	.loc	1 311 9                         ; matmul_kernel_cd_regclass.py:311:9
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[120:123], v[52:55], v[76:79], a[120:123]
+	.loc	1 314 9                         ; matmul_kernel_cd_regclass.py:314:9
+	buffer_load_dwordx4 v30, s[4:7], 0 offen lds
+	s_mov_b32 m0, s44
+	.loc	1 312 18                        ; matmul_kernel_cd_regclass.py:312:18
+	v_add_u32_e32 v39, 0x107c0, v24
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[116:119], v[64:67], v[76:79], a[116:119]
+	.loc	1 314 9                         ; matmul_kernel_cd_regclass.py:314:9
+	buffer_load_dwordx4 v31, s[4:7], 0 offen lds
+	s_mov_b32 m0, s45
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[112:115], v[72:75], v[76:79], a[112:115]
+	.loc	1 314 9                         ; matmul_kernel_cd_regclass.py:314:9
+	buffer_load_dwordx4 v32, s[4:7], 0 offen lds
+	s_mov_b32 m0, s46
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[108:111], v[44:47], v[84:87], a[108:111]
+	.loc	1 314 9                         ; matmul_kernel_cd_regclass.py:314:9
+	buffer_load_dwordx4 v33, s[4:7], 0 offen lds
+	.loc	1 327 9                         ; matmul_kernel_cd_regclass.py:327:9
+	s_mov_b32 m0, s47
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[104:107], v[52:55], v[84:87], a[104:107]
+	v_mfma_f32_16x16x32_f16 a[100:103], v[64:67], v[84:87], a[100:103]
+	v_mfma_f32_16x16x32_f16 a[96:99], v[72:75], v[84:87], a[96:99]
+	v_mfma_f32_16x16x32_f16 a[92:95], v[44:47], v[92:95], a[92:95]
+	v_mfma_f32_16x16x32_f16 a[88:91], v[52:55], v[92:95], a[88:91]
+	v_mfma_f32_16x16x32_f16 a[84:87], v[64:67], v[92:95], a[84:87]
+	v_mfma_f32_16x16x32_f16 a[80:83], v[72:75], v[92:95], a[80:83]
+	.loc	1 283 18                        ; matmul_kernel_cd_regclass.py:283:18
+	v_mfma_f32_16x16x32_f16 a[248:251], v[56:59], v[80:83], a[248:251]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[232:235], v[56:59], v[88:91], a[232:235]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[212:215], v[56:59], v[96:99], a[212:215]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[196:199], v[56:59], v[104:107], a[196:199]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 296 18                        ; matmul_kernel_cd_regclass.py:296:18
+	v_mfma_f32_16x16x32_f16 a[184:187], v[56:59], v[112:115], a[184:187]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[168:171], v[56:59], v[120:123], a[168:171]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[152:155], v[56:59], v[128:131], a[152:155]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[136:139], v[56:59], v[136:139], a[136:139]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[124:127], v[48:51], v[80:83], a[124:127]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[120:123], v[60:63], v[80:83], a[120:123]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[116:119], v[68:71], v[80:83], a[116:119]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[112:115], v[140:143], v[80:83], a[112:115]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[108:111], v[48:51], v[88:91], a[108:111]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[104:107], v[60:63], v[88:91], a[104:107]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[100:103], v[68:71], v[88:91], a[100:103]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[96:99], v[140:143], v[88:91], a[96:99]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[92:95], v[48:51], v[96:99], a[92:95]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[88:91], v[60:63], v[96:99], a[88:91]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[84:87], v[68:71], v[96:99], a[84:87]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[80:83], v[140:143], v[96:99], a[80:83]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[76:79], v[44:47], v[100:103], a[76:79]
+	v_mfma_f32_16x16x32_f16 a[72:75], v[52:55], v[100:103], a[72:75]
+	v_mfma_f32_16x16x32_f16 a[68:71], v[64:67], v[100:103], a[68:71]
+	v_mfma_f32_16x16x32_f16 a[64:67], v[72:75], v[100:103], a[64:67]
+	.loc	1 312 18                        ; matmul_kernel_cd_regclass.py:312:18
+	ds_read_b128 v[56:59], v39
+	ds_read_b128 v[100:103], v39 offset:64
+	ds_read_b128 v[92:95], v39 offset:256
+	ds_read_b128 v[96:99], v39 offset:320
+	ds_read_b128 v[84:87], v39 offset:512
+	ds_read_b128 v[88:91], v39 offset:576
+	ds_read_b128 v[76:79], v39 offset:768
+	ds_read_b128 v[80:83], v39 offset:832
+	; asyncmark
+	; wait_asyncmark(5)
+	.loc	1 324 9                         ; matmul_kernel_cd_regclass.py:324:9
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 327 9                         ; matmul_kernel_cd_regclass.py:327:9
+	buffer_load_dwordx4 v34, s[0:3], 0 offen lds
+	s_mov_b32 m0, s48
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	v_mfma_f32_16x16x32_f16 a[60:63], v[44:47], v[108:111], a[60:63]
+	.loc	1 327 9                         ; matmul_kernel_cd_regclass.py:327:9
+	buffer_load_dwordx4 v35, s[0:3], 0 offen lds
+	s_mov_b32 m0, s49
+	s_nop 0
+	buffer_load_dwordx4 v36, s[0:3], 0 offen lds
+	s_mov_b32 m0, s50
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	v_mfma_f32_16x16x32_f16 a[56:59], v[52:55], v[108:111], a[56:59]
+	.loc	1 327 9                         ; matmul_kernel_cd_regclass.py:327:9
+	buffer_load_dwordx4 v37, s[0:3], 0 offen lds
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	v_mfma_f32_16x16x32_f16 a[52:55], v[64:67], v[108:111], a[52:55]
+	v_mfma_f32_16x16x32_f16 a[44:47], v[44:47], v[116:119], a[44:47]
+	v_mfma_f32_16x16x32_f16 a[40:43], v[52:55], v[116:119], a[40:43]
+	v_mfma_f32_16x16x32_f16 a[36:39], v[64:67], v[116:119], a[36:39]
+	v_mfma_f32_16x16x32_f16 a[28:31], v[44:47], v[124:127], a[28:31]
+	v_mfma_f32_16x16x32_f16 a[24:27], v[52:55], v[124:127], a[24:27]
+	v_mfma_f32_16x16x32_f16 a[20:23], v[64:67], v[124:127], a[20:23]
+	v_mfma_f32_16x16x32_f16 a[12:15], v[44:47], v[132:135], a[12:15]
+	v_mfma_f32_16x16x32_f16 a[8:11], v[52:55], v[132:135], a[8:11]
+	v_mfma_f32_16x16x32_f16 a[4:7], v[64:67], v[132:135], a[4:7]
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[76:79], v[48:51], v[104:107], a[76:79]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[72:75], v[60:63], v[104:107], a[72:75]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[68:71], v[68:71], v[104:107], a[68:71]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	v_mfma_f32_16x16x32_f16 a[60:63], v[48:51], v[112:115], a[60:63]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[56:59], v[60:63], v[112:115], a[56:59]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[52:55], v[68:71], v[112:115], a[52:55]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[48:51], v[72:75], v[108:111], a[48:51]
+	v_mfma_f32_16x16x32_f16 a[44:47], v[48:51], v[120:123], a[44:47]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[40:43], v[60:63], v[120:123], a[40:43]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[36:39], v[68:71], v[120:123], a[36:39]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[32:35], v[72:75], v[116:119], a[32:35]
+	v_mfma_f32_16x16x32_f16 a[28:31], v[48:51], v[128:131], a[28:31]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[24:27], v[60:63], v[128:131], a[24:27]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[20:23], v[68:71], v[128:131], a[20:23]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[16:19], v[72:75], v[124:127], a[16:19]
+	v_mfma_f32_16x16x32_f16 a[12:15], v[48:51], v[136:139], a[12:15]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[8:11], v[60:63], v[136:139], a[8:11]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[4:7], v[68:71], v[136:139], a[4:7]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[0:3], v[72:75], v[132:135], a[0:3]
+	.loc	1 325 17                        ; matmul_kernel_cd_regclass.py:325:17
+	ds_read_b128 v[68:71], v0
+	ds_read_b128 v[72:75], v0 offset:64
+	ds_read_b128 v[60:63], v0 offset:256
+	ds_read_b128 v[64:67], v0 offset:320
+	ds_read_b128 v[48:51], v0 offset:512
+	ds_read_b128 v[52:55], v0 offset:576
+	ds_read_b128 v[40:43], v0 offset:768
+	ds_read_b128 v[44:47], v0 offset:832
+	; asyncmark
+	.loc	1 309 18                        ; matmul_kernel_cd_regclass.py:309:18
+	v_mfma_f32_16x16x32_f16 a[64:67], v[140:143], v[104:107], a[64:67]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 322 18                        ; matmul_kernel_cd_regclass.py:322:18
+	v_mfma_f32_16x16x32_f16 a[48:51], v[140:143], v[112:115], a[48:51]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[32:35], v[140:143], v[120:123], a[32:35]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[16:19], v[140:143], v[128:131], a[16:19]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[0:3], v[140:143], v[136:139], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 225 5                         ; matmul_kernel_cd_regclass.py:225:5
+	s_cbranch_scc1 .LBB0_1
+; %bb.2:
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 344 22                        ; matmul_kernel_cd_regclass.py:344:22
+	s_mul_i32 s0, s15, s19
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	s_waitcnt lgkmcnt(1)
+	v_mfma_f32_16x16x32_f16 a[200:203], v[56:59], v[40:43], a[200:203]
+	; wait_asyncmark(5)
+	.loc	1 352 5                         ; matmul_kernel_cd_regclass.py:352:5
+	s_waitcnt vmcnt(20) lgkmcnt(0)
+	s_barrier
+	.loc	1 354 13                        ; matmul_kernel_cd_regclass.py:354:13
+	ds_read_b128 v[30:33], v0 offset:33760
+	ds_read_b128 v[34:37], v0 offset:33824
+	ds_read_b128 v[104:107], v0 offset:34016
+	ds_read_b128 v[108:111], v0 offset:34080
+	ds_read_b128 v[112:115], v0 offset:34272
+	ds_read_b128 v[116:119], v0 offset:34336
+	ds_read_b128 v[120:123], v0 offset:34528
+	ds_read_b128 v[124:127], v0 offset:34592
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_ashr_i32 s1, s0, 31
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[200:203], v[100:103], v[44:47], a[200:203]
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_lshl_b64 s[0:1], s[0:1], 1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_add_u32 s2, s12, s0
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	s_nop 5
+	v_accvgpr_read_b32 v196, a200
+	v_accvgpr_read_b32 v197, a201
+	v_accvgpr_read_b32 v198, a202
+	v_accvgpr_read_b32 v199, a203
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_accvgpr_mov_b32 a200, a224
+	v_accvgpr_mov_b32 a201, a225
+	v_accvgpr_mov_b32 a202, a226
+	v_accvgpr_mov_b32 a203, a227
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_addc_u32 s3, s13, s1
+	s_ashr_i32 s15, s14, 31
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[252:255], v[56:59], v[68:71], a[252:255]
+	.loc	1 342 15                        ; matmul_kernel_cd_regclass.py:342:15
+	v_lshrrev_b32_e32 v1, 4, v21
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_lshl_b64 s[0:1], s[14:15], 1
+	.loc	1 342 15                        ; matmul_kernel_cd_regclass.py:342:15
+	v_or_b32_e32 v3, 16, v1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[248:251], v[92:95], v[68:71], a[248:251]
+	.loc	1 343 15                        ; matmul_kernel_cd_regclass.py:343:15
+	v_lshlrev_b32_e32 v2, 3, v23
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_add_u32 s0, s2, s0
+	.loc	1 342 15                        ; matmul_kernel_cd_regclass.py:342:15
+	v_or_b32_e32 v4, 32, v1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[240:243], v[76:79], v[68:71], a[240:243]
+	.loc	1 342 15                        ; matmul_kernel_cd_regclass.py:342:15
+	v_or_b32_e32 v5, 48, v1
+	v_or_b32_e32 v6, 64, v1
+	v_or_b32_e32 v7, 0x50, v1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[236:239], v[56:59], v[60:63], a[236:239]
+	.loc	1 342 15                        ; matmul_kernel_cd_regclass.py:342:15
+	v_or_b32_e32 v25, 0x60, v1
+	v_or_b32_e32 v26, 0x70, v1
+	.loc	1 344 14                        ; matmul_kernel_cd_regclass.py:344:14
+	s_addc_u32 s1, s3, s1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[232:235], v[92:95], v[60:63], a[232:235]
+	.loc	1 345 20                        ; matmul_kernel_cd_regclass.py:345:20
+	v_mad_u64_u32 v[18:19], s[2:3], v1, s19, v[2:3]
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[220:223], v[76:79], v[60:63], a[220:223]
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[216:219], v[56:59], v[48:51], a[216:219]
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[212:215], v[92:95], v[48:51], a[212:215]
+	.loc	1 358 15                        ; matmul_kernel_cd_regclass.py:358:15
+	v_add_u32_e32 v1, 0x18ba0, v24
+	; wait_asyncmark(4)
+	.loc	1 357 5                         ; matmul_kernel_cd_regclass.py:357:5
+	s_waitcnt vmcnt(16) lgkmcnt(0)
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[204:207], v[76:79], v[48:51], a[204:207]
+	.loc	1 357 5                         ; matmul_kernel_cd_regclass.py:357:5
+	s_barrier
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[196:199], v[92:95], v[40:43], a[196:199]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[200:203], v[76:79], v[40:43], a[200:203]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[188:191], v[56:59], v[30:33], a[188:191]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[184:187], v[92:95], v[30:33], a[184:187]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[176:179], v[76:79], v[30:33], a[176:179]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[172:175], v[56:59], v[104:107], a[172:175]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[168:171], v[92:95], v[104:107], a[168:171]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[160:163], v[76:79], v[104:107], a[160:163]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[156:159], v[56:59], v[112:115], a[156:159]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[152:155], v[92:95], v[112:115], a[152:155]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 345 20                        ; matmul_kernel_cd_regclass.py:345:20
+	v_mad_u64_u32 v[14:15], s[2:3], v4, s19, v[2:3]
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[144:147], v[76:79], v[112:115], a[144:147]
+	.loc	1 345 20                        ; matmul_kernel_cd_regclass.py:345:20
+	v_mad_u64_u32 v[12:13], s[2:3], v5, s19, v[2:3]
+	v_mad_u64_u32 v[4:5], s[2:3], v26, s19, v[2:3]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[140:143], v[56:59], v[120:123], a[140:143]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 345 20                        ; matmul_kernel_cd_regclass.py:345:20
+	v_mad_u64_u32 v[16:17], s[2:3], v3, s19, v[2:3]
+	v_mad_u64_u32 v[10:11], s[2:3], v6, s19, v[2:3]
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[136:139], v[92:95], v[120:123], a[136:139]
+	.loc	1 345 20                        ; matmul_kernel_cd_regclass.py:345:20
+	v_mad_u64_u32 v[8:9], s[2:3], v7, s19, v[2:3]
+	v_mad_u64_u32 v[6:7], s[2:3], v25, s19, v[2:3]
+	.loc	1 347 35                        ; matmul_kernel_cd_regclass.py:347:35
+	s_lshl_b32 s2, s19, 8
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[128:131], v[76:79], v[120:123], a[128:131]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_lshlrev_b32_e32 v5, 5, v20
+	.loc	1 347 35                        ; matmul_kernel_cd_regclass.py:347:35
+	s_ashr_i32 s4, s2, 1
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_and_b32_e32 v5, 0x200, v5
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[252:255], v[100:103], v[72:75], a[252:255]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	s_and_b32 s2, s18, 0x80
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[248:251], v[96:99], v[72:75], a[248:251]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_bfe_i32 v2, v20, 2, 1
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[244:247], v[84:87], v[68:71], a[244:247]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_bfe_i32 v3, v20, 3, 1
+	v_lshl_or_b32 v5, s2, 1, v5
+	s_movk_i32 s2, 0x1450
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[240:243], v[80:83], v[72:75], a[240:243]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_and_b32_e32 v3, 0x2490, v3
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[236:239], v[100:103], v[64:67], a[236:239]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	s_bfe_i32 s3, s18, 0x10007
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[232:235], v[96:99], v[64:67], a[232:235]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	s_cmp_eq_u32 s10, 0
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[228:231], v[84:87], v[60:63], a[228:231]
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_lshlrev_b32_e32 v19, 1, v16
+	v_lshlrev_b32_e32 v17, 1, v14
+	v_lshlrev_b32_e32 v15, 1, v12
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[220:223], v[80:83], v[64:67], a[220:223]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_lshlrev_b32_e32 v13, 1, v10
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[216:219], v[100:103], v[52:55], a[216:219]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_lshlrev_b32_e32 v11, 1, v8
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[212:215], v[96:99], v[52:55], a[212:215]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_lshlrev_b32_e32 v9, 1, v6
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[208:211], v[84:87], v[48:51], a[208:211]
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_lshlrev_b32_e32 v7, 1, v4
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_add_lshl_u32 v16, v16, s4, 1
+	v_add_lshl_u32 v14, v14, s4, 1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[204:207], v[80:83], v[52:55], a[204:207]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_add_lshl_u32 v12, v12, s4, 1
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[196:199], v[96:99], v[44:47], a[196:199]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_add_lshl_u32 v10, v10, s4, 1
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[192:195], v[84:87], v[40:43], a[192:195]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_add_lshl_u32 v8, v8, s4, 1
+	v_add_lshl_u32 v6, v6, s4, 1
+	v_add_lshl_u32 v4, v4, s4, 1
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[200:203], v[80:83], v[44:47], a[200:203]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[188:191], v[100:103], v[34:37], a[188:191]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[184:187], v[96:99], v[34:37], a[184:187]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[180:183], v[84:87], v[30:33], a[180:183]
+	v_mfma_f32_16x16x32_f16 a[176:179], v[80:83], v[34:37], a[176:179]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[172:175], v[100:103], v[108:111], a[172:175]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[168:171], v[96:99], v[108:111], a[168:171]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[164:167], v[84:87], v[104:107], a[164:167]
+	v_mfma_f32_16x16x32_f16 a[160:163], v[80:83], v[108:111], a[160:163]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[156:159], v[100:103], v[116:119], a[156:159]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[152:155], v[96:99], v[116:119], a[152:155]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[148:151], v[84:87], v[112:115], a[148:151]
+	v_mfma_f32_16x16x32_f16 a[144:147], v[80:83], v[116:119], a[144:147]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[140:143], v[100:103], v[124:127], a[140:143]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[136:139], v[96:99], v[124:127], a[136:139]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[132:135], v[84:87], v[120:123], a[132:135]
+	v_mfma_f32_16x16x32_f16 a[128:131], v[80:83], v[124:127], a[128:131]
+	.loc	1 358 15                        ; matmul_kernel_cd_regclass.py:358:15
+	ds_read_b128 v[56:59], v1
+	ds_read_b128 v[76:79], v1 offset:64
+	ds_read_b128 v[80:83], v1 offset:256
+	ds_read_b128 v[84:87], v1 offset:320
+	ds_read_b128 v[98:101], v1 offset:512
+	ds_read_b128 v[128:131], v1 offset:576
+	ds_read_b128 v[132:135], v1 offset:768
+	ds_read_b128 v[136:139], v1 offset:832
+	.loc	1 363 14                        ; matmul_kernel_cd_regclass.py:363:14
+	v_add_u32_e32 v1, 0x149c0, v24
+	; wait_asyncmark(3)
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	s_waitcnt vmcnt(12) lgkmcnt(1)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[132:135], v[120:123], a[0:3]
+	.loc	1 361 5                         ; matmul_kernel_cd_regclass.py:361:5
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[124:127], v[56:59], v[68:71], a[124:127]
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[120:123], v[80:83], v[68:71], a[120:123]
+	v_mfma_f32_16x16x32_f16 a[116:119], v[98:101], v[68:71], a[116:119]
+	v_mfma_f32_16x16x32_f16 a[112:115], v[132:135], v[68:71], a[112:115]
+	v_mfma_f32_16x16x32_f16 a[108:111], v[56:59], v[60:63], a[108:111]
+	v_mfma_f32_16x16x32_f16 a[104:107], v[80:83], v[60:63], a[104:107]
+	v_mfma_f32_16x16x32_f16 a[100:103], v[98:101], v[60:63], a[100:103]
+	v_mfma_f32_16x16x32_f16 a[96:99], v[132:135], v[60:63], a[96:99]
+	v_mfma_f32_16x16x32_f16 a[92:95], v[56:59], v[48:51], a[92:95]
+	v_mfma_f32_16x16x32_f16 a[88:91], v[80:83], v[48:51], a[88:91]
+	v_mfma_f32_16x16x32_f16 a[76:79], v[56:59], v[40:43], a[76:79]
+	v_mfma_f32_16x16x32_f16 a[72:75], v[80:83], v[40:43], a[72:75]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[60:63], v[56:59], v[30:33], a[60:63]
+	v_mfma_f32_16x16x32_f16 a[56:59], v[80:83], v[30:33], a[56:59]
+	v_mfma_f32_16x16x32_f16 a[44:47], v[56:59], v[104:107], a[44:47]
+	v_mfma_f32_16x16x32_f16 a[40:43], v[80:83], v[104:107], a[40:43]
+	v_mfma_f32_16x16x32_f16 a[28:31], v[56:59], v[112:115], a[28:31]
+	v_mfma_f32_16x16x32_f16 a[24:27], v[80:83], v[112:115], a[24:27]
+	v_mfma_f32_16x16x32_f16 a[12:15], v[56:59], v[120:123], a[12:15]
+	v_mfma_f32_16x16x32_f16 a[8:11], v[80:83], v[120:123], a[8:11]
+	v_mfma_f32_16x16x32_f16 a[0:3], v[136:139], v[124:127], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[244:247], v[88:91], v[72:75], a[244:247]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[228:231], v[88:91], v[64:67], a[228:231]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[208:211], v[88:91], v[52:55], a[208:211]
+	;;#ASMSTART
+	;;#ASMEND
+	s_nop 2
+	v_accvgpr_read_b32 v167, a3
+	v_accvgpr_read_b32 v166, a2
+	v_accvgpr_read_b32 v165, a1
+	v_accvgpr_read_b32 v164, a0
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_accvgpr_mov_b32 a0, a252
+	v_accvgpr_mov_b32 a1, a253
+	v_accvgpr_mov_b32 a2, a254
+	v_accvgpr_mov_b32 a3, a255
+	.loc	1 351 14                        ; matmul_kernel_cd_regclass.py:351:14
+	v_mfma_f32_16x16x32_f16 a[192:195], v[88:91], v[44:47], a[192:195]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[180:183], v[88:91], v[34:37], a[180:183]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[164:167], v[88:91], v[108:111], a[164:167]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	v_mfma_f32_16x16x32_f16 a[148:151], v[88:91], v[116:119], a[148:151]
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[132:135], v[88:91], v[124:127], a[132:135]
+	.loc	1 363 14                        ; matmul_kernel_cd_regclass.py:363:14
+	ds_read_b128 v[140:143], v1
+	ds_read_b128 v[144:147], v1 offset:64
+	ds_read_b128 v[148:151], v1 offset:256
+	ds_read_b128 v[152:155], v1 offset:320
+	ds_read_b128 v[156:159], v1 offset:512
+	ds_read_b128 v[160:163], v1 offset:576
+	ds_read_b128 v[90:93], v1 offset:768
+	ds_read_b128 v[94:97], v1 offset:832
+	; wait_asyncmark(2)
+	.loc	1 366 5                         ; matmul_kernel_cd_regclass.py:366:5
+	s_waitcnt vmcnt(8) lgkmcnt(0)
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[124:127], v[76:79], v[72:75], a[124:127]
+	.loc	1 366 5                         ; matmul_kernel_cd_regclass.py:366:5
+	s_barrier
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[120:123], v[84:87], v[72:75], a[120:123]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[116:119], v[128:131], v[72:75], a[116:119]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 356 14                        ; matmul_kernel_cd_regclass.py:356:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[112:115], v[136:139], v[72:75], a[112:115]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[108:111], v[76:79], v[64:67], a[108:111]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[104:107], v[84:87], v[64:67], a[104:107]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[100:103], v[128:131], v[64:67], a[100:103]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[96:99], v[136:139], v[64:67], a[96:99]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[92:95], v[76:79], v[52:55], a[92:95]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[88:91], v[84:87], v[52:55], a[88:91]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[76:79], v[76:79], v[44:47], a[76:79]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[72:75], v[84:87], v[44:47], a[72:75]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[60:63], v[76:79], v[34:37], a[60:63]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[56:59], v[84:87], v[34:37], a[56:59]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[44:47], v[76:79], v[108:111], a[44:47]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[40:43], v[84:87], v[108:111], a[40:43]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[28:31], v[76:79], v[116:119], a[28:31]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[24:27], v[84:87], v[116:119], a[24:27]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[12:15], v[76:79], v[124:127], a[12:15]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[8:11], v[84:87], v[124:127], a[8:11]
+	.loc	1 367 13                        ; matmul_kernel_cd_regclass.py:367:13
+	ds_read_b128 v[86:89], v0 offset:16896
+	ds_read_b128 v[82:85], v0 offset:16960
+	ds_read_b128 v[78:81], v0 offset:17152
+	ds_read_b128 v[74:77], v0 offset:17216
+	ds_read_b128 v[70:73], v0 offset:17408
+	ds_read_b128 v[66:69], v0 offset:17472
+	ds_read_b128 v[62:65], v0 offset:17664
+	ds_read_b128 v[58:61], v0 offset:17728
+	v_accvgpr_read_b32 v191, a27
+	v_accvgpr_read_b32 v190, a26
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_waitcnt lgkmcnt(7)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[140:143], v[86:89], a[0:3]
+	v_accvgpr_read_b32 v189, a25
+	v_accvgpr_read_b32 v188, a24
+	v_accvgpr_read_b32 v195, a31
+	s_waitcnt lgkmcnt(6)
+	v_mfma_f32_16x16x32_f16 a[24:27], v[144:147], v[82:85], a[0:3]
+	v_accvgpr_read_b32 v194, a30
+	v_accvgpr_read_b32 v193, a29
+	v_accvgpr_read_b32 v192, a28
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[16:19], v[132:135], v[112:115], a[16:19]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_accvgpr_mov_b32 a0, a248
+	v_accvgpr_mov_b32 a1, a249
+	v_accvgpr_mov_b32 a2, a250
+	v_accvgpr_mov_b32 a3, a251
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[16:19], v[136:139], v[116:119], a[16:19]
+	;;#ASMSTART
+	;;#ASMEND
+	v_accvgpr_read_b32 v179, a15
+	v_accvgpr_read_b32 v178, a14
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[148:151], v[86:89], a[0:3]
+	v_accvgpr_read_b32 v177, a13
+	v_accvgpr_read_b32 v176, a12
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[28:31], v[152:155], v[82:85], a[0:3]
+	v_accvgpr_read_b32 v175, a11
+	v_accvgpr_read_b32 v174, a10
+	v_accvgpr_read_b32 v183, a19
+	v_accvgpr_read_b32 v182, a18
+	v_accvgpr_read_b32 v181, a17
+	v_accvgpr_mov_b32 a0, a244
+	v_accvgpr_mov_b32 a1, a245
+	v_accvgpr_mov_b32 a2, a246
+	v_accvgpr_mov_b32 a3, a247
+	v_accvgpr_read_b32 v180, a16
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[20:23], v[98:101], v[112:115], a[20:23]
+	v_accvgpr_read_b32 v173, a9
+	v_accvgpr_read_b32 v172, a8
+	; wait_asyncmark(1)
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_waitcnt vmcnt(4)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[156:159], v[86:89], a[0:3]
+	.loc	1 373 5                         ; matmul_kernel_cd_regclass.py:373:5
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[16:19], v[160:163], v[82:85], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[20:23], v[128:131], v[116:119], a[20:23]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v1, a25
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[84:87], v[98:101], v[48:51], a[84:87]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 1
+	v_accvgpr_mov_b32 a0, a240
+	v_accvgpr_mov_b32 a1, a241
+	v_accvgpr_mov_b32 a2, a242
+	v_accvgpr_mov_b32 a3, a243
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[80:83], v[132:135], v[48:51], a[80:83]
+	v_accvgpr_read_b32 v187, a23
+	v_accvgpr_read_b32 v186, a22
+	v_accvgpr_read_b32 v185, a21
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[90:93], v[86:89], a[0:3]
+	v_accvgpr_read_b32 v184, a20
+	v_mfma_f32_16x16x32_f16 a[12:15], v[94:97], v[82:85], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[68:71], v[98:101], v[40:43], a[68:71]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 4
+	v_accvgpr_mov_b32 a0, a236
+	v_accvgpr_mov_b32 a1, a237
+	v_accvgpr_mov_b32 a2, a238
+	v_accvgpr_mov_b32 a3, a239
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[64:67], v[132:135], v[40:43], a[64:67]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 0
+	v_mfma_f32_16x16x32_f16 a[0:3], v[140:143], v[78:81], a[0:3]
+	v_mfma_f32_16x16x32_f16 a[20:23], v[144:147], v[74:77], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[52:55], v[98:101], v[30:33], a[52:55]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 5
+	v_accvgpr_mov_b32 a0, a232
+	v_accvgpr_mov_b32 a1, a233
+	v_accvgpr_mov_b32 a2, a234
+	v_accvgpr_mov_b32 a3, a235
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[48:51], v[132:135], v[30:33], a[48:51]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 0
+	v_mfma_f32_16x16x32_f16 a[0:3], v[148:151], v[78:81], a[0:3]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[4:7], v[98:101], v[120:123], a[4:7]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[8:11], v[152:155], v[74:77], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[192:195], v[156:159], v[62:65], a[192:195]
+	s_nop 4
+	v_accvgpr_mov_b32 a0, a228
+	v_accvgpr_mov_b32 a1, a229
+	v_accvgpr_mov_b32 a2, a230
+	v_accvgpr_mov_b32 a3, a231
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[84:87], v[128:131], v[52:55], a[84:87]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[156:159], v[78:81], a[0:3]
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[80:83], v[136:139], v[52:55], a[80:83]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[68:71], v[128:131], v[44:47], a[68:71]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 360 14                        ; matmul_kernel_cd_regclass.py:360:14
+	v_mfma_f32_16x16x32_f16 a[64:67], v[136:139], v[44:47], a[64:67]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[52:55], v[128:131], v[34:37], a[52:55]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[48:51], v[136:139], v[34:37], a[48:51]
+	.loc	1 374 13                        ; matmul_kernel_cd_regclass.py:374:13
+	ds_read_b128 v[54:57], v0 offset:50656
+	ds_read_b128 v[50:53], v0 offset:50720
+	ds_read_b128 v[46:49], v0 offset:50912
+	ds_read_b128 v[42:45], v0 offset:50976
+	ds_read_b128 v[38:41], v0 offset:51168
+	ds_read_b128 v[34:37], v0 offset:51232
+	ds_read_b128 v[30:33], v0 offset:51424
+	ds_read_b128 v[26:29], v0 offset:51488
+	.loc	1 378 15                        ; matmul_kernel_cd_regclass.py:378:15
+	v_add_u32_e32 v0, 0x1cda0, v24
+	; wait_asyncmark(0)
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	s_waitcnt vmcnt(0)
+	v_mfma_f32_16x16x32_f16 a[4:7], v[128:131], v[124:127], a[4:7]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 377 5                         ; matmul_kernel_cd_regclass.py:377:5
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[244:247], v[160:163], v[58:61], a[192:195]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[36:39], v[98:101], v[104:107], a[36:39]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	s_nop 1
+	v_accvgpr_mov_b32 a192, a200
+	v_accvgpr_mov_b32 a193, a201
+	v_accvgpr_read_b32 v171, a7
+	v_accvgpr_read_b32 v170, a6
+	v_accvgpr_read_b32 v169, a5
+	v_accvgpr_read_b32 v168, a4
+	v_mfma_f32_16x16x32_f16 a[4:7], v[160:163], v[74:77], a[0:3]
+	v_accvgpr_mov_b32 a194, a202
+	v_accvgpr_mov_b32 a195, a203
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[32:35], v[132:135], v[104:107], a[32:35]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_accvgpr_mov_b32 a0, a220
+	v_accvgpr_mov_b32 a1, a221
+	v_accvgpr_mov_b32 a2, a222
+	v_accvgpr_mov_b32 a3, a223
+	v_mfma_f32_16x16x32_f16 a[204:207], v[90:93], v[70:73], a[204:207]
+	s_nop 0
+	v_mfma_f32_16x16x32_f16 a[0:3], v[90:93], v[78:81], a[0:3]
+	v_mfma_f32_16x16x32_f16 a[196:199], v[148:151], v[62:65], a[196:199]
+	v_mfma_f32_16x16x32_f16 a[192:195], v[90:93], v[62:65], a[192:195]
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[188:191], v[140:143], v[54:57], a[188:191]
+	v_mfma_f32_16x16x32_f16 a[176:179], v[90:93], v[54:57], a[176:179]
+	v_mfma_f32_16x16x32_f16 a[172:175], v[140:143], v[46:49], a[172:175]
+	v_mfma_f32_16x16x32_f16 a[160:163], v[90:93], v[46:49], a[160:163]
+	v_mfma_f32_16x16x32_f16 a[144:147], v[90:93], v[38:41], a[144:147]
+	v_mfma_f32_16x16x32_f16 a[128:131], v[90:93], v[30:33], a[128:131]
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[36:39], v[128:131], v[108:111], a[36:39]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 365 14                        ; matmul_kernel_cd_regclass.py:365:14
+	v_mfma_f32_16x16x32_f16 a[32:35], v[136:139], v[108:111], a[32:35]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	s_nop 0
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[94:97], v[74:77], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[232:235], v[94:97], v[66:69], a[204:207]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	s_nop 2
+	v_accvgpr_mov_b32 a25, a37
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[240:243], v[152:155], v[58:61], a[196:199]
+	v_accvgpr_write_b32 a207, v199
+	v_accvgpr_write_b32 a206, v198
+	v_accvgpr_write_b32 a205, v197
+	v_mfma_f32_16x16x32_f16 a[248:251], v[94:97], v[58:61], a[192:195]
+	v_accvgpr_write_b32 a204, v196
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[192:195], v[144:147], v[50:53], a[188:191]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_accvgpr_mov_b32 a239, a207
+	v_accvgpr_mov_b32 a238, a206
+	v_accvgpr_mov_b32 a237, a205
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[196:199], v[94:97], v[50:53], a[176:179]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_accvgpr_mov_b32 a236, a204
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[200:203], v[144:147], v[42:45], a[172:175]
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[188:191], v[94:97], v[42:45], a[160:163]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[172:175], v[94:97], v[34:37], a[144:147]
+	;;#ASMSTART
+	;;#ASMEND
+	v_mfma_f32_16x16x32_f16 a[252:255], v[94:97], v[26:29], a[128:131]
+	.loc	1 378 15                        ; matmul_kernel_cd_regclass.py:378:15
+	ds_read_b128 v[118:121], v0
+	ds_read_b128 v[114:117], v0 offset:64
+	ds_read_b128 v[110:113], v0 offset:256
+	ds_read_b128 v[106:109], v0 offset:320
+	ds_read_b128 v[102:105], v0 offset:512
+	ds_read_b128 v[98:101], v0 offset:576
+	ds_read_b128 v[94:97], v0 offset:768
+	ds_read_b128 v[90:93], v0 offset:832
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v0, a24
+	v_cvt_pk_f16_f32 v122, v0, v1
+	v_accvgpr_read_b32 v0, a26
+	v_accvgpr_read_b32 v1, a27
+	v_cvt_pk_f16_f32 v123, v0, v1
+	v_accvgpr_read_b32 v0, a28
+	v_accvgpr_read_b32 v1, a29
+	v_cvt_pk_f16_f32 v126, v0, v1
+	v_accvgpr_read_b32 v0, a30
+	v_accvgpr_read_b32 v1, a31
+	v_cvt_pk_f16_f32 v127, v0, v1
+	v_accvgpr_read_b32 v0, a16
+	v_accvgpr_read_b32 v1, a17
+	v_cvt_pk_f16_f32 v130, v0, v1
+	v_accvgpr_read_b32 v0, a18
+	v_accvgpr_read_b32 v1, a19
+	v_cvt_pk_f16_f32 v131, v0, v1
+	v_accvgpr_read_b32 v0, a12
+	v_accvgpr_read_b32 v1, a13
+	v_cvt_pk_f16_f32 v134, v0, v1
+	v_accvgpr_read_b32 v0, a14
+	v_accvgpr_read_b32 v1, a15
+	v_cvt_pk_f16_f32 v135, v0, v1
+	v_accvgpr_read_b32 v0, a20
+	v_accvgpr_read_b32 v1, a21
+	v_cvt_pk_f16_f32 v124, v0, v1
+	v_accvgpr_read_b32 v0, a22
+	v_accvgpr_read_b32 v1, a23
+	v_cvt_pk_f16_f32 v125, v0, v1
+	v_accvgpr_read_b32 v0, a8
+	v_accvgpr_read_b32 v1, a9
+	v_cvt_pk_f16_f32 v128, v0, v1
+	v_accvgpr_read_b32 v0, a10
+	v_accvgpr_read_b32 v1, a11
+	v_cvt_pk_f16_f32 v129, v0, v1
+	v_accvgpr_read_b32 v0, a4
+	v_accvgpr_read_b32 v1, a5
+	v_cvt_pk_f16_f32 v132, v0, v1
+	v_accvgpr_read_b32 v0, a6
+	v_accvgpr_read_b32 v1, a7
+	v_cvt_pk_f16_f32 v133, v0, v1
+	v_accvgpr_read_b32 v0, a0
+	v_accvgpr_read_b32 v1, a1
+	v_cvt_pk_f16_f32 v136, v0, v1
+	v_accvgpr_read_b32 v0, a2
+	v_accvgpr_read_b32 v1, a3
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a124
+	v_accvgpr_mov_b32 a1, a125
+	v_accvgpr_mov_b32 a2, a126
+	v_accvgpr_mov_b32 a3, a127
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[216:219], v[140:143], v[70:73], a[216:219]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v137, v0, v1
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a4, a56
+	v_accvgpr_mov_b32 a5, a57
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(7)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[118:121], v[86:89], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a6, a58
+	v_accvgpr_mov_b32 a7, a59
+	v_accvgpr_mov_b32 a8, a52
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(6)
+	v_mfma_f32_16x16x32_f16 a[124:127], v[114:117], v[82:85], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a9, a53
+	v_accvgpr_mov_b32 a10, a54
+	v_accvgpr_mov_b32 a11, a55
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[212:215], v[148:151], v[70:73], a[212:215]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a120
+	v_accvgpr_mov_b32 a1, a121
+	v_accvgpr_mov_b32 a2, a122
+	v_accvgpr_mov_b32 a3, a123
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[220:223], v[144:147], v[66:69], a[216:219]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a12, a48
+	v_accvgpr_mov_b32 a13, a49
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(5)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[110:113], v[86:89], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a14, a50
+	v_accvgpr_mov_b32 a15, a51
+	v_accvgpr_write_b32 a48, v176
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(4)
+	v_mfma_f32_16x16x32_f16 a[120:123], v[106:109], v[82:85], a[0:3]
+	v_accvgpr_write_b32 a49, v177
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v0, a220
+	v_accvgpr_read_b32 v1, a221
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[208:211], v[156:159], v[70:73], a[208:211]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a116
+	v_accvgpr_mov_b32 a1, a117
+	v_accvgpr_mov_b32 a2, a118
+	v_accvgpr_mov_b32 a3, a119
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[224:227], v[152:155], v[66:69], a[212:215]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v138, v0, v1
+	v_accvgpr_read_b32 v0, a222
+	v_accvgpr_read_b32 v1, a223
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(3)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[102:105], v[86:89], a[0:3]
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v139, v0, v1
+	v_accvgpr_write_b32 a50, v178
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(2)
+	v_mfma_f32_16x16x32_f16 a[116:119], v[98:101], v[82:85], a[0:3]
+	v_accvgpr_write_b32 a51, v179
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v0, a224
+	v_accvgpr_read_b32 v1, a225
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[236:239], v[140:143], v[62:65], a[236:239]
+	v_accvgpr_write_b32 a52, v172
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a112
+	v_accvgpr_mov_b32 a1, a113
+	v_accvgpr_mov_b32 a2, a114
+	v_accvgpr_mov_b32 a3, a115
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[156:159], v[140:143], v[38:41], a[156:159]
+	v_accvgpr_write_b32 a53, v173
+	v_accvgpr_write_b32 a54, v174
+	v_accvgpr_write_b32 a55, v175
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	s_waitcnt lgkmcnt(1)
+	v_mfma_f32_16x16x32_f16 a[0:3], v[94:97], v[86:89], a[0:3]
+	v_accvgpr_write_b32 a56, v168
+	v_accvgpr_write_b32 a57, v169
+	v_accvgpr_write_b32 a58, v170
+	s_waitcnt lgkmcnt(0)
+	v_mfma_f32_16x16x32_f16 a[112:115], v[90:93], v[82:85], a[0:3]
+	v_accvgpr_write_b32 a59, v171
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[140:143], v[140:143], v[30:33], a[140:143]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v142, v0, v1
+	v_accvgpr_read_b32 v0, a226
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a108
+	v_accvgpr_mov_b32 a1, a109
+	v_accvgpr_mov_b32 a2, a110
+	v_accvgpr_mov_b32 a3, a111
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[228:231], v[160:163], v[66:69], a[208:211]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v1, a227
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v143, v0, v1
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[118:121], v[78:81], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v86, a254
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[108:111], v[114:117], v[74:77], a[0:3]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a16, a44
+	v_accvgpr_mov_b32 a17, a45
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	v_mfma_f32_16x16x32_f16 a[236:239], v[144:147], v[58:61], a[236:239]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v0, a228
+	v_accvgpr_read_b32 v1, a229
+	.loc	1 372 14                        ; matmul_kernel_cd_regclass.py:372:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[160:163], v[144:147], v[34:37], a[156:159]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a104
+	v_accvgpr_mov_b32 a1, a105
+	v_accvgpr_mov_b32 a2, a106
+	v_accvgpr_mov_b32 a3, a107
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[176:179], v[144:147], v[26:29], a[140:143]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v146, v0, v1
+	v_accvgpr_read_b32 v0, a230
+	v_accvgpr_read_b32 v1, a231
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[110:113], v[78:81], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v147, v0, v1
+	v_accvgpr_read_b32 v0, a232
+	v_accvgpr_read_b32 v1, a233
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[104:107], v[106:109], v[74:77], a[0:3]
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a18, a46
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[184:187], v[148:151], v[54:57], a[184:187]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a19, a47
+	v_accvgpr_mov_b32 a20, a40
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a100
+	v_accvgpr_mov_b32 a1, a101
+	v_accvgpr_mov_b32 a2, a102
+	v_accvgpr_mov_b32 a3, a103
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[168:171], v[148:151], v[46:49], a[168:171]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a21, a41
+	v_accvgpr_mov_b32 a22, a42
+	v_accvgpr_mov_b32 a23, a43
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[102:105], v[78:81], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a24, a36
+	v_accvgpr_mov_b32 a26, a38
+	v_accvgpr_mov_b32 a27, a39
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[100:103], v[98:101], v[74:77], a[0:3]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a28, a32
+	v_accvgpr_mov_b32 a29, a33
+	v_accvgpr_mov_b32 a30, a34
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[152:155], v[148:151], v[38:41], a[152:155]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a96
+	v_accvgpr_mov_b32 a1, a97
+	v_accvgpr_mov_b32 a2, a98
+	v_accvgpr_mov_b32 a3, a99
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[136:139], v[148:151], v[30:33], a[136:139]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v150, v0, v1
+	v_accvgpr_read_b32 v0, a234
+	v_accvgpr_read_b32 v1, a235
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[94:97], v[78:81], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v151, v0, v1
+	v_accvgpr_read_b32 v0, a236
+	v_accvgpr_read_b32 v1, a237
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[96:99], v[90:93], v[74:77], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v140, v0, v1
+	v_accvgpr_read_b32 v0, a238
+	v_accvgpr_read_b32 v1, a239
+	v_cvt_pk_f16_f32 v141, v0, v1
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a92
+	v_accvgpr_mov_b32 a1, a93
+	v_accvgpr_mov_b32 a2, a94
+	v_accvgpr_mov_b32 a3, a95
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_accvgpr_read_b32 v0, a240
+	v_accvgpr_read_b32 v1, a241
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[118:121], v[70:73], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v144, v0, v1
+	v_accvgpr_read_b32 v0, a242
+	v_accvgpr_read_b32 v1, a243
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[92:95], v[114:117], v[66:69], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v145, v0, v1
+	v_accvgpr_read_b32 v0, a244
+	v_accvgpr_read_b32 v1, a245
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[180:183], v[156:159], v[54:57], a[180:183]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a88
+	v_accvgpr_mov_b32 a1, a89
+	v_accvgpr_mov_b32 a2, a90
+	v_accvgpr_mov_b32 a3, a91
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[164:167], v[156:159], v[46:49], a[164:167]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v148, v0, v1
+	v_accvgpr_read_b32 v0, a246
+	v_accvgpr_read_b32 v1, a247
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[110:113], v[70:73], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v149, v0, v1
+	v_accvgpr_read_b32 v0, a248
+	v_accvgpr_read_b32 v1, a249
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[88:91], v[106:109], v[66:69], a[0:3]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v76, a178
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a31, a35
+	v_accvgpr_write_b32 a32, v192
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[204:207], v[152:155], v[50:53], a[184:187]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a84
+	v_accvgpr_mov_b32 a1, a85
+	v_accvgpr_mov_b32 a2, a86
+	v_accvgpr_mov_b32 a3, a87
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[208:211], v[160:163], v[50:53], a[180:183]
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	v_accvgpr_write_b32 a33, v193
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[102:105], v[70:73], a[0:3]
+	v_accvgpr_write_b32 a34, v194
+	v_accvgpr_write_b32 a35, v195
+	v_accvgpr_write_b32 a36, v188
+	v_mfma_f32_16x16x32_f16 a[84:87], v[98:101], v[66:69], a[0:3]
+	v_accvgpr_write_b32 a37, v189
+	v_accvgpr_write_b32 a38, v190
+	v_accvgpr_write_b32 a39, v191
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[212:215], v[152:155], v[42:45], a[168:171]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a80
+	v_accvgpr_mov_b32 a1, a81
+	v_accvgpr_mov_b32 a2, a82
+	v_accvgpr_mov_b32 a3, a83
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[216:219], v[160:163], v[42:45], a[164:167]
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	v_accvgpr_write_b32 a40, v184
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[94:97], v[70:73], a[0:3]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v70, a190
+	v_accvgpr_read_b32 v72, a162
+	v_accvgpr_write_b32 a41, v185
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[80:83], v[90:93], v[66:69], a[0:3]
+	v_accvgpr_write_b32 a42, v186
+	v_accvgpr_write_b32 a43, v187
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v68, a218
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[164:167], v[152:155], v[34:37], a[152:155]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a76
+	v_accvgpr_mov_b32 a1, a77
+	v_accvgpr_mov_b32 a2, a78
+	v_accvgpr_mov_b32 a3, a79
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[180:183], v[152:155], v[26:29], a[136:139]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v152, v0, v1
+	v_accvgpr_read_b32 v0, a250
+	v_accvgpr_read_b32 v1, a251
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[118:121], v[62:65], a[0:3]
+	.loc	1 380 12                        ; matmul_kernel_cd_regclass.py:380:12
+	v_cvt_pk_f16_f32 v153, v0, v1
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_and_b32_e32 v0, 3, v20
+	v_mul_u32_u24_e32 v0, 0x410, v0
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[76:79], v[114:117], v[58:61], a[0:3]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_lshrrev_b32_e32 v1, 1, v21
+	v_bitop3_b32 v0, v0, v2, s2 bitop3:0x78
+	v_and_b32_e32 v1, 48, v1
+	v_xor_b32_e32 v0, v0, v3
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a72
+	v_accvgpr_mov_b32 a1, a73
+	v_accvgpr_mov_b32 a2, a74
+	v_accvgpr_mov_b32 a3, a75
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_xad_u32 v3, v0, v1, v5
+	v_lshlrev_b32_e32 v5, 4, v23
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[110:113], v[62:65], a[0:3]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	s_cselect_b32 s2, 0, 0x1450
+	s_and_b32 s3, s3, 0x2490
+	v_lshl_or_b32 v5, v22, 6, v5
+	s_xor_b32 s2, s3, s2
+	v_add_u32_e32 v0, 0, v3
+	v_xad_u32 v1, v3, 64, 0
+	v_xor_b32_e32 v2, 0x80, v3
+	v_xor_b32_e32 v3, 0xc0, v3
+	v_xor_b32_e32 v5, s2, v5
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[72:75], v[106:109], v[58:61], a[0:3]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	v_add_u32_e32 v2, 0, v2
+	v_add_u32_e32 v3, 0, v3
+	v_xad_u32 v5, v5, v22, 0
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a68
+	v_accvgpr_mov_b32 a1, a69
+	v_accvgpr_mov_b32 a2, a70
+	v_accvgpr_mov_b32 a3, a71
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	ds_write_b128 v0, v[122:125]
+	ds_write_b128 v1, v[126:129]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[102:105], v[62:65], a[0:3]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	ds_write_b128 v2, v[130:133]
+	ds_write_b128 v3, v[134:137]
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_read_b128 v[20:23], v5
+	ds_read_b128 v[124:127], v5 offset:512
+	ds_read_b128 v[128:131], v5 offset:256
+	ds_read_b128 v[134:137], v5 offset:768
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[68:71], v[98:101], v[58:61], a[0:3]
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	s_and_b32 s1, s1, 0xffff
+	s_mov_b32 s3, 0x27000
+	s_mov_b32 s2, 0x7ffffffe
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_accvgpr_mov_b32 a0, a64
+	v_accvgpr_mov_b32 a1, a65
+	v_accvgpr_mov_b32 a2, a66
+	v_accvgpr_mov_b32 a3, a67
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	s_waitcnt lgkmcnt(3)
+	v_mov_b32_e32 v122, v20
+	v_mov_b32_e32 v123, v21
+	v_lshlrev_b32_e32 v20, 1, v18
+	s_waitcnt lgkmcnt(1)
+	v_mov_b32_e32 v132, v128
+	v_mov_b32_e32 v133, v129
+	v_mov_b32_e32 v24, v126
+	v_mov_b32_e32 v25, v127
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[94:97], v[62:65], a[0:3]
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_write_b128 v0, v[138:141]
+	ds_write_b128 v1, v[142:145]
+	ds_write_b128 v2, v[146:149]
+	ds_write_b128 v3, v[150:153]
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	buffer_store_dwordx4 v[122:125], v20, s[0:3], 0 offen
+	buffer_store_dwordx4 v[132:135], v19, s[0:3], 0 offen
+	buffer_store_dwordx4 v[22:25], v17, s[0:3], 0 offen
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v21, a193
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	v_mfma_f32_16x16x32_f16 a[64:67], v[90:93], v[58:61], a[0:3]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v22, a192
+	v_cvt_pk_f16_f32 v22, v22, v21
+	v_accvgpr_read_b32 v24, a194
+	v_accvgpr_read_b32 v21, a195
+	v_cvt_pk_f16_f32 v23, v24, v21
+	v_accvgpr_read_b32 v24, a204
+	v_accvgpr_read_b32 v21, a205
+	v_cvt_pk_f16_f32 v58, v24, v21
+	v_accvgpr_read_b32 v24, a206
+	v_accvgpr_read_b32 v21, a207
+	v_cvt_pk_f16_f32 v59, v24, v21
+	v_accvgpr_read_b32 v24, a208
+	v_accvgpr_read_b32 v21, a209
+	v_cvt_pk_f16_f32 v62, v24, v21
+	v_accvgpr_read_b32 v24, a210
+	v_accvgpr_read_b32 v21, a211
+	v_cvt_pk_f16_f32 v63, v24, v21
+	v_accvgpr_read_b32 v24, a196
+	v_accvgpr_read_b32 v21, a197
+	v_cvt_pk_f16_f32 v66, v24, v21
+	v_accvgpr_read_b32 v24, a198
+	v_accvgpr_read_b32 v21, a199
+	v_cvt_pk_f16_f32 v67, v24, v21
+	v_accvgpr_read_b32 v24, a200
+	v_accvgpr_read_b32 v21, a201
+	v_cvt_pk_f16_f32 v24, v24, v21
+	v_accvgpr_read_b32 v60, a202
+	v_accvgpr_read_b32 v21, a203
+	v_cvt_pk_f16_f32 v25, v60, v21
+	v_accvgpr_read_b32 v60, a212
+	v_accvgpr_read_b32 v21, a213
+	v_cvt_pk_f16_f32 v60, v60, v21
+	v_accvgpr_read_b32 v64, a214
+	v_accvgpr_read_b32 v21, a215
+	v_cvt_pk_f16_f32 v61, v64, v21
+	v_accvgpr_read_b32 v64, a216
+	v_accvgpr_read_b32 v21, a217
+	v_cvt_pk_f16_f32 v64, v64, v21
+	v_accvgpr_read_b32 v21, a219
+	v_cvt_pk_f16_f32 v65, v68, v21
+	v_accvgpr_read_b32 v68, a188
+	v_accvgpr_read_b32 v21, a189
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[148:151], v[156:159], v[38:41], a[148:151]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v68, v68, v21
+	v_accvgpr_read_b32 v21, a191
+	v_cvt_pk_f16_f32 v69, v70, v21
+	v_accvgpr_read_b32 v70, a160
+	v_accvgpr_read_b32 v21, a161
+	v_cvt_pk_f16_f32 v70, v70, v21
+	v_accvgpr_read_b32 v21, a163
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v71, v72, v21
+	v_accvgpr_read_b32 v72, a164
+	v_accvgpr_read_b32 v21, a165
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[168:171], v[160:163], v[34:37], a[148:151]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v74, v72, v21
+	v_accvgpr_read_b32 v72, a166
+	v_accvgpr_read_b32 v21, a167
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v75, v72, v21
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[132:135], v[156:159], v[30:33], a[132:135]
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 381 12                        ; matmul_kernel_cd_regclass.py:381:12
+	ds_read_b128 v[138:141], v5
+	ds_read_b128 v[144:147], v5 offset:512
+	ds_read_b128 v[148:151], v5 offset:256
+	ds_read_b128 v[154:157], v5 offset:768
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v72, a168
+	v_accvgpr_read_b32 v21, a169
+	v_cvt_pk_f16_f32 v78, v72, v21
+	v_accvgpr_read_b32 v72, a170
+	v_accvgpr_read_b32 v21, a171
+	v_cvt_pk_f16_f32 v79, v72, v21
+	v_accvgpr_read_b32 v72, a172
+	v_accvgpr_read_b32 v21, a173
+	v_cvt_pk_f16_f32 v82, v72, v21
+	v_accvgpr_read_b32 v72, a174
+	v_accvgpr_read_b32 v21, a175
+	v_cvt_pk_f16_f32 v83, v72, v21
+	v_accvgpr_read_b32 v72, a176
+	v_accvgpr_read_b32 v21, a177
+	v_cvt_pk_f16_f32 v72, v72, v21
+	v_accvgpr_read_b32 v21, a179
+	v_cvt_pk_f16_f32 v73, v76, v21
+	v_accvgpr_read_b32 v76, a180
+	v_accvgpr_read_b32 v21, a181
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	v_mfma_f32_16x16x32_f16 a[184:187], v[160:163], v[26:29], a[132:135]
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v76, v76, v21
+	v_accvgpr_read_b32 v80, a182
+	v_accvgpr_read_b32 v21, a183
+	.loc	1 376 14                        ; matmul_kernel_cd_regclass.py:376:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v77, v80, v21
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_accvgpr_mov_b32 a0, a60
+	v_accvgpr_mov_b32 a1, a61
+	v_accvgpr_mov_b32 a2, a62
+	v_accvgpr_mov_b32 a3, a63
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v80, a184
+	v_accvgpr_read_b32 v21, a185
+	v_cvt_pk_f16_f32 v80, v80, v21
+	v_accvgpr_read_b32 v84, a186
+	v_accvgpr_read_b32 v21, a187
+	v_accvgpr_write_b32 a60, v164
+	v_accvgpr_write_b32 a61, v165
+	v_accvgpr_write_b32 a62, v166
+	v_accvgpr_write_b32 a63, v167
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_mov_b32_e32 v132, v136
+	v_mov_b32_e32 v133, v137
+	s_waitcnt lgkmcnt(3)
+	v_mov_b32_e32 v142, v138
+	v_mov_b32_e32 v143, v139
+	s_waitcnt lgkmcnt(1)
+	v_mov_b32_e32 v152, v148
+	v_mov_b32_e32 v153, v149
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v81, v84, v21
+	v_accvgpr_read_b32 v84, a252
+	v_accvgpr_read_b32 v21, a253
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	buffer_store_dwordx4 v[130:133], v15, s[0:3], 0 offen
+	buffer_store_dwordx4 v[142:145], v13, s[0:3], 0 offen
+	s_waitcnt lgkmcnt(0)
+	buffer_store_dwordx4 v[152:155], v11, s[0:3], 0 offen
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v84, v84, v21
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	v_mov_b32_e32 v142, v146
+	v_mov_b32_e32 v143, v147
+	v_mov_b32_e32 v152, v156
+	v_mov_b32_e32 v153, v157
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_accvgpr_read_b32 v21, a255
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[48:51], v[118:121], v[30:33], a[48:51]
+	.loc	1 382 5                         ; matmul_kernel_cd_regclass.py:382:5
+	buffer_store_dwordx4 v[140:143], v9, s[0:3], 0 offen
+	buffer_store_dwordx4 v[150:153], v7, s[0:3], 0 offen
+	.loc	1 386 12                        ; matmul_kernel_cd_regclass.py:386:12
+	v_cvt_pk_f16_f32 v85, v86, v21
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[52:55], v[110:113], v[30:33], a[52:55]
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	s_barrier
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[56:59], v[102:105], v[30:33], a[56:59]
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	ds_write_b128 v0, v[22:25]
+	ds_write_b128 v1, v[58:61]
+	ds_write_b128 v2, v[62:65]
+	ds_write_b128 v3, v[66:69]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v22, a124
+	v_accvgpr_read_b32 v21, a125
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[60:63], v[94:97], v[30:33], a[60:63]
+	v_accvgpr_write_b32 a44, v180
+	v_accvgpr_write_b32 a45, v181
+	v_accvgpr_write_b32 a46, v182
+	v_accvgpr_write_b32 a47, v183
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v22, v22, v21
+	v_accvgpr_read_b32 v24, a126
+	v_accvgpr_read_b32 v21, a127
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v23, v24, v21
+	v_accvgpr_read_b32 v24, a120
+	v_accvgpr_read_b32 v21, a121
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[32:35], v[118:121], v[38:41], a[32:35]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[36:39], v[110:113], v[38:41], a[36:39]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[40:43], v[102:105], v[38:41], a[40:43]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v32, a106
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[44:47], v[94:97], v[38:41], a[44:47]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v38, a98
+	v_accvgpr_read_b32 v40, a94
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[48:51], v[114:117], v[26:29], a[48:51]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	s_waitcnt lgkmcnt(0)
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[52:55], v[106:109], v[26:29], a[52:55]
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	s_barrier
+	ds_read_b128 v[58:61], v5
+	ds_read_b128 v[64:67], v5 offset:512
+	ds_read_b128 v[122:125], v5 offset:256
+	ds_read_b128 v[86:89], v5 offset:768
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[56:59], v[98:101], v[26:29], a[56:59]
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[60:63], v[90:93], v[26:29], a[60:63]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v26, v24, v21
+	v_accvgpr_read_b32 v24, a122
+	v_accvgpr_read_b32 v21, a123
+	v_cvt_pk_f16_f32 v27, v24, v21
+	v_accvgpr_read_b32 v24, a116
+	v_accvgpr_read_b32 v21, a117
+	v_cvt_pk_f16_f32 v30, v24, v21
+	v_accvgpr_read_b32 v24, a118
+	v_accvgpr_read_b32 v21, a119
+	v_cvt_pk_f16_f32 v31, v24, v21
+	v_accvgpr_read_b32 v24, a112
+	v_accvgpr_read_b32 v21, a113
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[32:35], v[114:117], v[34:37], a[32:35]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v28, a110
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	ds_write_b128 v0, v[70:73]
+	ds_write_b128 v1, v[74:77]
+	ds_write_b128 v2, v[78:81]
+	ds_write_b128 v3, v[82:85]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[36:39], v[106:109], v[34:37], a[36:39]
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[40:43], v[98:101], v[34:37], a[40:43]
+	.loc	1 387 12                        ; matmul_kernel_cd_regclass.py:387:12
+	ds_read_b128 v[68:71], v5
+	ds_read_b128 v[74:77], v5 offset:512
+	ds_read_b128 v[78:81], v5 offset:256
+	ds_read_b128 v[128:131], v5 offset:768
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_mov_b32_e32 v62, v58
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[44:47], v[90:93], v[34:37], a[44:47]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v34, v24, v21
+	v_accvgpr_read_b32 v24, a114
+	v_accvgpr_read_b32 v21, a115
+	v_cvt_pk_f16_f32 v35, v24, v21
+	v_accvgpr_read_b32 v24, a108
+	v_accvgpr_read_b32 v21, a109
+	v_cvt_pk_f16_f32 v24, v24, v21
+	v_accvgpr_read_b32 v21, a111
+	v_cvt_pk_f16_f32 v25, v28, v21
+	v_accvgpr_read_b32 v28, a104
+	v_accvgpr_read_b32 v21, a105
+	v_cvt_pk_f16_f32 v28, v28, v21
+	v_accvgpr_read_b32 v21, a107
+	v_cvt_pk_f16_f32 v29, v32, v21
+	v_accvgpr_read_b32 v32, a100
+	v_accvgpr_read_b32 v21, a101
+	v_cvt_pk_f16_f32 v32, v32, v21
+	v_accvgpr_read_b32 v36, a102
+	v_accvgpr_read_b32 v21, a103
+	v_cvt_pk_f16_f32 v33, v36, v21
+	v_accvgpr_read_b32 v36, a96
+	v_accvgpr_read_b32 v21, a97
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[16:19], v[118:121], v[46:49], a[16:19]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v36, v36, v21
+	v_accvgpr_read_b32 v21, a99
+	v_cvt_pk_f16_f32 v37, v38, v21
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[20:23], v[110:113], v[46:49], a[20:23]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v38, a92
+	v_accvgpr_read_b32 v21, a93
+	v_cvt_pk_f16_f32 v38, v38, v21
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[24:27], v[102:105], v[46:49], a[24:27]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v21, a95
+	v_cvt_pk_f16_f32 v39, v40, v21
+	v_accvgpr_read_b32 v40, a88
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[28:31], v[94:97], v[46:49], a[28:31]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v21, a89
+	v_accvgpr_read_b32 v48, a74
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_mov_b32_e32 v63, v59
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[118:121], v[54:57], a[0:3]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_add_lshl_u32 v18, v18, s4, 1
+	.loc	1 384 14                        ; matmul_kernel_cd_regclass.py:384:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	buffer_store_dwordx4 v[62:65], v18, s[0:3], 0 offen
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[4:7], v[110:113], v[54:57], a[4:7]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_mov_b32_e32 v84, v122
+	v_mov_b32_e32 v85, v123
+	v_mov_b32_e32 v62, v66
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[8:11], v[102:105], v[54:57], a[8:11]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_mov_b32_e32 v63, v67
+	v_mov_b32_e32 v126, v88
+	v_mov_b32_e32 v127, v89
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[12:15], v[94:97], v[54:57], a[12:15]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	s_waitcnt lgkmcnt(3)
+	v_mov_b32_e32 v72, v68
+	v_mov_b32_e32 v73, v69
+	buffer_store_dwordx4 v[84:87], v16, s[0:3], 0 offen
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[16:19], v[114:117], v[42:45], a[16:19]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	buffer_store_dwordx4 v[60:63], v14, s[0:3], 0 offen
+	buffer_store_dwordx4 v[124:127], v12, s[0:3], 0 offen
+	s_waitcnt lgkmcnt(2)
+	buffer_store_dwordx4 v[72:75], v10, s[0:3], 0 offen
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[20:23], v[106:109], v[42:45], a[20:23]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	s_waitcnt lgkmcnt(1)
+	v_mov_b32_e32 v126, v78
+	v_mov_b32_e32 v127, v79
+	v_mov_b32_e32 v72, v76
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[24:27], v[98:101], v[42:45], a[24:27]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	v_mov_b32_e32 v73, v77
+	s_waitcnt lgkmcnt(0)
+	v_mov_b32_e32 v82, v130
+	v_mov_b32_e32 v83, v131
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[28:31], v[90:93], v[42:45], a[28:31]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v42, v40, v21
+	v_accvgpr_read_b32 v40, a90
+	v_accvgpr_read_b32 v21, a91
+	v_cvt_pk_f16_f32 v43, v40, v21
+	v_accvgpr_read_b32 v40, a84
+	v_accvgpr_read_b32 v21, a85
+	v_cvt_pk_f16_f32 v46, v40, v21
+	v_accvgpr_read_b32 v40, a86
+	v_accvgpr_read_b32 v21, a87
+	v_cvt_pk_f16_f32 v47, v40, v21
+	v_accvgpr_read_b32 v40, a80
+	v_accvgpr_read_b32 v21, a81
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[0:3], v[114:117], v[50:53], a[0:3]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_accvgpr_read_b32 v44, a78
+	v_accvgpr_read_b32 v54, a66
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	buffer_store_dwordx4 v[126:129], v8, s[0:3], 0 offen
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[4:7], v[106:109], v[50:53], a[4:7]
+	.loc	1 388 5                         ; matmul_kernel_cd_regclass.py:388:5
+	buffer_store_dwordx4 v[70:73], v6, s[0:3], 0 offen
+	buffer_store_dwordx4 v[80:83], v4, s[0:3], 0 offen
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[8:11], v[98:101], v[50:53], a[8:11]
+	.loc	1 393 12                        ; matmul_kernel_cd_regclass.py:393:12
+	s_barrier
+	ds_write_b128 v0, v[22:25]
+	ds_write_b128 v1, v[26:29]
+	ds_write_b128 v2, v[30:33]
+	ds_write_b128 v3, v[34:37]
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	v_mfma_f32_16x16x32_f16 a[12:15], v[90:93], v[50:53], a[12:15]
+	.loc	1 392 12                        ; matmul_kernel_cd_regclass.py:392:12
+	v_cvt_pk_f16_f32 v50, v40, v21
+	v_accvgpr_read_b32 v40, a82
+	v_accvgpr_read_b32 v21, a83
+	v_cvt_pk_f16_f32 v51, v40, v21
+	v_accvgpr_read_b32 v40, a76
+	v_accvgpr_read_b32 v21, a77
+	v_cvt_pk_f16_f32 v40, v40, v21
+	v_accvgpr_read_b32 v21, a79
+	v_cvt_pk_f16_f32 v41, v44, v21
+	v_accvgpr_read_b32 v44, a72
+	v_accvgpr_read_b32 v21, a73
+	v_cvt_pk_f16_f32 v44, v44, v21
+	v_accvgpr_read_b32 v21, a75
+	v_cvt_pk_f16_f32 v45, v48, v21
+	v_accvgpr_read_b32 v48, a68
+	v_accvgpr_read_b32 v21, a69
+	v_cvt_pk_f16_f32 v48, v48, v21
+	v_accvgpr_read_b32 v52, a70
+	v_accvgpr_read_b32 v21, a71
+	v_cvt_pk_f16_f32 v49, v52, v21
+	v_accvgpr_read_b32 v52, a64
+	v_accvgpr_read_b32 v21, a65
+	v_cvt_pk_f16_f32 v52, v52, v21
+	v_accvgpr_read_b32 v21, a67
+	v_cvt_pk_f16_f32 v53, v54, v21
+	.loc	1 393 12                        ; matmul_kernel_cd_regclass.py:393:12
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_read_b128 v[22:25], v5
+	ds_read_b128 v[28:31], v5 offset:512
+	ds_read_b128 v[32:35], v5 offset:256
+	ds_read_b128 v[54:57], v5 offset:768
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_write_b128 v0, v[38:41]
+	ds_write_b128 v1, v[42:45]
+	ds_write_b128 v2, v[46:49]
+	ds_write_b128 v3, v[50:53]
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_read_b128 v[38:41], v5
+	ds_read_b128 v[44:47], v5 offset:512
+	ds_read_b128 v[48:51], v5 offset:256
+	ds_read_b128 v[58:61], v5 offset:768
+	.loc	1 394 5                         ; matmul_kernel_cd_regclass.py:394:5
+	v_mov_b32_e32 v26, v22
+	v_mov_b32_e32 v27, v23
+	buffer_store_dwordx4 v[26:29], v20, s[0:3], 0 offen offset:256
+	v_mov_b32_e32 v52, v32
+	v_mov_b32_e32 v53, v33
+	v_mov_b32_e32 v26, v30
+	v_mov_b32_e32 v27, v31
+	v_mov_b32_e32 v36, v56
+	v_mov_b32_e32 v37, v57
+	s_waitcnt lgkmcnt(3)
+	v_mov_b32_e32 v42, v38
+	v_mov_b32_e32 v43, v39
+	buffer_store_dwordx4 v[52:55], v19, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[24:27], v17, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[34:37], v15, s[0:3], 0 offen offset:256
+	s_waitcnt lgkmcnt(2)
+	buffer_store_dwordx4 v[42:45], v13, s[0:3], 0 offen offset:256
+	s_waitcnt lgkmcnt(1)
+	v_mov_b32_e32 v56, v48
+	v_mov_b32_e32 v57, v49
+	v_mov_b32_e32 v42, v46
+	v_mov_b32_e32 v43, v47
+	s_waitcnt lgkmcnt(0)
+	v_mov_b32_e32 v52, v60
+	v_mov_b32_e32 v53, v61
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 394 5                         ; matmul_kernel_cd_regclass.py:394:5
+	buffer_store_dwordx4 v[56:59], v11, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[40:43], v9, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[50:53], v7, s[0:3], 0 offen offset:256
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_accvgpr_read_b32 v20, a0
+	v_accvgpr_read_b32 v7, a1
+	v_cvt_pk_f16_f32 v20, v20, v7
+	v_accvgpr_read_b32 v22, a2
+	v_accvgpr_read_b32 v7, a3
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v21, v22, v7
+	v_accvgpr_read_b32 v22, a4
+	v_accvgpr_read_b32 v7, a5
+	v_cvt_pk_f16_f32 v24, v22, v7
+	v_accvgpr_read_b32 v22, a6
+	v_accvgpr_read_b32 v7, a7
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v25, v22, v7
+	v_accvgpr_read_b32 v22, a8
+	v_accvgpr_read_b32 v7, a9
+	v_cvt_pk_f16_f32 v28, v22, v7
+	v_accvgpr_read_b32 v22, a10
+	v_accvgpr_read_b32 v7, a11
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v29, v22, v7
+	v_accvgpr_read_b32 v22, a12
+	v_accvgpr_read_b32 v7, a13
+	v_cvt_pk_f16_f32 v32, v22, v7
+	v_accvgpr_read_b32 v22, a14
+	v_accvgpr_read_b32 v7, a15
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v33, v22, v7
+	v_accvgpr_read_b32 v22, a16
+	v_accvgpr_read_b32 v7, a17
+	v_cvt_pk_f16_f32 v22, v22, v7
+	v_accvgpr_read_b32 v26, a18
+	v_accvgpr_read_b32 v7, a19
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v23, v26, v7
+	v_accvgpr_read_b32 v26, a20
+	v_accvgpr_read_b32 v7, a21
+	v_cvt_pk_f16_f32 v26, v26, v7
+	v_accvgpr_read_b32 v30, a22
+	v_accvgpr_read_b32 v7, a23
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v27, v30, v7
+	v_accvgpr_read_b32 v30, a24
+	v_accvgpr_read_b32 v7, a25
+	v_cvt_pk_f16_f32 v30, v30, v7
+	v_accvgpr_read_b32 v34, a26
+	v_accvgpr_read_b32 v7, a27
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v31, v34, v7
+	v_accvgpr_read_b32 v34, a28
+	v_accvgpr_read_b32 v7, a29
+	v_cvt_pk_f16_f32 v34, v34, v7
+	v_accvgpr_read_b32 v36, a30
+	v_accvgpr_read_b32 v7, a31
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v35, v36, v7
+	v_accvgpr_read_b32 v36, a32
+	v_accvgpr_read_b32 v7, a33
+	v_cvt_pk_f16_f32 v36, v36, v7
+	v_accvgpr_read_b32 v38, a34
+	v_accvgpr_read_b32 v7, a35
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v37, v38, v7
+	v_accvgpr_read_b32 v38, a36
+	v_accvgpr_read_b32 v7, a37
+	v_cvt_pk_f16_f32 v40, v38, v7
+	v_accvgpr_read_b32 v38, a38
+	v_accvgpr_read_b32 v7, a39
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v41, v38, v7
+	v_accvgpr_read_b32 v38, a40
+	v_accvgpr_read_b32 v7, a41
+	v_cvt_pk_f16_f32 v44, v38, v7
+	v_accvgpr_read_b32 v38, a42
+	v_accvgpr_read_b32 v7, a43
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v45, v38, v7
+	v_accvgpr_read_b32 v38, a44
+	v_accvgpr_read_b32 v7, a45
+	v_cvt_pk_f16_f32 v48, v38, v7
+	v_accvgpr_read_b32 v38, a46
+	v_accvgpr_read_b32 v7, a47
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v49, v38, v7
+	v_accvgpr_read_b32 v38, a48
+	v_accvgpr_read_b32 v7, a49
+	v_cvt_pk_f16_f32 v38, v38, v7
+	v_accvgpr_read_b32 v42, a50
+	v_accvgpr_read_b32 v7, a51
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v39, v42, v7
+	v_accvgpr_read_b32 v42, a52
+	v_accvgpr_read_b32 v7, a53
+	v_cvt_pk_f16_f32 v42, v42, v7
+	v_accvgpr_read_b32 v46, a54
+	v_accvgpr_read_b32 v7, a55
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v43, v46, v7
+	v_accvgpr_read_b32 v46, a56
+	v_accvgpr_read_b32 v7, a57
+	v_cvt_pk_f16_f32 v46, v46, v7
+	v_accvgpr_read_b32 v50, a58
+	v_accvgpr_read_b32 v7, a59
+	.loc	1 390 14                        ; matmul_kernel_cd_regclass.py:390:14
+	;;#ASMSTART
+	;;#ASMEND
+	.loc	1 396 12                        ; matmul_kernel_cd_regclass.py:396:12
+	v_cvt_pk_f16_f32 v47, v50, v7
+	v_accvgpr_read_b32 v50, a60
+	v_accvgpr_read_b32 v7, a61
+	v_cvt_pk_f16_f32 v50, v50, v7
+	v_accvgpr_read_b32 v52, a62
+	v_accvgpr_read_b32 v7, a63
+	v_cvt_pk_f16_f32 v51, v52, v7
+	.loc	1 397 12                        ; matmul_kernel_cd_regclass.py:397:12
+	s_barrier
+	ds_write_b128 v0, v[20:23]
+	ds_write_b128 v1, v[24:27]
+	ds_write_b128 v2, v[28:31]
+	ds_write_b128 v3, v[32:35]
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_read_b128 v[20:23], v5
+	ds_read_b128 v[26:29], v5 offset:512
+	ds_read_b128 v[30:33], v5 offset:256
+	ds_read_b128 v[52:55], v5 offset:768
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_write_b128 v0, v[36:39]
+	ds_write_b128 v1, v[40:43]
+	ds_write_b128 v2, v[44:47]
+	ds_write_b128 v3, v[48:51]
+	s_waitcnt lgkmcnt(0)
+	s_barrier
+	ds_read_b128 v[36:39], v5
+	ds_read_b128 v[42:45], v5 offset:512
+	ds_read_b128 v[46:49], v5 offset:256
+	ds_read_b128 v[56:59], v5 offset:768
+	.loc	1 398 5                         ; matmul_kernel_cd_regclass.py:398:5
+	v_mov_b32_e32 v24, v20
+	v_mov_b32_e32 v25, v21
+	buffer_store_dwordx4 v[24:27], v18, s[0:3], 0 offen offset:256
+	v_mov_b32_e32 v50, v30
+	v_mov_b32_e32 v51, v31
+	v_mov_b32_e32 v24, v28
+	v_mov_b32_e32 v25, v29
+	v_mov_b32_e32 v34, v54
+	v_mov_b32_e32 v35, v55
+	s_waitcnt lgkmcnt(3)
+	v_mov_b32_e32 v40, v36
+	v_mov_b32_e32 v41, v37
+	buffer_store_dwordx4 v[50:53], v16, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[22:25], v14, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[32:35], v12, s[0:3], 0 offen offset:256
+	s_waitcnt lgkmcnt(2)
+	buffer_store_dwordx4 v[40:43], v10, s[0:3], 0 offen offset:256
+	s_waitcnt lgkmcnt(1)
+	v_mov_b32_e32 v54, v46
+	v_mov_b32_e32 v55, v47
+	v_mov_b32_e32 v40, v44
+	v_mov_b32_e32 v41, v45
+	s_waitcnt lgkmcnt(0)
+	v_mov_b32_e32 v50, v58
+	v_mov_b32_e32 v51, v59
+	buffer_store_dwordx4 v[54:57], v8, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[38:41], v6, s[0:3], 0 offen offset:256
+	buffer_store_dwordx4 v[48:51], v4, s[0:3], 0 offen offset:256
+	.loc	1 44 1                          ; matmul_kernel_cd_regclass.py:44:1
+	s_endpgm
+.Ltmp10:
+.Lfunc_end0:
+	.size	v9_cd_regclass, .Lfunc_end0-v9_cd_regclass
+	.cfi_endproc
+	.section	.rodata,"a",@progbits
+	.p2align	6, 0x0
+	.amdhsa_kernel v9_cd_regclass
+		.amdhsa_group_segment_fixed_size 0
+		.amdhsa_private_segment_fixed_size 0
+		.amdhsa_kernarg_size 320
+		.amdhsa_user_sgpr_count 16
+		.amdhsa_user_sgpr_dispatch_ptr 1
+		.amdhsa_user_sgpr_queue_ptr 1
+		.amdhsa_user_sgpr_kernarg_segment_ptr 1
+		.amdhsa_user_sgpr_dispatch_id 1
+		.amdhsa_user_sgpr_kernarg_preload_length 8
+		.amdhsa_user_sgpr_kernarg_preload_offset 0
+		.amdhsa_user_sgpr_private_segment_size 0
+		.amdhsa_uses_dynamic_stack 0
+		.amdhsa_enable_private_segment 0
+		.amdhsa_system_sgpr_workgroup_id_x 1
+		.amdhsa_system_sgpr_workgroup_id_y 1
+		.amdhsa_system_sgpr_workgroup_id_z 1
+		.amdhsa_system_sgpr_workgroup_info 0
+		.amdhsa_system_vgpr_workitem_id 2
+		.amdhsa_next_free_vgpr 456
+		.amdhsa_next_free_sgpr 54
+		.amdhsa_accum_offset 200
+		.amdhsa_reserve_vcc 0
+		.amdhsa_reserve_xnack_mask 1
+		.amdhsa_float_round_mode_32 0
+		.amdhsa_float_round_mode_16_64 0
+		.amdhsa_float_denorm_mode_32 3
+		.amdhsa_float_denorm_mode_16_64 3
+		.amdhsa_dx10_clamp 1
+		.amdhsa_ieee_mode 1
+		.amdhsa_fp16_overflow 0
+		.amdhsa_tg_split 0
+		.amdhsa_exception_fp_ieee_invalid_op 0
+		.amdhsa_exception_fp_denorm_src 0
+		.amdhsa_exception_fp_ieee_div_zero 0
+		.amdhsa_exception_fp_ieee_overflow 0
+		.amdhsa_exception_fp_ieee_underflow 0
+		.amdhsa_exception_fp_ieee_inexact 0
+		.amdhsa_exception_int_div_zero 0
+	.end_amdhsa_kernel
+	.text
+                                        ; -- End function
+	.set .Lv9_cd_regclass.num_vgpr, 200
+	.set .Lv9_cd_regclass.num_agpr, 256
+	.set .Lv9_cd_regclass.numbered_sgpr, 54
+	.set .Lv9_cd_regclass.num_named_barrier, 0
+	.set .Lv9_cd_regclass.private_seg_size, 0
+	.set .Lv9_cd_regclass.uses_vcc, 0
+	.set .Lv9_cd_regclass.uses_flat_scratch, 0
+	.set .Lv9_cd_regclass.has_dyn_sized_stack, 0
+	.set .Lv9_cd_regclass.has_recursion, 0
+	.set .Lv9_cd_regclass.has_indirect_call, 0
+	.section	.AMDGPU.csdata,"",@progbits
+; Kernel info:
+; codeLenInByte = 15892
+; TotalNumSgprs: 60
+; NumVgprs: 200
+; NumAgprs: 256
+; TotalNumVgprs: 456
+; ScratchSize: 0
+; MemoryBound: 0
+; FloatMode: 240
+; IeeeMode: 1
+; LDSByteSize: 0 bytes/workgroup (compile time only)
+; SGPRBlocks: 7
+; VGPRBlocks: 56
+; NumSGPRsForWavesPerEU: 60
+; NumVGPRsForWavesPerEU: 456
+; AccumOffset: 200
+; Occupancy: 1
+; WaveLimiterHint : 0
+; COMPUTE_PGM_RSRC2:SCRATCH_EN: 0
+; COMPUTE_PGM_RSRC2:USER_SGPR: 16
+; COMPUTE_PGM_RSRC2:TRAP_HANDLER: 0
+; COMPUTE_PGM_RSRC2:TGID_X_EN: 1
+; COMPUTE_PGM_RSRC2:TGID_Y_EN: 1
+; COMPUTE_PGM_RSRC2:TGID_Z_EN: 1
+; COMPUTE_PGM_RSRC2:TIDIG_COMP_CNT: 2
+; COMPUTE_PGM_RSRC3_GFX90A:ACCUM_OFFSET: 49
+; COMPUTE_PGM_RSRC3_GFX90A:TG_SPLIT: 0
+	.text
+	.p2alignl 6, 3212836864
+	.fill 256, 4, 3212836864
+	.section	.AMDGPU.gpr_maximums,"",@progbits
+	.set amdgpu.max_num_vgpr, 0
+	.set amdgpu.max_num_agpr, 0
+	.set amdgpu.max_num_sgpr, 0
+	.set amdgpu.max_num_named_barrier, 0
+	.text
+	.section	.debug_abbrev,"",@progbits
+	.byte	1                               ; Abbreviation Code
+	.byte	17                              ; DW_TAG_compile_unit
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	37                              ; DW_AT_producer
+	.byte	14                              ; DW_FORM_strp
+	.byte	19                              ; DW_AT_language
+	.byte	5                               ; DW_FORM_data2
+	.byte	3                               ; DW_AT_name
+	.byte	14                              ; DW_FORM_strp
+	.byte	16                              ; DW_AT_stmt_list
+	.byte	23                              ; DW_FORM_sec_offset
+	.byte	27                              ; DW_AT_comp_dir
+	.byte	14                              ; DW_FORM_strp
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	2                               ; Abbreviation Code
+	.byte	46                              ; DW_TAG_subprogram
+	.byte	0                               ; DW_CHILDREN_no
+	.byte	3                               ; DW_AT_name
+	.byte	14                              ; DW_FORM_strp
+	.byte	32                              ; DW_AT_inline
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	3                               ; Abbreviation Code
+	.byte	46                              ; DW_TAG_subprogram
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	4                               ; Abbreviation Code
+	.byte	29                              ; DW_TAG_inlined_subroutine
+	.byte	1                               ; DW_CHILDREN_yes
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	85                              ; DW_AT_ranges
+	.byte	23                              ; DW_FORM_sec_offset
+	.byte	88                              ; DW_AT_call_file
+	.byte	11                              ; DW_FORM_data1
+	.byte	89                              ; DW_AT_call_line
+	.byte	11                              ; DW_FORM_data1
+	.byte	87                              ; DW_AT_call_column
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	5                               ; Abbreviation Code
+	.byte	29                              ; DW_TAG_inlined_subroutine
+	.byte	0                               ; DW_CHILDREN_no
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	85                              ; DW_AT_ranges
+	.byte	23                              ; DW_FORM_sec_offset
+	.byte	88                              ; DW_AT_call_file
+	.byte	11                              ; DW_FORM_data1
+	.byte	89                              ; DW_AT_call_line
+	.byte	11                              ; DW_FORM_data1
+	.byte	87                              ; DW_AT_call_column
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	6                               ; Abbreviation Code
+	.byte	29                              ; DW_TAG_inlined_subroutine
+	.byte	0                               ; DW_CHILDREN_no
+	.byte	49                              ; DW_AT_abstract_origin
+	.byte	19                              ; DW_FORM_ref4
+	.byte	17                              ; DW_AT_low_pc
+	.byte	1                               ; DW_FORM_addr
+	.byte	18                              ; DW_AT_high_pc
+	.byte	6                               ; DW_FORM_data4
+	.byte	88                              ; DW_AT_call_file
+	.byte	11                              ; DW_FORM_data1
+	.byte	89                              ; DW_AT_call_line
+	.byte	11                              ; DW_FORM_data1
+	.byte	87                              ; DW_AT_call_column
+	.byte	11                              ; DW_FORM_data1
+	.byte	0                               ; EOM(1)
+	.byte	0                               ; EOM(2)
+	.byte	0                               ; EOM(3)
+	.section	.debug_info,"",@progbits
+.Lcu_begin0:
+	.long	.Ldebug_info_end0-.Ldebug_info_start0 ; Length of Unit
+.Ldebug_info_start0:
+	.short	4                               ; DWARF version number
+	.long	.debug_abbrev                   ; Offset Into Abbrev. Section
+	.byte	8                               ; Address Size (in bytes)
+	.byte	1                               ; Abbrev [1] 0xb:0x65 DW_TAG_compile_unit
+	.long	.Linfo_string0                  ; DW_AT_producer
+	.short	2                               ; DW_AT_language
+	.long	.Linfo_string1                  ; DW_AT_name
+	.long	.Lline_table_start0             ; DW_AT_stmt_list
+	.long	.Linfo_string2                  ; DW_AT_comp_dir
+	.quad	.Lfunc_begin0                   ; DW_AT_low_pc
+	.long	.Lfunc_end0-.Lfunc_begin0       ; DW_AT_high_pc
+	.byte	2                               ; Abbrev [2] 0x2a:0x6 DW_TAG_subprogram
+	.long	.Linfo_string3                  ; DW_AT_name
+	.byte	1                               ; DW_AT_inline
+	.byte	3                               ; Abbrev [3] 0x30:0x3f DW_TAG_subprogram
+	.quad	.Lfunc_begin0                   ; DW_AT_low_pc
+	.long	.Lfunc_end0-.Lfunc_begin0       ; DW_AT_high_pc
+	.long	42                              ; DW_AT_abstract_origin
+	.byte	4                               ; Abbrev [4] 0x41:0x2d DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.long	.Ldebug_ranges0                 ; DW_AT_ranges
+	.byte	1                               ; DW_AT_call_file
+	.byte	76                              ; DW_AT_call_line
+	.byte	20                              ; DW_AT_call_column
+	.byte	5                               ; Abbrev [5] 0x4d:0xc DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.long	.Ldebug_ranges1                 ; DW_AT_ranges
+	.byte	3                               ; DW_AT_call_file
+	.byte	50                              ; DW_AT_call_line
+	.byte	17                              ; DW_AT_call_column
+	.byte	6                               ; Abbrev [6] 0x59:0x14 DW_TAG_inlined_subroutine
+	.long	42                              ; DW_AT_abstract_origin
+	.quad	.Ltmp3                          ; DW_AT_low_pc
+	.long	.Ltmp4-.Ltmp3                   ; DW_AT_high_pc
+	.byte	3                               ; DW_AT_call_file
+	.byte	51                              ; DW_AT_call_line
+	.byte	17                              ; DW_AT_call_column
+	.byte	0                               ; End Of Children Mark
+	.byte	0                               ; End Of Children Mark
+	.byte	0                               ; End Of Children Mark
+.Ldebug_info_end0:
+	.section	.debug_ranges,"",@progbits
+.Ldebug_ranges0:
+	.quad	.Ltmp2-.Lfunc_begin0
+	.quad	.Ltmp7-.Lfunc_begin0
+	.quad	.Ltmp8-.Lfunc_begin0
+	.quad	.Ltmp9-.Lfunc_begin0
+	.quad	0
+	.quad	0
+.Ldebug_ranges1:
+	.quad	.Ltmp2-.Lfunc_begin0
+	.quad	.Ltmp3-.Lfunc_begin0
+	.quad	.Ltmp5-.Lfunc_begin0
+	.quad	.Ltmp6-.Lfunc_begin0
+	.quad	0
+	.quad	0
+	.section	.debug_str,"MS",@progbits,1
+.Linfo_string0:
+	.asciz	"triton"                        ; string offset=0 ; triton
+.Linfo_string1:
+	.asciz	"matmul_kernel_cd_regclass.py"  ; string offset=7 ; matmul_kernel_cd_regclass.py
+.Linfo_string2:
+	.asciz	"/root/gfx950-gluon-tutorials/experiments/v9_agpr_pinning" ; string offset=36 ; /root/gfx950-gluon-tutorials/experiments/v9_agpr_pinning
+.Linfo_string3:
+	.asciz	"v9_cd_regclass"                ; string offset=93 ; v9_cd_regclass
+	.ident	"Triton version 3.8.0+gita26d06a7"
+	.ident	"LLVM version 24.0.0git (b010a18d2b648cab83c83967ff26b8fde11acdc6)"
+	.section	".note.GNU-stack","",@progbits
+	.amdgpu_metadata
+---
+amdhsa.kernels:
+  - .agpr_count:     256
+    .args:
+      - .address_space:  global
+        .offset:         0
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         8
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         16
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         24
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         28
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         32
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         36
+        .size:           4
+        .value_kind:     by_value
+      - .offset:         40
+        .size:           4
+        .value_kind:     by_value
+      - .address_space:  global
+        .offset:         48
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  global
+        .offset:         56
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         64
+        .size:           4
+        .value_kind:     hidden_block_count_x
+      - .offset:         68
+        .size:           4
+        .value_kind:     hidden_block_count_y
+      - .offset:         72
+        .size:           4
+        .value_kind:     hidden_block_count_z
+      - .offset:         76
+        .size:           2
+        .value_kind:     hidden_group_size_x
+      - .offset:         78
+        .size:           2
+        .value_kind:     hidden_group_size_y
+      - .offset:         80
+        .size:           2
+        .value_kind:     hidden_group_size_z
+      - .offset:         82
+        .size:           2
+        .value_kind:     hidden_remainder_x
+      - .offset:         84
+        .size:           2
+        .value_kind:     hidden_remainder_y
+      - .offset:         86
+        .size:           2
+        .value_kind:     hidden_remainder_z
+      - .offset:         104
+        .size:           8
+        .value_kind:     hidden_global_offset_x
+      - .offset:         112
+        .size:           8
+        .value_kind:     hidden_global_offset_y
+      - .offset:         120
+        .size:           8
+        .value_kind:     hidden_global_offset_z
+      - .offset:         128
+        .size:           2
+        .value_kind:     hidden_grid_dims
+      - .offset:         144
+        .size:           8
+        .value_kind:     hidden_hostcall_buffer
+      - .offset:         152
+        .size:           8
+        .value_kind:     hidden_multigrid_sync_arg
+      - .offset:         160
+        .size:           8
+        .value_kind:     hidden_heap_v1
+      - .offset:         168
+        .size:           8
+        .value_kind:     hidden_default_queue
+      - .offset:         176
+        .size:           8
+        .value_kind:     hidden_completion_action
+      - .offset:         184
+        .size:           4
+        .value_kind:     hidden_dynamic_lds_size
+      - .offset:         264
+        .size:           8
+        .value_kind:     hidden_queue_ptr
+    .group_segment_fixed_size: 0
+    .kernarg_segment_align: 8
+    .kernarg_segment_size: 320
+    .max_flat_workgroup_size: 256
+    .name:           v9_cd_regclass
+    .private_segment_fixed_size: 0
+    .sgpr_count:     60
+    .sgpr_spill_count: 0
+    .symbol:         v9_cd_regclass.kd
+    .uniform_work_group_size: 1
+    .uses_dynamic_stack: false
+    .vgpr_count:     456
+    .vgpr_spill_count: 0
+    .wavefront_size: 64
+amdhsa.target:   amdgpu9.50-amd-amdhsa-unknown-gfx950
+amdhsa.version:
+  - 1
+  - 2
+...
+
+	.end_amdgpu_metadata
+	.section	.debug_line,"",@progbits
+.Lline_table_start0:
