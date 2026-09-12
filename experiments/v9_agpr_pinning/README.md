@@ -266,14 +266,59 @@ It is repeatable across dispatches:
 | 25 | 4490, 91.2% | 4212, 97.3% |
 | 40 | 4494, 91.1% | 4239, 96.6% |
 
-The fences stop LLVM's machine scheduler from interleaving tiles, so all 128 second-K-step MFMAs in
-the loop issue right behind the MFMA whose result they read and wait for it. With force-agpr only 33
-of the 128 do; the rest have 1 to 5 independent MFMAs in between. Interleaving two tiles' K-steps
-before fencing them should close the gap.
+### Where the gap comes from
+
+llirSched emits a tile's K-steps next to each other: in the LLVM IR it hands to the backend, 128 of
+the loop's 192 dependent MFMA pairs are adjacent — for the unpinned kernel as well, byte for byte the
+same order. Without pins nothing keeps them there, and LLVM's schedulers spread every one of them out
+in the final assembly. With pins the per-tile fences freeze that order, so 123 of the 192 pairs stay
+adjacent and each one waits for its producer.
+
+Separating the passes shows it (v9 16×16 with `cd_regclass` pins throughout; the assembly built by
+`llc` from llirSched's IR and measured with the same ATT recipe):
+
+| pin fences | pre-RA `misched` | loop ins | copies | `s_nop` | adjacent dependent pairs | MFMA eff | cycles/iter |
+|---|---|---|---|---|---|---|---|
+| every tile (shipped) | on | 519 | 0 | 90 | 123/192 | 90.9% | 4508 |
+| every tile | off | 520 | 0 | 90 | 118/192 | 91.9% | 4456 |
+| none | on | 643 | **200** | 24 | 5/184 | 83.2% | 4921 |
+| none | off, and post-RA off too | 585 | 0 | 152 | 58/192 | 93.2% | 4395 |
+| **none** | **off** | **428** | **0** | **8** | **0/192** | **96.9%** | **4229** |
+| *force-agpr, no pins* | on | 422 | 0 | 0 | 0/192 | 96.5% | 4245 |
+
+The pins themselves cost nothing: drop the fences and stop only the **pre-RA** scheduler from touching
+the pinned MFMAs, and the **post-RA** scheduler spreads the dependent MFMAs, the hazard `s_nop`s all
+but disappear and `cd_regclass` lands on force-agpr's number (96.9% vs 96.5%, 4229 vs 4245
+cycles/iter, in a loop of 428 instructions against force-agpr's 422). The fences are only needed
+against the pre-RA scheduler — without them it reorders the pinned MFMAs and register allocation
+strands 200 copies in the loop (row 3). But `sched.barrier(0)` blocks *both* schedulers, so it also
+blocks the pass that does the spreading. That is the 6 points.
+
+The `s_nop`s are a symptom of the same adjacency rather than a separate cost (90 with the fences, 8
+without), which is also why deleting the 60 that guard the fake hazard changed nothing.
+
+Three things that do not close the gap:
+
+- **Fewer fences.** One per 2 / 4 / 8 tiles instead of per tile leaves 80 / 132 / 164 copies in the
+  loop (994 / 969 / 951 TFLOPS warm, against 1063 for one per tile).
+- **A masked fence.** `sched.barrier` with every class except MFMA allowed to cross behaves like no
+  fence at all: 200 copies.
+- **Emitting the K-steps apart.** Reordering llirSched's MFMA list so that a tile's K-steps are
+  separated (round-robin over accumulator chains, at any group size) does remove the adjacency, but
+  then register allocation cannot hold the pins: 332–452 copies, 84–106 MFMAs back in VGPR form,
+  810–846 TFLOPS.
+
+So closing it needs either a fence that holds the pins through the pre-RA scheduler without freezing
+the post-RA one — LLVM has no such barrier today, and `-enable-misched=false` is process-wide, though
+so is force-agpr's own `amdgpu-mfma-vgpr-form=0` — or the register class attached to the MFMA at
+instruction selection instead of as an asm hint, which is what force-agpr and the in-progress
+`RewriteMFMAFormStage` do.
 
 Note that this per-CU loop metric does not decide end-to-end time on its own: on v9 16×16
 `cd_regclass` trails force-agpr by 5 points of MFMA efficiency but is 1% ahead in cold TFLOPS, while
-on a4w4 v0 it leads by 9 points and is 2% behind. Judge a change by both.
+on a4w4 v0 it leads by 9 points and is 2% behind. The 96.9% variant above is another case — it gains
+6 points of MFMA efficiency over the shipped one and runs the same cold (1013 vs 1016 TFLOPS), the
+loop's extra MFMA-pipe idle time being covered by memory waits. Judge a change by both.
 
 ## Limitations
 
@@ -288,7 +333,8 @@ on a4w4 v0 it leads by 9 points and is 2% behind. Judge a change by both.
 - **All-AGPR is not always best.** On a4w4 v1 without llirSched, force-agpr's MFMA efficiency (66.2%)
   beats both the unpinned kernel (64.0%) and `cd_regclass` (64.2%) only slightly, and on v9 without
   llirSched none of the three differ much: the schedule dominates.
-- **llirSched's fences serialize dependent MFMAs** (see [What ATT shows](#what-att-shows)).
+- **llirSched's fences serialize dependent MFMAs**, worth ~6 points of MFMA efficiency on v9; the
+  pins are what force the fences (see [Where the gap comes from](#where-the-gap-comes-from)).
 - **`s_nop` padding**, negligible in practice (see above).
 - Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1, at one shape
   (4096×4096×8192) each.
