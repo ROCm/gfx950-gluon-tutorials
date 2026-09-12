@@ -268,11 +268,19 @@ It is repeatable across dispatches:
 
 ### Where the gap comes from
 
-llirSched emits a tile's K-steps next to each other: in the LLVM IR it hands to the backend, 128 of
-the loop's 192 dependent MFMA pairs are adjacent — for the unpinned kernel as well, byte for byte the
-same order. Without pins nothing keeps them there, and LLVM's schedulers spread every one of them out
-in the final assembly. With pins the per-tile fences freeze that order, so 123 of the 192 pairs stay
-adjacent and each one waits for its producer.
+In the LLVM IR llirSched hands to the backend, 128 of the loop's 192 dependent MFMA pairs are already
+consecutive — for the unpinned kernel as well, the same order. Without pins LLVM's schedulers pull
+every one of those pairs apart again in the final assembly; with pins the per-tile fences stop that,
+and 123 of the 192 stay consecutive.
+
+A fence only forbids *crossing* it, so this is not simply the IR order being frozen. Each fenced
+window here holds a C pin, the tile's first K-step and one memory op, and inside the window the
+pre-RA scheduler still hoists the memory op above the MFMA — which pushes that MFMA to the window's
+end, right against the next window's dependent MFMA. In the IR the tile reads `pin, mfma k0, ds_read,
+[fence], mfma k1`; built with `-enable-misched=false` the assembly keeps that (`mfma, ds_read, mfma`),
+and with the scheduler on it becomes `ds_read, mfma, mfma`. That hoisting is worth about a point
+(91.9% vs 90.9% below). The other five points are the post-RA scheduler, which the fences stop from
+interleaving independent tiles at all.
 
 Separating the passes shows it (v9 16×16 with `cd_regclass` pins throughout; the assembly built by
 `llc` from llirSched's IR and measured with the same ATT recipe):
