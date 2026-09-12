@@ -9,8 +9,8 @@ which is the pair of LLVM settings `amdgpu-mfma-vgpr-form=0` (process-wide LLVM 
 
 It uses two extensions:
 
-- **`cd_regclass`** (Triton): `gl.amd.cdna4.mfma(a, b, acc, cd_regclass="a")` and the same argument
-  on `gl.amd.cdna4.mfma_scaled` make the compiler pin each MFMA's C and D next to the MFMA
+- **`cd_regclass`** (Triton): `gl.amd.cdna4.mfma(a, b, acc, cd_regclass="a")`, and the same argument
+  on `gl.amd.cdna4.mfma_scaled`, make the compiler pin each MFMA's C and D next to the MFMA
   instruction.
 - **llirSched** (this repo's [plugins/llir_scheduler](../../plugins/llir_scheduler)): the plugin keeps
   those pins attached to their MFMAs when it reorders the loop.
@@ -20,11 +20,11 @@ accumulator before and after every `mfma()` call with `inline_asm_elementwise`, 
 [triton-lang/triton#10337](https://github.com/triton-lang/triton/pull/10337) (Lei Zhang's branch
 `antiagainst/triton:pr-10337-amd-register-classes`). It does not work on v9. A Gluon-level pin covers
 the whole accumulator tensor, so each `mfma()` call becomes 16 pins, then 32 MFMAs, then 16 more pins.
-The loop kept 480 copy instructions and only 176 of its 256 MFMAs in AGPR form (849 TFLOPS vs 943 for
-v9), and pinning only D spilled 147 VGPRs. Lei's example on that branch only has one MFMA per `mfma()`
-call (a single wave, one 16×16×32 or 32×32×16 tile, no register pressure), so a tensor-level pin sits
-next to its MFMA by construction and the problem cannot show up there. Those files are in this
-directory's git history (commit `efaa3ad`); `cd_regclass` does not need PR #10337.
+The loop kept 480 copy instructions and only 176 of its 256 MFMAs in AGPR form, and pinning only D
+spilled 147 VGPRs. Lei's example on that branch only has one MFMA per `mfma()` call (a single wave,
+one 16×16×32 or 32×32×16 tile, no register pressure), so a tensor-level pin sits next to its MFMA by
+construction and the problem cannot show up there. Those files are in this directory's git history
+(commit `efaa3ad`); `cd_regclass` does not need PR #10337.
 
 ## Triton compiler
 
@@ -45,7 +45,7 @@ Flow: no amdgcnas and no force-agpr unless stated. As in `gfx950-tutorial-v2.1`,
 - [`matmul_kernel_cd_regclass.py`](matmul_kernel_cd_regclass.py): v9 with every
   `gl.amd.cdna3.mfma(a, b, acc)` written as `gl.amd.cdna4.mfma(a, b, acc, cd_regclass="a")`. A diff
   against v9 shows only the 16 call sites and the kernel renamed to `v9_cd_regclass`.
-- [`run.py`](run.py): correctness check and `do_bench` timing, 4096×4096×8192 fp16.
+- [`run.py`](run.py): correctness check and timing, 4096×4096×8192 fp16.
 - [`ir_dumps/`](ir_dumps/): the LLVM IR (`.llir`) and gfx950 assembly (`.amdgcn`) Triton generated,
   `v9_cd_regclass.*` without llirSched and `v9_cd_regclass_llirsched.*` with it.
 
@@ -95,66 +95,101 @@ pins behind, which broke the IR. The plugin on this branch (`LlirSchedPlugin.cpp
   extracts also looks through pins.
 - **Fences each pinned tile.** A `sched.barrier` after every D pin stops LLVM's machine scheduler
   from reordering the pinned MFMAs in the stretches between memory anchors. Without these fences
-  that reordering left 200 copies in the loop, because LLVM's post-RA copy-removal pass could not
+  that reordering left 200 copies in the v9 loop, because LLVM's post-RA copy-removal pass could not
   find a free AGPR for 17 of the MFMA chains. The fences have a cost, see
   [What ATT shows](#what-att-shows).
 
 Kernels without pins get byte-identical output from the plugin before and after this change.
 
+## How the numbers are measured
+
+- **Copies in the loop** (`v_accvgpr_read` / `_write` / `_mov`), **AGPR-form MFMAs**, **VGPR spills**,
+  **`s_nop`** and **`sched.barrier`s** come from the generated assembly and kernel metadata. The hot
+  loop is the loop body containing the MFMAs, from its label to its backward branch.
+- **MFMA efficiency** and **cycles per loop iteration** come from `rocprofv3 --att` on the 15th
+  dispatch, CU 0 of every shader engine, decoded with
+  [`scripts/process_json.py`](../../scripts/process_json.py). All kernels here run 4 warps, i.e. 1
+  wave/SIMD, so the per-wave figure the script prints is also the per-SIMD figure (no ×2, unlike the
+  8-wave kernels; see [docs/mfma_efficiency.md](../../docs/mfma_efficiency.md)).
+- **Cold TFLOPS** come from `rocprofv3 --kernel-trace` over 200 dispatches, median kernel time.
+- Both use rotating inputs larger than 512 MB, so every dispatch starts with cold caches, as in
+  `bench.py --rocprof`. All 4096×4096×8192. Every configuration was checked against its reference.
+- The per-configuration traces, the summary CSVs and the driver scripts are in
+  `/data/att_v9_cd_regclass_sweep_20260912/`, and two full ATT traces (row 4 and force-agpr) in
+  `/data/att_a16w16-v9_cd_regclass_llir-sched_...` and `..._v9_beyond_hotloop_llir-sched_force-agpr_...`.
+
 ## Results
 
-**The number to look at is the copy instructions inside the hot loop**: `v_accvgpr_read`,
-`v_accvgpr_write` and `v_accvgpr_mov`, which move accumulator values between AGPRs and VGPRs. A clean
-kernel keeps the accumulators in AGPRs across the whole loop and has none. The hot loop is the loop
-body that contains the MFMAs, from its label to its backward branch.
+**v9, 16×16×32 fp16** (256 MFMAs in the hot loop)
 
-All rows are compiled and run in-process with the Triton build above; llirSched is loaded with
-`LLVM_PASS_PLUGIN_PATH` and `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`. TFLOPS are only a rough
-reference: `triton.testing.do_bench` (warm cache, not the tutorial's cold-cache rocprof methodology)
-on gfx950, 4096×4096×8192. Run-to-run spread is about 1%. All outputs match their reference.
+| variant | llirSched | copies in loop | AGPR-form MFMAs | VGPR spills | `s_nop` (cycles) | `sched.barrier`s | MFMA efficiency | cycles/iter | cold TFLOPS |
+|---|---|---|---|---|---|---|---|---|---|
+| unpinned | no | 36 | 52/256 | 0 | 1 (1) | 0 | 70.3% | 5827 | 922 |
+| unpinned | yes | 119 | 58/256 | 0 | 40 (169) | 96 | 76.7% | 5344 | 936 |
+| **`cd_regclass`** | no | **0** | 256/256 | 0 | 47 (47) | 0 | 71.8% | 5703 | 917 |
+| **`cd_regclass`** | yes | **0** | 256/256 | 0 | 90 (90) | 224 | **91.4%** | 4481 | 1024 |
+| force-agpr | no | 0 | 256/256 | 0 | 1 (1) | 0 | 70.7% | 5793 | 909 |
+| force-agpr | yes | 0 | 256/256 | 0 | 0 (0) | 96 | **96.5%** | 4245 | 1012 |
 
-| # | `cd_regclass` | llirSched | copies in loop | AGPR-form MFMAs in loop (x/y) | VGPR spills | `s_nop` in loop (wait states) | `sched.barrier`s | TFLOPS (do_bench, reference) |
-|---|---|---|---|---|---|---|---|---|
-| 1 | no | no | 36 | 52/256 | 0 | 1 (1) | 0 | 942 |
-| 2 | **yes** | no | **0** | 256/256 | 0 | 47 (47) | 0 | 949 |
-| 3 | no | yes | 119 | 58/256 | 0 | 40 (169) | 96 | 963 |
-| 4 | **yes** | yes | **0** | 256/256 | 0 | 90 (90) | 224 | 1065 |
+Two things to note. Without llirSched the register placement barely matters: every variant sits near
+70% because the schedule, not the accumulator's register file, is the limit. And MFMA efficiency does
+not always track end-to-end time: `cd_regclass` is 5 points behind force-agpr here yet slightly ahead
+in cold TFLOPS (1024 vs 1012).
 
-For reference, force-agpr on the same build also gives 0 copies and 256/256 in both flows, at 939
-TFLOPS without llirSched and 1062 with it. With cold caches (`rocprofv3 --kernel-trace`, 200
-dispatches on rotating inputs, median of two runs) row 4 and llir + force-agpr are also level:
-1022 vs 1019 TFLOPS (row 3: 934).
+### Other shapes and data types
 
-- **copies in loop**: number of `v_accvgpr_read` / `v_accvgpr_write` / `v_accvgpr_mov` instructions in the hot loop.
-- **AGPR-form MFMAs in loop (x/y)**: x of the y MFMA instructions in the hot loop use the AGPR form,
-  meaning their accumulator input C and result D are AGPRs, e.g.
-  `v_mfma_f32_16x16x32_f16 a[252:255], v[88:91], v[96:99], a[252:255]`. The other y − x use the VGPR
-  form, where C and D are VGPRs: `v_mfma_f32_16x16x32_f16 v[..], v[..], v[..], v[..]`. C and D always
-  share one register class (the instruction has a single bit for both).
-- **VGPR spills**: `.vgpr_spill_count` from the kernel metadata.
-- **`s_nop` in loop (wait states)**: number of `s_nop` instructions in the hot loop, and the cycles
-  they add in total (`s_nop N` waits N+1 cycles).
-- **`sched.barrier`s**: `llvm.amdgcn.sched.barrier` calls in the LLVM IR, which llirSched inserts to
-  pin its schedule.
+Same measurements on a 32×32×16 variant of v9 and on the tutorial's fp8 and MXFP4 GEMMs, with
+`cd_regclass="a"` on every `mfma` / `mfma_scaled` call.
 
-### Other MFMA shapes and data types
+**v9, 32×32×16 fp16** (128 MFMAs in the loop)
 
-The same pinning on a 32×32×16 variant of v9 (`instr_shape=[32, 32, 16]`, 128 MFMAs in the loop)
-and on the tutorial's fp8 and MXFP4 GEMMs, all at 4096×4096×8192 with `cd_regclass="a"` on every
-`mfma` / `mfma_scaled` call. With `cd_regclass`, every loop MFMA is in AGPR form in all of these.
+| variant | llirSched | copies in loop | AGPR-form | VGPR spills | MFMA efficiency | cycles/iter | cold TFLOPS |
+|---|---|---|---|---|---|---|---|
+| unpinned | no | 112 | 24/128 | 0 | 62.6% | 6540 | 811 |
+| unpinned | yes | 144 | 32/128 | 0 | 85.3% | 4801 | 876 |
+| **`cd_regclass`** | no | **0** | 128/128 | 0 | 63.7% | 6427 | 815 |
+| **`cd_regclass`** | yes | **0** | 128/128 | 0 | 92.9% | 4411 | 897 |
+| force-agpr | no | 0 | 128/128 | **27** | 16.3% | 25094 | 289 |
+| force-agpr | yes | 0 | 128/128 | 0 | 96.6% | 4241 | 915 |
 
-| kernel | llirSched | copies in loop: unpinned / `cd_regclass` | `cd_regclass` VGPR spills | TFLOPS (do_bench): unpinned / `cd_regclass` / force-agpr |
-|---|---|---|---|---|
-| v9, 32×32×16 fp16 | no | 112 / **0** | 0 | 826 / 830 / 290 ¹ |
-| | yes | 144 / **0** | 0 | 900 / 937 / 945 |
-| a8w8, fp8 (e5m2) | no | 33 / **0** | 0 | 1982 / 2027 / 2025 |
-| | yes | 49 / **0** | 0 | 2203 / 2258 / 2267 |
-| a4w4 v0, MXFP4 | no | 68 / **0** | **60** | 3248 / 3025 / 3314 |
-| | yes | 238 / **0** | **28** | 497 ² / 2411 / 2466 |
-| a4w4 v1, MXFP4 | no | 79 / **0** | 0 | 3045 / 2475 / 2672 |
-| | yes | 220 / **0** | 0 | 2165 / 2481 / 2470 |
+**a8w8, fp8 e5m2, 16×16×128 scaled** (128 MFMAs in the loop)
 
-¹ force-agpr spills 27 VGPRs on this shape. ² The unpinned kernel spills 186 VGPRs here.
+| variant | llirSched | copies in loop | AGPR-form | VGPR spills | MFMA efficiency | cycles/iter | cold TFLOPS |
+|---|---|---|---|---|---|---|---|
+| unpinned | no | 33 | 32/128 | 0 | 67.3% | 6083 | 1803 |
+| unpinned | yes | 49 | 34/128 | 0 | 91.8% | 4460 | 1954 |
+| **`cd_regclass`** | no | **0** | 128/128 | 0 | 72.7% | 5636 | 1852 |
+| **`cd_regclass`** | yes | **0** | 128/128 | 0 | 95.2% | 4304 | 2014 |
+| force-agpr | no | 0 | 128/128 | 0 | 70.8% | 5789 | 1858 |
+| force-agpr | yes | 0 | 128/128 | 0 | 96.9% | 4225 | 2056 |
+
+**a4w4 v0, MXFP4, 16×16×128 scaled** (256 MFMAs in the loop)
+
+| variant | llirSched | copies in loop | AGPR-form | VGPR spills | MFMA efficiency | cycles/iter | cold TFLOPS |
+|---|---|---|---|---|---|---|---|
+| unpinned | no | 68 | 68/256 | 0 | 50.5% | 8107 | 2633 |
+| unpinned | yes | 238 | 62/256 | **186** | 7.8% | 52742 | 709 |
+| **`cd_regclass`** | no | **0** | 256/256 | **60** | 56.1% | 7299 | 2637 |
+| **`cd_regclass`** | yes | **0** | 256/256 | **28** | 70.2% | 5837 | 2920 |
+| force-agpr | no | 0 | 256/256 | 0 | 55.4% | 7395 | 2742 |
+| force-agpr | yes | 0 | 256/256 | 0 | 60.7% | 6745 | 2992 |
+
+**a4w4 v1, MXFP4, 16×16×128 scaled** (256 MFMAs in the loop)
+
+| variant | llirSched | copies in loop | AGPR-form | VGPR spills | MFMA efficiency | cycles/iter | cold TFLOPS |
+|---|---|---|---|---|---|---|---|
+| unpinned | no | 79 | 48/256 | 0 | 64.0% | 6404 | 2775 |
+| unpinned | yes | 220 | 82/256 | 12 | 40.1% | 10226 | 2363 |
+| **`cd_regclass`** | no | **0** | 256/256 | 0 | 64.2% | 6379 | 2861 |
+| **`cd_regclass`** | yes | **0** | 256/256 | 0 | 67.8% | 6040 | 3072 |
+| force-agpr | no | 0 | 256/256 | 0 | 66.2% | 6188 | 2833 |
+| force-agpr | yes | 0 | 256/256 | 0 | 67.5% | 6067 | 3050 |
+
+`cd_regclass` removes every loop copy and puts every loop MFMA in AGPR form in all five kernels. With
+llirSched it beats force-agpr's MFMA efficiency on a4w4 v0 (70.2% vs 60.7%) and matches it on a4w4 v1,
+while trailing it on v9 (91.4% vs 96.5%, 92.9% vs 96.6%) and a8w8 (95.2% vs 96.9%) because of the
+per-tile fences. It also rescues the two configurations where llirSched alone collapses: a4w4 v0
+(7.8% → 70.2%) and a4w4 v1 (40.1% → 67.8%).
 
 ## `s_nop` generation and overhead
 
@@ -167,47 +202,48 @@ fire:
   state before the next instruction touching that register. LLVM assumes any inline asm might be
   such a write, so it pads between a pin and the next instruction that uses the pinned registers.
   The pins are empty, so this padding is never needed.
-  - Row 2: 46 of the 47, between the D pin that ends one `mfma()` call and the C pin that starts the
-    next call on the same accumulator, which LLVM's machine scheduler hoists right up to it.
-  - Row 4: 60 of the 90, between a C pin and the MFMA that reads it. The fences keep each C pin
-    next to its own MFMA, and LLVM counts MFMAs as VALU instructions.
+  - v9 without llirSched: 46 of the 47, between the D pin that ends one `mfma()` call and the C pin
+    that starts the next call on the same accumulator, which LLVM's machine scheduler hoists right up
+    to it.
+  - v9 with llirSched: 60 of the 90, between a C pin and the MFMA that reads it. The fences keep each
+    C pin next to its own MFMA, and LLVM counts MFMAs as VALU instructions.
 - **M0 before an LDS-DMA load (a real hazard).** Writing `m0` (`s_mov_b32 m0, ...`) and then issuing
   a `buffer_load ... lds` needs 1 wait state. Inline asm doesn't count toward that distance, so when
-  only a pin sits between the two, LLVM has to add the nop. This accounts for the other 30 in row 4.
+  only a pin sits between the two, LLVM has to add the nop. This accounts for the other 30.
 
-**Overhead.** Each `s_nop 0` takes 4 cycles of the wave's issue time: 360 cycles per iteration in
-row 4, 8% of the loop's latency in ATT. It costs almost nothing, though. Deleting the 60 fake-hazard
-nops from row 4's assembly (and keeping the 30 real ones) leaves the ATT loop time unchanged: the
-MFMAs' stall time grows by the same amount. Cold end-to-end it gains about 0.5% (1027 vs 1022 TFLOPS).
+**Overhead: negligible.** Each `s_nop 0` takes 4 cycles of the wave's issue time, 360 cycles per
+iteration with llirSched, 8% of the loop's summed latency in ATT. But deleting the 60 fake-hazard
+nops from the assembly (keeping the 30 real ones) does not speed the loop up: MFMA efficiency stays
+at 90.8% against 91.2%, because the MFMAs' stall time grows by the same amount. Cold end-to-end it
+gains about 0.5%. The nops sit in time the wave would otherwise spend waiting on the MFMA pipe.
 
-**Removing them.** Two options, neither done yet:
+**Removing them anyway.** Two options, neither done yet:
 
 - In LLVM, teach the hazard recognizer that an inline asm with an empty string emits no instruction.
-  That removes the partial-register-write padding (46 in row 2, 60 in row 4). The 30 M0 nops stay
-  unless the schedule puts a real instruction between the `m0` write and the load.
+  That removes the partial-register-write padding (46 without llirSched, 60 with it). The 30 M0 nops
+  stay unless the schedule puts a real instruction between the `m0` write and the load.
 - In Triton, drop redundant pins. A C pin whose input is already the previous call's D pin in the
-  same register class changes nothing, and removing it removes the row-2 pairs.
+  same register class changes nothing.
 
 ## What ATT shows
 
-ATT traces for row 4 and for llir + force-agpr are in `/data`:
-`att_a16w16-v9_cd_regclass_llir-sched_4096x4096x8192_fp16_mi350x_rotating_v2.1-cd-regclass_20260911`
-and `att_a16w16-v9_beyond_hotloop_llir-sched_force-agpr_4096x4096x8192_fp16_mi350x_rotating_v2.1-cd-regclass_20260911`
-(cold rotating inputs, CU 0 of every shader engine, `scripts/process_json.py`).
+The MFMA-efficiency gap to force-agpr on v9 comes from the per-tile fences, not from the `s_nop`s.
+It is repeatable across dispatches:
 
-| traced dispatch | row 4: cycles per iteration, MFMA efficiency | llir + force-agpr |
+| traced dispatch | `cd_regclass` + llirSched | force-agpr + llirSched |
 |---|---|---|
-| 15 | 4491, 91.2% | 4226, 96.9% |
+| 15 | 4491 cycles/iter, 91.2% | 4226, 96.9% |
 | 25 | 4490, 91.2% | 4212, 97.3% |
 | 40 | 4494, 91.1% | 4239, 96.6% |
 
-On the traced CU the pinned loop is consistently about 6% longer, and the cause is the per-tile
-fences, not the `s_nop`s. The fences stop LLVM's machine scheduler from interleaving tiles, so all 128
-second K-step MFMAs in the loop issue right behind the MFMA whose result they read and wait for it.
-With force-agpr only 33 of the 128 do; the rest have 1 to 5 independent MFMAs in between. End to
-end the two still take the same time (cold and warm), and why the traced CU's gap does not show up
-there is not understood yet. Interleaving two tiles' K-steps before fencing them should remove the
-gap.
+The fences stop LLVM's machine scheduler from interleaving tiles, so all 128 second-K-step MFMAs in
+the loop issue right behind the MFMA whose result they read and wait for it. With force-agpr only 33
+of the 128 do; the rest have 1 to 5 independent MFMAs in between. Interleaving two tiles' K-steps
+before fencing them should close the gap.
+
+Note that this per-CU loop metric does not decide end-to-end time on its own: on v9 16×16
+`cd_regclass` trails force-agpr by 5 points of MFMA efficiency but is 1% ahead in cold TFLOPS, while
+on a4w4 v0 it leads by 9 points and is 2% behind. Judge a change by both.
 
 ## Limitations
 
@@ -219,9 +255,10 @@ gap.
   find VGPRs for values in transit before the copies are removed. On a4w4 v0 (256 VGPRs + 256 AGPRs)
   that spills 60 VGPRs without llirSched and 28 with it, all after the hot loop; force-agpr does not
   spill there.
-- **All-AGPR is not always best.** On a4w4 v1 without llirSched, keeping every accumulator in AGPRs
-  (`cd_regclass` 2475, force-agpr 2672) is slower than the compiler's own mix (3045).
+- **All-AGPR is not always best.** On a4w4 v1 without llirSched, force-agpr's MFMA efficiency (66.2%)
+  beats both the unpinned kernel (64.0%) and `cd_regclass` (64.2%) only slightly, and on v9 without
+  llirSched none of the three differ much: the schedule dominates.
 - **llirSched's fences serialize dependent MFMAs** (see [What ATT shows](#what-att-shows)).
-- **`s_nop` padding**, mostly harmless (see above).
-- Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1 only, and with warm-cache
-  `do_bench` except where cold numbers are given.
+- **`s_nop` padding**, negligible in practice (see above).
+- Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1, at one shape
+  (4096×4096×8192) each.
