@@ -316,11 +316,49 @@ Three things that do not close the gap:
   then register allocation cannot hold the pins: 332–452 copies, 84–106 MFMAs back in VGPR form,
   810–846 TFLOPS.
 
-So closing it needs either a fence that holds the pins through the pre-RA scheduler without freezing
-the post-RA one — LLVM has no such barrier today, and `-enable-misched=false` is process-wide, though
-so is force-agpr's own `amdgpu-mfma-vgpr-form=0` — or the register class attached to the MFMA at
-instruction selection instead of as an asm hint, which is what force-agpr and the in-progress
-`RewriteMFMAFormStage` do.
+### Fencing before the anchor instead
+
+llirSched's output is the same with and without pins: dropping the pins and fences, the loop's MFMAs,
+LDS reads, async copies and stores come in the same order, and all 96 anchor fences sit at the same
+positions. The pinned version only adds a fence after each of the 128 D pins.
+
+The anchor fence goes *after* its anchor, so a window runs from one tile's MFMA to the next anchor
+(`mfma, ds_read | mfma`), and the scheduler is free to hoist that ds_read in front of the MFMA. Without
+pin fences that is harmless: the next window also starts with a hoisted load, so a load still lands
+between every two MFMAs. With them, 120 of the 192 MFMA windows hold no memory op at all. Putting the
+anchor fence *before* the anchor (`LLIR_SCHED_ANCHOR_FENCE=before` in an experimental build of the
+plugin) makes each window `ds_read, mfma` with the load already in front, and the D-pin fence then
+coincides with the next anchor's fence. Two ATT runs each, v9 16×16:
+
+| anchor fence | variant | loop ins | `s_nop` | adjacent dependent pairs | MFMA eff |
+|---|---|---|---|---|---|
+| after (shipped) | force-agpr | 423 | 0 | 0/192 | 96.7% / 96.4% |
+| before | force-agpr | 420 | 0 | 0/192 | 97.2% / 97.2% |
+| after (shipped) | `cd_regclass` | 520 | 90 | 123/192 | 90.9% / 91.3% |
+| before | `cd_regclass` | 528 | 98 | 59/192 | **95.6% / 95.2%** |
+| before, pin `s_nop`s deleted | `cd_regclass` | 429 | 0 | 59/192 | 95.9% / 95.9% |
+
+All five keep 0 copies in the loop and all 256 MFMAs in AGPR form. Fence-before recovers most of
+`cd_regclass`'s gap and helps force-agpr slightly too; the pin fences are still needed (without them:
+316 copies).
+
+The remaining 1.6 points against force-agpr are 56 tiles that still sit alone in a window
+(`pin, s_nop, mfma, mfma, pin`). They come from the blocks of 4 MFMAs llirSched places after each
+async copy: 4 consecutive MFMAs from 2-step chains always contain a whole tile, and with no memory op
+inside the block only interleaving two tiles would separate its K-steps. Doing that
+(`LLIR_SCHED_PIN_LOCAL_SPREAD=1`, alternating chains within each block) strands the pins again: 312
+copies, 52 MFMAs back in VGPR form. So pinned tiles apparently must not overlap each other, and that
+is what the last points cost.
+
+The `s_nop` row emulates LLVM's hazard recognizer ignoring the pins (see Limitations): it deletes
+each `s_nop 0` that sits between an empty asm and an MFMA. It is worth a few tenths of a point here,
+but it shortens the loop to force-agpr's length.
+
+Closing the gap completely would need either a fence that holds the pins through the pre-RA
+scheduler without freezing the post-RA one — LLVM has no such barrier today, and
+`-enable-misched=false` is process-wide, though so is force-agpr's own `amdgpu-mfma-vgpr-form=0` — or
+the register class attached to the MFMA at instruction selection instead of as an asm hint, which is
+what force-agpr and the in-progress `RewriteMFMAFormStage` do.
 
 Note that this per-CU loop metric does not decide end-to-end time on its own: on v9 16×16
 `cd_regclass` trails force-agpr by 5 points of MFMA efficiency but is 1% ahead in cold TFLOPS, while
@@ -343,6 +381,11 @@ loop's extra MFMA-pipe idle time being covered by memory waits. Judge a change b
   llirSched none of the three differ much: the schedule dominates.
 - **llirSched's fences serialize dependent MFMAs**, worth ~6 points of MFMA efficiency on v9; the
   pins are what force the fences (see [Where the gap comes from](#where-the-gap-comes-from)).
-- **`s_nop` padding**, negligible in practice (see above).
+- **`s_nop` padding.** `GCNHazardRecognizer::checkVALUHazards` (and `checkInlineAsmHazards`) assume
+  any inline asm has a dst-sel forwarding hazard, so an MFMA reading a pinned tuple right after its
+  pin gets 1 wait state. The pin emits nothing, so this could be fixed in LLVM by skipping inline asm
+  with an empty asm string there; the recognizer already looks past inline asm when counting wait
+  states, so a real hazard from the instruction that produced the value would still be found.
+  Worth ~0.3 points and ~100 loop instructions on v9 (see above).
 - Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1, at one shape
   (4096×4096×8192) each.
