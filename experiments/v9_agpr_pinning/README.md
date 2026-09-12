@@ -99,7 +99,10 @@ pins behind, which broke the IR. The plugin on this branch (`LlirSchedPlugin.cpp
   find a free AGPR for 17 of the MFMA chains. The fences have a cost, see
   [What ATT shows](#what-att-shows).
 
-Kernels without pins get byte-identical output from the plugin before and after this change.
+Kernels without pins get byte-identical output from the plugin before and after this change:
+running `opt -passes=llir-sched` with the old and the new `libLlirSched.so` over the LLVM IR of the
+unpinned v9 (16×16 and 32×32), v6, a8w8, a4w4 v0 and a4w4 v1 kernels gives identical files and
+identical `sched.barrier` counts. Everything the change adds is reached only through a pin.
 
 ## How the numbers are measured
 
@@ -139,7 +142,9 @@ in cold TFLOPS (1024 vs 1012).
 ### Other shapes and data types
 
 Same measurements on a 32×32×16 variant of v9 and on the tutorial's fp8 and MXFP4 GEMMs, with
-`cd_regclass="a"` on every `mfma` / `mfma_scaled` call.
+`cd_regclass="a"` on every `mfma` / `mfma_scaled` call. These all use K=8192 so they are comparable
+with v9 above; that is *not* the shape the tutorial publishes for fp8 and MXFP4, see
+[At the tutorial's headline shapes](#at-the-tutorials-headline-shapes).
 
 **v9, 32×32×16 fp16** (128 MFMAs in the loop)
 
@@ -190,6 +195,31 @@ llirSched it beats force-agpr's MFMA efficiency on a4w4 v0 (70.2% vs 60.7%) and 
 while trailing it on v9 (91.4% vs 96.5%, 92.9% vs 96.6%) and a8w8 (95.2% vs 96.9%) because of the
 per-tile fences. It also rescues the two configurations where llirSched alone collapses: a4w4 v0
 (7.8% → 70.2%) and a4w4 v1 (40.1% → 67.8%).
+
+### At the tutorial's headline shapes
+
+The tutorial publishes MFMA efficiency at each precision's headline shape (fp16 K=8192, BF8 K=16384,
+MXFP4 K=32768), with amdgcnas in its last column
+([intra_wave README](../../kernels/gemm/intra_wave/README.md)). Measured here the same way,
+force-agpr reproduces those numbers, which is also a check that the pin-aware llirSched leaves
+unpinned kernels alone:
+
+| kernel | source | `llir` | `llir + force-agpr` | `+ amdgcnas` |
+|---|---|---|---|---|
+| a8w8, K=16384 | measured here | 91.8% | **98.0%** | 99.2% |
+| a8w8, K=16384 | tutorial | 91.6% | **98.1%** | 99.2% |
+| a4w4 v1, K=32768 | measured here | 43.1% | **88.3%** | 94.6% |
+| a4w4 v1, K=32768 | tutorial | 45.1% | **88.5%** | 93.7% |
+
+`cd_regclass` at those same shapes: a8w8 95.8% with llirSched and 99.5% with amdgcnas on top (the best
+of all a8w8 configurations measured); a4w4 v1 83.7% and 92.7%; v9 fp16 at K=8192 96.6% with amdgcnas
+against force-agpr's 97.9%.
+
+Absolute TFLOPS on this machine run about 30% below the published figures in every column, including
+the unmodified `llir` and `+amdgcnas` ones, so that offset belongs to the machine and not to any
+variant: the shapes (4096×4096) and the GPU (256 CUs, SPX) match, and ATT cycles ÷ kernel time put
+these loops at ~2.0 GHz, while the published TFLOPS would need ~3 GHz at the same cycle counts. MFMA
+efficiency is a ratio and independent of clock, which is why it reproduces exactly.
 
 ## `s_nop` generation and overhead
 
