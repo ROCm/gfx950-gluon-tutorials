@@ -409,6 +409,82 @@ points for stock and patched alike, and the same assembly re-run gives both resu
 kernels by the median, not a single run. Builds, patch and raw results:
 `/data/llvm-hazardfix/INFO.txt`.
 
+## Best MFMA efficiency
+
+All configurations at the tutorial's headline shapes (fp16 K=8192, BF8 K=16384, MXFP4 K=32768), 6
+interleaved ATT runs each, median MFMA efficiency (range in brackets). llirSched is on in every row.
+force-agpr uses the stock LLVM, since the LLVM fix leaves its assembly unchanged; `cd_regclass` uses the
+LLVM with the fix. "Fence before" is the experimental `LLIR_SCHED_ANCHOR_FENCE=before` (with
+`LLIR_SCHED_PIN_FENCE=1` for `cd_regclass`); "after" is the shipped plugin. Every row has 0 copies in
+the loop and every loop MFMA in AGPR form.
+
+| kernel | best setting | MFMA eff | tutorial's best (force-agpr + llirSched + amdgcnas) |
+|---|---|---|---|
+| a16w16 v9 | `cd_regclass` + LLVM fix + fence before + amdgcnas | **98.4%** (98.1–98.6) | 97.7% (97.4–97.9) |
+| a8w8 | `cd_regclass` + LLVM fix + amdgcnas, either fence | **99.5%** (99.5–99.5) | 99.2% (99.2–99.2) |
+| a4w4 v1 | `cd_regclass` + LLVM fix + fence before + amdgcnas | **93.7%** (92.9–94.5) | 93.7% (92.7–93.8) |
+
+All eight combinations:
+
+| placement | anchor fence | amdgcnas | v9 | a8w8 | a4w4 v1 |
+|---|---|---|---|---|---|
+| force-agpr | after (tutorial) | off | 96.7% (96.3–96.9) | 97.9% (97.6–98.2) | 87.8% (86.8–88.7) |
+| force-agpr | after (tutorial) | on | 97.7% (97.4–97.9) | 99.2% (99.2–99.2) | **93.7%** (92.7–93.8) |
+| force-agpr | before | off | 97.2% (97.0–97.8) | 97.7% (97.7–97.7) | 88.2% (88.1–88.3) |
+| force-agpr | before | on | 97.1% (96.7–97.1) | 98.3% (98.2–98.3) | 92.5% (91.7–92.5) |
+| `cd_regclass` + LLVM fix | after | off | 93.1% (92.7–93.3) | 96.7% (96.6–96.7) | 86.2% (85.9–86.3) |
+| `cd_regclass` + LLVM fix | after | on | 96.6% (96.5–96.6) | **99.5%** (99.5–99.5) | 90.9% (90.8–91.7) |
+| `cd_regclass` + LLVM fix | before | off | 95.3% (94.8–95.4) | 96.9% (96.9–96.9) | 87.6% (87.1–87.8) |
+| `cd_regclass` + LLVM fix | before | on | **98.4%** (98.1–98.6) | **99.5%** (99.5–99.5) | **93.7%** (92.9–94.5) |
+
+- amdgcnas is the largest single gain in every configuration.
+- Fence before helps `cd_regclass` everywhere, but hurts force-agpr once amdgcnas is on.
+- Without amdgcnas, force-agpr stays ahead of `cd_regclass`.
+- End-to-end kernel time was not measured for this table; the earlier sweeps moved it by less than 2%.
+
+The winning setting needs three things outside the tutorial: the Triton `cd_regclass` branch, the local
+LLVM commit, and the experimental plugin (`/data/llvm-hazardfix/plugins/`). Raw runs:
+`/data/llvm-hazardfix/results/sweep_best.txt`.
+
+### Without amdgcnas
+
+`cd_regclass` + LLVM fix + llirSched with fence before, against the tutorial's llirSched + force-agpr
+(from the table above):
+
+| kernel | tutorial: llirSched + force-agpr | `cd_regclass` + LLVM fix + llirSched, fence before | difference |
+|---|---|---|---|
+| a16w16 v9 | 96.7% (96.3–96.9), 4238 cycles/iter | 95.3% (94.8–95.4), 4300 cycles/iter | −1.4 points |
+| a8w8 | 97.9% (97.6–98.2), 4184 | 96.9% (96.9–96.9), 4226 | −1.0 |
+| a4w4 v1 | 87.8% (86.8–88.7), 4665 | 87.6% (87.1–87.8), 4676 | −0.2, within the spread |
+
+The remaining gap is the tiles that llirSched places whole inside a block of MFMAs with no memory op,
+which the pin fences keep from interleaving (see
+[Fencing before the anchor instead](#fencing-before-the-anchor-instead)).
+
+### Without llirSched and amdgcnas
+
+With LLVM's own scheduler only. Same shapes, 6 interleaved runs each:
+
+| kernel | placement | loop ins | copies in loop | AGPR / VGPR-form MFMAs | loop `s_nop` | MFMA eff | cycles/iter |
+|---|---|---|---|---|---|---|---|
+| a16w16 v9 | unpinned (tutorial kernel) | 462 | 36 | 52 / 204 | 1 | 70.3% (70.3–70.3) | 5828 |
+| a16w16 v9 | force-agpr | 421 | 0 | 256 / 0 | 1 | 70.7% (70.6–70.8) | 5790 |
+| a16w16 v9 | `cd_regclass` + LLVM fix | 421 | 0 | 256 / 0 | 1 | **71.8%** (71.7–71.8) | 5708 |
+| a8w8 | unpinned | 324 | 33 | 32 / 96 | 0 | 68.0% (68.0–68.2) | 6021 |
+| a8w8 | force-agpr | 299 | 0 | 128 / 0 | 9 | 70.7% (70.6–70.8) | 5794 |
+| a8w8 | `cd_regclass` + LLVM fix | 296 | 0 | 128 / 0 | 6 | **72.3%** (72.2–72.4) | 5666 |
+| a4w4 v1 | unpinned | 560 | 79 | 48 / 208 | 8 | 63.4% (63.3–63.8) | 6462 |
+| a4w4 v1 | force-agpr | 483 | 0 | 256 / 0 | 15 | 66.5% (66.5–66.6) | 6158 |
+| a4w4 v1 | `cd_regclass` + LLVM fix | 477 | 0 | 256 / 0 | 6 | **68.1%** (68.0–68.2) | 6016 |
+
+With the stock scheduler, `cd_regclass` gets the same register placement as force-agpr (0 copies, all
+MFMAs in AGPR form) and is 1.1–1.6 points ahead of it on all three kernels, with no spread overlap. Why
+it is ahead was not investigated; on v9 the two loops have the same instruction and `s_nop` counts. All
+three configurations stay near 70%, 20–25 points below any llirSched configuration: without llirSched
+the schedule, not the register placement, limits MFMA efficiency. (a8w8 reports a tolerance mismatch in
+every configuration, including the unmodified tutorial kernel: max error 0.5 against a fixed 0.1
+tolerance, an fp8 accumulation effect at K=16384.) Raw runs: `/data/llvm-hazardfix/results/sweep_nollir.txt`.
+
 ## Limitations
 
 - **The pins never change instruction selection.** At this LLVM, AGPR-form MFMA needs both
