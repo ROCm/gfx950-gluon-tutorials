@@ -366,6 +366,49 @@ on a4w4 v0 it leads by 9 points and is 2% behind. The 96.9% variant above is ano
 6 points of MFMA efficiency over the shipped one and runs the same cold (1013 vs 1016 TFLOPS), the
 loop's extra MFMA-pipe idle time being covered by memory waits. Judge a change by both.
 
+## LLVM fix for the pin `s_nop`s
+
+A local LLVM change (`[AMDGPU] Don't assume a hazard for empty inline asm`, on top of `b010a18d`)
+makes `GCNHazardRecognizer` skip inline asm with an empty asm string, both as a hazard producer and
+as a consumer. A hazard carried by the pinned value is still found at the instruction that produced
+it, since wait-state counting already walks past inline asm. It adds the lit test
+`llvm/test/CodeGen/AMDGPU/inlineasm-empty-no-hazard.ll`, which fails on the stock LLVM.
+
+Triton (this experiment's branch) was rebuilt against it, with llirSched rebuilt against the same
+headers. Checks:
+
+- The AMDGPU CodeGen lit suite passes (4949 tests, 0 failures).
+- The unpinned force-agpr kernels (v9 16×16 and 32×32, a8w8, a4w4 v0 and v1) compile to the same
+  assembly as with the stock LLVM.
+- In the pinned kernels every remaining loop `s_nop` guards the real `m0` → LDS-DMA hazard.
+
+`cd_regclass` + llirSched, 6 interleaved ATT runs per row (median MFMA efficiency), stock → patched
+LLVM:
+
+| kernel | anchor fence | loop instructions | loop `s_nop` | MFMA eff |
+|---|---|---|---|---|
+| v9 16×16 | after (shipped) | 519 → 429 | 90 → 0 | 91.2% → 93.0% |
+| v9 16×16 | before | 527 → 431 | 98 → 0 | 95.3% → 95.1% |
+| v9 32×32 | after | 318 → 304 | 24 → 8 | 92.8% → 93.0% |
+| v9 32×32 | before | 306 → 296 | 16 → 0 | 93.8% → 94.7% |
+| a8w8 | after | 450 → 328 | 154 → 32 | 95.0% → 95.6% |
+| a8w8 | before | 418 → 296 | 122 → 0 | 95.3% → 96.4% |
+| a4w4 v0 | after | 585 → 491 | 126 → 32 | 70.5% → 71.7% |
+| a4w4 v0 | before | 573 → 459 | 114 → 0 | 71.6% → 73.9% |
+| a4w4 v1 | after | 560 → 472 | 96 → 8 | 81.9% → 84.7% |
+| a4w4 v1 | before | 566 → 470 | 102 → 0 | 83.1% → 85.3% |
+
+All rows keep 0 copies in the loop and every loop MFMA in AGPR form. On v9 with the shipped fence
+placement the real fix gains more than deleting the `s_nop`s from the stock assembly did (+1.8 against
++0.3 points), because the hazard recognizer no longer reshapes the schedule around the pins. Cold
+end-to-end kernel time (`--kernel-trace`, median of 200 dispatches, 3 runs) moves by less than 2% and
+within run-to-run spread on every kernel.
+
+The a8w8 and a4w4 traces are noisy on this shared machine: single runs occasionally drop 10–20
+points for stock and patched alike, and the same assembly re-run gives both results. Read these
+kernels by the median, not a single run. Builds, patch and raw results:
+`/data/llvm-hazardfix/INFO.txt`.
+
 ## Limitations
 
 - **The pins never change instruction selection.** At this LLVM, AGPR-form MFMA needs both
@@ -383,9 +426,7 @@ loop's extra MFMA-pipe idle time being covered by memory waits. Judge a change b
   pins are what force the fences (see [Where the gap comes from](#where-the-gap-comes-from)).
 - **`s_nop` padding.** `GCNHazardRecognizer::checkVALUHazards` (and `checkInlineAsmHazards`) assume
   any inline asm has a dst-sel forwarding hazard, so an MFMA reading a pinned tuple right after its
-  pin gets 1 wait state. The pin emits nothing, so this could be fixed in LLVM by skipping inline asm
-  with an empty asm string there; the recognizer already looks past inline asm when counting wait
-  states, so a real hazard from the instruction that produced the value would still be found.
-  Worth ~0.3 points and ~100 loop instructions on v9 (see above).
+  pin gets 1 wait state. The pin emits nothing. Fixed in a local LLVM build, see
+  [LLVM fix for the pin `s_nop`s](#llvm-fix-for-the-pin-s_nops).
 - Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1, at one shape
   (4096×4096×8192) each.
