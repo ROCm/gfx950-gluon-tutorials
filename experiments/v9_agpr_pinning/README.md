@@ -506,3 +506,43 @@ tolerance, an fp8 accumulation effect at K=16384.) Raw runs: `/data/llvm-hazardf
   [LLVM fix for the pin `s_nop`s](#llvm-fix-for-the-pin-s_nops).
 - Measured on v9 (16×16×32 and 32×32×16 fp16), a8w8 and a4w4 v0/v1, at one shape
   (4096×4096×8192) each.
+
+## Performance impact of the LLVM fix (llvm/llvm-project#223526)
+
+The fix as in [llvm/llvm-project#223526](https://github.com/llvm/llvm-project/pull/223526) (head
+`c9c0db98e`), ported onto LLVM `b010a18d`, the version `gfx950-tutorial-v2.1` uses. "Before" is stock
+`b010a18d`; "after" is the same LLVM with the fix, with Triton rebuilt against it.
+
+- Every MFMA accumulator is pinned with `cd_regclass="a"`, and no force-agpr settings are used.
+- gfx950, 4096×4096×8192, cold rotating inputs.
+- Loop `s_nop`: counted in the generated assembly.
+- MFMA efficiency: `rocprofv3 --att`, median of 6 interleaved runs (min–max in brackets).
+- TFLOPS: `rocprofv3 --kernel-trace`, median kernel time over 200 dispatches, then the median of 3
+  runs (min–max in brackets).
+
+### With llirSched (anchor fence before)
+
+| kernel | loop `s_nop` (before → after) | MFMA eff, before | MFMA eff, after | TFLOPS, before | TFLOPS, after | TFLOPS change |
+|---|---|---|---|---|---|---|
+| a16w16 v9 (16×16) | 98 → 0 | 95.2% (95.0–95.8) | 95.0% (94.8–95.3) | 1029 (1021–1036) | 1034 (1029–1035) | +0.5% |
+| a8w8 | 122 → 0 | 95.4% (93.6–95.6) | 96.4% (96.0–96.8) | 2036 (2035–2050) | 2048 (2030–2070) | +0.6% |
+| a4w4 v1 | 102 → 0 | 83.4% (75.4–84.5) | 85.5% (69.2–86.8) | 3054 (2998–3064) | 3085 (3054–3085) | +1.0% |
+
+### Without llirSched
+
+| kernel | loop `s_nop` (before → after) | MFMA eff, before | MFMA eff, after | TFLOPS, before | TFLOPS, after | TFLOPS change |
+|---|---|---|---|---|---|---|
+| a16w16 v9 (16×16) | 47 → 1 | 71.8% (71.8–71.9) | 71.8% (71.7–71.9) | 915 (912–918) | 914 (914–917) | −0.0% |
+| a8w8 | 49 → 6 | 72.4% (71.8–72.6) | 72.4% (72.3–72.6) | 1867 (1836–1870) | 1850 (1844–1879) | −0.9% |
+| a4w4 v1 | 32 → 6 | 68.3% (67.8–68.6) | 67.7% (66.9–67.9) | 2857 (2851–2869) | 2843 (2843–2893) | −0.5% |
+
+- Every configuration keeps 0 copies in the loop and every loop MFMA in AGPR form.
+- Every `s_nop` left after the fix guards the real `m0` → LDS-DMA hazard.
+- TFLOPS moves by −0.9% to +1.0%, within run-to-run spread.
+- With llirSched, MFMA efficiency rises on a8w8 (+1.0) and a4w4 v1 (+2.1) and is flat on v9. Without
+  llirSched the schedule limits efficiency, and removing the `s_nop`s changes nothing.
+- a4w4 v1 ATT runs occasionally drop to 66–78% regardless of the build: swapping the generated assembly
+  between builds reproduces the drop with either version. Read that kernel by its median.
+- Raw runs and scripts: `/data/llvm-hazardfix/results/` (`perf_impact_pr223526.md`, `perf_att.txt`,
+  `perf_kt.txt`).
+
