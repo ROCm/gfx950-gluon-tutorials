@@ -840,8 +840,13 @@ private:
         // the rest of the function -- prologue/epilogue and any region the pass
         // bailed on still get machine-scheduled -- so no global misched-disable
         // is needed.
+        // Each anchor's fence goes in front of it, so every window between
+        // fences is `anchor, mfma...` with the memory op already leading. With
+        // register-class pins this keeps a load between two pinned tiles
+        // (see experiments/v9_agpr_pinning, "Fencing before the anchor").
         for (const AnchorInst &A : Res.Anchors)
-          insertSchedBarrier(A.I, /*Mask=*/0);
+          if (Instruction *Prev = A.I->getPrevNode())
+            insertSchedBarrier(Prev, /*Mask=*/0);
         // With register-class pins, also fence each MFMA tile after its D pin so
         // LLVM's machine scheduler cannot reorder the pinned MFMAs in the
         // stretches between memory anchors; that reordering leaves pins behind
@@ -2018,7 +2023,7 @@ static bool insertMemRegionNops(Function &F, int count) {
   };
   // Flatten the function into layout order. A stage is delimited by the REAL
   // cluster barrier (amdgcn.s.barrier), and a stage can SPAN SEVERAL BASIC BLOCKS:
-  // FAv4's mem2 carries the lazy-rescale warp_predicate, whose branch splits the
+  // FAv4's mem2 carries the lazy-rescale branch (map_elementwise), which splits the
   // stage across 2-4 blocks. Walking per-block therefore never sees mem2's closing
   // barrier and skipped it entirely (mem1, a single block, was the only stage that
   // got its nops).
