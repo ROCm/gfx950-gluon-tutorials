@@ -92,7 +92,6 @@ def load_kernel(args):
     if args.route == "inter":
         forbidden = (
             "LLVM_PASS_PLUGIN_PATH",
-            "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
             "GLUON_MFMA_CD_REGCLASS",
             "TRITON_AMDGCNAS_PLUGIN",
         )

@@ -67,14 +67,13 @@ A4W4_VERSION_MAP = {
 
 # As of gfx950-tutorial-v1.0 the LLIR scheduler and amdgcnas peephole are
 # out-of-tree plugins (see plugins/). The scheduler is an LLVM pass plugin loaded
-# via LLVM_PASS_PLUGIN_PATH (+ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 to keep the
-# O3 TargetMachine); bench.py opts libtriton into the global dlopen scope when
+# via LLVM_PASS_PLUGIN_PATH (the pinned Triton keeps the O3 TargetMachine for
+# plugins on its own); bench.py opts libtriton into the global dlopen scope when
 # LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with TRITON_EXT_ENABLED=1.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
 _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-    "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
 # force-agpr (the RA piece): GLUON_MFMA_CD_REGCLASS=a makes the kernels pass cd_regclass="a" to every
 # MFMA, so Triton pins each accumulator's C and D in AGPRs (the LLIR scheduler keeps the pins next to their
@@ -203,7 +202,6 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
         "LLVM_PASS_PLUGIN_PATH",
-        "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
         "GLUON_MFMA_CD_REGCLASS",
         "TRITON_AMDGCNAS_PLUGIN",
     ):

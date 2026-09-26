@@ -73,15 +73,14 @@ VERSION_MAP = {
 
 # The LLIR scheduler now ships as an out-of-tree LLVM pass plugin
 # (plugins/llir_scheduler/). Enable it by pointing LLVM_PASS_PLUGIN_PATH at the
-# built .so and keeping the target machine for the O3 pipeline via
-# LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1. bench.py opts libtriton into the global
+# built .so; the pinned Triton keeps the target machine for the O3 pipeline on
+# its own (triton-lang/triton#10849). bench.py opts libtriton into the global
 # dlopen scope when LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with
 # TRITON_EXT_ENABLED=1. See plugins/llir_scheduler/README.md.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
 _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-    "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
 # force-agpr (the RA piece): GLUON_MFMA_CD_REGCLASS=a makes the kernels pass cd_regclass="a" to every
 # MFMA, so Triton pins each accumulator's C and D in AGPRs (the LLIR scheduler keeps the pins next to their
@@ -445,7 +444,6 @@ def run_benchmark(
     # Clear any previous config env vars
     for key in (
         "LLVM_PASS_PLUGIN_PATH",
-        "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
         "TRITON_AMDGCNAS_PLUGIN",
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
