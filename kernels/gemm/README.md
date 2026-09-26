@@ -61,7 +61,7 @@ The larger question this repository asks is **where the scheduling intelligence 
 ```
 gemm/
 ├── utils/                                # shared Gluon device helpers (get_pids), used by both routes
-├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + force-agpr + amdgcnas)
+├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + amdgcnas)
 │   ├── a16w16/                            # FP16/BF16 — the v0→v9 optimization journey (start here)
 │   │   ├── v0_naive/                      #   baseline: explicit layouts, correctness-first
 │   │   ├── v1_buffer_load/                #   buffer_load for hardware OOB (branch elimination)
@@ -88,14 +88,14 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), HIP device 7, Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) tag, rocprof
+Measured on a single MI355X (gfx950), HIP device 5, Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
-scheduler + force-agpr + amdgcnas (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
+scheduler + amdgcnas, with their MFMA accumulators pinned to AGPRs in the kernels (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
 
 ![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
 
-Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v1). The MXFP4 8-wave bar is **v1** (4845 TFLOPS / 80.7% MFMA), 2.4% ahead of **v2** (4733 / 98.9%) at this shape — each bar is its route's best variant at that shape.
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v2). The MXFP4 8-wave bar is **v2** (5196 TFLOPS / 98.9% MFMA), 3.0% ahead of v1 (5043 / 81.3%) at this shape — each bar is its route's best variant at that shape.
 
 > [!NOTE]
 > The **4-wave** bars are the `gfx950-tutorial-v2.2`-build numbers from
@@ -103,9 +103,9 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
 > (2 waves/SIMD → per-wave fraction × 2).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
-> FP16 optimization journey's near-optimal headline (1476 TFLOPS on `gfx950-tutorial-v2.2`) is
-> documented in [`a16w16/`](intra_wave/a16w16/). Absolute numbers on this die were 2–10% lower than
-> on 2026-09-03 for every kernel, v2.1 included; see the v2.2 entry in [`CHANGELOG.md`](../../CHANGELOG.md).
+> FP16 optimization journey's near-optimal headline (1608 TFLOPS on `gfx950-tutorial-v2.2`) is
+> documented in [`a16w16/`](intra_wave/a16w16/). Dies differ by up to ~17% on this node; see the v2.2
+> entry in [`CHANGELOG.md`](../../CHANGELOG.md) for why these numbers come from HIP device 5.
 
 The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 

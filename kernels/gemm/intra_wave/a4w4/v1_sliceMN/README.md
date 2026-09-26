@@ -74,20 +74,21 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on MI355X (HIP device 7), Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on MI355X (HIP device 5), Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4343 | 4632 | 61.5% |
-| llir | 4726 | 4888 | 73.9% |
-| llir+force-agpr | 4940 (28 spills) | 5212 | 83.8% |
-| llir+force-agpr+amdgcnas | 4996 (28 spills) | 5334 | 93.4% |
+| base | 4699 (16 spills) | 5265 | 67.7% |
+| llir | 5137 (28 spills) | 5648 | 83.7% |
+| llir+amdgcnas | 5397 (28 spills) | 5804 | 93.6% |
 
-Under `llir` alone neither version spills on this pin (on `gfx950-tutorial-v2.1` v0_sliceN
-spilled 186 registers and v1_sliceMN 12). `force-agpr` is worth +6.6% on v1_sliceMN and
-`amdgcnas` another +2.3% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
-the tutorial. On v0_sliceN the AGPR pins cost 28 spills; v1_sliceMN has none.
+Both versions pin their accumulators to AGPRs (`cd_regclass="a"` on every `mfma_scaled`), so
+every row runs with no `v_accvgpr_*` copies in the loop. `llir` is worth +7.3% on v1_sliceMN and
+`amdgcnas` another +2.8% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
+the tutorial. With the accumulators pinned, v0_sliceN spills (outside the loop); v1_sliceMN's
+balanced M+N tiling does not. (On `gfx950-tutorial-v2.1`, without pins, `llir` alone spilled 186
+registers on v0_sliceN and 12 on v1_sliceMN.)
 
 ## 4. How to Run
 
@@ -95,11 +96,10 @@ From the `a4w4` directory:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-GLUON_MFMA_CD_REGCLASS=a \
 TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+force-agpr+amdgcnas --K 32768 --rocprof
+  --configs base llir llir+amdgcnas --K 32768 --rocprof
 ```

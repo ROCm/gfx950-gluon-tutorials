@@ -111,23 +111,22 @@ derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelinin
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v2.2`, HIP device 7, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+Triton `gfx950-tutorial-v2.2`, HIP device 5, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
 kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
-reference (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
+reference (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | 1432 | 99.84% | **1476** | 98.40% |
-| 16384 | 1472 | 99.00% | **1508** | 97.65% |
-| 32768 | 1308 | 73.40% | **1327** | 67.01% |
+| 8192  | 1478 | 99.84% | **1608** | 97.82% |
+| 16384 | 1529 | 99.24% | **1651** | 97.06% |
+| 32768 | 1328 | 76.54% | **1432** | 83.51% |
 
 VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **448 / 0**.
 
-**The 4-wave route leads at every K**, by **~3.1%** at K=8192 (1476 vs 1432), **~2.4%** at 16384
-(1508 vs 1472) and **~1.5%** at 32768 (1327 vs 1308) — narrower than the ~7% measured on `gfx950-tutorial-v2.1`
-(see the v2.2 entry in [`CHANGELOG.md`](../../../../CHANGELOG.md) for why absolute numbers moved).
-This kernel still wins on loop MFMA efficiency at every K (99.84%, 99.00%, 73.40%); both fall away at
-K=32768 as the buffer-load stall sets in. (MFMA-eff is a single-dispatch ATT reading —
+**The 4-wave route leads at every K**, by **~8.8%** at K=8192 (1608 vs 1478), **~8.0%** at 16384
+(1651 vs 1529) and **~7.8%** at 32768 (1432 vs 1328). This kernel wins on loop MFMA efficiency at
+K=8192 and 16384 (99.84%, 99.24%); at K=32768 both fall away as the buffer-load stall sets in, the
+8-wave kernel further (76.54% vs 83.51%). (MFMA-eff is a single-dispatch ATT reading —
 treat the last digit as noise.)
 
 ### Trace (MI355X, K=8192)

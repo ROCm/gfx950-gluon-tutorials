@@ -51,14 +51,14 @@ for a `[128,8]` half because there the 128-N span equals the tile's N.
 
 ## 2. Performance
 
-MI355X HIP device 7, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating
+MI355X HIP device 5, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating
 (`--rotating-buffer-size 2048` for K ≥ 16384):
 
 | K | v0 TFLOPS | **v1 TFLOPS** | v0 MFMA | **v1 MFMA** | speedup |
 |---|---|---|---|---|---|
-| 8192  | 3580 | **4125** | 65.1% | **80.9%** | +15.2% |
-| 16384 | 4184 | **4552** | 66.0% | **81.2%** | +8.8% |
-| 32768 | 4401 | **4845** | 66.3% | **80.7%** | +10.1% |
+| 8192  | 3505 | **4202** | 65.3% | **80.9%** | +19.9% |
+| 16384 | 4087 | **4746** | 65.8% | **81.2%** | +16.1% |
+| 32768 | 4402 | **5043** | 67.0% | **81.3%** | +14.6% |
 
 Codegen (K=8192): B-scale `v_perm` **11 → 0**, `ds_read_u8` **16 → 0**; VGPR/spills
 **256 / 34 → 256 / 12**.

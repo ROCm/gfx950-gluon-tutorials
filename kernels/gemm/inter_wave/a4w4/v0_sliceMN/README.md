@@ -49,23 +49,23 @@ between MFMAs and inflates register pressure.
 
 ## 3. Performance
 
-MI355X HIP device 7, gfx950, 4096×4096, MXFP4, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating
+MI355X HIP device 5, gfx950, 4096×4096, MXFP4, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating
 (`--rotating-buffer-size 2048` for K ≥ 16384). This **8-wave, no-AGPR** kernel
 (`scripts/collect_perf.py`) vs the 4-wave
 [`intra_wave/a4w4/v1`](../../../intra_wave/a4w4/v1_sliceMN/README.md) reference
-(`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
+(`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/a4w4 v1` TFLOPS | `intra_wave/a4w4 v1` MFMA eff |
 |---|---|---|---|---|
-| 8192  | 3580 | 65.1% | **4770** | **94.1%** |
-| 16384 | 4184 | 66.0% | **5126** | **94.1%** |
-| 32768 | 4401 | 66.3% | **5334** | **93.4%** |
+| 8192  | 3505 | 65.3% | **4986** | **93.6%** |
+| 16384 | 4087 | 65.8% | **5550** | **93.4%** |
+| 32768 | 4402 | 67.0% | **5804** | **93.6%** |
 
-The hot loop is spill-free but reaches only **~65% loop MFMA efficiency**, and this baseline
+The hot loop is spill-free but reaches only **~66% loop MFMA efficiency**, and this baseline
 **trails the tuned 4-wave `intra_wave/a4w4/v1`** (~94% MFMA) on TFLOPS at every K. Two reasons:
 the B-scale byte-shuffle (11 `v_perm` + 16 `ds_read_u8`, §2) keeps the loop
 LDS/scale-throughput-bound rather than latency-bound — so the 8-wave's ping-pong latency-hiding
-has little to hide — and the halved 8-wave VGPR budget (256 vs 492) is a real cost. Eliminating the
+has little to hide — and the halved 8-wave VGPR budget (256 per wave, against the 4-wave kernel's 512) is a real cost. Eliminating the
 B-scale `v_perm` in [`v1_combineBsc`](../v1_combineBsc/README.md) closes most of the gap; see the
 [family README Versions table](../README.md#1-versions) for the full v0 → v1 → v2 comparison.
 

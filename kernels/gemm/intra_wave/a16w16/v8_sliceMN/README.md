@@ -243,20 +243,20 @@ Unlike the parametric improvements, a tensor-granularity load engine *does* chan
 
 The buffer load stall described above is directly measurable. We compare v7 (slice N only) and v8 (slice M and N) at two K values — K=8192 (moderate) and K=16384 (large, high HBM contention):
 
-| Version                    |     K | TFLOPS | MFMA Eff. |
-|----------------------------|-------|--------|-----------|
-| v7_sliceN + llir+force-agpr+amdgcnas  |  8192 |   1446 |    98.00% |
-| v7_sliceN + llir+force-agpr+amdgcnas  | 16384 |   1477 |    95.44% |
-| v8_sliceMN + llir+force-agpr+amdgcnas |  8192 |   1461 |    98.70% |
-| v8_sliceMN + llir+force-agpr+amdgcnas | 16384 |   1485 |    98.34% |
+| Version                        |     K | TFLOPS | MFMA Eff. |
+|--------------------------------|-------|--------|-----------|
+| v7_sliceN + llir+amdgcnas      |  8192 |   1569 |    97.92% |
+| v7_sliceN + llir+amdgcnas      | 16384 |   1573 |    96.88% |
+| v8_sliceMN + llir+amdgcnas     |  8192 |   1593 |    98.56% |
+| v8_sliceMN + llir+amdgcnas     | 16384 |   1599 |    98.34% |
 
 Performance is collected using:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof
-python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+force-agpr+amdgcnas --K 16384 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 16384 --dtype fp16 --rocprof
 ```
 
-At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 v7 drops to 95.44% while v8 holds at 98.34%. That drop is the signature of the TCP stall: v7's 16 consecutive buffer loads per wave press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
+At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 v7 drops to 96.88% while v8 holds at 98.34%. That drop is the signature of the TCP stall: v7's 16 consecutive buffer loads per wave press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
 
 ## 6. What Comes Next
 

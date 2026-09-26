@@ -199,14 +199,14 @@ Understanding the relationship between operand layouts and result layouts is ess
 
 ## Performance
 
-Measured on MI355X, HIP device 7, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
+Measured on MI355X, HIP device 5, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
 rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v0_naive        |    545 |   428 |      0 |    25.28% |
+| v0_naive        |    543 |   428 |      0 |    25.47% |
 
 ## 5. What Comes Next
 

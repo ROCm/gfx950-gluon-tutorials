@@ -24,66 +24,67 @@ turns stock `intra_wave` loops into AGPR↔VGPR copy storms (v9 -15%, a4w4 v1 -2
 `inter_wave` kernel spill. The fix is with the LLVM team; the tutorial will re-pin once it lands,
 together with the two PRs above.
 
-- **Dropped carried commits.** `TRITON_FORCE_MFMA_AGPR` is replaced by Gluon's per-call
-  `cd_regclass="a"`, which the force-agpr kernels (a16w16 v6–v9, a8w8, a4w4 v0/v1) pass to every
-  MFMA when `GLUON_MFMA_CD_REGCLASS=a` is set. `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE` is gone:
-  #10849 keeps the target machine on its own. `gl.warp_predicate` is gone: `fmha_v4`'s per-wave
-  skip is now `gl.map_elementwise` with a scalar body that branches on `alpha != 1`.
-- **LLIR scheduler.** It now keeps each `cd_regclass` pin next to its MFMA and fences the pinned
-  MFMAs (without that, the pins become `v_accvgpr` copies), and it always places a memory anchor's
-  `sched.barrier` in front of the anchor. Fence-before is worth up to +1% on the pinned rows,
-  costs the unpinned `llir` rows of v5 and v6 2.6% and 1.7%, and removes the a4w4 v0 `llir` spill
-  collapse (55 -> 0 spills). The `.so` is rebuilt; the core LLVM is unchanged.
+- **Accumulator pinning is part of the kernels now, not a config.** a16w16 v7–v9, a8w8 and a4w4
+  v0/v1 pass Gluon's `cd_regclass="a"` to every MFMA; v0–v6 do not. The in-loop `v_accvgpr` copies
+  start at v5 under llirSched (18 -> 105 per loop body once the register file is full) and v6's
+  unroll makes them fatal in the stock build (340 copies, 241 spills), so v7 introduces the pins.
+  The configs are now `base` / `llir` / `llir+amdgcnas`: `TRITON_FORCE_MFMA_AGPR` and the
+  `llir+force-agpr` config are gone.
+- **Dropped carried commits.** `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE` is gone (#10849 keeps the
+  target machine on its own). `gl.warp_predicate` is gone: `fmha_v4`'s per-wave skip is now
+  `gl.map_elementwise` with a scalar body that branches on `alpha != 1`.
+- **LLIR scheduler.** It keeps each `cd_regclass` pin next to its MFMA and fences the pinned MFMAs
+  (without that, the pins become `v_accvgpr` copies), and it always places a memory anchor's
+  `sched.barrier` in front of the anchor: up to +1% on pinned kernels, -2.6% and -1.7% on the
+  unpinned v5 and v6 `llir` rows. The `.so` is rebuilt; the core LLVM is unchanged.
 
-### Measurement, and a same-day control
+### Measurement: a new die, and a same-day control
 
-Same die and protocol as the 2026-09-03 refresh: HIP device 7 of `smci355-ccs-aus-m01-29` (PCI
-`0000:95:00.0`; `rocm-smi` calls it GPU[5], and earlier entries' "`rocm-smi` GPU[7]" label was
-wrong — it was always this die), plain `rocprofv3`, rotating tensors, final 100 of 1000 dispatches.
+All numbers are from **HIP device 5** of `smci355-ccs-aus-m01-29` (PCI `0000:85:00.0`, `rocm-smi`
+GPU[4]), same protocol as the 2026-09-03 refresh: plain `rocprofv3`, rotating tensors, final 100 of
+1000 dispatches. The earlier refreshes used HIP device 7 (PCI `0000:95:00.0`, which `rocm-smi` calls
+GPU[5]; their "`rocm-smi` GPU[7]" label was wrong). **The dies no longer rank as they did on
+2026-09-02:** the same binaries on all eight put HIP 5 first and HIP 7 fourth, at 91.8% of it; HIP 7
+lost ~7% over three weeks while HIP 5 gained ~4%. All eight run the same power cap and perf level.
+So compare only same-die, same-day numbers.
 
-**Absolute numbers on this die are 2–10% below the 2026-09-03 measurement for every kernel,
-including `gfx950-tutorial-v2.1` re-measured the same day** (a16w16 v9 full stack: 1587 published,
-1426 today), with the high-duty kernels hit hardest. FlyDSL, which does not go through Triton,
-dropped too (1332 -> 1277). So the pin is judged against the same-day v2.1 control, not against the
-older table:
+`gfx950-tutorial-v2.1` re-measured on HIP 5 the same day:
 
-| same day, HIP device 7 | `v2.1` | `v2.2` |
+| same day, HIP device 5 | `v2.1` | `v2.2` |
 |---|---:|---:|
-| a16w16 v9 full stack, FP16 / BF16 | 1426 / 1529 | **1476 / 1581** |
-| a16w16 v6 `llir` | 229 (129 spills) | **1152** (8) |
-| a4w4 v0 / v1 `llir` | 710 (186) / 3429 (12) | **4726 / 4888** (0 / 0) |
-| a4w4 v1 full stack | 5226 | **5334** |
-| a8w8 full stack | 3258 | 3258 |
-| `inter_wave` a16w16 | 1419 | 1432 |
-| `inter_wave` a4w4 v2, K=32768 | 4678 / 93.8% | 4733 / **98.9%** |
-| `fmha_v4` tuned | 1241 | 1246 |
-| a16w16 v6 / v7 `base` | 1213 / 1227 | **218** (241 spills) / 1178 (6) |
+| a16w16 v9 full stack, FP16 / BF16 | 1555 / 1656 | **1608 / 1696** |
+| a16w16 v9 `llir` (v2.1: `llir+force-agpr`) | 1546 | **1587** |
+| a16w16 v6 `llir` | 226 (129 spills) | **1158** (8) |
+| a4w4 v0 / v1 full stack | 5312 / 5711 | **5397 / 5804** |
+| a8w8 full stack | 3436 | 3476 |
+| `inter_wave` a16w16 | 1470 | 1478 |
+| `inter_wave` a4w4 v1 / v2, K=32768 | 4872 @75.3% / 5058 @93.9% | 5043 @**81.3%** / 5196 @**98.9%** |
+| `fmha_v4` tuned | 1261 | 1261 |
+| a16w16 `base` v6 | 1130 | **219** (241 spills) |
 
-**Headline (v2.2): 545 -> 1476 TFLOPS (~2.7x)** on a16w16 FP16 K=8192. a8w8 **3258**, a4w4 v1
-**5334**, BF16 v9 **1581**, `fmha_v4` **1246** (0.976x FlyDSL).
+**Headline (v2.2): 543 -> 1608 TFLOPS (~3.0x)** on a16w16 FP16 K=8192. a8w8 **3476**, a4w4 v1
+**5804**, BF16 v9 **1696**, `fmha_v4` **1261** (0.967x FlyDSL).
 
 ### What happened to the three v2.1 causes
 
 1. **`amdgpu-use-amdgpu-trackers`** — #11663 turns the trackers off for every GEMM here, since none
-   requests `waves_per_eu > 1`. That removes the `llir` spill collapses (table above) and is worth
-   +4.6% on v9 `llir`. **It regresses the stock `base` builds:** forcing the trackers back on gives
-   v6 1036 TFLOPS with 0 spills against 218 with 241, v7 1250 against 1175 (6 spills), v5 1069
-   against 1047, v9 1309 against 1289. The ladder's `base` rows below are measured as the pin
-   ships, trackers off.
+   requests `waves_per_eu > 1`. That removes the `llir` spill collapses and is right for the pinned
+   kernels (v7 `base` spills 8 with the trackers off, 64 with them on). **It costs the unpinned stock
+   v6:** 219 TFLOPS with 241 spills, against 1038 with 0 spills when the trackers are forced back on.
 2. **`computePSetLimit` underflow** — fixed through the AMD codegen LLVM. `inter_wave` a4w4 v2 goes
-   93.8% -> 98.9% loop MFMA efficiency and v1 75.5% -> 80.7% (same day).
+   93.9% -> 98.9% loop MFMA efficiency and v1 75.3% -> 81.3% (same day).
 3. **`ConvertWarpPipeline` head barrier** — unchanged. The attention ATT figures are identical to
-   v2.1 (`fmha_v4` 84.7% vs 85.1%, 4839 vs 4812 cyc/iter), so attention still sits ~9 points of
-   in-loop efficiency below v2.0.
+   v2.1, so attention still sits ~9 points of in-loop efficiency below v2.0.
 
 ### Other findings
 
-- **`inter_wave/a4w4`: v1 and v2 trade places again.** With both at their new efficiencies, v2
-  finishes the loop in fewer cycles but is power-bound: v2 leads at K=8192 (4173 vs 4125) and v1 at
-  K=16384 (4552 vs 4535) and K=32768 (4845 vs 4733). The v2.1 same-day control shows the same order
-  (4802 vs 4678), so the 2026-09-03 finding that v2 beats v1 at every shape does not reproduce.
-- **Pinned `cd_regclass` builds spill a little outside the loop:** a16w16 v7 8 registers, a4w4 v0
-  28 (0 before), with no scratch access in the loop.
+- **Pins cost the stock build and pay under llirSched.** On v7, with vs without pins: `base` 1203 vs
+  1237, `llir` 1556 vs 1435. The unpinned `llir+amdgcnas` build returns wrong results — the
+  peephole mis-handles it — so amdgcnas should only be used on pinned kernels.
+- **`inter_wave/a4w4`: v2 stays ahead of v1 at every K** on HIP 5 (+3.0 to +6.6%). On HIP 7 the same
+  day v1 led at K >= 16384: v2 is power-bound and loses more on the slower die.
+- **Pinned kernels spill a little outside the loop:** a16w16 v7 8 registers, a4w4 v0 16 (`base`)
+  and 28 (`llir`), with no scratch access in the loop.
 - **Not re-measured:** the L2 counter table in `a16w16/v9_beyond_hotloop` §3.5, a memory-access
   property of the kernel that the pin does not change.
 

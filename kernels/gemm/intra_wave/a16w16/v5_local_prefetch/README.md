@@ -147,11 +147,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1072 |   434 |    57.52% |
-| v5             |   1069 |   452 |    57.96% |
-| v5 + llirSched |   1211 |   512 |    80.24% |
+| v4             |   1072 |   434 |    57.38% |
+| v5             |   1062 |   452 |    58.30% |
+| v5 + llirSched |   1204 |   512 |    80.32% |
 
-On its own the 3-stage pipeline buys nothing in the baseline case (1072 → 1069 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1211 TFLOPS and MFMA efficiency from 58.0% to 80.2% — a **13% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
+On its own the 3-stage pipeline buys nothing in the baseline case (1072 → 1062 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1204 TFLOPS and MFMA efficiency from 58.3% to 80.3% — a **13% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).
@@ -265,7 +265,7 @@ Without the LLIR scheduler, `ds_read` instructions are clustered at the very end
 
 However, when we interleave `ds_read` with MFMA, the situation changes. The `ds_read` results must remain live across intervening MFMA instructions until the next iteration. This extended live range overlaps with the registers actively used by the current iteration's MFMA. The register allocator must therefore place the `ds_read` results in a *different* set of registers to avoid conflicts. At the iteration boundary, the data must be copied from these temporary registers to the registers expected by the next iteration's MFMA.
 
-This is a fundamental trade-off: interleaving improves instruction-level parallelism but increases register pressure and introduces copy overhead. The copies are the price we pay for the extended live ranges that interleaving creates.
+This is a fundamental trade-off: interleaving improves instruction-level parallelism but increases register pressure and introduces copy overhead. The copies are the price we pay for the extended live ranges that interleaving creates. Counted in the current build, the loop body carries **105** `v_accvgpr_*` copies under the LLIR scheduler against 18 without it, and the register file is full: 256 VGPRs and 256 AGPRs. This is where the accumulator-copy problem that v6 and v7 deal with begins.
 
 This copy overhead is unavoidable in a single-iteration loop body—unless we unroll the loop.
 

@@ -134,7 +134,7 @@ The optimal values are GM = 4, 6, or 8, all achieving f(GM) = 12. The math model
 
 ### 3.5 Validation
 
-The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v8 (no XCD remapping) or v9 with GM = 1. Hardware counter measurements on MI355 at M=N=4096, K=8192, fp16, llir+force-agpr+amdgcnas confirm this:
+The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality than v8 (no XCD remapping) or v9 with GM = 1. Hardware counter measurements on MI355 at M=N=4096, K=8192, fp16, with the full plugin stack (measured on an earlier pin) confirm this:
 
 | Configuration                  | TCC_EA0_RDREQ_DRAM_sum | TCP_TCC_READ_REQ_sum |
 |--------------------------------|------------------------|----------------------|
@@ -156,25 +156,28 @@ The math model predicts that GM = 4, 6, or 8 should achieve better L2 locality t
 Counters are collected using:
 ```bash
 # v8 (no XCD remapping)
-python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+python scripts/run_counter_collection.py --kernel a16w16 --versions 8 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 
 # v9 with GM=1, 4, 6, 8 — vary GROUP_SIZE_M in v9_beyond_hotloop/matmul_kernel.py's matmul() launcher
-python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
+python scripts/run_counter_collection.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype fp16 --counters TCC_EA0_RDREQ_DRAM_sum,TCP_TCC_READ_REQ_sum
 ```
 
 For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficiency](../../../../../docs/mfma_efficiency.md).
 
 ## 4. Performance
 
-Measured on MI355X, HIP device 7, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
-rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
+Measured on MI355X, HIP device 5, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
+rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16. `llir+amdgcnas` is
+the shipping stack.
 
-Config: `llir+force-agpr+amdgcnas` — the shipping stack.
-
-| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|----------------------|--------|-------|--------|-----------|
-| v8_sliceMN           |   1461 |   448 |      0 |    98.70% |
-| v9_beyond_hotloop    |   1476 |   448 |      0 |    98.40% |
+| Version              | Config          | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------------|-----------------|--------|-------|--------|-----------|
+| v8_sliceMN           | `base`          |   1382 |   448 |      0 |    71.53% |
+| v9_beyond_hotloop    | `base`          |   1414 |   448 |      0 |    71.79% |
+| v8_sliceMN           | `llir`          |   1552 |   448 |      0 |    95.37% |
+| v9_beyond_hotloop    | `llir`          |   1587 |   448 |      0 |    96.15% |
+| v8_sliceMN           | `llir+amdgcnas` |   1593 |   448 |      0 |    98.56% |
+| v9_beyond_hotloop    | `llir+amdgcnas` |   1608 |   448 |      0 |    97.82% |
 
 v9 adds no instructions to the hot loop — the gain is entirely outside it, from the L2
 locality the XCD-aware PID remapping buys. MFMA efficiency is essentially unchanged (the loop

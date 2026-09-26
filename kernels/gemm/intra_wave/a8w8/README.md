@@ -134,18 +134,17 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on MI355X (HIP device 7) with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.2`:
+Measured on MI355X (HIP device 5) with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.2`:
 
-| Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|--------------------------|--------|-------|--------|-----------|
-| base                     |   2896 |   508 |      0 |    69.56% |
-| llir                     |   3177 |   512 |      0 |    93.46% |
-| llir+force-agpr          |   3225 |   448 |      0 |    96.31% |
-| llir+force-agpr+amdgcnas |   3258 |   448 |      0 |    99.72% |
+| Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------|--------|-------|--------|-----------|
+| base           |   2902 |   448 |      0 |    72.22% |
+| llir           |   3381 |   448 |      0 |    96.31% |
+| llir+amdgcnas  |   3476 |   448 |      0 |    99.72% |
 
-**M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget: `llir` alone runs spill-free at **3177 TFLOPS / 93.46% MFMA efficiency**.
+**M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget.
 
-**force-agpr and amdgcnas reach near-saturation.** `force-agpr` pins the MFMA accumulators into AGPRs, freeing VGPRs (512 → 448) and removing the in-loop `v_accvgpr_*` copies, for 96.31%. `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
+**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../a16w16/v7_sliceN/README.md)), so all three configurations run with the accumulators in AGPRs, 448 arch VGPRs and no in-loop `v_accvgpr_*` copies. `llir` then interleaves the loop to **3381 TFLOPS / 96.31%**, and `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
 
 The [LLIR Scheduler](../../../../plugins/llir_scheduler/README.md) and [amdgcnas](../../../../plugins/amdgcnas/README.md) ship as out-of-tree plugins in this repo; see [gemm/README §2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for how to build Triton and enable them.
 

@@ -12,26 +12,23 @@ kernel versions, and the measured performance.
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
-| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3580 | 4401 | ~66% |
-| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | combined `[256,8]` → `ds_read_b64_tr_b8` | 4125 | **4845** | ~81% |
-| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4173** | 4733 | **~99%** |
+| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3505 | 4402 | ~67% |
+| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | combined `[256,8]` → `ds_read_b64_tr_b8` | 4202 | 5043 | ~81% |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4479** | **5196** | **~99%** |
 
 > [!IMPORTANT]
-> **v1 and v2 are within ~2.5% and trade places by K.** On `gfx950-tutorial-v2.2` v2 is ahead at
-> K=8192 (+1.2%), v1 at K=16384 (+0.4%, 4552 vs 4535) and K=32768 (+2.4%). v2 runs its loop at
-> ~99% MFMA efficiency against v1's ~81%, but its denser MFMA stream draws more power and the clock
-> throttles more, which takes back the cycle win. v2.1 re-measured on the same day shows the same
-> ordering (v1 4802 vs v2 4678 at K=32768), so the earlier "v2 leads at both shapes" reading
-> (`gfx950-tutorial-v2.1`, 2026-09-03) does not reproduce. `bench.py` defaults to v2 (`--version 2`).
+> **v2 is the one to use.** On `gfx950-tutorial-v2.2` it leads v1 at every K: +6.6% at K=8192,
+> +3.2% at K=16384 (4900 vs 4746) and +3.0% at K=32768. It runs its loop at ~99% MFMA efficiency
+> against v1's ~81%, but its denser MFMA stream draws more power, so its margin depends on the clock
+> the die sustains: on a slower die (HIP device 7) the same day, v1 was ahead at K ≥ 16384.
+> `bench.py` defaults to v2 (`--version 2`).
 
 **v2** ([`v2_mfma32x32x64`](v2_mfma32x32x64/README.md)) widens the MFMA **16×16×128 → 32×32×64**
 with a width-matched, bank-conflict-free LDS layout. That lifts loop MFMA efficiency to **~99%**
-and keeps it **spill-free at 244 VGPRs**, where v0 and v1 spill 34 and 12. It is the
-cycle-efficiency result the section describes; on wall-clock the wider MFMAs are power-hungrier
-and the clock throttles, so it only matches v1.
+and keeps it **spill-free at 244 VGPRs**, where v0 and v1 spill 34 and 12.
 
-**v1** eliminates v0's B-scale `v_perm` and is worth **+15%** over v0 at K=8192 and **+10%** at
-K=32768. It is the fastest version at K ≥ 16384, and the step v2 builds on.
+**v1** eliminates v0's B-scale `v_perm` and is worth **+20%** over v0 at K=8192 and **+15%** at
+K=32768. It is the step v2 builds on.
 **v0** is the pedagogical baseline that exposes the problem.
 
 ## 2. What changes from 16-bit to 4-bit
@@ -56,7 +53,7 @@ a8w8's.
 ## 3. Running
 
 ```bash
-# v2 (bench.py's default): correctness + do_bench TFLOPS (from this kernel dir)
+# v2 (recommended, bench.py's default): correctness + do_bench TFLOPS (from this kernel dir)
 python bench.py --version 2 --K 8192
 
 # rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill (from the repo root)
@@ -67,7 +64,7 @@ python scripts/collect_perf.py --kernel a4w4 --version 2 --K 32768 --rotating-bu
 python bench.py --version 0 --K 8192
 python scripts/collect_perf.py --kernel a4w4 --version 0 --K 8192
 
-# v1 (combined B scale, the faster version at K >= 16384)
+# v1 (combined B scale, the step v2 builds on)
 python bench.py --version 1 --K 8192
 python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 --rotating-buffer-size 2048
 ```
@@ -84,5 +81,5 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
   (`--kernel a4w4 --version N`).
 - `v0_sliceMN/` — baseline kernel (N-sliced B scale) + its README.
 - `v1_combineBsc/` — combined-B-scale kernel + its README.
-- `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout (`bench.py`'s default) + its README.
+- `v2_mfma32x32x64/` — 32×32×64 MFMA + conflict-free LDS layout (recommended, `bench.py`'s default) + its README.
   All three expose `matmul_kernel_only`, `matmul`, `MIN_K`, `KERNEL_NAME`.

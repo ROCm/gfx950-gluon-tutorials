@@ -29,7 +29,7 @@ bar chart in kernels/gemm/README.md.
 
 Grouped bars of peak TFLOPS (4-wave vs 8-wave) at each precision's headline
 shape, with the per-SIMD loop MFMA efficiency printed in red inside each bar.
-The numbers mirror the README (MI355X, gfx950, Triton gfx950-tutorial-v1.0,
+The numbers mirror the README (MI355X, gfx950, Triton gfx950-tutorial-v2.2,
 rocprof cold-rotating); edit the `rows` table below when they change.
 
     python scripts/plot_perf_summary.py
@@ -49,12 +49,12 @@ CMFMA = "#D62728"  # MFMA-efficiency labels (red)
 
 # precision, K, 4-wave (TFLOPS, MFMA%), 8-wave (TFLOPS, MFMA%)
 # Each bar is that route's best variant at the shape: 4-wave MXFP4 = intra a4w4 v1,
-# 8-wave MXFP4 = inter a4w4 v1 (2.4% ahead of v2 at K=32768 on the v2.2 pin).
+# 8-wave MXFP4 = inter a4w4 v2 (3.0% ahead of v1 at K=32768 on the v2.2 pin, HIP device 5).
 rows = [
-    ("FP16", 8192, 1476, 98.40, 1432.3, 99.84),
-    ("BF16", 8192, 1581, 98.39, 1530.6, 99.84),
-    ("BF8", 16384, 3258, 99.72, 3115.9, 99.84),
-    ("MXFP4", 32768, 5334, 93.36, 4845.4, 80.72),
+    ("FP16", 8192, 1608, 97.82, 1478.2, 99.84),
+    ("BF16", 8192, 1696, 98.24, 1573.6, 99.84),
+    ("BF8", 16384, 3476, 99.72, 3131.1, 99.84),
+    ("MXFP4", 32768, 5804, 93.59, 5195.9, 98.92),
 ]
 
 
@@ -110,7 +110,7 @@ def main():
     ax.set_xticklabels(labels, fontsize=10)
     ax.set_ylim(0, 6500)
     legend = [
-        Patch(facecolor=C4, label="4-wave  (LLIR + force-agpr + amdgcnas)"),
+        Patch(facecolor=C4, label="4-wave  (LLIR + amdgcnas)"),
         Patch(facecolor=C8, label="8-wave  (warp-pipeline, no AGPRs)"),
         plt.Line2D(
             [],

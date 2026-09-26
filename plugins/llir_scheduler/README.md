@@ -23,7 +23,8 @@ each scheduling region and routes it to one of two models:
 
 ## Register-class pins
 Kernels that pin MFMA accumulators with Triton's experimental `cd_regclass` option
-(`gl.amd.cdna4.mfma(..., cd_regclass="a")`) carry an empty `"=a,0"` / `"=v,0"` inline asm
+(`gl.amd.cdna4.mfma(..., cd_regclass="a")`) — in this tutorial a16w16 v7 and later, a8w8 and
+a4w4 — carry an empty `"=a,0"` / `"=v,0"` inline asm
 on each MFMA tile's C and D. The MFMA ↔ memory model keeps these pins attached: when it moves
 an MFMA, the C pin goes directly before it and the D pin directly after it. It also puts a
 `sched.barrier(0)` after each D pin, so LLVM's machine scheduler cannot reorder the pinned
@@ -78,8 +79,8 @@ is set it loads `libtriton` with `RTLD_GLOBAL` so the plugin can resolve symbols
 LLVM_PASS_PLUGIN_PATH=/abs/path/plugins/llir_scheduler/libLlirSched.so \
     python bench.py --version 8 --K 8192 --dtype fp16
 ```
-`scripts/run_perf_table.py` wires this into the `llir`, `llir+force-agpr`, and
-`llir+force-agpr+amdgcnas` configs automatically.
+`scripts/run_perf_table.py` wires this into the `llir` and `llir+amdgcnas` configs
+automatically.
 
 ## The plugin source
 `LlirSchedPlugin.cpp` is the maintained plugin source — a self-contained

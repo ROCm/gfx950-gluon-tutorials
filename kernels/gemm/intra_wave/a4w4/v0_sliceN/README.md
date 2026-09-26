@@ -219,22 +219,21 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 ## 4. Performance
 
-Measured on MI355X (HIP device 7) with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.2`:
+Measured on MI355X (HIP device 5) with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.2`:
 
-| Configuration            | TFLOPS | VGPRs | Spills | MFMA Eff. |
-|--------------------------|--------|-------|--------|-----------|
-| base                     |   4343 |   512 |      0 |    52.67% |
-| llir                     |   4726 |   510 |      0 |    69.74% |
-| llir+force-agpr          |   4940 |   512 |     28 |    75.99% |
-| llir+force-agpr+amdgcnas |   4996 |   512 |     28 |    82.35% |
+| Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
+|----------------|--------|-------|--------|-----------|
+| base           |   4699 |   512 |     16 |    58.63% |
+| llir           |   5137 |   512 |     28 |    75.79% |
+| llir+amdgcnas  |   5397 |   512 |     28 |    82.13% |
 
 See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
-**Effect of the LLIR scheduler**: v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget. The scheduler alone now runs spill-free at 4726 TFLOPS / 69.74% MFMA efficiency (+8.8% over `base`). On `gfx950-tutorial-v2.1` the same config spilled 186 VGPRs and collapsed to 716 TFLOPS: two things changed on v2.2 — the scheduler now places each memory anchor's fence *in front of* the anchor, and Triton no longer passes `amdgpu-use-amdgpu-trackers` to kernels that do not request `waves_per_eu > 1`. With the fence after the anchor the same build still spills 55 VGPRs; the drop from 186 to 55 is the pin (trackers off, and a newer AMD codegen LLVM), the drop from 55 to 0 is the fence.
+**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../../a16w16/v7_sliceN/README.md)), so all three configurations keep the accumulators in AGPRs and the loop has no `v_accvgpr_*` copies. v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and with the accumulators fixed in AGPRs the remaining VGPR demand no longer fits: the kernel spills 16 VGPRs in `base` and 28 under `llir`, all outside the hot loop (no scratch access in the loop). v1_sliceMN, with its balanced M+N tiling, does not spill under the same pins.
 
-**Effect of force-agpr**: Passing `cd_regclass="a"` to every MFMA (`GLUON_MFMA_CD_REGCLASS=a`) pins the MFMA accumulators to AGPRs. That lifts the kernel to 4940 TFLOPS / 75.99% MFMA efficiency, but on this pin it spills 28 VGPRs (v1_sliceMN does not spill under the same pins).
+**Effect of the LLIR scheduler**: interleaving the MFMAs with the memory operations lifts the kernel to 5137 TFLOPS / 75.79% MFMA efficiency (+9.3% over `base`). On `gfx950-tutorial-v2.1`, where the accumulators were not pinned, the same config spilled 186 VGPRs and collapsed to ~710 TFLOPS.
 
-**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 82.35% (4996 TFLOPS).
+**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 82.13% (5397 TFLOPS).
 
 ## 5. How to Run
 
@@ -252,7 +251,6 @@ LLVM_PASS_PLUGIN_PATH=$LLIR \
 
 # With both LLIR scheduler and amdgcnas
 LLVM_PASS_PLUGIN_PATH=$LLIR \
-    GLUON_MFMA_CD_REGCLASS=a \
     TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
 ```
 
@@ -260,7 +258,6 @@ For accurate performance measurement with rocprof:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-    GLUON_MFMA_CD_REGCLASS=a \
     TRITON_AMDGCNAS_PLUGIN=1 \
     rocprofv3 --kernel-trace -d out -- python bench.py --K 32768 --rocprof
 ```
