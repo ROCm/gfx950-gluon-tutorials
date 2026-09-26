@@ -27,7 +27,8 @@
 Bars = TFLOPS (left axis), red line = MFMA efficiency (right axis), one bar per
 (version, config).  Configs: base / llir / llir+force-agpr / llir+force-agpr+amdgcnas.
 
-Data: MI355X, 4096x4096x8192, FP16, rocprofv3 (1000 dispatches, last-100 avg),
+Data: MI355X (HIP device 7), Triton gfx950-tutorial-v2.2, 4096x4096x8192, FP16,
+rocprofv3 (1000 dispatches, last-100 avg),
 collected with:
     python scripts/run_perf_table.py --kernel a16w16 --versions <v> \
         --configs base llir llir+force-agpr llir+force-agpr+amdgcnas \
@@ -55,27 +56,27 @@ CONFIGS = {
 
 # (version, config, TFLOPS, MFMA%) in plotting order.
 DATA = [
-    (0, "base", 525, 22.54),
-    (1, "base", 614, 27.41),
-    (2, "base", 645, 27.45),
-    (3, "base", 738, 32.01),
-    (4, "base", 964, 51.87),
-    (5, "base", 1034, 57.67),
-    (5, "llir", 1221, 68.56),
-    (6, "base", 1128, 62.94),
-    (6, "llir", 228, 8.74),
-    (7, "base", 1248, 64.87),
-    (7, "llir", 1419, 82.07),
-    (7, "llir+force-agpr", 1526, 95.54),
-    (7, "llir+force-agpr+amdgcnas", 1567, 97.96),
-    (8, "base", 1384, 70.21),
-    (8, "llir", 1434, 76.36),
-    (8, "llir+force-agpr", 1527, 96.42),
-    (8, "llir+force-agpr+amdgcnas", 1569, 97.40),
-    (9, "base", 1403, 70.36),
-    (9, "llir", 1475, 76.35),
-    (9, "llir+force-agpr", 1581, 96.72),
-    (9, "llir+force-agpr+amdgcnas", 1587, 97.79),
+    (0, "base", 545, 25.28),
+    (1, "base", 547, 25.76),
+    (2, "base", 671, 31.89),
+    (3, "base", 775, 41.49),
+    (4, "base", 1072, 57.52),
+    (5, "base", 1069, 57.96),
+    (5, "llir", 1211, 80.24),
+    (6, "base", 218, 8.58),
+    (6, "llir", 1152, 89.65),
+    (7, "base", 1178, 62.66),
+    (7, "llir", 1346, 85.62),
+    (7, "llir+force-agpr", 1447, 97.20),
+    (7, "llir+force-agpr+amdgcnas", 1446, 98.00),
+    (8, "base", 1269, 68.70),
+    (8, "llir", 1369, 88.30),
+    (8, "llir+force-agpr", 1454, 94.72),
+    (8, "llir+force-agpr+amdgcnas", 1461, 98.70),
+    (9, "base", 1288, 68.62),
+    (9, "llir", 1376, 88.58),
+    (9, "llir+force-agpr", 1467, 95.61),
+    (9, "llir+force-agpr+amdgcnas", 1476, 98.40),
 ]
 
 x = list(range(len(DATA)))

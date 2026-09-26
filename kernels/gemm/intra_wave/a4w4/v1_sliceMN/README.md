@@ -74,22 +74,20 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on MI355, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on MI355X (HIP device 7), Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4423 | 5131 | 64.4% |
-| llir | 716 (186 spills) | 3420 (12 spills) | 45.1% |
-| llir+force-agpr | 5429 | 5737 | 88.5% |
-| llir+force-agpr+amdgcnas | 5420 | 5843 | 93.7% |
+| base | 4343 | 4632 | 61.5% |
+| llir | 4726 | 4888 | 73.9% |
+| llir+force-agpr | 4940 (28 spills) | 5212 | 83.8% |
+| llir+force-agpr+amdgcnas | 4996 (28 spills) | 5334 | 93.4% |
 
-Under `llir` alone **both** versions now spill: v0_sliceN by 186 registers (its LDS-round-trip
-scale pipeline is register-heavy) collapsing to 716 TFLOPS, and v1_sliceMN by 12, costing it
-about a quarter of its throughput. `force-agpr` clears the spills in both cases and is what
-makes the MXFP4 kernels usable at all on this pin — it is not a marginal 2-3% tuning flag here.
-That is the same failure v6 hits in the FP16 series: these kernels sit at the register ceiling,
-and without the AGPR hint the allocator has nowhere to put the accumulators.
+Under `llir` alone neither version spills on this pin (on `gfx950-tutorial-v2.1` v0_sliceN
+spilled 186 registers and v1_sliceMN 12). `force-agpr` is worth +6.6% on v1_sliceMN and
+`amdgcnas` another +2.3% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
+the tutorial. On v0_sliceN the AGPR pins cost 28 spills; v1_sliceMN has none.
 
 ## 4. How to Run
 
@@ -97,8 +95,7 @@ From the `a4w4` directory:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_FORCE_MFMA_AGPR=1 \
+GLUON_MFMA_CD_REGCLASS=a \
 TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1
 

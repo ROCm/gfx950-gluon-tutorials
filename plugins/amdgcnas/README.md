@@ -21,8 +21,7 @@ reproduce the full `llir+force-agpr+amdgcnas` stack:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=.../plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_FORCE_MFMA_AGPR=1 \
+GLUON_MFMA_CD_REGCLASS=a \
 TRITON_AMDGCNAS_PLUGIN=1 \
     python bench.py --version 8 --K 8192 --dtype fp16
 ```

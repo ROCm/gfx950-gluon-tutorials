@@ -46,21 +46,23 @@ Because the four LDS allocations are separate, the membar disambiguates the load
 from the async-copy write (AC) by allocation — the loads stay plain (non-relaxed) and carry
 no extra `s_barrier`. The **hot loop is spill-free** (~99.7% MFMA); the store-side
 pointer-walk + de-interleaved epilogue keep the four live `[128×128]` accumulators inside
-the 256-VGPR budget, leaving only 13 residual spills in the `convert_layout` + store
+the 256-VGPR budget, leaving only 8 residual spills in the `convert_layout` + store
 epilogue (which carries no MFMA).
 
 ## 2. Performance
 
 MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000 dispatches;
-`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.1`, GPU[7]. The 8-wave kernel
+`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.2`, HIP device 7. The 8-wave kernel
 (`scripts/collect_perf.py`, **no-AGPR**) vs the 4-wave `intra_wave/a8w8` reference
 (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
 | K | 8-wave TFLOPS | 8-wave MFMA eff | 4-wave TFLOPS | 4-wave MFMA eff |
 |---|---|---|---|---|
-| 8192  | 2915 | 99.72% | **3365** | 99.25% |
-| 16384 | 3151 | 96.22% | **3527** | 99.20% |
-| 32768 | 3058 | 88.24% | **3090** | 86.43% |
+| 8192  | 2912 | 99.70% | **3086** | 99.73% |
+| 16384 | 3116 | 99.84% | **3258** | 99.72% |
+| 32768 | **3166** | 99.20% | 3085 | 98.16% |
+
+The 4-wave kernel leads at K ≤ 16384 (+6.0% and +4.6%); at K=32768 the 8-wave kernel is ahead by 2.6%.
 
 ## 3. Running
 

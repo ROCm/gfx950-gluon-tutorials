@@ -49,21 +49,21 @@ tile reads and keep the MFMA fed.
 
 | kernel | TFLOPS | MFMA eff |
 |---|---|---|
-| v1 | 4885 | 75.1% |
-| v2 | **5159** | **93.8%** |
+| v1 | **4845** | 80.7% |
+| v2 | 4733 | **98.9%** |
 
-MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.1`, GPU[7], rocprof cold-rotating.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.2`, HIP device 7, rocprof cold-rotating.
 
-The conflict-free layout removes the ds stall → **~94% MFMA efficiency** (the matrix core is nearly
+The conflict-free layout removes the ds stall → **~99% MFMA efficiency** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in far fewer cycles than v1. The bigger 32×32×64 MFMAs
-are power-hungrier, so the GPU still **frequency-throttles** — but on `gfx950-tutorial-v2.1` that no
-longer cancels the cycle win: v2 leads on wall-clock at **both** shapes, **+4.4%** at K=8192
-(4336 vs 4155) and **+5.6%** at K=32768 (5159 vs 4885), and is the only spill-free version.
+are power-hungrier, so the GPU **frequency-throttles**, and that cancels the cycle win: v2 is ahead
+on wall-clock only at K=8192 (**+1.2%**, 4173 vs 4125); v1 is ahead at K=16384 (+0.4%) and K=32768
+(**+2.4%**, 4845 vs 4733). v2 is the only spill-free version of the three.
 
 > [!NOTE]
-> On the `v1.1` pin the two effects *did* cancel and this section read "the win is cycle-based, not
-> wall-clock" (4094 vs 4107 at K=8192, 4800 vs 4919 at K=32768). That is no longer the case. The
-> caveat below is still the right lesson about MFMA efficiency — it just no longer applies to v2.
+> On `gfx950-tutorial-v2.1` (2026-09-03) this section reported v2 ahead at both shapes (+4.4% and
+> +5.6%). Re-measured on the same day as the v2.2 numbers, v2.1 shows v1 ahead too (4802 vs 4678 at
+> K=32768), so that ordering was a property of the die's clock on that day, not of the kernels.
 
 This is
 the [MFMA-efficiency caveat](../../../../../docs/mfma_efficiency.md) in the extreme: MFMA efficiency is
@@ -76,11 +76,9 @@ The single-dispatch ATT trace (K=16384) shows the near-solid MFMA the wider co-i
 
 ## Conclusion
 
-32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~94% MFMA
-efficiency, and the only spill-free version of the three. On `gfx950-tutorial-v2.1` the clock throttling
-no longer cancels it: v2 leads v1 on wall-clock at both shapes (**+4.4%** at K=8192, **+5.6%** at
-K=32768), so **v2 is the production choice** here. On the older `v1.1` pin it was a wall-clock wash,
-which is what earlier revisions of this page described.
+32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~99% MFMA
+efficiency, and the only spill-free version of the three. On wall-clock the clock throttling cancels it:
+v1 and v2 are within ~2.5% and trade places by K (v2 ahead at K=8192, v1 at K ≥ 16384).
 
 ```bash
 # correctness + do_bench TFLOPS (from this v2_mfma32x32x64 dir)

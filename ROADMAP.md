@@ -35,7 +35,7 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 | **FlashAttention** | | |
 | FMHA v3 8-Wave | Port the existing Triton FAv3 kernel to Gluon (`kernels/attention/fmha_v3.py`) | :white_check_mark: |
 | FMHA v3 8-Wave | Adapt llirSched for the 8-wave dot clusters (MFMA ↔ VALU co-execution model) | :white_check_mark: |
-| FMHA v4 8-Wave | Lazy softmax rescale, per-wave skip via `gl.warp_predicate` (`fmha_v4.py`) | :white_check_mark: |
+| FMHA v4 8-Wave | Lazy softmax rescale, per-wave skip via `gl.map_elementwise` (`fmha_v4.py`) | :white_check_mark: |
 | FMHA 8-Wave | Causal masking and ragged tails (removed from the tutorial cut) | :calendar: |
 | Other FA kernels | MLA, and decode-shaped MQA / GQA — separate pipelines beside `fmha_*` | :calendar: |
 | **Memory-Bound Kernels** | | |

@@ -245,10 +245,10 @@ The buffer load stall described above is directly measurable. We compare v7 (sli
 
 | Version                    |     K | TFLOPS | MFMA Eff. |
 |----------------------------|-------|--------|-----------|
-| v7_sliceN + llir+force-agpr+amdgcnas  |  8192 |   1567 |    97.96% |
-| v7_sliceN + llir+force-agpr+amdgcnas  | 16384 |   1567 |    90.48% |
-| v8_sliceMN + llir+force-agpr+amdgcnas |  8192 |   1569 |    97.40% |
-| v8_sliceMN + llir+force-agpr+amdgcnas | 16384 |   1579 |    91.15% |
+| v7_sliceN + llir+force-agpr+amdgcnas  |  8192 |   1446 |    98.00% |
+| v7_sliceN + llir+force-agpr+amdgcnas  | 16384 |   1477 |    95.44% |
+| v8_sliceMN + llir+force-agpr+amdgcnas |  8192 |   1461 |    98.70% |
+| v8_sliceMN + llir+force-agpr+amdgcnas | 16384 |   1485 |    98.34% |
 
 Performance is collected using:
 ```bash
@@ -256,7 +256,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+f
 python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+force-agpr+amdgcnas --K 16384 --dtype fp16 --rocprof
 ```
 
-At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 both drop sharply, v7 to 90.48% and v8 to 91.15%. The gap narrows to well under a point, but v8 stays ahead, and the drop itself is the residual signature of the TCP stall: v7's 16 consecutive buffer loads per wave still press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
+At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 v7 drops to 95.44% while v8 holds at 98.34%. That drop is the signature of the TCP stall: v7's 16 consecutive buffer loads per wave press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
 
 ## 6. What Comes Next
 

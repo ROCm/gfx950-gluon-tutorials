@@ -6,9 +6,7 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-The performance numbers in this repository are reproduced against the [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) annotated tag in `triton-lang/triton`, on `rocm-smi` GPU[7] of machine `smci355-ccs-aus-m01-29` (see `CHANGELOG.md`). the committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration against v1.1 is pending). Those tags are immutable — they will not be moved or deleted. **The current pin is
-[`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1)**; the numbers above have not yet been re-measured against it (see
-`CHANGELOG.md`), so they are quoted with the tag they were taken on. Building Triton from the relevant tag (or any commit reachable from it) reproduces the measurements within run-to-run noise.
+The performance numbers in this repository are reproduced against the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) annotated tag in `triton-lang/triton` — **the current pin** — on HIP device 7 (`HIP_VISIBLE_DEVICES=7`, PCI `0000:95:00.0`) of machine `smci355-ccs-aus-m01-29` (see `CHANGELOG.md`). The committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration is pending). Those tags are immutable — they will not be moved or deleted. Building Triton from the relevant tag (or any commit reachable from it) reproduces the measurements within run-to-run noise on the same die and day; absolute TFLOPS on this node moved by 2–10% between measurement days with the compiler unchanged (see the v2.2 entry in `CHANGELOG.md`), so compare configurations measured together.
 
 Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
 
@@ -17,7 +15,7 @@ Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/t
 The three components the tutorial depends on are on a planned upstreaming path:
 
 - **llirSched** — the LLIR scheduler (out-of-tree LLVM pass plugin, enabled via `LLVM_PASS_PLUGIN_PATH`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
-- **force-agpr** — the AGPR register-allocation hint (enabled via `TRITON_FORCE_MFMA_AGPR`) — targeted for upstream LLVM around June 2026 as an AGPR allocator policy. Its `amdgpu-mfma-vgpr-form=0` half is a stopgap that forces *all* MFMA C/D into AGPRs; LLVM's upcoming `RewriteMFMAFormStage` pass will instead pick AGPR vs. VGPR form per MFMA by register pressure, and once it defaults on that flag can be dropped from `llvm.cc`.
+- **force-agpr** — keeps MFMA accumulators in AGPRs through upstream Gluon's per-call `cd_regclass="a"` ([triton-lang/triton#11792](https://github.com/triton-lang/triton/pull/11792)), toggled in the tutorial kernels by `GLUON_MFMA_CD_REGCLASS=a`. It replaced the earlier process-wide `TRITON_FORCE_MFMA_AGPR` hook in `gfx950-tutorial-v2.2`. LLVM's upcoming `RewriteMFMAFormStage` pass, which picks AGPR vs. VGPR form per MFMA by register pressure, is the longer-term replacement.
 - **`amdgcnas`** — the post-assembly peephole (out-of-tree plugin, enabled via `TRITON_AMDGCNAS_PLUGIN`) — a longer-term target for an LLVM MachineInstr-level pass.
 
 Once these land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.

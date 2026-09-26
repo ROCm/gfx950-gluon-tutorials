@@ -147,11 +147,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |    964 |   362 |    51.87% |
-| v5             |   1034 |   426 |    57.67% |
-| v5 + llirSched |   1221 |   512 |    68.56% |
+| v4             |   1072 |   434 |    57.52% |
+| v5             |   1069 |   452 |    57.96% |
+| v5 + llirSched |   1211 |   512 |    80.24% |
 
-The 3-stage pipeline provides a modest improvement in the baseline case (964 → 1034 TFLOPS). However, when combined with the LLIR scheduler, throughput jumps to 1221 TFLOPS — an **18% additional improvement** over the v5 baseline by interleaving MFMA with memory operations.
+On its own the 3-stage pipeline buys nothing in the baseline case (1072 → 1069 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1211 TFLOPS and MFMA efficiency from 58.0% to 80.2% — a **13% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).
@@ -219,7 +219,6 @@ Enable it by pointing `LLVM_PASS_PLUGIN_PATH` at the built `.so`:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
 python bench.py --K 8192 --dtype fp16 --version 5
 ```
 

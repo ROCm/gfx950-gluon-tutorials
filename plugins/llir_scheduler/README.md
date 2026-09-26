@@ -7,7 +7,7 @@ each scheduling region and routes it to one of two models:
   and described in the
   [a16w16 v5 README](../../kernels/gemm/intra_wave/a16w16/v5_local_prefetch/README.md). It
   reorders the MFMA/`ds_read`/`buffer_load` instructions in the LLVM-IR hot loop and pins
-  the order with `llvm.amdgcn.sched.barrier(i32 0)` after each memory anchor, so LLVM's
+  the order with `llvm.amdgcn.sched.barrier(i32 0)` in front of each memory anchor, so LLVM's
   machine scheduler preserves the interleave (no misched-disable needed).
 - **MFMA ↔ VALU — a co-execution problem.** Used by the flash-attention dot clusters
   ([`kernels/attention/`](../../kernels/attention/README.md) §6). Every vector op has to be
@@ -27,8 +27,9 @@ Kernels that pin MFMA accumulators with Triton's experimental `cd_regclass` opti
 on each MFMA tile's C and D. The MFMA ↔ memory model keeps these pins attached: when it moves
 an MFMA, the C pin goes directly before it and the D pin directly after it. It also puts a
 `sched.barrier(0)` after each D pin, so LLVM's machine scheduler cannot reorder the pinned
-MFMAs; otherwise the pins turn into `v_accvgpr` copies. Kernels without pins are scheduled
-exactly as before. See [experiments/v9_agpr_pinning](../../experiments/v9_agpr_pinning/README.md).
+MFMAs; otherwise the pins turn into `v_accvgpr` copies. Kernels without pins get no pin fences.
+In both cases each memory anchor's fence goes directly *in front of* the anchor, so every window
+between fences starts with its memory op; with pins, that keeps a load between two pinned tiles. See [experiments/v9_agpr_pinning](../../experiments/v9_agpr_pinning/README.md).
 
 ## Files
 - `LlirSchedPlugin.cpp` — the pass, as a new-PassManager plugin (`llvmGetPassPluginInfo`,
@@ -39,10 +40,12 @@ exactly as before. See [experiments/v9_agpr_pinning](../../experiments/v9_agpr_p
 
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
-Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.1) for both the GEMM and the
-attention kernels. That tag carries **LLVM commit `b010a18d`** (see `cmake/llvm-info.json`);
-the prebuilt `.so` here is built against it. If the LLVM pin moves, **rebuild the `.so`** —
-the v2.0 `.so` (LLVM `850a2b1b`) segfaults against this pin.
+Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) for both the GEMM and the
+attention kernels. Triton now uses two LLVMs: the **core LLVM `b010a18d`** (see `cmake/llvm-info.json`)
+runs the LLVM-IR pipeline, including this plugin, and a separately pinned AMD codegen LLVM
+(`ce3529423`, see `cmake/amd-llvm-info.json`) turns the result into AMDGCN. The plugin only sees
+the core LLVM, and the prebuilt `.so` here is built against it. If the core LLVM pin moves,
+**rebuild the `.so`** — the v2.0 `.so` (LLVM `850a2b1b`) segfaults against this pin.
 
 ## Build
 Build against the same LLVM Triton uses (downloaded to `~/.triton/llvm/llvm-b010a18d-*`):
@@ -57,10 +60,11 @@ The plugin does **not** link LLVM; it resolves LLVM symbols from `libtriton` at
 load time (see prerequisites).
 
 ## Triton prerequisites
-Both pins carry the source change this plugin needs: it
-*keeps the TargetMachine for LLVM plugins* via `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`,
-without which `optimize_module` runs all of O3 with no target machine and codegen
-regresses. The one thing left to the builder is symbol visibility:
+The pin carries the source change this plugin needs,
+[triton-lang/triton#10849](https://github.com/triton-lang/triton/pull/10849): Triton
+*always sets the TargetMachine when an arch is given*, without which `optimize_module` runs
+all of O3 with no target machine and codegen regresses (v9 loses ~11%). The one thing left to
+the builder is symbol visibility:
 
 - **Build with default visibility:** `TRITON_EXT_ENABLED=1 pip install -e .`
   (the default `-fvisibility=hidden` build exports no LLVM symbols, and
@@ -72,10 +76,9 @@ is set it loads `libtriton` with `RTLD_GLOBAL` so the plugin can resolve symbols
 ## Use
 ```bash
 LLVM_PASS_PLUGIN_PATH=/abs/path/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
     python bench.py --version 8 --K 8192 --dtype fp16
 ```
-`scripts/run_perf_table.py` wires both env vars into the `llir`, `llir+force-agpr`, and
+`scripts/run_perf_table.py` wires this into the `llir`, `llir+force-agpr`, and
 `llir+force-agpr+amdgcnas` configs automatically.
 
 ## The plugin source

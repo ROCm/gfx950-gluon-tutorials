@@ -111,25 +111,23 @@ derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelinin
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v2.1`, GPU[7], rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+Triton `gfx950-tutorial-v2.2`, HIP device 7, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
 kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
 reference (`scripts/run_perf_table.py --configs llir+force-agpr+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | **1479** | 99.84% | 1587 | 97.79% |
-| 16384 | **1538** | 96.12% | 1634 | 97.35% |
-| 32768 | 1318 | 70.98% | **1333** | 70.56% |
+| 8192  | 1432 | 99.84% | **1476** | 98.40% |
+| 16384 | 1472 | 99.00% | **1508** | 97.65% |
+| 32768 | 1308 | 73.40% | **1327** | 67.01% |
 
-VGPRs / spills: this kernel **248 / 0**, `intra_wave/v9` **480 / 0** (both loop-spill-free).
+VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **448 / 0**.
 
-**On this pin the 4-wave route leads at every K**, reversing the earlier v1.1 reading where this
-kernel edged it at K ≤ 16384: `intra_wave/v9` (LLIR scheduler + force-agpr + amdgcnas) is ahead by
-**~7%** at K=8192 (1587 vs 1479), **~6%** at 16384 (1634 vs 1538) and **~1%** at 32768 (1333 vs
-1318). The reversal is on the 4-wave side — those numbers rose sharply on v2.1 while these barely
-moved. This kernel still wins on loop MFMA efficiency at K=8192 (99.84% vs 97.79%), but its
-efficiency falls away with K (96.12% at 16384, 70.98% at 32768) as the buffer-load stall sets in,
-where `intra_wave/v9` holds 97%+ through K=16384. (MFMA-eff is a single-dispatch ATT reading —
+**The 4-wave route leads at every K**, by **~3.1%** at K=8192 (1476 vs 1432), **~2.4%** at 16384
+(1508 vs 1472) and **~1.5%** at 32768 (1327 vs 1308) — narrower than the ~7% measured on `gfx950-tutorial-v2.1`
+(see the v2.2 entry in [`CHANGELOG.md`](../../../../CHANGELOG.md) for why absolute numbers moved).
+This kernel still wins on loop MFMA efficiency at every K (99.84%, 99.00%, 73.40%); both fall away at
+K=32768 as the buffer-load stall sets in. (MFMA-eff is a single-dispatch ATT reading —
 treat the last digit as noise.)
 
 ### Trace (MI355X, K=8192)

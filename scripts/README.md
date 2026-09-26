@@ -160,8 +160,8 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+for
 Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
 
 - **base** — no extra env vars (default Triton scheduling)
-- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so` + `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`
-- **llir+force-agpr** — `llir` + `TRITON_FORCE_MFMA_AGPR=1` (force MFMA accumulators into AGPRs; no peephole)
+- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so`
+- **llir+force-agpr** — `llir` + `GLUON_MFMA_CD_REGCLASS=a` (force MFMA accumulators into AGPRs; no peephole)
 - **llir+force-agpr+amdgcnas** — `llir+force-agpr` + `TRITON_AMDGCNAS_PLUGIN=1` (adds the post-assembly peephole)
 
 ### Examples
@@ -221,8 +221,8 @@ AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
   --version 9 --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
 
 # Inter-wave BF16; all optional compiler-plugin variables must be unset.
-env -u LLVM_PASS_PLUGIN_PATH -u LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE \
-  -u TRITON_FORCE_MFMA_AGPR -u TRITON_AMDGCNAS_PLUGIN \
+env -u LLVM_PASS_PLUGIN_PATH \
+  -u GLUON_MFMA_CD_REGCLASS -u TRITON_AMDGCNAS_PLUGIN \
   AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
   --kernel-include-regex a16w16_kernel -d trace_inter_bf16 -- \
   python scripts/benchmark_prepared.py --route inter --kernel a16w16 \

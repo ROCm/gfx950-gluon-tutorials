@@ -35,10 +35,9 @@ LLVM symbols, and no Triton rebuild — just wrap `stages["amdgcn"]`.
 Enable from bench.py by setting knobs.runtime.add_stages_inspection_hook to
 inspect_stages_hook when TRITON_AMDGCNAS_PLUGIN is set.
 
-Note: this hook is the *amdgcnas* peephole only. The register-allocation hints
-are the separate force-agpr component, both driven by TRITON_FORCE_MFMA_AGPR:
-amdgpu-agpr-alloc via the kernel's llvm_fn_attrs option, and amdgpu-mfma-vgpr-form
-set in llvm.cc.
+Note: this hook is the *amdgcnas* peephole only. Keeping MFMA accumulators in
+AGPRs is the separate force-agpr component: the kernels pass cd_regclass="a" to
+every MFMA when GLUON_MFMA_CD_REGCLASS=a is set.
 """
 
 import hashlib

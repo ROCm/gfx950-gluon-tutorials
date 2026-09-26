@@ -182,46 +182,48 @@ Storing `acc_left` overlaps with the final MFMA computing `acc_right`.
 
 Performance data is collected with:
 ```bash
-python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+force-agpr llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof
+python scripts/run_perf_table.py --kernel a16w16 --versions 6 7 --configs llir llir+force-agpr llir+force-agpr+amdgcnas --K 8192 --dtype fp16 --rocprof --allow-unreported
 ```
 This command can be run from anywhere in the repository. See [run_perf_table.py](../../../../../scripts/README.md#run_perf_tablepy) for details. For MFMA efficiency measurement methodology, see [MFMA Efficiency](../../../../../docs/mfma_efficiency.md).
 
 | Version                                     | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler                         |    228 |   512 |    129 |     8.74% |
-| v7 + LLIR scheduler                         |   1419 |   510 |      0 |    82.07% |
-| v7 + LLIR scheduler + force-agpr            |   1526 |   480 |      0 |    95.54% |
-| v7 + LLIR scheduler + force-agpr + amdgcnas |   1567 |   480 |      0 |    97.96% |
+| v6 + LLIR scheduler                         |   1152 |   511 |      8 |    89.65% |
+| v7 + LLIR scheduler                         |   1346 |   510 |      0 |    85.62% |
+| v7 + LLIR scheduler + force-agpr            |   1447 |   512 |      8 |    97.20% |
+| v7 + LLIR scheduler + force-agpr + amdgcnas |   1446 |   512 |      8 |    98.00% |
 
-The first row is the point of this version. On this pin v6 no longer fits: the allocator
-runs out of VGPRs and spills 129 registers, and the kernel collapses to 228 TFLOPS. v7's
-N-slicing brings the budget under the ceiling **by construction**, and the same `llir` config
-that spills on v6 runs clean on v7 at 1419 TFLOPS. Slicing is not a tuning knob here — it is
-what makes the register budget a design decision instead of an allocator outcome.
+The first row is the point of this version. v6 has no headroom, so whether it fits is up to
+the allocator: under `llir` it spills 8 registers on this pin (129, and a collapse to 228 TFLOPS,
+on `gfx950-tutorial-v2.1`), and its stock build now spills 241. v7's N-slicing brings the budget
+under the ceiling **by construction**, and the same `llir` config runs clean on v7 at 1346 TFLOPS,
+17% ahead of v6. Slicing is not a tuning knob here — it is what makes the register budget a design
+decision instead of an allocator outcome.
 
 ### 4.2. The AGPR↔VGPR copy bottleneck
 
-At 82.07% MFMA efficiency, v7 + LLIR scheduler is well short of the 98% ceiling. The gap is copy traffic inside the main loop. The MFMA accumulators are split between AGPRs and VGPRs, so the register allocator inserts `v_accvgpr_*` copies to move accumulator values into the register file each MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream.
+At 85.62% MFMA efficiency, v7 + LLIR scheduler is well short of the 98% ceiling. The gap is copy traffic inside the main loop. The MFMA accumulators are split between AGPRs and VGPRs, so the register allocator inserts `v_accvgpr_*` copies to move accumulator values into the register file each MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream.
 
 The copy count tracks the efficiency directly. Counting `v_accvgpr_*` instructions in one main-loop body (256 MFMAs each):
 
-| Config                          | in-loop `v_accvgpr_*` copies | MFMA Eff. |
-|---------------------------------|------------------------------|-----------|
-| v6 + LLIR scheduler + force-agpr |                          39 |    71.82% |
-| v7 + LLIR scheduler              |                         100 |    82.07% |
+| Config                           | in-loop `v_accvgpr_*` copies | MFMA Eff. |
+|----------------------------------|------------------------------|-----------|
+| v7 + LLIR scheduler              |                          116 |    85.62% |
+| v7 + LLIR scheduler + force-agpr |                            0 |    97.20% |
 
-v7's N-slicing spreads the operands across more live ranges, so the allocator shuffles accumulators more often — more copies, lower MFMA efficiency. (v6 is compared here with force-agpr, since without it v6 spills and the copy count is not meaningful.) These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
+With the accumulators free to live in either register file, the allocator moves them back and forth inside the loop — 116 copies against 256 MFMAs. These in-loop copies are the dominant non-MFMA cost, and the next section removes them.
 
 ### 4.3. Register Allocation Workaround: force-agpr
 
-The `force-agpr` config (`TRITON_FORCE_MFMA_AGPR=1`) constrains every MFMA accumulator — both the input accumulator (OpC) and the output (Dst) — to AGPRs, via two LLVM settings:
+The `force-agpr` config (`GLUON_MFMA_CD_REGCLASS=a`) constrains every MFMA accumulator — both the input accumulator (OpC) and the output (Dst) — to AGPRs. The kernel passes Gluon's `cd_regclass="a"` to each MFMA call:
 
-```
-amdgpu-agpr-alloc=256      # reserve 256 AGPRs for accumulators
-amdgpu-mfma-vgpr-form=0    # emit the AGPR form of MFMA
+```python
+acc = gl.amd.cdna3.mfma(a, b, acc, cd_regclass="a")
 ```
 
-With every accumulator already in an AGPR, each MFMA reads and writes it in place, so the allocator never needs an in-loop shuffle. The main loop drops to **0** `v_accvgpr_*` copies, which frees VGPRs (510 → 480) and raises MFMA efficiency to **95.5%** (**98.0%** with amdgcnas on top).
+Triton then wraps the MFMA's C and D in empty tied inline asm (`"=a,0"`), which pins both to the AGPR class, so the register allocator has no VGPR form to choose. (Before `gfx950-tutorial-v2.2` the same effect came from two process-wide LLVM settings, `amdgpu-agpr-alloc=256` and `amdgpu-mfma-vgpr-form=0`.)
+
+With every accumulator already in an AGPR, each MFMA reads and writes it in place, so the allocator never needs an in-loop shuffle. The main loop drops to **0** `v_accvgpr_*` copies and MFMA efficiency rises to **97.2%** (**98.0%** with amdgcnas on top). The pinned build reports 512 VGPRs and spills 8 registers, all outside the main loop (no scratch access inside it).
 
 The tradeoff: forcing all accumulators into AGPRs pushes the AGPR→VGPR reads into the epilogue, where the output `v_cvt` downcast requires VGPR inputs — paid once per kernel instead of every iteration. For compute-bound GEMM with large K (~95% of the time in the main loop), that is a good trade.
 
@@ -236,7 +238,7 @@ The trace above shows that removing the in-loop copies also eliminates the VALU 
 Enable it on top of the LLIR scheduler and force-agpr by setting the environment variables:
 
 ```bash
-TRITON_FORCE_MFMA_AGPR=1 TRITON_AMDGCNAS_PLUGIN=1
+GLUON_MFMA_CD_REGCLASS=a TRITON_AMDGCNAS_PLUGIN=1
 ```
 
 Layered on force-agpr, the peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + force-agpr + amdgcnas), v7 reaches **98% MFMA efficiency** — near the theoretical maximum.
