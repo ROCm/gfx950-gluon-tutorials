@@ -75,21 +75,13 @@ _LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlir
 _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
 }
-# force-agpr (the RA piece): GLUON_MFMA_CD_REGCLASS=a makes the kernels pass cd_regclass="a" to every
-# MFMA, so Triton pins each accumulator's C and D in AGPRs (the LLIR scheduler keeps the pins next to their
-# MFMAs). See plugins/llir_scheduler/README.md.
-_FORCE_AGPR_ENV = {
-    "GLUON_MFMA_CD_REGCLASS": "a",
-}
 
 # Cumulative configs: each adds one component on top of the previous.
 CONFIG_ENV = {
     "base": {},
     "llir": {**_LLIR_SCHED_ENV},
-    "llir+force-agpr": {**_LLIR_SCHED_ENV, **_FORCE_AGPR_ENV},
-    "llir+force-agpr+amdgcnas": {
+    "llir+amdgcnas": {
         **_LLIR_SCHED_ENV,
-        **_FORCE_AGPR_ENV,
         "TRITON_AMDGCNAS_PLUGIN": "1",
     },
 }
@@ -202,7 +194,6 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
         "LLVM_PASS_PLUGIN_PATH",
-        "GLUON_MFMA_CD_REGCLASS",
         "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)

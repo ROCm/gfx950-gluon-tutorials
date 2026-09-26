@@ -36,8 +36,8 @@ Enable from bench.py by setting knobs.runtime.add_stages_inspection_hook to
 inspect_stages_hook when TRITON_AMDGCNAS_PLUGIN is set.
 
 Note: this hook is the *amdgcnas* peephole only. Keeping MFMA accumulators in
-AGPRs is the separate force-agpr component: the kernels pass cd_regclass="a" to
-every MFMA when GLUON_MFMA_CD_REGCLASS=a is set.
+AGPRs is part of the kernels themselves: from a16w16 v7 on (and in a8w8 and
+a4w4) every MFMA passes cd_regclass="a".
 """
 
 import hashlib

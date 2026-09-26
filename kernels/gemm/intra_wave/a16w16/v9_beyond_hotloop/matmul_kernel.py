@@ -22,8 +22,6 @@
 # THE SOFTWARE.
 ##############################################################################
 
-import os
-
 import torch
 import triton
 from common import get_pids
@@ -50,8 +48,7 @@ def v9_beyond_hotloop(
     BLOCK_K: gl.constexpr,  #
     GRID_MN: gl.constexpr,
     NUM_XCDS: gl.constexpr,
-    GROUP_SIZE_M: gl.constexpr,
-    CD_REGCLASS: gl.constexpr = None,  #
+    GROUP_SIZE_M: gl.constexpr,  #
 ):
     """
     Beyond the hot loop: L2 locality + interleaved epilogue on top of v8_sliceMN.
@@ -223,7 +220,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
-        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
+        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(0).load(dotOpLayoutA)
@@ -234,7 +231,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
-        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
+        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(0).load(dotOpLayoutB)
@@ -245,7 +242,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
-        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
+        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(1).load(dotOpLayoutB)
@@ -256,7 +253,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
-        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
+        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(1).load(dotOpLayoutA)
@@ -272,7 +269,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
-        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
+        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(1).load(dotOpLayoutA)
@@ -285,7 +282,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
-        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
+        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(1).load(dotOpLayoutB)
@@ -298,7 +295,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
-        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
+        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(0).load(dotOpLayoutB)
@@ -311,7 +308,7 @@ def v9_beyond_hotloop(
         ########################################
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
-        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
+        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(0).load(dotOpLayoutA)
@@ -340,32 +337,32 @@ def v9_beyond_hotloop(
     c_br_offsets = c_bl_offsets + BLOCK_N * stride_cn // 2
 
     ## Iter iterMax - 2: same 4-region pattern as main loop, no AC
-    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
+    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(5)
     l_idx = (iterMax - 2) % 2
     a_bot = smemA_bot.index(l_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
+    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(4)
     b_right = smemB_right.index(l_idx).load(dotOpLayoutB)
 
-    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
+    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(3)
     g_idx = 1 - l_idx
     b_left = smemB_left.index(g_idx).load(dotOpLayoutB)
 
-    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
     ## Iter iterMax - 1
     ## Natural-pipeline epilogue: each store follows its MFMA with one
     ## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
-    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
+    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
+    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
@@ -373,13 +370,13 @@ def v9_beyond_hotloop(
     c_tl = gl.convert_layout(c_tl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
-    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
+    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass="a")
 
     c_bl = acc_bl.to(a_ptr.dtype.element_ty)
     c_bl = gl.convert_layout(c_bl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
 
-    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass="a")
 
     c_tr = acc_tr.to(a_ptr.dtype.element_ty)
     c_tr = gl.convert_layout(c_tr, layout=gStoreLayoutC)
@@ -422,9 +419,6 @@ def matmul(a, b, c=None):
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
-        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
-        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
-        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
     )
     return c

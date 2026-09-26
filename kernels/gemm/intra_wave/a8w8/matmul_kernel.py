@@ -22,8 +22,6 @@
 # THE SOFTWARE.
 ##############################################################################
 
-import os
-
 import torch
 import triton
 from common import get_pids
@@ -50,8 +48,7 @@ def a8w8_kernel(
     BLOCK_K: gl.constexpr,  #
     GRID_MN: gl.constexpr,
     NUM_XCDS: gl.constexpr,
-    GROUP_SIZE_M: gl.constexpr,
-    CD_REGCLASS: gl.constexpr = None,  #
+    GROUP_SIZE_M: gl.constexpr,  #
 ):
     """
     Slice both M and N with loop unrolling (factor 2). Same structure as
@@ -236,7 +233,7 @@ def a8w8_kernel(
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
         acc_tl = gl.amd.cdna4.mfma_scaled(
-            a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass=CD_REGCLASS
+            a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -249,7 +246,7 @@ def a8w8_kernel(
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
         acc_bl = gl.amd.cdna4.mfma_scaled(
-            a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass=CD_REGCLASS
+            a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -262,7 +259,7 @@ def a8w8_kernel(
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
         acc_tr = gl.amd.cdna4.mfma_scaled(
-            a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass=CD_REGCLASS
+            a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -275,7 +272,7 @@ def a8w8_kernel(
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
         acc_br = gl.amd.cdna4.mfma_scaled(
-            a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass=CD_REGCLASS
+            a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -293,7 +290,7 @@ def a8w8_kernel(
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
         acc_tl = gl.amd.cdna4.mfma_scaled(
-            a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass=CD_REGCLASS
+            a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -308,7 +305,7 @@ def a8w8_kernel(
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
         acc_bl = gl.amd.cdna4.mfma_scaled(
-            a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass=CD_REGCLASS
+            a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -323,7 +320,7 @@ def a8w8_kernel(
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
         acc_tr = gl.amd.cdna4.mfma_scaled(
-            a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass=CD_REGCLASS
+            a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -338,7 +335,7 @@ def a8w8_kernel(
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
         acc_br = gl.amd.cdna4.mfma_scaled(
-            a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass=CD_REGCLASS
+            a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass="a"
         )
 
         gl.amd.cdna4.async_copy.wait_group(5)
@@ -372,27 +369,27 @@ def a8w8_kernel(
 
     ## Iter iterMax - 2: same 4-region pattern as main loop, no AC
     acc_tl = gl.amd.cdna4.mfma_scaled(
-        a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass=CD_REGCLASS
+        a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(5)
     l_idx = (iterMax - 2) % 2
     a_bot = smemA_bot.index(l_idx).load(dotOpLayoutA)
 
     acc_bl = gl.amd.cdna4.mfma_scaled(
-        a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass=CD_REGCLASS
+        a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(4)
     b_right = smemB_right.index(l_idx).load(dotOpLayoutB)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
-        a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass=CD_REGCLASS
+        a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(3)
     g_idx = 1 - l_idx
     b_left = smemB_left.index(g_idx).load(dotOpLayoutB)
 
     acc_br = gl.amd.cdna4.mfma_scaled(
-        a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass=CD_REGCLASS
+        a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
@@ -401,13 +398,13 @@ def a8w8_kernel(
     ## Natural-pipeline epilogue: each store follows its MFMA with one
     ## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
     acc_tl = gl.amd.cdna4.mfma_scaled(
-        a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass=CD_REGCLASS
+        a_top, None, "e5m2", b_left, None, "e5m2", acc_tl, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
     acc_bl = gl.amd.cdna4.mfma_scaled(
-        a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass=CD_REGCLASS
+        a_bot, None, "e5m2", b_left, None, "e5m2", acc_bl, cd_regclass="a"
     )
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
@@ -417,7 +414,7 @@ def a8w8_kernel(
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
     acc_tr = gl.amd.cdna4.mfma_scaled(
-        a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass=CD_REGCLASS
+        a_top, None, "e5m2", b_right, None, "e5m2", acc_tr, cd_regclass="a"
     )
 
     c_bl = acc_bl.to(gl.float16)
@@ -425,7 +422,7 @@ def a8w8_kernel(
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
 
     acc_br = gl.amd.cdna4.mfma_scaled(
-        a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass=CD_REGCLASS
+        a_bot, None, "e5m2", b_right, None, "e5m2", acc_br, cd_regclass="a"
     )
 
     c_tr = acc_tr.to(gl.float16)
@@ -468,9 +465,6 @@ def matmul(a, b):
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
-        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
-        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
-        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
     )
     return c
