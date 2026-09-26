@@ -15,9 +15,10 @@ skipped, so p = exp2(score - m_lag) can rise up to ~256 but the final acc / l_i
 
 Two separate decisions implement that, and they are worth keeping apart. The *max
 update* is gated branchlessly with a per-row ``gl.where``, so control flow stays
-uniform. The *correction itself* is a real branch: ``rescale_lazy`` wraps it in
-``gl.warp_predicate``, which lowers to ``s_and_saveexec`` + ``s_cbranch_execz`` and
-skips the block entirely for any wavefront none of whose rows advanced. The branch
+uniform. The *correction itself* is a real branch: ``rescale_lazy`` runs it through
+``gl.map_elementwise`` with a scalar body that tests ``alpha != 1`` once per thread;
+the backend lowers that to ``s_and_saveexec`` + ``s_cbranch_execz``, which skips the
+block entirely for any wavefront none of whose rows advanced. The branch
 is the point -- a row carrying alpha == 1 is numerically a no-op, but its multiply
 still issues and still costs its four cycles, so eliding that VALU needs control
 flow rather than a multiply by one.
@@ -84,6 +85,7 @@ from triton.experimental.gluon.language._layouts import (
 )
 
 
+from fmha_v4_map_elementwise import rescale_acc_pack64, rescale_row
 from common import (
     get_shape_from_layout,
     get_strides_from_layout,
@@ -242,34 +244,27 @@ def _concat_halves(x, y):
 
 
 @gluon.jit
-def _rescale(acc, l_i, alpha):
-    """warp_predicate body: apply the deferred per-row correction.
-
-    Runs only for wavefronts holding at least one row with alpha < 1 (see
-    sc_vec2). Rows that did not advance carry alpha == 1, so their multiply is a
-    no-op -- correct even though the whole lane executes under one exec mask.
-    """
-    return acc * alpha[:, None], l_i * alpha
-
-
-@gluon.jit
 def rescale_lazy(acc, l_i, alpha):
     """The deferred per-row correction, hoisted into the PRIOR mem stage.
 
-    Same warp_predicate rescale as before (acc *= alpha, l_i *= alpha, skipped
-    per-wave when no row advanced), but pulled OUT of sc_vec2 so it runs in the
-    mem2 stage -- paired with the LRK/ACV loads -- instead of sitting ahead of the
-    DOT1 QK mfma. alpha was produced by VEC1 in THIS tile's DOT2; applying the
+    acc *= alpha and l_i *= alpha, skipped per wave when no row advanced, run in
+    the mem2 stage -- paired with the LRK/ACV loads -- instead of sitting ahead of
+    the DOT1 QK mfma. alpha was produced by VEC1 in THIS tile's DOT2; applying the
     correction here (before the NEXT tile's DOT2 accumulates) keeps acc in the
     advanced frame while overlapping the branch/control with LDS/global latency.
 
-    PER-WAVE LAZY SKIP: ``gl.warp_predicate`` keyed on ``alpha < 1`` lowers to
-    ``s_and_saveexec`` + ``s_cbranch_execz``, so each wavefront independently skips
-    the rescale when none of ITS rows advanced -- no cross-warp reduction. Rows
-    that did not advance carry alpha == 1, so their multiply is a no-op.
+    PER-WAVE LAZY SKIP: ``gl.map_elementwise`` hands each thread's elements to a
+    scalar function (``pack`` = elements per thread), whose ``if alpha != 1``
+    becomes one branch per thread. The backend lowers it to ``s_and_saveexec`` +
+    ``s_cbranch_execz``, so each wavefront independently skips the rescale when
+    none of ITS rows advanced -- no cross-warp reduction. Rows that did not
+    advance carry alpha == 1, so the multiply is exact wherever it does run.
+    With BLOCK_M=256, BLOCK_DMODEL=128 and 8 warps a thread holds 64 accumulator
+    elements (all in one row) and one row of l_i; see fmha_v4_map_elementwise.py.
     """
-    need = alpha < 1.0
-    acc, l_i = gl.warp_predicate(need, (acc, l_i), _rescale, args=(alpha, ))
+    alpha_b = gl.broadcast(alpha[:, None], acc)[0]
+    acc, = gl.map_elementwise(rescale_acc_pack64, acc, alpha_b, pack=64)
+    l_i = gl.map_elementwise(rescale_row, l_i, alpha)
     return acc, l_i
 
 
