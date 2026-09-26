@@ -843,7 +843,7 @@ private:
         // Each anchor's fence goes in front of it, so every window between
         // fences is `anchor, mfma...` with the memory op already leading. With
         // register-class pins this keeps a load between two pinned tiles
-        // (see experiments/v9_agpr_pinning, "Fencing before the anchor").
+        // (see the plugin README, "Register-class pins").
         for (const AnchorInst &A : Res.Anchors)
           if (Instruction *Prev = A.I->getPrevNode())
             insertSchedBarrier(Prev, /*Mask=*/0);
