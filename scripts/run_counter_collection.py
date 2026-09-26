@@ -76,13 +76,11 @@ _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
     "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
-# force-agpr (the RA piece): TRITON_FORCE_MFMA_AGPR=1 forces MFMA accumulators
-# into AGPRs. The kernels read it to set llvm_fn_attrs="amdgpu-agpr-alloc=256"
-# (reserve the AGPRs), and llvm.cc reads it to set amdgpu-mfma-vgpr-form=0. The
-# post-assembly peephole is the TRITON_AMDGCNAS_PLUGIN hook installed by bench.py.
-# See plugins/amdgcnas/README.md.
+# force-agpr (the RA piece): GLUON_MFMA_CD_REGCLASS=a makes the kernels pass cd_regclass="a" to every
+# MFMA, so Triton pins each accumulator's C and D in AGPRs (the LLIR scheduler keeps the pins next to their
+# MFMAs). See plugins/llir_scheduler/README.md.
 _FORCE_AGPR_ENV = {
-    "TRITON_FORCE_MFMA_AGPR": "1",
+    "GLUON_MFMA_CD_REGCLASS": "a",
 }
 
 # Cumulative configs: each adds one component on top of the previous.
@@ -206,7 +204,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "TRITON_ENABLE_AMDGCN_AS",
         "LLVM_PASS_PLUGIN_PATH",
         "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
-        "TRITON_FORCE_MFMA_AGPR",
+        "GLUON_MFMA_CD_REGCLASS",
         "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)

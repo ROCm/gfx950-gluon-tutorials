@@ -22,6 +22,8 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import os
+
 import torch
 import triton
 from triton.experimental import gluon
@@ -44,7 +46,8 @@ def v7_sliceN(
     stride_cn,
     BLOCK_M: gl.constexpr,
     BLOCK_N: gl.constexpr,
-    BLOCK_K: gl.constexpr,  #
+    BLOCK_K: gl.constexpr,
+    CD_REGCLASS: gl.constexpr = None,  #
 ):
     """
     Local prefetch pipeline design
@@ -234,7 +237,7 @@ def v7_sliceN(
         g_idx = 0
         l_idx = 1
 
-        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(2)
         b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
@@ -248,7 +251,7 @@ def v7_sliceN(
         ########################################
         ## Region 1
         ########################################
-        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(2)
         a = smemA.index(l_idx).load(dotOpLayoutA)
@@ -273,7 +276,7 @@ def v7_sliceN(
         ## Region 2
         ########################################
 
-        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(2)
         b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
@@ -287,7 +290,7 @@ def v7_sliceN(
         ########################################
         ## Region 3
         ########################################
-        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(2)
         a = smemA.index(l_idx).load(dotOpLayoutA)
@@ -317,14 +320,14 @@ def v7_sliceN(
     ########################################
     g_idx = 0
     l_idx = 1
-    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     ########################################
     ## Region 1
     ########################################
-    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass=CD_REGCLASS)
     a = smemA.index(l_idx).load(dotOpLayoutA)
     b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
@@ -335,7 +338,7 @@ def v7_sliceN(
     ########################################
     g_idx = 1
 
-    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass=CD_REGCLASS)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     c_left = acc_left.to(a_ptr.dtype.element_ty)
@@ -345,7 +348,7 @@ def v7_sliceN(
     ########################################
     ## Region 3
     ########################################
-    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass=CD_REGCLASS)
 
     c_right = acc_right.to(a_ptr.dtype.element_ty)
     c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)
@@ -379,6 +382,9 @@ def matmul(a, b, c=None):
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
+        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
+        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
+        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
     )
     return c

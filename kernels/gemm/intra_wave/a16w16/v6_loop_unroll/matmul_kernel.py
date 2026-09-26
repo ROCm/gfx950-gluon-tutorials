@@ -22,6 +22,8 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import os
+
 import torch
 import triton
 from triton.experimental import gluon
@@ -44,7 +46,8 @@ def v6_loop_unroll(
     stride_cn,
     BLOCK_M: gl.constexpr,
     BLOCK_N: gl.constexpr,
-    BLOCK_K: gl.constexpr,  #
+    BLOCK_K: gl.constexpr,
+    CD_REGCLASS: gl.constexpr = None,  #
 ):
     """
     Local prefetch pipeline design
@@ -207,7 +210,7 @@ def v6_loop_unroll(
         g_idx = 0
         l_idx = 1
 
-        acc = gl.amd.cdna3.mfma(a, b, acc)
+        acc = gl.amd.cdna3.mfma(a, b, acc, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(0)
 
@@ -224,7 +227,7 @@ def v6_loop_unroll(
         g_idx = 1
         l_idx = 0
 
-        acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
+        acc = gl.amd.cdna3.mfma(a_next, b_next, acc, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(0)
 
@@ -241,13 +244,13 @@ def v6_loop_unroll(
     ## Epilogue
     ## iterMax - 2
     l_idx = 1
-    acc = gl.amd.cdna3.mfma(a, b, acc)
+    acc = gl.amd.cdna3.mfma(a, b, acc, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(0)
     a_next = smemA.index(l_idx).load(dotOpLayoutA)
     b_next = smemB.index(l_idx).load(dotOpLayoutB)
 
     ## iterMax - 1
-    acc = gl.amd.cdna3.mfma(a_next, b_next, acc)
+    acc = gl.amd.cdna3.mfma(a_next, b_next, acc, cd_regclass=CD_REGCLASS)
 
     c = acc.to(a_ptr.dtype.element_ty)
 
@@ -288,6 +291,9 @@ def matmul(a, b, c=None):
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
+        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
+        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
+        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
     )
     return c

@@ -57,6 +57,7 @@ def v0_sliceN(
     GRID_MN: gl.constexpr,
     NUM_XCDS: gl.constexpr,
     GROUP_SIZE_M: gl.constexpr,
+    CD_REGCLASS: gl.constexpr = None,
 ):
     """
     MXFP4 GEMM kernel with N-slice and prefetched scales.
@@ -333,6 +334,7 @@ def v0_sliceN(
             b_scale=b_sc_left_reg_buf0,
             b_format="e2m1",
             acc=acc_left,
+            cd_regclass=CD_REGCLASS,
         )
 
         # Wait for B_right tile (commit group 1)
@@ -365,6 +367,7 @@ def v0_sliceN(
             b_scale=b_sc_right_reg_buf0,
             b_format="e2m1",
             acc=acc_right,
+            cd_regclass=CD_REGCLASS,
         )
 
         # Wait for next A + B_left tiles (commit group 2)
@@ -403,6 +406,7 @@ def v0_sliceN(
             b_scale=b_sc_left_reg_buf2,
             b_format="e2m1",
             acc=acc_left,
+            cd_regclass=CD_REGCLASS,
         )
 
         # Wait for B_right tile
@@ -435,6 +439,7 @@ def v0_sliceN(
             b_scale=b_sc_right_reg_buf2,
             b_format="e2m1",
             acc=acc_right,
+            cd_regclass=CD_REGCLASS,
         )
 
         # Wait for next A + B_left tiles
@@ -482,6 +487,7 @@ def v0_sliceN(
         b_scale=b_sc_left_reg_buf0,
         b_format="e2m1",
         acc=acc_left,
+        cd_regclass=CD_REGCLASS,
     )
 
     gl.amd.cdna4.async_copy.wait_group(2)
@@ -501,6 +507,7 @@ def v0_sliceN(
         b_scale=b_sc_right_reg_buf0,
         b_format="e2m1",
         acc=acc_right,
+        cd_regclass=CD_REGCLASS,
     )
 
     gl.amd.cdna4.async_copy.wait_group(1)
@@ -533,6 +540,7 @@ def v0_sliceN(
         b_scale=b_sc_left_reg_buf2,
         b_format="e2m1",
         acc=acc_left,
+        cd_regclass=CD_REGCLASS,
     )
 
     gl.amd.cdna4.async_copy.wait_group(0)
@@ -555,6 +563,7 @@ def v0_sliceN(
         b_scale=b_sc_right_reg_buf2,
         b_format="e2m1",
         acc=acc_right,
+        cd_regclass=CD_REGCLASS,
     )
 
     c_right = acc_right.to(c_ptr.type.element_ty)
@@ -604,9 +613,9 @@ def matmul(a, b, a_scales, b_scales):
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
+        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
+        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
+        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
-        # force-agpr RA hint: reserve 256 AGPRs for MFMA accumulators, enabled by
-        # TRITON_FORCE_MFMA_AGPR (paired in llvm.cc with amdgpu-mfma-vgpr-form=0).
-        llvm_fn_attrs=("amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""),
     )
     return c

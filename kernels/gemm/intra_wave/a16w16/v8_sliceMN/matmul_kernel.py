@@ -46,7 +46,8 @@ def v8_sliceMN(
     stride_cn,  #
     BLOCK_M: gl.constexpr,
     BLOCK_N: gl.constexpr,
-    BLOCK_K: gl.constexpr,  #
+    BLOCK_K: gl.constexpr,
+    CD_REGCLASS: gl.constexpr = None,  #
 ):
     """
     Slice both M and N with loop unrolling (factor 2).
@@ -260,7 +261,7 @@ def v8_sliceMN(
         ########################################
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
-        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
+        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(0).load(dotOpLayoutA)
@@ -271,7 +272,7 @@ def v8_sliceMN(
         ########################################
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
-        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
+        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(0).load(dotOpLayoutB)
@@ -282,7 +283,7 @@ def v8_sliceMN(
         ########################################
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
-        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
+        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(1).load(dotOpLayoutB)
@@ -293,7 +294,7 @@ def v8_sliceMN(
         ########################################
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
-        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(1).load(dotOpLayoutA)
@@ -309,7 +310,7 @@ def v8_sliceMN(
         ########################################
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
-        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
+        acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(1).load(dotOpLayoutA)
@@ -322,7 +323,7 @@ def v8_sliceMN(
         ########################################
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
-        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
+        acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(1).load(dotOpLayoutB)
@@ -335,7 +336,7 @@ def v8_sliceMN(
         ########################################
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
-        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
+        acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(0).load(dotOpLayoutB)
@@ -348,7 +349,7 @@ def v8_sliceMN(
         ########################################
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
-        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+        acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
 
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(0).load(dotOpLayoutA)
@@ -380,32 +381,32 @@ def v8_sliceMN(
     c_br_offsets = c_bl_offsets + BLOCK_N * stride_cn // 2
 
     ## Iter iterMax - 2
-    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
+    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(5)
     l_idx = (iterMax - 2) % 2
     a_bot = smemA_bot.index(l_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
+    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(4)
     b_right = smemB_right.index(l_idx).load(dotOpLayoutB)
 
-    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
+    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(3)
     g_idx = 1 - l_idx
     b_left = smemB_left.index(g_idx).load(dotOpLayoutB)
 
-    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dotOpLayoutA)
 
     ## Iter iterMax - 1
     ## Natural-pipeline epilogue: each store follows its MFMA with one
     ## MFMA cycle of gap, yielding uniform MFMA-store interleaving.
-    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl)
+    acc_tl = gl.amd.cdna3.mfma(a_top, b_left, acc_tl, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dotOpLayoutA)
 
-    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl)
+    acc_bl = gl.amd.cdna3.mfma(a_bot, b_left, acc_bl, cd_regclass=CD_REGCLASS)
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
@@ -413,13 +414,13 @@ def v8_sliceMN(
     c_tl = gl.convert_layout(c_tl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_tl_offsets, stored_value=c_tl)
 
-    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr)
+    acc_tr = gl.amd.cdna3.mfma(a_top, b_right, acc_tr, cd_regclass=CD_REGCLASS)
 
     c_bl = acc_bl.to(a_ptr.dtype.element_ty)
     c_bl = gl.convert_layout(c_bl, layout=gStoreLayoutC)
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_bl_offsets, stored_value=c_bl)
 
-    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br)
+    acc_br = gl.amd.cdna3.mfma(a_bot, b_right, acc_br, cd_regclass=CD_REGCLASS)
 
     c_tr = acc_tr.to(a_ptr.dtype.element_ty)
     c_tr = gl.convert_layout(c_tr, layout=gStoreLayoutC)
@@ -457,9 +458,9 @@ def matmul(a, b, c=None):
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
+        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
+        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
+        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
-        # force-agpr RA hint: reserve 256 AGPRs for MFMA accumulators, enabled by
-        # TRITON_FORCE_MFMA_AGPR (paired in llvm.cc with amdgpu-mfma-vgpr-form=0).
-        llvm_fn_attrs=("amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""),
     )
     return c

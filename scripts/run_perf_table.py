@@ -83,12 +83,11 @@ _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
     "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
 }
-# force-agpr (the RA piece): a single env var TRITON_FORCE_MFMA_AGPR=1 forces MFMA
-# accumulators into AGPRs. The kernels read it to set llvm_fn_attrs=
-# "amdgpu-agpr-alloc=256" (reserve the AGPRs), and llvm.cc reads it to set
-# amdgpu-mfma-vgpr-form=0 (use the AGPR MFMA form). See plugins/amdgcnas/README.md.
+# force-agpr (the RA piece): GLUON_MFMA_CD_REGCLASS=a makes the kernels pass cd_regclass="a" to every
+# MFMA, so Triton pins each accumulator's C and D in AGPRs (the LLIR scheduler keeps the pins next to their
+# MFMAs). See plugins/llir_scheduler/README.md.
 _FORCE_AGPR_ENV = {
-    "TRITON_FORCE_MFMA_AGPR": "1",
+    "GLUON_MFMA_CD_REGCLASS": "a",
 }
 
 # Cumulative configs: each adds one component on top of the previous, so a perf
@@ -450,7 +449,7 @@ def run_benchmark(
         "TRITON_AMDGCNAS_PLUGIN",
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
-        "TRITON_FORCE_MFMA_AGPR",
+        "GLUON_MFMA_CD_REGCLASS",
     ):
         env.pop(key, None)
     # Set config-specific env vars

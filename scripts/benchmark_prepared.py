@@ -93,7 +93,7 @@ def load_kernel(args):
         forbidden = (
             "LLVM_PASS_PLUGIN_PATH",
             "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
-            "TRITON_FORCE_MFMA_AGPR",
+            "GLUON_MFMA_CD_REGCLASS",
             "TRITON_AMDGCNAS_PLUGIN",
         )
         active = [name for name in forbidden if os.environ.get(name)]
@@ -232,8 +232,9 @@ def launch_configuration(args, jit_kernel):
             "num_warps": 8,
             "llvm_fn_attrs": (("amdgpu-agpr-alloc", "0,0"),),
         }
-    elif os.environ.get("TRITON_FORCE_MFMA_AGPR"):
-        compiler_options["llvm_fn_attrs"] = "amdgpu-agpr-alloc=256"
+    elif os.environ.get("GLUON_MFMA_CD_REGCLASS") and "CD_REGCLASS" in jit_kernel.arg_names:
+        # force-agpr: pin the MFMA accumulators with Triton's cd_regclass
+        constexprs["CD_REGCLASS"] = os.environ["GLUON_MFMA_CD_REGCLASS"]
     return (grid_mn, 1), constexprs, compiler_options
 
 

@@ -39,6 +39,7 @@ def v1_sliceMN(
     GRID_MN: gl.constexpr,
     NUM_XCDS: gl.constexpr,
     GROUP_SIZE_M: gl.constexpr,
+    CD_REGCLASS: gl.constexpr = None,
 ):
     """
     MXFP4 GEMM kernel with M+N slicing and tile-paired scale async copy.
@@ -385,6 +386,7 @@ def v1_sliceMN(
             b_scale=b_sc_left,
             b_format="e2m1",
             acc=acc_tl,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(0).load(dot_a_layout)
@@ -404,6 +406,7 @@ def v1_sliceMN(
             b_scale=b_sc_left,
             b_format="e2m1",
             acc=acc_bl,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(0).permute([1, 0]).load(dot_b_layout)
@@ -423,6 +426,7 @@ def v1_sliceMN(
             b_scale=b_sc_right,
             b_format="e2m1",
             acc=acc_tr,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(1).permute([1, 0]).load(dot_b_layout)
@@ -442,6 +446,7 @@ def v1_sliceMN(
             b_scale=b_sc_right,
             b_format="e2m1",
             acc=acc_br,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(1).load(dot_a_layout)
@@ -465,6 +470,7 @@ def v1_sliceMN(
             b_scale=b_sc_left,
             b_format="e2m1",
             acc=acc_tl,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         a_bot = smemA_bot.index(1).load(dot_a_layout)
@@ -486,6 +492,7 @@ def v1_sliceMN(
             b_scale=b_sc_left,
             b_format="e2m1",
             acc=acc_bl,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         b_right = smemB_right.index(1).permute([1, 0]).load(dot_b_layout)
@@ -507,6 +514,7 @@ def v1_sliceMN(
             b_scale=b_sc_right,
             b_format="e2m1",
             acc=acc_tr,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         b_left = smemB_left.index(0).permute([1, 0]).load(dot_b_layout)
@@ -528,6 +536,7 @@ def v1_sliceMN(
             b_scale=b_sc_right,
             b_format="e2m1",
             acc=acc_br,
+            cd_regclass=CD_REGCLASS,
         )
         gl.amd.cdna4.async_copy.wait_group(5)
         a_top = smemA_top.index(0).load(dot_a_layout)
@@ -569,6 +578,7 @@ def v1_sliceMN(
         b_scale=b_sc_left,
         b_format="e2m1",
         acc=acc_tl,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(5)
     l_idx = (iterMax - 2) % 2
@@ -583,6 +593,7 @@ def v1_sliceMN(
         b_scale=b_sc_left,
         b_format="e2m1",
         acc=acc_bl,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(4)
     b_right = smemB_right.index(l_idx).permute([1, 0]).load(dot_b_layout)
@@ -596,6 +607,7 @@ def v1_sliceMN(
         b_scale=b_sc_right,
         b_format="e2m1",
         acc=acc_tr,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(3)
     g_idx = 1 - l_idx
@@ -610,6 +622,7 @@ def v1_sliceMN(
         b_scale=b_sc_right,
         b_format="e2m1",
         acc=acc_br,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(2)
     a_top = smemA_top.index(g_idx).load(dot_a_layout)
@@ -624,6 +637,7 @@ def v1_sliceMN(
         b_scale=b_sc_left,
         b_format="e2m1",
         acc=acc_tl,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(1)
     a_bot = smemA_bot.index(g_idx).load(dot_a_layout)
@@ -637,6 +651,7 @@ def v1_sliceMN(
         b_scale=b_sc_left,
         b_format="e2m1",
         acc=acc_bl,
+        cd_regclass=CD_REGCLASS,
     )
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).permute([1, 0]).load(dot_b_layout)
@@ -654,6 +669,7 @@ def v1_sliceMN(
         b_scale=b_sc_right,
         b_format="e2m1",
         acc=acc_tr,
+        cd_regclass=CD_REGCLASS,
     )
 
     c_bl = acc_bl.to(c_ptr.type.element_ty)
@@ -668,6 +684,7 @@ def v1_sliceMN(
         b_scale=b_sc_right,
         b_format="e2m1",
         acc=acc_br,
+        cd_regclass=CD_REGCLASS,
     )
 
     c_tr = acc_tr.to(c_ptr.type.element_ty)
@@ -723,9 +740,9 @@ def matmul(a, b, a_scales, b_scales):
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
+        # MFMA accumulator register class via Triton's cd_regclass: GLUON_MFMA_CD_REGCLASS=a keeps
+        # C/D in AGPRs (the force-agpr config), =v in VGPRs; unset leaves it to the compiler.
+        CD_REGCLASS=(os.environ.get("GLUON_MFMA_CD_REGCLASS") or None),
         num_warps=num_warps,
-        # force-agpr RA hint: reserve 256 AGPRs for MFMA accumulators, enabled by
-        # TRITON_FORCE_MFMA_AGPR (paired in llvm.cc with amdgpu-mfma-vgpr-form=0).
-        llvm_fn_attrs=("amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""),
     )
     return c
