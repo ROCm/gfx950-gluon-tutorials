@@ -74,7 +74,7 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on MI355X (HIP device 5), Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |

@@ -49,7 +49,7 @@ CMFMA = "#D62728"  # MFMA-efficiency labels (red)
 
 # precision, K, 4-wave (TFLOPS, MFMA%), 8-wave (TFLOPS, MFMA%)
 # Each bar is that route's best variant at the shape: 4-wave MXFP4 = intra a4w4 v1,
-# 8-wave MXFP4 = inter a4w4 v2 (3.0% ahead of v1 at K=32768 on the v2.2 pin, HIP device 5).
+# 8-wave MXFP4 = inter a4w4 v2 (3.0% ahead of v1 at K=32768 on the v2.2 pin).
 rows = [
     ("FP16", 8192, 1608, 97.82, 1478.2, 99.84),
     ("BF16", 8192, 1696, 98.24, 1573.6, 99.84),

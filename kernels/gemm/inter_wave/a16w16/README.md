@@ -111,7 +111,7 @@ derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelinin
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v2.2`, HIP device 5, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
 kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
 reference (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 

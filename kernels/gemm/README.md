@@ -88,7 +88,7 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single MI355X (gfx950), HIP device 5, Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) tag, rocprof
+Measured on a single well-performing MI355X (gfx950), Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) tag, rocprof
 cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
 scheduler + amdgcnas, with their MFMA accumulators pinned to AGPRs in the kernels (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
@@ -104,8 +104,8 @@ Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K
 > (2 waves/SIMD → per-wave fraction × 2).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
 > FP16 optimization journey's near-optimal headline (1608 TFLOPS on `gfx950-tutorial-v2.2`) is
-> documented in [`a16w16/`](intra_wave/a16w16/). Dies differ by up to ~17% on this node; see the v2.2
-> entry in [`CHANGELOG.md`](../../CHANGELOG.md) for why these numbers come from HIP device 5.
+> documented in [`a16w16/`](intra_wave/a16w16/). Absolute TFLOPS differ by up to ~17% between MI355X
+> parts; see the v2.2 entry in [`CHANGELOG.md`](../../CHANGELOG.md).
 
 The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 

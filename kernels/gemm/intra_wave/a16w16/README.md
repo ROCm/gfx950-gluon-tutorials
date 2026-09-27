@@ -90,7 +90,7 @@ The last gap is scattered SALU instructions at iteration boundaries. **amdgcnas*
 
 ### The Results
 
-Measured on MI355X (HIP device 5), Triton `gfx950-tutorial-v2.2`, shape 4096×4096×8192, FP16. The die choice is explained in the v2.2 entry of [`CHANGELOG.md`](../../../../CHANGELOG.md).
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, shape 4096×4096×8192, FP16.
 
 ![Performance Chart](images/performance_chart.png)
 

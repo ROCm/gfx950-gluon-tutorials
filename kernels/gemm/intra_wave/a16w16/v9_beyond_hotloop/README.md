@@ -166,7 +166,7 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ## 4. Performance
 
-Measured on MI355X, HIP device 5, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
 rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16. `llir+amdgcnas` is
 the shipping stack.
 

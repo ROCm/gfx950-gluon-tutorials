@@ -20,7 +20,7 @@ kernel versions, and the measured performance.
 > **v2 is the one to use.** On `gfx950-tutorial-v2.2` it leads v1 at every K: +6.6% at K=8192,
 > +3.2% at K=16384 (4900 vs 4746) and +3.0% at K=32768. It runs its loop at ~99% MFMA efficiency
 > against v1's ~81%, but its denser MFMA stream draws more power, so its margin depends on the clock
-> the die sustains: on a slower die (HIP device 7) the same day, v1 was ahead at K ≥ 16384.
+> the die sustains: on a slower MI355X measured the same day, v1 was ahead at K ≥ 16384.
 > `bench.py` defaults to v2 (`--version 2`).
 
 **v2** ([`v2_mfma32x32x64`](v2_mfma32x32x64/README.md)) widens the MFMA **16×16×128 → 32×32×64**

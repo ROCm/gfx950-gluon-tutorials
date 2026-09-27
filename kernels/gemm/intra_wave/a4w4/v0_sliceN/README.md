@@ -219,7 +219,7 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 ## 4. Performance
 
-Measured on MI355X (HIP device 5) with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.2`:
+Measured on a well-performing MI355X with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.2`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|

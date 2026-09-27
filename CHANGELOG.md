@@ -38,19 +38,17 @@ together with the two PRs above.
   `sched.barrier` in front of the anchor: up to +1% on pinned kernels, -2.6% and -1.7% on the
   unpinned v5 and v6 `llir` rows. The `.so` is rebuilt; the core LLVM is unchanged.
 
-### Measurement: a new die, and a same-day control
+### Measurement, and a same-day control
 
-All numbers are from **HIP device 5** of `smci355-ccs-aus-m01-29` (PCI `0000:85:00.0`, `rocm-smi`
-GPU[4]), same protocol as the 2026-09-03 refresh: plain `rocprofv3`, rotating tensors, final 100 of
-1000 dispatches. The earlier refreshes used HIP device 7 (PCI `0000:95:00.0`, which `rocm-smi` calls
-GPU[5]; their "`rocm-smi` GPU[7]" label was wrong). **The dies no longer rank as they did on
-2026-09-02:** the same binaries on all eight put HIP 5 first and HIP 7 fourth, at 91.8% of it; HIP 7
-lost ~7% over three weeks while HIP 5 gained ~4%. All eight run the same power cap and perf level.
-So compare only same-die, same-day numbers.
+All numbers are from a well-performing MI355X, same protocol as the 2026-09-03 refresh: plain `rocprofv3`,
+rotating tensors, final 100 of 1000 dispatches. **Absolute TFLOPS differ by up to ~17% between
+MI355X parts running the same binary at the same power cap, and a part's standing drifts over
+weeks**, so the GPU used here is not the one the 2026-09-03 refresh used, and numbers are only
+comparable within one measurement.
 
-`gfx950-tutorial-v2.1` re-measured on HIP 5 the same day:
+`gfx950-tutorial-v2.1` re-measured on the same GPU the same day:
 
-| same day, HIP device 5 | `v2.1` | `v2.2` |
+| same day, same GPU | `v2.1` | `v2.2` |
 |---|---:|---:|
 | a16w16 v9 full stack, FP16 / BF16 | 1555 / 1656 | **1608 / 1696** |
 | a16w16 v9 `llir` (v2.1: `llir+force-agpr`) | 1546 | **1587** |
@@ -81,8 +79,8 @@ So compare only same-die, same-day numbers.
 - **Pins cost the stock build and pay under llirSched.** On v7, with vs without pins: `base` 1203 vs
   1237, `llir` 1556 vs 1435. The unpinned `llir+amdgcnas` build returns wrong results — the
   peephole mis-handles it — so amdgcnas should only be used on pinned kernels.
-- **`inter_wave/a4w4`: v2 stays ahead of v1 at every K** on HIP 5 (+3.0 to +6.6%). On HIP 7 the same
-  day v1 led at K >= 16384: v2 is power-bound and loses more on the slower die.
+- **`inter_wave/a4w4`: v2 stays ahead of v1 at every K** (+3.0 to +6.6%). On a slower MI355X
+  measured the same day, v1 led at K >= 16384: v2 is power-bound and loses more on a slower part.
 - **Pinned kernels spill a little outside the loop:** a16w16 v7 8 registers, a4w4 v0 16 (`base`)
   and 28 (`llir`), with no scratch access in the loop.
 - **Not re-measured:** the L2 counter table in `a16w16/v9_beyond_hotloop` §3.5, a memory-access
@@ -91,11 +89,10 @@ So compare only same-die, same-day numbers.
 ## 2026-09-03 — Performance refresh on `gfx950-tutorial-v2.1` (plain rocprofv3)
 
 Every performance number in the tutorial re-measured on a **stock** `gfx950-tutorial-v2.1` build
-(no local LLVM or Triton patches), on machine `smci355-ccs-aus-m01-29`, `rocm-smi` **GPU[7]**
-(MI355X / gfx950), with **plain `rocprofv3` and rotating tensors**, 1000 dispatches, last-100
+(no local LLVM or Triton patches), on one MI355X (gfx950), with **plain `rocprofv3` and rotating tensors**, 1000 dispatches, last-100
 average. **No prepared launch**: kernel-trace timing already excludes host launch overhead, so the
 prepared launcher was not buying accuracy, and measured side by side it is not faster either
-(a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one die.
+(a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one GPU.
 
 **Headline: 525 -> 1587 TFLOPS (~3.0x)** on a16w16 FP16 K=8192. a8w8 **3527**, a4w4 v1 **5843**,
 BF16 v9 **1682**.
@@ -176,7 +173,7 @@ attention kernels**, replacing the v1.1 / v2.0 split.
   work.
 
 - **Known cost of that drop, attention only.** MI355X, rocprofv3 prepared launch, n=3,
-  `B=32 HQ=8 S=8192 D=128 bf16`, GPU[0]: `fmha_v3` 1249.9 → 1200.1 (**−4.0%**), `fmha_v4`
+  `B=32 HQ=8 S=8192 D=128 bf16`: `fmha_v3` 1249.9 → 1200.1 (**−4.0%**), `fmha_v4`
   1325.2 → 1279.0 (**−3.5%**). **GEMM is unaffected**: `intra_wave/a16w16` v9 at K=8192 fp16
   measures 1349.7 vs 1349.4 on the old pin.
 

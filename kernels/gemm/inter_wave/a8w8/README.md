@@ -52,7 +52,7 @@ epilogue (which carries no MFMA).
 ## 2. Performance
 
 MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000 dispatches;
-`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.2`, HIP device 5. The 8-wave kernel
+`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.2`, on a well-performing MI355X. The 8-wave kernel
 (`scripts/collect_perf.py`, **no-AGPR**) vs the 4-wave `intra_wave/a8w8` reference
 (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 

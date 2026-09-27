@@ -518,7 +518,7 @@ all. It is visible in a count of 3-source VALU in `fmha_v4`'s loop body: **98 wi
 with it on** — and 98 − 34 = 64 is exactly the 32 subtracts of each of the two unrolled tiles. The
 34 that remain are the `max3` reduction, which is the part only `MEMNOP` can help.
 
-Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, HIP device 5,
+Measured at [§9](#9-results)'s shape and protocol — `B=32, S=8192, H=8, D=128, bf16`, non-causal, same GPU,
 rocprofv3 kernel time for TFLOPS (single run per configuration, `--launch jit`), an ATT instruction
 trace for the in-loop MFMA efficiency per SIMD. The top two rows set `--scale-on-q 0`; the top row
 additionally overrides `LLIRSCHED_WP_MEMNOP=0`. Those two are single runs; the bottom row is
@@ -618,7 +618,7 @@ rest on.
 
 ## 9. Results
 
-`B=32, S=8192, H=8, D=128, bf16`, non-causal, MI355X, HIP device 5 — ROCm/FlyDSL's published
+`B=32, S=8192, H=8, D=128, bf16`, non-causal, a well-performing MI355X — ROCm/FlyDSL's published
 benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` with
 `AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
 fraction come from an ATT instruction trace of one dispatch. The five configurations were run
@@ -633,7 +633,7 @@ equally. Round-to-round spread was 1.5 to 11.0 TFLOPS, widest on FlyDSL, whose f
 | `fmha_v4` — stock LLVM, no plugin, no env | 1164 | 67.8% | 91.8% | 6044 |
 | `fmha_v3` — stock LLVM, no plugin, no env | 1120 | 64.8% | 93.4% | 6321 |
 
-The v2.1 build re-measured on the same die the same day also puts `fmha_v4` at 1261, and the ATT
+The v2.1 build re-measured on the same GPU the same day also puts `fmha_v4` at 1261, and the ATT
 columns match v2.1's: the re-pin does not move attention (see the v2.2 entry in
 [`CHANGELOG.md`](../../CHANGELOG.md)).
 
@@ -677,7 +677,7 @@ hit the GEMM kernels; neither was shown to affect these.
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
 `build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
 [`scripts/fly_kernel_time.py`](../../scripts/fly_kernel_time.py) under the same protocol as our
-rows: **1304 TFLOPS** (1297.5 / 1307.0 / 1308.5), re-measured on this pin on HIP device 5,
+rows: **1304 TFLOPS** (1297.5 / 1307.0 / 1308.5), re-measured on this pin on the same GPU,
 interleaved with the `fmha_v4` rounds (1258.1 / 1262.5 / 1263.1) so the two sides share thermal
 state. Its ATT figures are unchanged from the `v2.0` measurement — 84.9% vs 84.7%, 94.2% loop
 fraction both times, 4822 vs 4837 cyc/iter — which is expected: **FlyDSL does not go through Triton**, so no
@@ -726,7 +726,6 @@ the table quotes — **pass `--launch jit`**, since its default is `prepared` an
 ```bash
 FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
-HIP_VISIBLE_DEVICES=5 \
 python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --launch jit
 ```
 

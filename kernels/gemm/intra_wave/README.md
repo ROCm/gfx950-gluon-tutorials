@@ -31,7 +31,7 @@ cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 
 The tag is upstream `main` at the commit that added `cd_regclass` ([#11792](https://github.com/triton-lang/triton/pull/11792)) plus two open upstream PRs: [#10849](https://github.com/triton-lang/triton/pull/10849), which keeps the target machine for LLVM pass plugins, and [#11663](https://github.com/triton-lang/triton/pull/11663), which enables `amdgpu-use-amdgpu-trackers` only when `waves_per_eu > 1`. Upstream Triton now builds AMDGCN with a separately pinned LLVM: the core LLVM is `b010a18d` and the AMD codegen LLVM is `ce3529423`.
 
-Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to the core LLVM (`b010a18d`); if that pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers quoted in this tutorial are reproduced against `gfx950-tutorial-v2.2` on HIP device 5; the relative structure (`base` vs. `llir` vs. `llir+amdgcnas`) is expected to remain stable across later pins.
+Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to the core LLVM (`b010a18d`); if that pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers quoted in this tutorial are reproduced against `gfx950-tutorial-v2.2` on a well-performing MI355X; the relative structure (`base` vs. `llir` vs. `llir+amdgcnas`) is expected to remain stable across later pins.
 
 **Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap — both plugins, and the accumulator pinning, are targeted for the LLVM backend. The LLIR scheduler will be implemented as a scheduling pass in the LLVM backend; the AGPR placement is already a per-MFMA Gluon option (`cd_regclass`), and the LLVM backend's AMDGPU register allocator is gaining the same choice (the `RewriteMFMAFormStage` pass); the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../../docs/performance_philosophy.md#4-llirsched-cd_regclass-pins-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -61,7 +61,7 @@ Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports n
 - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted output is redefined inside the loop.
 - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These scalar instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
-**Relative contributions.** On the `gfx950-tutorial-v2.2` pin (HIP device 5), all four kernels
+**Relative contributions.** On the `gfx950-tutorial-v2.2` pin, all four kernels
 below carry the pins in every config, so the split is between the two plugins:
 
 | kernel | `base` | `llir` | `llir+amdgcnas` |

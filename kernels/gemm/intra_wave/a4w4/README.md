@@ -58,7 +58,7 @@ faster.
 
 ## 4. Performance
 
-Measured on MI355X (HIP device 5), Triton `gfx950-tutorial-v2.2`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
 average), `llir+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |

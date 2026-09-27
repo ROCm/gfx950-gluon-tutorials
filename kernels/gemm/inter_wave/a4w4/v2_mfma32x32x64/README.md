@@ -52,13 +52,13 @@ tile reads and keep the MFMA fed.
 | v1 | 5043 | 81.3% |
 | v2 | **5196** | **98.9%** |
 
-MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.2`, HIP device 5, rocprof cold-rotating.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating.
 
 The conflict-free layout removes the ds stall → **~99% MFMA efficiency** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in far fewer cycles than v1. v2 leads on wall-clock at
 every K: **+6.6%** at K=8192 (4479 vs 4202), +3.2% at K=16384 and **+3.0%** at K=32768 (5196 vs
 5043). The lead is smaller than the cycle win because the bigger 32×32×64 MFMAs are power-hungrier and
-the GPU **frequency-throttles** harder; on a slower die (HIP device 7) the same day, the throttling took
+the GPU **frequency-throttles** harder; on a slower MI355X measured the same day, the throttling took
 the whole win back at K ≥ 16384 and v1 was ahead. v2 is the only spill-free version of the three.
 
 This is
@@ -74,7 +74,7 @@ The single-dispatch ATT trace (K=16384) shows the near-solid MFMA the wider co-i
 
 32×32×64 + a conflict-free, width-matched layout is a genuine **cycle-efficiency** result — ~99% MFMA
 efficiency, and the only spill-free version of the three. On wall-clock the clock throttling takes back
-part of it, so v2 leads v1 by 3–7% on this die rather than by the ~18% its efficiency gain would suggest.
+part of it, so v2 leads v1 by 3–7% on this GPU rather than by the ~18% its efficiency gain would suggest.
 
 ```bash
 # correctness + do_bench TFLOPS (from this v2_mfma32x32x64 dir)
