@@ -26,8 +26,8 @@ TRITON_AMDGCNAS_PLUGIN=1 \
 ```
 
 The kernels it is used on (a16w16 v7 and later, a8w8, a4w4) keep their MFMA accumulators in
-AGPRs with `cd_regclass="a"`, and the peephole assumes that: on an unpinned copy of v7 the full
-stack returned wrong results.
+AGPRs with `cd_regclass="a"`, and the peephole assumes that, so it is only used on these pinned
+kernels.
 
 `scripts/run_perf_table.py` wires these into the tutorial's configs; see
 [gemm/README §2.1](../../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)

@@ -75,9 +75,9 @@ The LLIR scheduler is the large step: +7% to +31% of throughput and 16–31 poin
 efficiency, because the stock scheduler does not interleave the MFMA and memory streams. amdgcnas
 adds another 1–10 points of efficiency — most on MXFP4, where the scale pipeline leaves the densest
 SALU activity — worth 1–3% of throughput. The pins do their work underneath both: measured on
-v7 with and without them, they take the `llir` loop from 116 `v_accvgpr_*` copies to none (+8.4%),
-and without them amdgcnas produces wrong results
-([v7 §4.3](a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass)). The kernels
+v7 with and without them, they take the `llir` loop from 116 `v_accvgpr_*` copies to none (+8.4%)
+([v7 §4.3](a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass)), and amdgcnas
+runs only on the pinned kernels, since it assumes the accumulators are in AGPRs. The kernels
 that sit at the 512-register ceiling without pins remain at the mercy of allocator policy — on this
 pin the unpinned stock v6 build spills 241 registers (see [v6](a16w16/v6_loop_unroll/README.md)).
 The upstream stories differ accordingly: pinning maps to an allocator-policy change, the

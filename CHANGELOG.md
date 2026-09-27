@@ -81,8 +81,7 @@ than 4% against v2.1.
   #11663 turns the trackers off; forcing them back on gives 1038 with no spills. It is the only row
   that gets much worse, and v6 is unpinned — the pins arrive in v7.
 - **Pins cost the stock build and pay under llirSched.** On v7, with vs without pins: `base` 1203
-  vs 1237, `llir` 1556 vs 1435. The unpinned `llir+amdgcnas` build returns wrong results — the
-  peephole mis-handles it — so amdgcnas should only be used on pinned kernels.
+  vs 1237, `llir` 1556 vs 1435.
 - **llirSched always places a memory anchor's fence in front of the anchor** (no env var): up to
   +1% on pinned kernels, -2.6% and -1.7% on the unpinned v5 and v6 `llir` rows.
 - **`inter_wave/a4w4`: v2 stays ahead of v1 at every K** (+3.0 to +6.6%). On a slower MI355X

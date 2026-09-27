@@ -245,15 +245,14 @@ side by side (two rounds each):
 |--------------------------------|----------------------------|---------------------------|
 | `base`                         | 1237 (280 copies, 6 spills) | 1203 (0 copies, 8 spills) |
 | + LLIR scheduler               | 1435 (116 copies)          | **1556** (0 copies)       |
-| + LLIR scheduler + amdgcnas    | wrong results              | **1565**                  |
 
 Under the LLIR scheduler the pins are worth **+8.4%**: the loop keeps its interleave and loses all
 116 copies, and MFMA efficiency reaches 97.2%. The stock build gives up about 3%: without the
 scheduler the copies are not what limits it (the pinned stock loop still runs at only 66% MFMA
 efficiency).
 The pinned build spills 8 registers, all outside the main loop (no scratch access inside it).
-amdgcnas's peephole mis-handles the unpinned build and produces wrong results, so the pins are
-also what makes the full stack usable.
+amdgcnas ([§4.4](#44-amdgcnas-assembly-processor)) runs on top of the pinned build only: it
+assumes the accumulators are in AGPRs.
 
 The tradeoff: forcing all accumulators into AGPRs pushes the AGPR→VGPR reads into the epilogue, where the output `v_cvt` downcast requires VGPR inputs — paid once per kernel instead of every iteration. For compute-bound GEMM with large K (~95% of the time in the main loop), that is a good trade.
 
