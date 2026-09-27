@@ -50,7 +50,8 @@ it every tile is 64 vector instructions that are pure overhead whenever the row 
 actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
 
 **Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2)
-tag. They are written in upstream Gluon: `fmha_v4`'s per-wave skip uses `gl.map_elementwise`.
+tag. They are written in upstream Gluon: `fmha_v4`'s per-wave skip uses `gl.map_elementwise`
+([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), so its stock build needs nothing beyond upstream Triton.
 [§9](#9-results) has the build and run commands.
 
 ---
@@ -370,7 +371,7 @@ allowed to rise as high as 256 and the correction is skipped entirely. `acc` and
 in the same lagging frame, so the result is unchanged.
 
 Skipping needs a branch, and the useful granularity is the wave: each wave owns 32 rows and can
-decide independently. `gl.map_elementwise` expresses exactly that: it hands each thread's
+decide independently. [`gl.map_elementwise`](https://triton-lang.org/main/python-api/generated/triton.language.map_elementwise.html) expresses exactly that: it hands each thread's
 elements to a scalar function, and that function's `if alpha != 1` becomes one branch per
 thread, which the backend lowers to `s_and_saveexec` + `s_cbranch_execz`, with no cross-wave
 reduction and no barrier. A thread holds 64 accumulator elements, all in one row, so the scalar

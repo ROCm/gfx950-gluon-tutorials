@@ -222,7 +222,8 @@ section removes them.
 
 ### 4.3. Pinning the accumulators: `cd_regclass`
 
-From v7 on, every MFMA call passes Gluon's `cd_regclass="a"`, which constrains the accumulator —
+From v7 on, every MFMA call passes Gluon's `cd_regclass="a"`
+([triton-lang/triton#11792](https://github.com/triton-lang/triton/pull/11792)), which constrains the accumulator —
 both the input (OpC) and the output (Dst) — to AGPRs:
 
 ```python
