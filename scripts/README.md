@@ -130,13 +130,13 @@ Automates running benchmarks across kernel versions and scheduler configs, colle
 
 ```bash
 # a16w16 kernels (run from anywhere):
-python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+force-agpr+amdgcnas --K 4096 --dtype fp16
+python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
 
 # a8w8 kernel (run from anywhere):
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 
 # Final-100 kernel timing with a prepared launcher and three rotating tensor sets:
-python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+force-agpr+amdgcnas --K 8192 --dtype bf16 --rocprof --prepared
+python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype bf16 --rocprof --prepared
 ```
 
 ### Options
@@ -145,7 +145,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+for
 |------|---------|-------------|
 | `--kernel` | `a16w16` | Kernel type to benchmark (`a16w16`, `a8w8`, or `a4w4`) |
 | `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
-| `--configs` | `base llir llir+force-agpr+amdgcnas` | Scheduler configs to test |
+| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 | `--rocprof` | off | Derive TFLOP/s from `rocprofv3 --kernel-trace` instead of `do_bench` |
@@ -160,9 +160,11 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+for
 Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
 
 - **base** — no extra env vars (default Triton scheduling)
-- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so` + `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1`
-- **llir+force-agpr** — `llir` + `TRITON_FORCE_MFMA_AGPR=1` (force MFMA accumulators into AGPRs; no peephole)
-- **llir+force-agpr+amdgcnas** — `llir+force-agpr` + `TRITON_AMDGCNAS_PLUGIN=1` (adds the post-assembly peephole)
+- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so`
+- **llir+amdgcnas** — `llir` + `TRITON_AMDGCNAS_PLUGIN=1` (adds the post-assembly peephole)
+
+Keeping MFMA accumulators in AGPRs is not a config: a16w16 v7 and later, a8w8 and a4w4 pass
+`cd_regclass="a"` to every MFMA in the kernel source, so every config of those kernels is pinned.
 
 ### Examples
 
@@ -187,7 +189,7 @@ python scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf
 Run a8w8 kernel benchmark:
 
 ```bash
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+force-agpr+amdgcnas --K 8192
+python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 ```
 
 ### Output
@@ -221,8 +223,8 @@ AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
   --version 9 --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
 
 # Inter-wave BF16; all optional compiler-plugin variables must be unset.
-env -u LLVM_PASS_PLUGIN_PATH -u LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE \
-  -u TRITON_FORCE_MFMA_AGPR -u TRITON_AMDGCNAS_PLUGIN \
+env -u LLVM_PASS_PLUGIN_PATH \
+  -u TRITON_AMDGCNAS_PLUGIN \
   AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
   --kernel-include-regex a16w16_kernel -d trace_inter_bf16 -- \
   python scripts/benchmark_prepared.py --route inter --kernel a16w16 \
@@ -251,7 +253,7 @@ python scripts/run_counter_collection.py --counters TCC_EA0_RDREQ_DRAM_sum,TCP_T
 |------|---------|-------------|
 | `--kernel` | `a16w16` | Kernel type (`a16w16` or `a8w8`) |
 | `--versions` | `5 6 7 8` | Kernel versions to benchmark (ignored for a8w8) |
-| `--configs` | `base llir llir+force-agpr+amdgcnas` | Scheduler configs to test |
+| `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
 | `--counters` | (required) | Comma-separated list of hardware counters to collect |

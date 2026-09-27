@@ -25,12 +25,14 @@
 """Regenerate performance_chart.png for the a16w16 optimization journey.
 
 Bars = TFLOPS (left axis), red line = MFMA efficiency (right axis), one bar per
-(version, config).  Configs: base / llir / llir+force-agpr / llir+force-agpr+amdgcnas.
+(version, config).  Configs: base / llir / llir+amdgcnas. From v7 on the kernels pin their MFMA
+accumulators to AGPRs (cd_regclass) in every config; v0-v6 are unpinned.
 
-Data: MI355X, 4096x4096x8192, FP16, rocprofv3 (1000 dispatches, last-100 avg),
+Data: a well-performing MI355X, Triton gfx950-tutorial-v2.2, 4096x4096x8192, FP16,
+rocprofv3 (1000 dispatches, last-100 avg),
 collected with:
     python scripts/run_perf_table.py --kernel a16w16 --versions <v> \
-        --configs base llir llir+force-agpr llir+force-agpr+amdgcnas \
+        --configs base llir llir+amdgcnas \
         --K 8192 --dtype fp16 --rocprof --allow-unreported
 
 Run:  python scripts/gen_performance_chart.py
@@ -47,35 +49,29 @@ from matplotlib.patches import Patch
 CONFIGS = {
     "base": dict(color="#4E95D9", label="Base kernel", tag=""),
     "llir": dict(color="#E8973A", label="+ llir", tag="+llir"),
-    "llir+force-agpr": dict(color="#9467BD", label="+ llir + force-agpr", tag="+fa"),
-    "llir+force-agpr+amdgcnas": dict(
-        color="#5BA85B", label="+ llir + force-agpr + amdgcnas", tag="+fa+asm"
-    ),
+    "llir+amdgcnas": dict(color="#5BA85B", label="+ llir + amdgcnas", tag="+asm"),
 }
 
 # (version, config, TFLOPS, MFMA%) in plotting order.
 DATA = [
-    (0, "base", 525, 22.54),
-    (1, "base", 614, 27.41),
-    (2, "base", 645, 27.45),
-    (3, "base", 738, 32.01),
-    (4, "base", 964, 51.87),
-    (5, "base", 1034, 57.67),
-    (5, "llir", 1221, 68.56),
-    (6, "base", 1128, 62.94),
-    (6, "llir", 228, 8.74),
-    (7, "base", 1248, 64.87),
-    (7, "llir", 1419, 82.07),
-    (7, "llir+force-agpr", 1526, 95.54),
-    (7, "llir+force-agpr+amdgcnas", 1567, 97.96),
-    (8, "base", 1384, 70.21),
-    (8, "llir", 1434, 76.36),
-    (8, "llir+force-agpr", 1527, 96.42),
-    (8, "llir+force-agpr+amdgcnas", 1569, 97.40),
-    (9, "base", 1403, 70.36),
-    (9, "llir", 1475, 76.35),
-    (9, "llir+force-agpr", 1581, 96.72),
-    (9, "llir+force-agpr+amdgcnas", 1587, 97.79),
+    (0, "base", 543, 25.47),
+    (1, "base", 553, 25.86),
+    (2, "base", 673, 33.00),
+    (3, "base", 755, 41.66),
+    (4, "base", 1072, 57.38),
+    (5, "base", 1062, 58.30),
+    (5, "llir", 1204, 80.32),
+    (6, "base", 219, 8.59),
+    (6, "llir", 1158, 89.83),
+    (7, "base", 1186, 65.99),
+    (7, "llir", 1551, 97.15),
+    (7, "llir+amdgcnas", 1569, 97.92),
+    (8, "base", 1382, 71.53),
+    (8, "llir", 1552, 95.37),
+    (8, "llir+amdgcnas", 1593, 98.56),
+    (9, "base", 1414, 71.79),
+    (9, "llir", 1587, 96.15),
+    (9, "llir+amdgcnas", 1608, 97.82),
 ]
 
 x = list(range(len(DATA)))

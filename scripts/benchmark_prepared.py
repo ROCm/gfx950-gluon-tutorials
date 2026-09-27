@@ -92,8 +92,6 @@ def load_kernel(args):
     if args.route == "inter":
         forbidden = (
             "LLVM_PASS_PLUGIN_PATH",
-            "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
-            "TRITON_FORCE_MFMA_AGPR",
             "TRITON_AMDGCNAS_PLUGIN",
         )
         active = [name for name in forbidden if os.environ.get(name)]
@@ -232,8 +230,6 @@ def launch_configuration(args, jit_kernel):
             "num_warps": 8,
             "llvm_fn_attrs": (("amdgpu-agpr-alloc", "0,0"),),
         }
-    elif os.environ.get("TRITON_FORCE_MFMA_AGPR"):
-        compiler_options["llvm_fn_attrs"] = "amdgpu-agpr-alloc=256"
     return (grid_mn, 1), constexprs, compiler_options
 
 

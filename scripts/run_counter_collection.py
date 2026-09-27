@@ -67,32 +67,21 @@ A4W4_VERSION_MAP = {
 
 # As of gfx950-tutorial-v1.0 the LLIR scheduler and amdgcnas peephole are
 # out-of-tree plugins (see plugins/). The scheduler is an LLVM pass plugin loaded
-# via LLVM_PASS_PLUGIN_PATH (+ LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 to keep the
-# O3 TargetMachine); bench.py opts libtriton into the global dlopen scope when
+# via LLVM_PASS_PLUGIN_PATH (the pinned Triton keeps the O3 TargetMachine for
+# plugins on its own); bench.py opts libtriton into the global dlopen scope when
 # LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with TRITON_EXT_ENABLED=1.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
 _LLIR_SCHED_ENV = {
     "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-    "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE": "1",
-}
-# force-agpr (the RA piece): TRITON_FORCE_MFMA_AGPR=1 forces MFMA accumulators
-# into AGPRs. The kernels read it to set llvm_fn_attrs="amdgpu-agpr-alloc=256"
-# (reserve the AGPRs), and llvm.cc reads it to set amdgpu-mfma-vgpr-form=0. The
-# post-assembly peephole is the TRITON_AMDGCNAS_PLUGIN hook installed by bench.py.
-# See plugins/amdgcnas/README.md.
-_FORCE_AGPR_ENV = {
-    "TRITON_FORCE_MFMA_AGPR": "1",
 }
 
 # Cumulative configs: each adds one component on top of the previous.
 CONFIG_ENV = {
     "base": {},
     "llir": {**_LLIR_SCHED_ENV},
-    "llir+force-agpr": {**_LLIR_SCHED_ENV, **_FORCE_AGPR_ENV},
-    "llir+force-agpr+amdgcnas": {
+    "llir+amdgcnas": {
         **_LLIR_SCHED_ENV,
-        **_FORCE_AGPR_ENV,
         "TRITON_AMDGCNAS_PLUGIN": "1",
     },
 }
@@ -205,8 +194,6 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
         "LLVM_PASS_PLUGIN_PATH",
-        "LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE",
-        "TRITON_FORCE_MFMA_AGPR",
         "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)

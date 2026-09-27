@@ -59,10 +59,9 @@ power-limited plateau.
 
 Example (fmha_v4 at the tutorial shape, plugin stack enabled):
 
-    HIP_VISIBLE_DEVICES=1 FA_MODULE=fmha_v4 \\
+    FA_MODULE=fmha_v4 \\
     DISABLE_LLVM_OPT=disable-machine-sink \\
     LLVM_PASS_PLUGIN_PATH=$PWD/plugins/llir_scheduler/libLlirSched.so \\
-    LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \\
     python scripts/fa_kernel_time.py --seqlen 16320 --launch both
 """
 

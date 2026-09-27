@@ -22,8 +22,6 @@
 # THE SOFTWARE.
 ##############################################################################
 
-import os
-
 import torch
 import triton
 from common import get_pids
@@ -333,6 +331,7 @@ def v0_sliceN(
             b_scale=b_sc_left_reg_buf0,
             b_format="e2m1",
             acc=acc_left,
+            cd_regclass="a",
         )
 
         # Wait for B_right tile (commit group 1)
@@ -365,6 +364,7 @@ def v0_sliceN(
             b_scale=b_sc_right_reg_buf0,
             b_format="e2m1",
             acc=acc_right,
+            cd_regclass="a",
         )
 
         # Wait for next A + B_left tiles (commit group 2)
@@ -403,6 +403,7 @@ def v0_sliceN(
             b_scale=b_sc_left_reg_buf2,
             b_format="e2m1",
             acc=acc_left,
+            cd_regclass="a",
         )
 
         # Wait for B_right tile
@@ -435,6 +436,7 @@ def v0_sliceN(
             b_scale=b_sc_right_reg_buf2,
             b_format="e2m1",
             acc=acc_right,
+            cd_regclass="a",
         )
 
         # Wait for next A + B_left tiles
@@ -482,6 +484,7 @@ def v0_sliceN(
         b_scale=b_sc_left_reg_buf0,
         b_format="e2m1",
         acc=acc_left,
+        cd_regclass="a",
     )
 
     gl.amd.cdna4.async_copy.wait_group(2)
@@ -501,6 +504,7 @@ def v0_sliceN(
         b_scale=b_sc_right_reg_buf0,
         b_format="e2m1",
         acc=acc_right,
+        cd_regclass="a",
     )
 
     gl.amd.cdna4.async_copy.wait_group(1)
@@ -533,6 +537,7 @@ def v0_sliceN(
         b_scale=b_sc_left_reg_buf2,
         b_format="e2m1",
         acc=acc_left,
+        cd_regclass="a",
     )
 
     gl.amd.cdna4.async_copy.wait_group(0)
@@ -555,6 +560,7 @@ def v0_sliceN(
         b_scale=b_sc_right_reg_buf2,
         b_format="e2m1",
         acc=acc_right,
+        cd_regclass="a",
     )
 
     c_right = acc_right.to(c_ptr.type.element_ty)
@@ -605,8 +611,5 @@ def matmul(a, b, a_scales, b_scales):
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=num_warps,
-        # force-agpr RA hint: reserve 256 AGPRs for MFMA accumulators, enabled by
-        # TRITON_FORCE_MFMA_AGPR (paired in llvm.cc with amdgpu-mfma-vgpr-form=0).
-        llvm_fn_attrs=("amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""),
     )
     return c

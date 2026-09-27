@@ -28,8 +28,6 @@ From the `a4w4` directory:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_FORCE_MFMA_AGPR=1 \
 TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1 --K 32768
 ```
@@ -40,7 +38,7 @@ timing + MFMA efficiency. For the full version × config table:
 
 ```bash
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+force-agpr+amdgcnas --K 32768 --rocprof
+  --configs base llir llir+amdgcnas --K 32768 --rocprof
 ```
 
 ## 3. The Two Versions
@@ -60,12 +58,12 @@ faster.
 
 ## 4. Performance
 
-Measured on MI355, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
-average), `llir+force-agpr+amdgcnas`:
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
+average), `llir+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
-| v0_sliceN  | 5420 | 81.7% |
-| v1_sliceMN | 5843 | 93.7% |
+| v0_sliceN  | 5397 | 82.1% |
+| v1_sliceMN | 5804 | 93.6% |
 
 See each version's README for the full per-config table.

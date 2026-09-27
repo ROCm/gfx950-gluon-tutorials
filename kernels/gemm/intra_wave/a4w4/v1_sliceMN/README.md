@@ -74,22 +74,21 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on MI355, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4423 | 5131 | 64.4% |
-| llir | 716 (186 spills) | 3420 (12 spills) | 45.1% |
-| llir+force-agpr | 5429 | 5737 | 88.5% |
-| llir+force-agpr+amdgcnas | 5420 | 5843 | 93.7% |
+| base | 4699 (16 spills) | 5265 | 67.7% |
+| llir | 5137 (28 spills) | 5648 | 83.7% |
+| llir+amdgcnas | 5397 (28 spills) | 5804 | 93.6% |
 
-Under `llir` alone **both** versions now spill: v0_sliceN by 186 registers (its LDS-round-trip
-scale pipeline is register-heavy) collapsing to 716 TFLOPS, and v1_sliceMN by 12, costing it
-about a quarter of its throughput. `force-agpr` clears the spills in both cases and is what
-makes the MXFP4 kernels usable at all on this pin — it is not a marginal 2-3% tuning flag here.
-That is the same failure v6 hits in the FP16 series: these kernels sit at the register ceiling,
-and without the AGPR hint the allocator has nowhere to put the accumulators.
+Both versions pin their accumulators to AGPRs (`cd_regclass="a"` on every `mfma_scaled`), so
+every row runs with no `v_accvgpr_*` copies in the loop. `llir` is worth +7.3% on v1_sliceMN and
+`amdgcnas` another +2.8% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
+the tutorial. With the accumulators pinned, v0_sliceN spills (outside the loop); v1_sliceMN's
+balanced M+N tiling does not. (On `gfx950-tutorial-v2.1`, without pins, `llir` alone spilled 186
+registers on v0_sliceN and 12 on v1_sliceMN.)
 
 ## 4. How to Run
 
@@ -97,12 +96,10 @@ From the `a4w4` directory:
 
 ```bash
 LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 \
-TRITON_FORCE_MFMA_AGPR=1 \
 TRITON_AMDGCNAS_PLUGIN=1 \
 python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \
-  --configs base llir llir+force-agpr+amdgcnas --K 32768 --rocprof
+  --configs base llir llir+amdgcnas --K 32768 --rocprof
 ```

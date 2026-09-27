@@ -234,7 +234,7 @@ def v7_sliceN(
         g_idx = 0
         l_idx = 1
 
-        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(2)
         b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
@@ -248,7 +248,7 @@ def v7_sliceN(
         ########################################
         ## Region 1
         ########################################
-        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(2)
         a = smemA.index(l_idx).load(dotOpLayoutA)
@@ -273,7 +273,7 @@ def v7_sliceN(
         ## Region 2
         ########################################
 
-        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+        acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(2)
         b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
@@ -287,7 +287,7 @@ def v7_sliceN(
         ########################################
         ## Region 3
         ########################################
-        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+        acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass="a")
 
         gl.amd.cdna4.async_copy.wait_group(2)
         a = smemA.index(l_idx).load(dotOpLayoutA)
@@ -317,14 +317,14 @@ def v7_sliceN(
     ########################################
     g_idx = 0
     l_idx = 1
-    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
     gl.amd.cdna4.async_copy.wait_group(0)
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     ########################################
     ## Region 1
     ########################################
-    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass="a")
     a = smemA.index(l_idx).load(dotOpLayoutA)
     b_left = smemB_left.index(l_idx).load(dotOpLayoutB)
 
@@ -335,7 +335,7 @@ def v7_sliceN(
     ########################################
     g_idx = 1
 
-    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left)
+    acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
     b_right = smemB_right.index(g_idx).load(dotOpLayoutB)
 
     c_left = acc_left.to(a_ptr.dtype.element_ty)
@@ -345,7 +345,7 @@ def v7_sliceN(
     ########################################
     ## Region 3
     ########################################
-    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right)
+    acc_right = gl.amd.cdna3.mfma(a, b_right, acc_right, cd_regclass="a")
 
     c_right = acc_right.to(a_ptr.dtype.element_ty)
     c_right = gl.convert_layout(c_right, layout=gStoreLayoutC)

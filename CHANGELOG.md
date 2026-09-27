@@ -5,14 +5,99 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-09-26 — Re-pin to `gfx950-tutorial-v2.2`
+
+[`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2)
+is upstream Triton `main` at `01c5d2ac6` plus two upstream PRs that are in review. It is the first
+pin that carries **no fork-only feature**: the two mechanisms the tutorial used to get from its own
+Triton commits now come from upstream.
+
+### What changed, and why it matters
+
+Neither change is here for performance — each does what the fork mechanism it replaces did, within
+a couple of percent. They matter because the kernels now rely on upstream Triton for them, which is
+a step from tutorial code toward production code.
+
+1. **`cd_regclass` replaces force-agpr.** Keeping MFMA accumulators in AGPRs used to be a
+   process-wide switch in the tutorial's Triton fork (`TRITON_FORCE_MFMA_AGPR=1`, which set
+   `amdgpu-mfma-vgpr-form=false` for every kernel). It is now a per-MFMA option in upstream Gluon,
+   `gl.amd.cdna3.mfma(..., cd_regclass="a")` and `gl.amd.cdna4.mfma_scaled(..., cd_regclass="a")`
+   ([triton-lang/triton#11792](https://github.com/triton-lang/triton/pull/11792)), and it is part of
+   the kernels themselves from a16w16 v7 on, and in a8w8 and a4w4 — no env var, no config. The
+   configs are now `base` / `llir` / `llir+amdgcnas`. Why v7 is where the pins come in:
+   [a16w16 v7 §4.2–§4.3](kernels/gemm/intra_wave/a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass).
+   The LLIR scheduler is adjusted to the pin asm: it keeps each pin next to its MFMA and fences the
+   pinned MFMAs, otherwise the pins turn into `v_accvgpr` copies
+   ([plugin README](plugins/llir_scheduler/README.md#register-class-pins)).
+2. **`gl.map_elementwise` replaces `gl.warp_predicate`.** `fmha_v4` skips the lazy softmax rescale
+   per wave with a branch. That branch used to need `gl.warp_predicate`, a primitive only the
+   tutorial's fork had; it is now written with upstream's
+   [`map_elementwise`](https://triton-lang.org/main/python-api/generated/triton.language.map_elementwise.html)
+   and still lowers to `s_and_saveexec` + `s_cbranch_execz`
+   ([attention §5](kernels/attention/README.md#5-fmha_v3--fmha_v4-getting-under-the-budget)). **`fmha_v4`
+   without llirSched now builds on upstream Triton alone, ready for production use**; llirSched adds
+   the tuned schedule on top.
+
+### The two commits on top of upstream `main`
+
+| commit | why the tutorial needs it |
+|---|---|
+| [#10849](https://github.com/triton-lang/triton/pull/10849) — always set the target machine when an arch is given | llirSched is an LLVM **pass plugin**; without this, Triton runs O3 with no target machine whenever a plugin is loaded, and codegen regresses (v9 `llir` -11%). It replaces the fork's `LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE`. |
+| [#11663](https://github.com/triton-lang/triton/pull/11663) — pass `amdgpu-use-amdgpu-trackers` only when `waves_per_eu > 1` | The trackers flag is behind the `intra_wave` regression of v2.1 (cause 1 below). |
+
+Both are under review. The next pin will take them from upstream `main`, together with the LLVM fix
+for the AMD codegen scheduler. That fix is also why this pin stops at `01c5d2ac6`: four days later
+(#11916) upstream moved the AMD codegen to `triton-lang/llvm-project@d26ff26e`, whose gfx1250
+co-execution scheduler records a rejected schedule's register pressure in
+`GCNSchedStage::checkScheduling()` and, on gfx950, turns stock `intra_wave` loops into AGPR↔VGPR
+copy storms (v9 -15%, a4w4 v1 -20%) and makes every `inter_wave` kernel spill. The fix is with the
+LLVM team. The core LLVM stays `b010a18d`, so the llirSched `.so` keeps its ABI; the AMD codegen
+LLVM is `ce3529423`.
+
+### What happened to the three v2.1 causes
+
+1. **`amdgpu-use-amdgpu-trackers`** — #11663 turns the trackers off for every GEMM here, since none
+   requests `waves_per_eu > 1`. That removes the `llir` spill collapses and is right for the pinned
+   kernels (v7 `base` spills 8 with the trackers off, 64 with them on). It costs the unpinned stock
+   v6, below.
+2. **`computePSetLimit` underflow** — fixed through the AMD codegen LLVM (`ce3529423` includes
+   llvm#216372). `inter_wave` a4w4 v2 goes 93.9% -> 98.9% loop MFMA efficiency and v1 75.3% -> 81.3%.
+3. **`ConvertWarpPipeline` head barrier** — unchanged. The attention ATT figures are identical to
+   v2.1, so attention still sits ~9 points of in-loop efficiency below v2.0.
+
+### Findings on v2.2
+
+Every number was re-measured on a well-performing MI355X with the protocol of the 2026-09-03
+refresh. Absolute TFLOPS differ by up to ~17% between MI355X parts and drift over weeks, so v2.1 was
+re-measured on the same GPU the same day, and the comparisons below are against that. Headline:
+**543 -> 1608 TFLOPS (~3.0x)** on a16w16 FP16; a8w8 **3476**, a4w4 v1 **5804**, BF16 v9 **1696**,
+`fmha_v4` **1261** (0.967x FlyDSL). Apart from the rows below, like-for-like numbers move by less
+than 4% against v2.1.
+
+- **a16w16 v6 `llir` no longer collapses:** 226 TFLOPS with 129 spills on v2.1, **1158** with 8
+  on v2.2 (trackers off). a4w4 v0 and v1 under `llir` (now pinned) likewise lose their v2.1 spill
+  collapses: 713 -> 5137 and 3423 -> 5648.
+- **a16w16 v6 `base` does collapse:** 1130 on v2.1, **219 with 241 spills** on v2.2, because
+  #11663 turns the trackers off; forcing them back on gives 1038 with no spills. It is the only row
+  that gets much worse, and v6 is unpinned — the pins arrive in v7.
+- **Pins cost the stock build and pay under llirSched.** On v7, with vs without pins: `base` 1203
+  vs 1237, `llir` 1556 vs 1435.
+- **llirSched always places a memory anchor's fence in front of the anchor** (no env var): up to
+  +1% on pinned kernels, -2.6% and -1.7% on the unpinned v5 and v6 `llir` rows.
+- **`inter_wave/a4w4`: v2 stays ahead of v1 at every K** (+3.0 to +6.6%). On a slower MI355X
+  measured the same day, v1 led at K >= 16384: v2 is power-bound and loses more on a slower part.
+- **Pinned kernels spill a little outside the loop:** a16w16 v7 8 registers, a4w4 v0 16 (`base`)
+  and 28 (`llir`), with no scratch access in the loop.
+- **Not re-measured:** the L2 counter table in `a16w16/v9_beyond_hotloop` §3.5, a memory-access
+  property of the kernel that the pin does not change.
+
 ## 2026-09-03 — Performance refresh on `gfx950-tutorial-v2.1` (plain rocprofv3)
 
 Every performance number in the tutorial re-measured on a **stock** `gfx950-tutorial-v2.1` build
-(no local LLVM or Triton patches), on machine `smci355-ccs-aus-m01-29`, `rocm-smi` **GPU[7]**
-(MI355X / gfx950), with **plain `rocprofv3` and rotating tensors**, 1000 dispatches, last-100
+(no local LLVM or Triton patches), on one MI355X (gfx950), with **plain `rocprofv3` and rotating tensors**, 1000 dispatches, last-100
 average. **No prepared launch**: kernel-trace timing already excludes host launch overhead, so the
 prepared launcher was not buying accuracy, and measured side by side it is not faster either
-(a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one die.
+(a16w16 v9 reads 1587 plain vs 1571 prepared). Every number below is from that one GPU.
 
 **Headline: 525 -> 1587 TFLOPS (~3.0x)** on a16w16 FP16 K=8192. a8w8 **3527**, a4w4 v1 **5843**,
 BF16 v9 **1682**.
@@ -93,7 +178,7 @@ attention kernels**, replacing the v1.1 / v2.0 split.
   work.
 
 - **Known cost of that drop, attention only.** MI355X, rocprofv3 prepared launch, n=3,
-  `B=32 HQ=8 S=8192 D=128 bf16`, GPU[0]: `fmha_v3` 1249.9 → 1200.1 (**−4.0%**), `fmha_v4`
+  `B=32 HQ=8 S=8192 D=128 bf16`: `fmha_v3` 1249.9 → 1200.1 (**−4.0%**), `fmha_v4`
   1325.2 → 1279.0 (**−3.5%**). **GEMM is unaffected**: `intra_wave/a16w16` v9 at K=8192 fp16
   measures 1349.7 vs 1349.4 on the old pin.
 

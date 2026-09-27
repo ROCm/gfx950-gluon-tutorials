@@ -415,21 +415,22 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     <div class="note"><b>Self‑contained.</b> Because it pins locally, the pass needs no companion change in the compiler
       to hold its schedule, so it loads as a plugin via <code>LLVM_PASS_PLUGIN_PATH</code> at the
       <code>OptimizerLast</code> extension point. (Its one compiler‑side requirement is unrelated to scheduling —
-      <code>LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1</code>, so the O3 run keeps its target machine when a plugin is loaded.)</div>
+      the O3 run must keep its target machine when a plugin is loaded, which the pinned Triton does on its own
+      (<a href="https://github.com/triton-lang/triton/pull/10849">triton-lang/triton#10849</a>).)</div>
   </section>
 
   <section class="card">
     <h2><span class="num">★</span> Cheat‑sheet (gfx950)</h2>
     <table>
       <tr><th>Decision</th><th>Value</th></tr>
-      <tr><td>Enable</td><td><code>LLVM_PASS_PLUGIN_PATH=…/libLlirSched.so</code> (+ <code>LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1</code>), gfx950 only</td></tr>
+      <tr><td>Enable</td><td><code>LLVM_PASS_PLUGIN_PATH=…/libLlirSched.so</code>, gfx950 only</td></tr>
       <tr><td>Scope</td><td>every basic block; per‑block transactional bail‑out (no loop selection)</td></tr>
       <tr><td>Region boundary</td><td>at each MFMA that follows a memory op since the region began</td></tr>
       <tr><td>Region eligible?</td><td>recognized‑shape MFMA + ≥1 memory anchor (dependency safety is a structural invariant, §3)</td></tr>
       <tr><td>MFMA : LDS access (LR &amp; LW)</td><td>throughput ratio <b>cycles_per_access / mfma_cycles</b> (one carried balance over reads and writes): cheap accesses share an MFMA (e.g. 1 MFMA : 2 accesses), wide ones draw several</td></tr>
       <tr><td>MFMA per GR</td><td><b>ceil(64 / mfma_cycles)</b> = <b>4</b> (16‑cyc) / <b>2</b> (32‑cyc); <b>1</b> if GR→LR</td></tr>
       <tr><td>tail / head</td><td>2 drain at end; surplus compute split evenly head/tail (odd favors head)</td></tr>
-      <tr><td>Schedule pinning</td><td><code>llvm.amdgcn.sched.barrier(0)</code> after each memory anchor — misched stays enabled elsewhere</td></tr>
+      <tr><td>Schedule pinning</td><td><code>llvm.amdgcn.sched.barrier(0)</code> in front of each memory anchor — misched stays enabled elsewhere</td></tr>
       <tr><td>Unknown MFMA shape</td><td>region left unscheduled</td></tr>
     </table>
   </section>

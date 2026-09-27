@@ -132,6 +132,45 @@ bool isSinkTransparentInst(const Instruction &I) {
   return isa<ExtractElementInst>(I);
 }
 
+// A register-class pin: an empty inline asm whose output is tied to its input
+// ("=a,0" / "=v,0"), which Triton's `cd_regclass` MFMA lowering puts around
+// each MFMA tile's accumulator. It emits no instruction; it only forces the
+// value into AGPRs or VGPRs at that point, so it has to stay right next to its
+// MFMA: the pin on C directly before the MFMA, the pin on D directly after.
+bool isRegClassPin(const Instruction &I) {
+  const auto *CI = dyn_cast<CallInst>(&I);
+  if (!CI || CI->arg_size() != 1 ||
+      CI->getType() != CI->getArgOperand(0)->getType())
+    return false;
+  const auto *IA = dyn_cast<InlineAsm>(CI->getCalledOperand());
+  if (!IA || !IA->getAsmString().empty())
+    return false;
+  StringRef Constraints = IA->getConstraintString();
+  return Constraints == "=a,0" || Constraints == "=v,0";
+}
+
+// The pin that produces MFMA's accumulator operand C, if that is its only use.
+Instruction *getCPin(Instruction *MFMA) {
+  auto *CI = cast<CallInst>(MFMA);
+  if (CI->arg_size() < 3 || CI->getArgOperand(2)->getType() != CI->getType())
+    return nullptr;
+  auto *Pin = dyn_cast<Instruction>(CI->getArgOperand(2));
+  if (!Pin || !isRegClassPin(*Pin) || !Pin->hasOneUse() ||
+      Pin->getParent() != MFMA->getParent())
+    return nullptr;
+  return Pin;
+}
+
+// The pin on MFMA's result D, if it is the result's only user.
+Instruction *getDPin(Instruction *MFMA) {
+  if (!MFMA->hasOneUse())
+    return nullptr;
+  auto *Pin = dyn_cast<Instruction>(*MFMA->user_begin());
+  if (!Pin || !isRegClassPin(*Pin) || Pin->getParent() != MFMA->getParent())
+    return nullptr;
+  return Pin;
+}
+
 SchedKind classifySchedInst(Instruction &I) {
   if (isMFMAorWMMA(I))
     return SchedKind::MFMA;
@@ -381,7 +420,7 @@ private:
         if (auto *UI = dyn_cast<Instruction>(U)) {
           if (Utils::isMFMAorWMMA(*UI))
             return true;
-          if (Utils::isHoistTransparentInst(*UI))
+          if (Utils::isHoistTransparentInst(*UI) || Utils::isRegClassPin(*UI))
             Worklist.push_back(UI);
         }
       }
@@ -404,7 +443,7 @@ private:
         if (Utils::isMFMAorWMMA(*DefI))
           return true;
 
-        if (Utils::isSinkTransparentInst(*DefI)) {
+        if (Utils::isSinkTransparentInst(*DefI) || Utils::isRegClassPin(*DefI)) {
           for (Value *Op : DefI->operands())
             Worklist.push_back(Op);
         }
@@ -488,6 +527,9 @@ private:
       return Res;
 
     Instruction *HoistPos = R.Begin; // Region start (the region's first MFMA)
+    // Keep the region start's D pin directly after it.
+    if (Instruction *DPin = Utils::getDPin(R.Begin))
+      HoistPos = DPin;
     Instruction *SinkPos = Res.LastAnchor; // last anchor in region
 
     if (HoistPos)
@@ -542,10 +584,22 @@ private:
                                  Instruction *InsertPt) {
     unsigned moved = 0;
     for (unsigned j = 0; j < Count && MFMAIdx > 0; ++j) {
-      MFMAInsts[--MFMAIdx]->moveAfter(InsertPt);
+      moveMFMAAfter(MFMAInsts[--MFMAIdx], InsertPt);
       moved++;
     }
     return moved;
+  }
+
+  // Move one MFMA right after InsertPt, together with its register-class pins:
+  // the C pin stays directly before it and the D pin directly after it.
+  static void moveMFMAAfter(Instruction *MFMA, Instruction *InsertPt) {
+    Instruction *CPin = Utils::getCPin(MFMA);
+    Instruction *DPin = Utils::getDPin(MFMA);
+    MFMA->moveAfter(InsertPt);
+    if (CPin)
+      CPin->moveBefore(MFMA->getIterator());
+    if (DPin)
+      DPin->moveAfter(MFMA);
   }
 
   // Interleave MFMA with anchor instructions using moveAfter.
@@ -751,7 +805,9 @@ private:
            << " LW";
         ScheduledRegionIdx++;
 
-        insertAsmComment(bbR.Begin, Comment);
+        // Before the region start's C pin (if any), so the pin stays adjacent.
+        Instruction *CPin = Utils::getCPin(bbR.Begin);
+        insertAsmComment(CPin ? CPin : bbR.Begin, Comment);
 
         LLVM_DEBUG({
           dbgs() << "Cluster " << i << " structure:";
@@ -784,8 +840,20 @@ private:
         // the rest of the function -- prologue/epilogue and any region the pass
         // bailed on still get machine-scheduled -- so no global misched-disable
         // is needed.
+        // Each anchor's fence goes in front of it, so every window between
+        // fences is `anchor, mfma...` with the memory op already leading. With
+        // register-class pins this keeps a load between two pinned tiles
+        // (see the plugin README, "Register-class pins").
         for (const AnchorInst &A : Res.Anchors)
-          insertSchedBarrier(A.I, /*Mask=*/0);
+          if (Instruction *Prev = A.I->getPrevNode())
+            insertSchedBarrier(Prev, /*Mask=*/0);
+        // With register-class pins, also fence each MFMA tile after its D pin so
+        // LLVM's machine scheduler cannot reorder the pinned MFMAs in the
+        // stretches between memory anchors; that reordering leaves pins behind
+        // as v_accvgpr copies.
+        for (Instruction *MFMA : Res.MFMAInsts)
+          if (Instruction *DPin = Utils::getDPin(MFMA))
+            insertSchedBarrier(DPin, /*Mask=*/0);
       }
     }
     return ScheduledRegionIdx > 0;
@@ -1955,7 +2023,7 @@ static bool insertMemRegionNops(Function &F, int count) {
   };
   // Flatten the function into layout order. A stage is delimited by the REAL
   // cluster barrier (amdgcn.s.barrier), and a stage can SPAN SEVERAL BASIC BLOCKS:
-  // FAv4's mem2 carries the lazy-rescale warp_predicate, whose branch splits the
+  // FAv4's mem2 carries the lazy-rescale branch (map_elementwise), which splits the
   // stage across 2-4 blocks. Walking per-block therefore never sees mem2's closing
   // barrier and skipped it entirely (mem1, a single block, was the only stage that
   // got its nops).
