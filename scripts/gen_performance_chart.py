@@ -28,7 +28,7 @@ Bars = TFLOPS (left axis), red line = MFMA efficiency (right axis), one bar per
 (version, config).  Configs: base / llir / llir+amdgcnas. From v7 on the kernels pin their MFMA
 accumulators to AGPRs (cd_regclass) in every config; v0-v6 are unpinned.
 
-Data: a well-performing MI355X, Triton gfx950-tutorial-v2.2, 4096x4096x8192, FP16,
+Data: a well-performing MI355X, Triton gfx950-tutorial-v2.3, 4096x4096x8192, FP16,
 rocprofv3 (1000 dispatches, last-100 avg),
 collected with:
     python scripts/run_perf_table.py --kernel a16w16 --versions <v> \
@@ -54,24 +54,24 @@ CONFIGS = {
 
 # (version, config, TFLOPS, MFMA%) in plotting order.
 DATA = [
-    (0, "base", 543, 25.47),
-    (1, "base", 553, 25.86),
-    (2, "base", 673, 33.00),
-    (3, "base", 755, 41.66),
-    (4, "base", 1072, 57.38),
-    (5, "base", 1062, 58.30),
-    (5, "llir", 1204, 80.32),
-    (6, "base", 219, 8.59),
-    (6, "llir", 1158, 89.83),
-    (7, "base", 1186, 65.99),
-    (7, "llir", 1551, 97.15),
-    (7, "llir+amdgcnas", 1569, 97.92),
-    (8, "base", 1382, 71.53),
-    (8, "llir", 1552, 95.37),
-    (8, "llir+amdgcnas", 1593, 98.56),
-    (9, "base", 1414, 71.79),
-    (9, "llir", 1587, 96.15),
-    (9, "llir+amdgcnas", 1608, 97.82),
+    (0, "base", 542, 25.62),
+    (1, "base", 544, 25.90),
+    (2, "base", 675, 32.25),
+    (3, "base", 773, 43.10),
+    (4, "base", 1061, 57.29),
+    (5, "base", 1060, 58.50),
+    (5, "llir", 1216, 80.36),
+    (6, "base", 218, 8.51),
+    (6, "llir", 1162, 90.20),
+    (7, "base", 1210, 66.52),
+    (7, "llir", 1554, 97.33),
+    (7, "llir+amdgcnas", 1583, 98.06),
+    (8, "base", 1326, 71.55),
+    (8, "llir", 1555, 94.78),
+    (8, "llir+amdgcnas", 1588, 98.39),
+    (9, "base", 1389, 71.80),
+    (9, "llir", 1591, 95.88),
+    (9, "llir+amdgcnas", 1605, 98.40),
 ]
 
 x = list(range(len(DATA)))

@@ -74,18 +74,18 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4699 (16 spills) | 5265 | 67.7% |
-| llir | 5137 (28 spills) | 5648 | 83.7% |
-| llir+amdgcnas | 5397 (28 spills) | 5804 | 93.6% |
+| base | 4619 (16 spills) | 5134 | 68.0% |
+| llir | 4978 (28 spills) | 5644 | 84.2% |
+| llir+amdgcnas | 5377 (28 spills) | 5815 | 94.1% |
 
 Both versions pin their accumulators to AGPRs (`cd_regclass="a"` on every `mfma_scaled`), so
-every row runs with no `v_accvgpr_*` copies in the loop. `llir` is worth +7.3% on v1_sliceMN and
-`amdgcnas` another +2.8% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
+every row runs with no `v_accvgpr_*` copies in the loop. `llir` is worth +9.9% on v1_sliceMN and
+`amdgcnas` another +3.0% and nearly 10 points of MFMA efficiency, the largest amdgcnas gain in
 the tutorial. With the accumulators pinned, v0_sliceN spills (outside the loop); v1_sliceMN's
 balanced M+N tiling does not. (On `gfx950-tutorial-v2.1`, without pins, `llir` alone spilled 186
 registers on v0_sliceN and 12 on v1_sliceMN.)

@@ -6,15 +6,15 @@ architecture and differ in how they handle the softmax rescale.
 
 ![FMHA throughput, stock LLVM vs llirSched, for both kernels and against ROCm/FlyDSL](images/results.png)
 
-Tuned, `fmha_v4` reaches **1261 TFLOPS** at **84.6%** in-loop MFMA efficiency per SIMD, and
-`fmha_v3` 1189 at 76.8%. The reference point is ROCm/FlyDSL, which reaches **1304** on this shape
-from **84.9%** efficiency — so on this pin FlyDSL is **~3.4% ahead**, where on `v2.0` the two were
+Tuned, `fmha_v4` reaches **1289 TFLOPS** at **89.3%** in-loop MFMA efficiency per SIMD, and
+`fmha_v3` 1216 at 81.0%. The reference point is ROCm/FlyDSL, which reaches **1306** on this shape
+from **84.7%** efficiency — so on this pin FlyDSL is **~1.3% ahead**, where on `v2.0` the two were
 level (1323 vs 1322). The orange bar in each group is the same kernel
 source built without the scheduling plugin. [§9](#9-results) works through what separates all five,
 and what each step costs.
 
-That efficiency number is what the rest of this document is about. 84.6% means the matrix pipe
-takes a new MFMA in 84.6% of the loop's cycles, and the missing 15.4% is time the SIMD spent
+That efficiency number is what the rest of this document is about. 89.3% means the matrix pipe
+takes a new MFMA in 89.3% of the loop's cycles, and the missing 10.7% is time the SIMD spent
 issuing something it could not hide behind one. So the design question is what *else* an FMHA
 kernel has to issue, and where that work can go.
 
@@ -49,7 +49,7 @@ to keep in mind is **`acc·alpha`**: `acc` is the largest live value in the kern
 it every tile is 64 vector instructions that are pure overhead whenever the row max did not
 actually move. [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) is the story of removing them.
 
-**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2)
+**Toolchain.** These kernels need Triton built from the [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3)
 tag. They are written in upstream Gluon: `fmha_v4`'s per-wave skip uses `gl.map_elementwise`
 ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), so its stock build needs nothing beyond upstream Triton.
 [§9](#9-results) has the build and run commands.
@@ -527,15 +527,15 @@ additionally overrides `LLIRSCHED_WP_MEMNOP=0`. Those two are single runs; the b
 
 | | `fmha_v3` | `fmha_v4` |
 |---|---|---|
-| no `s_nop`, no fold | 1177 / 74.8% | 1246 / 81.3% |
-| `MEMNOP=2` | 1183 / 76.1% | 1254 / 83.1% |
-| `MEMNOP=2` + `SCALE_ON_Q` | **1189 / 76.8%** | **1261 / 84.6%** |
+| no `s_nop`, no fold | 1199 / 79.5% | 1274 / 85.9% |
+| `MEMNOP=2` | 1203 / 80.3% | 1283 / 88.0% |
+| `MEMNOP=2` + `SCALE_ON_Q` | **1216 / 81.0%** | **1289 / 89.3%** |
 
-Together the two settings are worth **+2.0** and **+3.3 points** of efficiency on `fmha_v3` and
-`fmha_v4`: pacing **+1.3** and **+1.8**, the fold **+0.7** and **+1.5**. The efficiency column is the
-firmer signal here. In throughput the same steps are **+1.04%** and **+1.20%** in total, about half
-each for pacing and the fold, and each step (~0.5%) is about the size of the tuned rows'
-round-to-round spread in [§9](#9-results) (0.4–0.5%), so the TFLOPS column alone does not separate the two settings.
+Together the two settings are worth **+1.5** and **+3.4 points** of efficiency on `fmha_v3` and
+`fmha_v4`: pacing **+0.8** and **+2.1**, the fold **+0.7** and **+1.3**. The efficiency column is the
+firmer signal here. In throughput the same steps are **+1.4%** and **+1.2%** in total, and each step
+(0.3–1.1%) is about the size of the tuned rows' round-to-round spread in [§9](#9-results)
+(0.4–0.5%), so the TFLOPS column alone does not separate the two settings.
 
 `SCALE_ON_Q` is not free: pre-scaling rounds `q · scale` back to the input dtype before the loop, so
 max error against the fp32 reference goes from 4.69e-04 to 7.84e-04 on `fmha_v3`, and from 7.38e-04
@@ -624,24 +624,26 @@ benchmark shape. TFLOPS is the mean of three runs of `rocprofv3 --kernel-trace` 
 `AMD_SERIALIZE_KERNEL=3`, averaging the last 100 of 1000 dispatches; MFMA efficiency and the loop
 fraction come from an ATT instruction trace of one dispatch. The five configurations were run
 **interleaved** — one of each, three times round — so any drift in the board hits every row
-equally. Round-to-round spread was 1.5 to 11.0 TFLOPS, widest on FlyDSL, whose first round was its lowest.
+equally. Round-to-round spread was 1.1 to 10.2 TFLOPS, widest on FlyDSL, whose first round was its lowest.
 
 | | TFLOPS | MFMA eff / SIMD | in loop | cyc/iter |
 |---|---:|---:|---:|---:|
-| *ROCm/FlyDSL* — its own tuned config | *1304* | 84.9% | 94.2% | 4822 |
-| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1261** | **84.6%** | 90.0% | **4840** |
-| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1189** | 76.8% | 92.1% | 5332 |
-| `fmha_v4` — stock LLVM, no plugin, no env | 1164 | 67.8% | 91.8% | 6044 |
-| `fmha_v3` — stock LLVM, no plugin, no env | 1120 | 64.8% | 93.4% | 6321 |
+| *ROCm/FlyDSL* — its own tuned config | *1306* | 84.7% | 94.2% | 4834 |
+| **`fmha_v4`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1289** | **89.3%** | 90.2% | **4589** |
+| **`fmha_v3`** — llirSched, `SCALE_ON_Q=1`, `MEMNOP=2` | **1216** | 81.0% | 91.9% | 5057 |
+| `fmha_v4` — stock LLVM, no plugin, no env | 1173 | 68.7% | 91.8% | 5965 |
+| `fmha_v3` — stock LLVM, no plugin, no env | 1118 | 64.7% | 93.3% | 6332 |
 
-The v2.1 build re-measured on the same GPU the same day also puts `fmha_v4` at 1261, and the ATT
-columns match v2.1's: the re-pin does not move attention (see the v2.2 entry in
-[`CHANGELOG.md`](../../CHANGELOG.md)).
+The `v2.2` build re-measured on the same GPU the same day puts the tuned `fmha_v4` at 1261 TFLOPS /
+84.7% / 4836 cyc/iter and the tuned `fmha_v3` at 1191 / 76.9% / 5330, so this pin is worth about
+**+2%** of throughput and **+4.6** and **+4.1 points** of in-loop efficiency on the tuned rows. The
+stock rows move by less than 1%. What changed is below, and in the v2.3 entry in
+[`CHANGELOG.md`](../../CHANGELOG.md).
 
-**What lazy rescaling is worth** is the distance between the two kernels: **+4.0%** on stock LLVM
-(1120 → 1164) and **+6.1%** tuned (1189 → 1261). The efficiency column says something the throughput
-column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 64.8%
-against 67.8%, **+3.0 points** — while the tuned rows are **7.8 points** apart, more than twice as far.
+**What lazy rescaling is worth** is the distance between the two kernels: **+4.9%** on stock LLVM
+(1118 → 1173) and **+6.0%** tuned (1216 → 1289). The efficiency column says something the throughput
+column does not, though. Stock LLVM barely tells the two kernels apart where it counts — 64.7%
+against 68.7%, **+4.0 points** — while the tuned rows are **8.3 points** apart, twice as far.
 Lazy rescaling does not make the loop faster by itself: it *frees budget* ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)), and only something
 downstream that spends that budget converts it into cycles. A design that creates headroom only pays
 if something spends it. **Its price** is that the per-wave skip needs a real branch — `gl.map_elementwise` with a
@@ -649,39 +651,70 @@ generated scalar body that takes all 64 of a thread's accumulator elements — a
 clusters enough that part of the softmax has to be moved between them by hand ([§5](#5-fmha_v3--fmha_v4-getting-under-the-budget)).
 
 **What the scheduling is worth** is the distance within each kernel, from its stock build to its
-tuned one: **+6.2%** of throughput on `fmha_v3` and **+8.3%** on `fmha_v4`, and in efficiency terms
-**+12.0** and **+16.8 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
+tuned one: **+8.7%** of throughput on `fmha_v3` and **+9.9%** on `fmha_v4`, and in efficiency terms
+**+16.3** and **+20.6 points**. It is the larger of the two effects, and everything in [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) and
 [§6](#6-making-the-compiler-co-operate) lives in that gap. **Its price** is that the interleave has to be *declared* rather than left
 to the machine scheduler — every vector op assigned to a specific MFMA's shadow and emitted as a
 `sched_group_barrier` sequence for IGroupLP to construct — and the ops then kept in the cluster
 they were assigned to ([§6](#6-making-the-compiler-co-operate)).
 
 **The ceilings from [§5](#5-fmha_v3--fmha_v4-getting-under-the-budget) still frame the tuned rows.** `fmha_v4`'s demand fits its window, so its
-ceiling is 100% and it reaches 84.6%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
-against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 76.8%. The two are
-7.8 points apart while their ceilings are 8.6 apart — so the whole difference is still work
-`fmha_v3`'s budget cannot absorb rather than a worse schedule. Both now sit about **15 points**
-below their own ceiling (15.4 and 14.6), against ~5.5 on the `gfx950-tutorial-v2.0` measurement:
-the v2.1 and v2.2 toolchains give up roughly 9 points of in-loop MFMA efficiency on both kernels.
+ceiling is 100% and it reaches 89.3%. `fmha_v3` leaves 4 × 48 = 192 cycles exposed per loop body
+against 2048 of MFMA, so its ceiling is 2048/2240 = **91.4%** and it reaches 81.0%. The two are
+8.3 points apart while their ceilings are 8.6 apart — so the whole difference is still work
+`fmha_v3`'s budget cannot absorb rather than a worse schedule. Both now sit about **10.5 points**
+below their own ceiling (10.7 and 10.4), against ~5.5 on the `gfx950-tutorial-v2.0` measurement and
+~15 on `v2.1` and `v2.2`: those two toolchains gave up roughly 9 points of in-loop MFMA efficiency
+on both kernels, and this pin takes about half of that back.
 
-**What costs those 9 points: `ConvertWarpPipeline`, not either of the LLVM bugs.** `v2.0`
-placed the loop-carried wrap-around barrier at the **top** of the loop body unconditionally, so
-that barrier's `setprio` primed cluster 0's priority every iteration. `v2.1` gates that behind
-`shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at section ends instead, and upstream
-still does at `v2.2`. Rebuilding v2.1 with `v2.0`'s `ConvertWarpPipeline.cpp` and
-`warp_pipeline.py` and changing nothing else recovered `fmha_v4` to **1327 TFLOPS at 91.7%**
-in-loop MFMA (4467 cyc/iter) against the v2.0 published 1323 / 94.2%, and `fmha_v3` to **1265**
-(measured on v2.1, 2026-09-03). The two LLVM bugs recorded in [`CHANGELOG.md`](../../CHANGELOG.md)
-hit the GEMM kernels; neither was shown to affect these.
+**Both moves come from the barriers `ConvertWarpPipeline` places, not from LLVM.**
+
+*What cost 9 points in `v2.1`.* `v2.0` placed the loop-carried wrap-around barrier at the **top**
+of the loop body unconditionally, so that barrier's `setprio` primed cluster 0's priority every
+iteration. `v2.1` gates that behind `shouldPlaceBackedgeBarrierAtHead()` and keeps `setprio` at
+section ends instead, and upstream still does at `v2.3`. Rebuilding v2.1 with `v2.0`'s
+`ConvertWarpPipeline.cpp` and `warp_pipeline.py` and changing nothing else recovered `fmha_v4` to
+**1327 TFLOPS at 91.7%** in-loop MFMA (4467 cyc/iter) against the v2.0 published 1323 / 94.2%, and
+`fmha_v3` to **1265** (measured on v2.1, 2026-09-03; not repeated on this pin).
+
+*What gives 4.5 back in `v2.3`.* The loop alternates four memory stages (`ds_read`s and the next
+tile's `buffer_load`s) with four compute stages (16 MFMAs and the softmax work in their shadow),
+and a barrier closes each stage. A barrier is either plain (`s_barrier`) or *local*
+(`s_waitcnt lgkmcnt(0)`, then `s_barrier`: every LDS access of this wave has completed before the
+other wave runs). Which one a boundary gets depends on whether the LDS accesses of the stages around
+it conflict, and
+[triton-lang/triton#11719](https://github.com/triton-lang/triton/pull/11719) makes that test
+direction-aware: a `ds_read` followed by a direct-to-LDS refill of the same buffer now counts, where
+it used to be filtered out together with the opposite order. It is a correctness change, and here
+it turns the barrier that closes each memory stage from plain into local. The speed-up is a side
+effect of where the waits go:
+
+| per loop body | `v2.2` | `v2.3` |
+|---|---:|---:|
+| LDS waits inside the compute stages, between the MFMAs | 42 | 0 |
+| LDS waits at the end of the memory stages | 0 | 4 |
+| instructions | 594 | 556 |
+
+With a plain barrier LLVM waits for each `ds_read` result where it is first used, which is inside
+the next compute stage: a staircase of `s_waitcnt lgkmcnt(14)` … `lgkmcnt(0)` spread through the
+MFMA chain. With a local barrier one wait at the end of the memory stage covers them all. Nothing
+else in the loop changes. The compiler flags are not part of it: the assembly is identical with the
+register-pressure trackers forced on, with FP fusion turned back on, and the efficiency follows the
+Triton build when the two AMD codegen LLVMs are swapped (84.7% with `v2.2`'s Triton and either
+LLVM, 89.2% with `v2.3`'s). The 8-wave GEMMs are not affected: their barriers and waits are the
+same on both pins.
+
+The two LLVM bugs recorded in [`CHANGELOG.md`](../../CHANGELOG.md) hit the GEMM kernels; neither
+was shown to affect these.
 
 **On the FlyDSL row.** ROCm/FlyDSL at
 [`63eb891`](https://github.com/ROCm/FlyDSL/tree/63eb891/kernels/attention) (`v0.2.4-26-g63eb891`),
 `build_flash_attn_dualwave_swp_module` in its own tuned configuration, timed by
 [`scripts/fly_kernel_time.py`](../../scripts/fly_kernel_time.py) under the same protocol as our
-rows: **1304 TFLOPS** (1297.5 / 1307.0 / 1308.5), re-measured on this pin on the same GPU,
-interleaved with the `fmha_v4` rounds (1258.1 / 1262.5 / 1263.1) so the two sides share thermal
-state. Its ATT figures are unchanged from the `v2.0` measurement — 84.9% vs 84.7%, 94.2% loop
-fraction both times, 4822 vs 4837 cyc/iter — which is expected: **FlyDSL does not go through Triton**, so no
+rows: **1306 TFLOPS** (1299.5 / 1307.9 / 1309.7), re-measured on this pin on the same GPU,
+interleaved with the `fmha_v4` rounds (1285.2 / 1290.5 / 1291.4) so the two sides share thermal
+state. Its ATT figures are unchanged from the `v2.0` measurement — 84.7% vs 84.7%, 94.2% loop
+fraction both times, 4834 vs 4837 cyc/iter — which is expected: **FlyDSL does not go through Triton**, so no
 Triton or LLVM change reaches it. That is what makes it a useful control here.
 
 > [!NOTE]
@@ -693,18 +726,20 @@ Triton or LLVM change reaches it. That is what makes it a useful control here.
 
 **What this changes.** On `v2.0` `fmha_v4` matched FlyDSL (1323 vs 1322) from a much higher in-loop
 efficiency (94.2% vs 84.7%) — it was doing more per cycle and spending it on a shorter loop
-fraction. Since v2.1 `fmha_v4` has lost ~9 points of that efficiency and the two kernels now sit
-level on efficiency (84.6% vs 84.9%), at which point FlyDSL's better loop fraction (94.2% vs 90.0%)
-decides it. The gap is a symptom of the `ConvertWarpPipeline` change, not a design difference.
+fraction. On `v2.1` and `v2.2` it had lost ~9 points of that efficiency and sat level with FlyDSL
+(84.6% vs 84.9% on `v2.2`), so FlyDSL's better loop fraction decided it by 3.4%. On this pin
+`fmha_v4` is 4.6 points ahead again in the loop (89.3% vs 84.7%) and still behind on loop fraction
+(90.2% vs 94.2%), and the gap is down to 1.3%. The head-barrier experiment above says the rest is
+also the toolchain's rather than a design difference, but it has not been repeated on this pin.
 
 ### Building and running
 
 The kernels need Triton built from the
-[`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2)
+[`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3)
 tag. Build it with default symbol visibility so the scheduler plugin can resolve LLVM symbols:
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.2 /tmp/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.3 /tmp/triton
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 

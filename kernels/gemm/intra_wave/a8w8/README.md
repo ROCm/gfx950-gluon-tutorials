@@ -134,17 +134,17 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.2`:
+Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.3`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|
-| base           |   2902 |   448 |      0 |    72.22% |
-| llir           |   3381 |   448 |      0 |    96.31% |
-| llir+amdgcnas  |   3476 |   448 |      0 |    99.72% |
+| base           |   2807 |   448 |      0 |    72.05% |
+| llir           |   3351 |   448 |      0 |    96.16% |
+| llir+amdgcnas  |   3417 |   448 |      0 |    99.72% |
 
 **M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget.
 
-**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../a16w16/v7_sliceN/README.md)), so all three configurations run with the accumulators in AGPRs, 448 arch VGPRs and no in-loop `v_accvgpr_*` copies. `llir` then interleaves the loop to **3381 TFLOPS / 96.31%**, and `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
+**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../a16w16/v7_sliceN/README.md)), so all three configurations run with the accumulators in AGPRs, 448 arch VGPRs and no in-loop `v_accvgpr_*` copies. `llir` then interleaves the loop to **3351 TFLOPS / 96.16%**, and `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
 
 The [LLIR Scheduler](../../../../plugins/llir_scheduler/README.md) and [amdgcnas](../../../../plugins/amdgcnas/README.md) ship as out-of-tree plugins in this repo; see [gemm/README §2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for how to build Triton and enable them.
 

@@ -89,8 +89,8 @@ SCORES = {
     "inter_wave/a4w4/v0_sliceMN": [2, 4, 3, 4, 3, 5, 5],  # byte-shuffle (~57%); full clock
     "inter_wave/a4w4/v1_combineBsc": [5, 5, 3, 4.5, 4, 5, 5],  # combined B-scale (~80%)
     # v2: 32x32x64 lifts scheduling/occupancy (~98%) but the wider MFMA throttles
-    # the clock, so freq drops and end-to-end TFLOPS lands below v1. Bank conflict
-    # matches v1 (4.5) — the MXFP4 scale-read conflict is inherent to both.
+    # the clock, so freq drops and end-to-end TFLOPS lands only ~2% above v1. Bank
+    # conflict matches v1 (4.5) — the MXFP4 scale-read conflict is inherent to both.
     "inter_wave/a4w4/v2_mfma32x32x64": [5, 5, 5, 4.5, 5, 5, 3],  # +sched, throttled clock
 }
 
