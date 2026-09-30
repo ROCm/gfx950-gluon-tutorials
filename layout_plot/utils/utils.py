@@ -26,10 +26,13 @@ import argparse
 import subprocess
 
 
-def run_bash_command(commandstring):
-    proc = subprocess.run(
-        commandstring, shell=True, check=False, executable="/bin/bash", stdout=subprocess.PIPE
-    )
+def run_command(args):
+    """Run a program with an argument list, without a shell, and return its exit code
+    (127 if the program is not found, as a shell would)."""
+    try:
+        proc = subprocess.run(args, check=False, stdout=subprocess.PIPE)
+    except FileNotFoundError:
+        return 127
     return proc.returncode
 
 
