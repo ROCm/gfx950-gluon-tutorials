@@ -32,19 +32,19 @@ a markdown performance table.
 
 Usage:
     # a16w16 kernels (run from anywhere):
-    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir llir+amdgcnas --K 4096 --dtype fp16
+    python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs base llir --K 4096 --dtype fp16
 
     # a8w8 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a8w8 --configs llir --K 8192
 
     # a4w4 kernel (run from anywhere):
-    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+amdgcnas --K 8192
+    python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir --K 8192
 
     # Use rocprofv3 for TFLOPS timing instead of do_bench:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir --versions 7 --K 8192 --dtype fp16 --rocprof
 
     # Compile/bind once and use the cached launcher for the rocprof timing loop:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 9 --K 8192 --dtype bf16 --rocprof --prepared
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir --versions 9 --K 8192 --dtype bf16 --rocprof --prepared
 """
 
 import argparse
@@ -71,30 +71,17 @@ VERSION_MAP = {
     9: "v9_beyond_hotloop",
 }
 
-# The LLIR scheduler now ships as an out-of-tree LLVM pass plugin
-# (plugins/llir_scheduler/). Enable it by pointing LLVM_PASS_PLUGIN_PATH at the
-# built .so; the pinned Triton keeps the target machine for the O3 pipeline on
-# its own (triton-lang/triton#10849). bench.py opts libtriton into the global
-# dlopen scope when LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with
-# TRITON_EXT_ENABLED=1. See plugins/llir_scheduler/README.md.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
-_LLIR_SCHED_ENV = {
-    "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-}
 
-# Cumulative configs: each adds one component on top of the previous, so a perf
-# table row's number reflects that stack (llirSched, then + the out-of-tree
-# amdgcnas post-assembly peephole). Keeping MFMA accumulators in AGPRs is not a
-# config: from a16w16 v7 on (and in a8w8 and a4w4) the kernels pass
+# Configs select how the kernels are compiled. `llir` uses Triton's in-tree LLIR
+# scheduler (the llir-scheduler-upstream branch of AMD-Triton/triton-mi450),
+# opted into per kernel with the schedule_hint compile option; bench.py sets it
+# for every kernel when given --schedule-hint. Keeping MFMA accumulators in AGPRs
+# is not a config: from a16w16 v7 on (and in a8w8 and a4w4) the kernels pass
 # cd_regclass="a" to every MFMA themselves.
-CONFIG_ENV = {
-    "base": {},
-    "llir": {**_LLIR_SCHED_ENV},
-    "llir+amdgcnas": {
-        **_LLIR_SCHED_ENV,
-        "TRITON_AMDGCNAS_PLUGIN": "1",
-    },
+CONFIG_ARGS = {
+    "base": [],
+    "llir": ["--schedule-hint", "mfma-mem-interleave"],
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
@@ -112,17 +99,14 @@ REPORTED_COMBINATIONS = {
     "a16w16": {
         "base": {0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
         "llir": {5, 6, 7, 8, 9},
-        "llir+amdgcnas": {7, 8, 9},
     },
     "a8w8": {
         "base": {None},
         "llir": {None},
-        "llir+amdgcnas": {None},
     },
     "a4w4": {
         "base": {0, 1},
         "llir": {0, 1},
-        "llir+amdgcnas": {0, 1},
     },
 }
 
@@ -442,8 +426,6 @@ def run_benchmark(
         "TRITON_ENABLE_AMDGCN_AS",
     ):
         env.pop(key, None)
-    # Set config-specific env vars
-    env.update(CONFIG_ENV[config])
 
     cmd = [
         sys.executable,
@@ -455,6 +437,7 @@ def run_benchmark(
         "--K",
         str(K),
     ]
+    cmd.extend(CONFIG_ARGS[config])
     if kernel == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
     elif kernel == "a4w4":
@@ -566,8 +549,8 @@ def parse_args():
     parser.add_argument(
         "--configs",
         nargs="+",
-        choices=list(CONFIG_ENV.keys()),
-        default=list(CONFIG_ENV.keys()),
+        choices=list(CONFIG_ARGS.keys()),
+        default=list(CONFIG_ARGS.keys()),
         help="Scheduler configs to test (default: all)",
     )
     parser.add_argument(

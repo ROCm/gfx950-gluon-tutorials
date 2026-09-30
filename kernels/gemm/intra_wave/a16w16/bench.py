@@ -24,41 +24,27 @@
 
 import argparse
 import importlib
-
-# The out-of-tree LLIR scheduler ships as an LLVM pass plugin (see ../../../../plugins/).
-# Loaded via LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at
-# dlopen time, which requires libtriton in the *global* symbol scope. CPython
-# loads C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the
-# first `import triton`. Only takes effect when the plugin is in use.
 import os
 import sys
 
 import torch
-
-if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-
 import triton
 
-# Out-of-tree amdgcnas peephole (post-assembly): install the amdgcn-stage hook
-# when TRITON_AMDGCNAS_PLUGIN is set. Pure-Python text transform, no rebuild.
-if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
-    sys.path.insert(
-        0,
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "..",
-            "..",
-            "..",
-            "plugins",
-            "amdgcnas",
-        ),
-    )
-    import amdgcnas_plugin
-    from triton import knobs
 
-    knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
+def use_schedule_hint(hint):
+    """Compile every kernel with schedule_hint=hint, the opt-in of Triton's in-tree LLIR
+    scheduler (llir-scheduler-upstream branch of AMD-Triton/triton-mi450)."""
+    from triton.backends.amd.compiler import HIPBackend
+
+    parse_options = HIPBackend.parse_options
+
+    def parse_options_with_hint(self, opts):
+        opts = dict(opts)
+        opts.setdefault("schedule_hint", hint)
+        return parse_options(self, opts)
+
+    HIPBackend.parse_options = parse_options_with_hint
+
 
 # Put the shared kernels/gemm/utils/ on the path so each version's
 # `from common import get_pids` resolves to the shared helper.
@@ -134,6 +120,12 @@ def parse_args():
 
     parser = argparse.ArgumentParser(description="GEMM benchmark")
     parser.add_argument("--K", type=int, default=None, help="Select GEMM problem size with given K")
+    parser.add_argument(
+        "--schedule-hint",
+        default="",
+        help="Triton schedule_hint compile option for every kernel, e.g. mfma-mem-interleave "
+        "(the in-tree LLIR scheduler).",
+    )
     parser.add_argument(
         "--dtype",
         nargs="+",
@@ -243,6 +235,8 @@ def run_rocprof_iterations(
 
 def main():
     args = parse_args()
+    if args.schedule_hint:
+        use_schedule_hint(args.schedule_hint)
     version_dir = VERSION_MAP[args.version]
     module = importlib.import_module(f"{version_dir}.matmul_kernel")
     matmul = module.matmul
