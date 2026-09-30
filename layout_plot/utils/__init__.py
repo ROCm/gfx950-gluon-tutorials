@@ -22,6 +22,6 @@
 # THE SOFTWARE.
 ##############################################################################
 
-from .utils import OneLineFormatter, run_bash_command
+from .utils import OneLineFormatter, run_command
 
-__all__ = ["run_bash_command", "OneLineFormatter"]
+__all__ = ["run_command", "OneLineFormatter"]

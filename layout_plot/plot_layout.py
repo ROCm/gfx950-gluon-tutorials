@@ -24,12 +24,13 @@
 
 import argparse
 import os
+import shutil
 import sys
 
 from blocked import generate_blocked_tex
 from dot import generate_dot_tex
 from lds import generate_lds_tex
-from utils import OneLineFormatter, run_bash_command
+from utils import OneLineFormatter, run_command
 
 # GFX architecture configurations
 # Consolidated config for all subcommands (dot, lds, blocked)
@@ -514,7 +515,7 @@ def main():
                 f"Only blocked, dot, and lds supported, you entered {args.plot_type}"
             )
 
-    ret = run_bash_command(f"pdflatex -halt-on-error -jobname {ofilename} myplot.tex")
+    ret = run_command(["pdflatex", "-halt-on-error", "-jobname", ofilename, "myplot.tex"])
     if ret == 0:
         print(f"plot saved in {ofilename}.pdf")
         # Remove auxiliary files
@@ -522,7 +523,7 @@ def main():
         os.remove(f"{ofilename}.log")
         if not keepSrc:
             os.remove("myplot.tex")
-            run_bash_command("rm -rf ./auto")
+            shutil.rmtree("auto", ignore_errors=True)
     else:
         print("pdflatex has problem generating the pdf file. Check myplot.log for the error!!!")
         sys.exit(1)
