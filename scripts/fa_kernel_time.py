@@ -86,6 +86,9 @@ from run_perf_table import avg_kernel_time_ns, find_kernel_trace_csv  # noqa: E4
 def parse_args():
     p = argparse.ArgumentParser(description="rocprofv3 kernel-time TFLOPS for FA (gfx950)")
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
+    p.add_argument(
+        "--schedule-hint", default="", help="passed to bench.py (in-tree LLIR scheduler opt-in)"
+    )
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64)
@@ -193,6 +196,8 @@ def collect(args, launch_mode, trace_root):
     ]
     if launch_mode == "prepared":
         cmd += ["--prepared", "--n-warmup", str(args.warmup)]
+    if args.schedule_hint:
+        cmd += ["--schedule-hint", args.schedule_hint]
 
     env = os.environ.copy()
     if not args.no_serialize:

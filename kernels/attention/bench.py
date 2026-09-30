@@ -34,28 +34,23 @@ import os
 import sys
 
 import torch
-
-# The out-of-tree LLIR scheduler ships as an LLVM pass plugin. Loaded via
-# LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at dlopen time,
-# which requires libtriton in the *global* symbol scope. CPython loads
-# C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the first
-# `import triton`. Only takes effect when the plugin is in use.
-if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-
 import triton  # noqa: E402
 
-# Out-of-tree amdgcnas peephole (post-assembly): install the amdgcn-stage hook
-# when TRITON_AMDGCNAS_PLUGIN is set. Pure-Python text transform, no rebuild.
-if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
-    sys.path.insert(
-        0,
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "amdgcnas"),
-    )
-    import amdgcnas_plugin  # noqa: E402
-    from triton import knobs  # noqa: E402
 
-    knobs.runtime.add_stages_inspection_hook = amdgcnas_plugin.inspect_stages_hook
+def use_schedule_hint(hint):
+    """Compile every kernel with schedule_hint=hint, the opt-in of Triton's in-tree LLIR
+    scheduler (llir-scheduler-upstream branch of AMD-Triton/triton-mi450)."""
+    from triton.backends.amd.compiler import HIPBackend
+
+    parse_options = HIPBackend.parse_options
+
+    def parse_options_with_hint(self, opts):
+        opts = dict(opts)
+        opts.setdefault("schedule_hint", hint)
+        return parse_options(self, opts)
+
+    HIPBackend.parse_options = parse_options_with_hint
+
 
 # Ported FMHA kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,7 +58,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # fmha_v4 (lazy-rescale variant). Both expose run_gluon_attention.
 import importlib  # noqa: E402
 
-from common import (
+from common import (  # noqa: E402
     _check_output,
     compute_flops,
     get_shape_from_layout,
@@ -103,6 +98,11 @@ SEQLENS = [1024, 2048, 4096, 8192, 16384]
 def parse_args():
     p = argparse.ArgumentParser(description="FMHA rotated-4cluster attention benchmark (gfx950)")
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
+    p.add_argument(
+        "--schedule-hint",
+        default="",
+        help="Triton schedule_hint compile option, e.g. mfma-mem-interleave (the in-tree LLIR scheduler)",
+    )
     p.add_argument("--layout", choices=["bhsd", "bshd"], default="bhsd")
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--hq", type=int, default=64, help="number of query heads")
@@ -307,6 +307,8 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
 
 def main():
     args = parse_args()
+    if args.schedule_hint:
+        use_schedule_hint(args.schedule_hint)
     global _SCALE_ON_Q
     _SCALE_ON_Q = bool(args.scale_on_q)
     if not _SCALE_ON_Q and not _SCALE_ON_Q_ARG:
