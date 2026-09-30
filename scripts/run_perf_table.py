@@ -281,12 +281,17 @@ def run_rocprof_trace(
     iters=1000,
     rotating_sets=3,
     last_n=100,
+    M=4096,
+    N=4096,
+    config="base",
+    tile=None,
 ):
     """Run rocprofv3 --kernel-trace to collect kernel timestamps.
 
     Returns TFLOPS computed from the average kernel time, or None on failure.
     """
-    M, N = 4096, 4096
+    M = M or 4096
+    N = N or 4096
     trace_dir = os.path.join(work_dir, f"{version_dir}_rocprof_trace")
     if os.path.isdir(trace_dir):
         shutil.rmtree(trace_dir)
@@ -303,6 +308,11 @@ def run_rocprof_trace(
         "--",
     ]
     if prepared:
+        if CONFIG_ARGS[config] or tile is not None or (M, N) != (4096, 4096):
+            raise ValueError(
+                "--prepared times the kernel as bench.py compiles it by default: "
+                "use it with config base at 4096x4096"
+            )
         prepared_driver = os.path.join(_REPO_ROOT, "scripts", "benchmark_prepared.py")
         cmd.extend(
             [
@@ -328,8 +338,15 @@ def run_rocprof_trace(
             cmd.extend(["--version", str(version)])
     else:
         cmd.extend([sys.executable, "bench.py", "--rocprof", "--K", str(K)])
+        cmd.extend(CONFIG_ARGS[config])
         if kernel_type == "a16w16":
             cmd.extend(["--dtype", dtype, "--version", str(version)])
+            if M != 4096:
+                cmd.extend(["--M", str(M)])
+            if N != 4096:
+                cmd.extend(["--N", str(N)])
+            if tile is not None:
+                cmd.extend(["--tile", tile])
         elif kernel_type == "a4w4":
             cmd.extend(["--version", str(version)])
 
@@ -387,6 +404,9 @@ def run_benchmark(
     iters=1000,
     rotating_sets=3,
     last_n=100,
+    M=None,
+    N=None,
+    tile=None,
 ):
     """Run a single benchmark for the given version, config, and kernel type.
 
@@ -440,6 +460,12 @@ def run_benchmark(
     cmd.extend(CONFIG_ARGS[config])
     if kernel == "a16w16":
         cmd.extend(["--dtype", dtype, "--version", str(version)])
+        if M is not None:
+            cmd.extend(["--M", str(M)])
+        if N is not None:
+            cmd.extend(["--N", str(N)])
+        if tile is not None:
+            cmd.extend(["--tile", tile])
     elif kernel == "a4w4":
         cmd.extend(["--version", str(version)])
 
@@ -494,6 +520,10 @@ def run_benchmark(
             iters=iters,
             rotating_sets=rotating_sets,
             last_n=last_n,
+            M=M,
+            N=N,
+            config=config,
+            tile=tile,
         )
         result["tflops"] = tflops
 
@@ -558,6 +588,11 @@ def parse_args():
         type=int,
         default=4096,
         help="K dimension for GEMM (default: 4096)",
+    )
+    parser.add_argument("--M", type=int, default=None, help="M for a16w16 (default: 4096)")
+    parser.add_argument("--N", type=int, default=None, help="N for a16w16 (default: 4096)")
+    parser.add_argument(
+        "--tile", default=None, help="a16w16 v9 tile BLOCK_M,BLOCK_N,BLOCK_K (default: 256,256,64)"
     )
     parser.add_argument(
         "--dtype",
@@ -688,6 +723,9 @@ def main():
                 iters=args.iters,
                 rotating_sets=args.rotating_sets,
                 last_n=args.last_n,
+                M=args.M,
+                N=args.N,
+                tile=args.tile,
             )
             results[config].append(row)
 

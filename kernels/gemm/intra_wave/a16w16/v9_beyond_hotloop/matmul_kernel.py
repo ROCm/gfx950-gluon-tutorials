@@ -22,11 +22,45 @@
 # THE SOFTWARE.
 ##############################################################################
 
+import math
+import os
+
 import torch
 import triton
 from common import get_pids
 from triton.experimental import gluon
 from triton.experimental.gluon import language as gl
+from triton.experimental.gluon.language.amd import cdna4 as ttgl_cdna4
+from triton.runtime.jit import constexpr_function
+
+
+@constexpr_function
+def compute_gload_layout(shared_layout, load_contig, num_warps, threads_per_warp=64):
+    """Derive the coalesced global-load linear layout that matches a PaddedSharedLayout.
+
+    Ported from the `llirSched_prod` branch (kernels/gemm/a16w16/v5..v8). Reimplements
+    CoalesceAsyncCopy's padded-encoding derivation: partition the shared layout's offset
+    bases into reg/lane/warp so each warp writes contiguous LDS offsets. This reproduces
+    the hand-written 256x256x64 gLoad layouts exactly and generalises to any tile.
+    """
+    bases = [list(b) for b in shared_layout.offset_bases]
+    rank = len(shared_layout.shape)
+    n_reg = int(math.log2(load_contig))
+    n_lane = int(math.log2(threads_per_warp))
+    n_warp = int(math.log2(num_warps))
+    reg = bases[:n_reg]
+    lane = bases[n_reg : n_reg + n_lane]
+    warp = bases[n_reg + n_lane : n_reg + n_lane + n_warp]
+    while len(warp) < n_warp:  # zero-pad (broadcast) if we ran out of bases
+        warp.append([0] * rank)
+    reg += bases[n_reg + n_lane + n_warp :]
+    return gl.DistributedLinearLayout(
+        reg_bases=reg,
+        lane_bases=lane,
+        warp_bases=warp,
+        block_bases=[],
+        shape=list(shared_layout.shape),
+    )
 
 
 @gluon.jit
@@ -65,64 +99,28 @@ def v9_beyond_hotloop(
     pid_m, pid_n = get_pids(M, N, BLOCK_M, BLOCK_N, GRID_MN, NUM_XCDS, GROUP_SIZE_M)
 
     # Half-M global load layout
-    gLoadLayoutA: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[0, 1], [0, 2], [0, 4], [4, 0], [8, 0]],
-        lane_bases=[[0, 8], [0, 16], [0, 32], [16, 0], [32, 0], [64, 0]],
-        warp_bases=[[1, 0], [2, 0]],
-        block_bases=[],
-        shape=[BLOCK_M // 2, BLOCK_K],
+    # Tile-parametric layouts (ported from `llirSched_prod`).
+    #
+    # The hand-written DistributedLinearLayout/PaddedSharedLayout bases that used to live here
+    # were enumerated for a 256x256x64 tile: they carry row/col basis vectors such as [64, 0]
+    # and [0, 64] that fall outside a 128x128x64 tile's [64, 64] half-tiles, so
+    # `allocate_shared_memory` rejected them ("Expected: 64, got: 128"). Deriving the shared
+    # layout from the dot-operand layout and the global-load layout from the shared layout
+    # makes both follow BLOCK_M/BLOCK_N/BLOCK_K.
+    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
+        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[2, 2]
     )
-    # Half-N global load layout
-    gLoadLayoutB: gl.constexpr = gl.DistributedLinearLayout(
-        reg_bases=[[1, 0], [2, 0], [4, 0], [0, 4], [0, 8]],
-        lane_bases=[[8, 0], [16, 0], [32, 0], [0, 16], [0, 32], [0, 64]],
-        warp_bases=[[0, 1], [0, 2]],
-        block_bases=[],
-        shape=[BLOCK_K, BLOCK_N // 2],
-    )
+    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
+    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
-    # Half-M padded shared layout
-    sharedLayoutA: gl.constexpr = gl.PaddedSharedLayout(
-        [[512, 16]],
-        [
-            [0, 1],
-            [0, 2],
-            [0, 4],
-            [0, 8],
-            [0, 16],
-            [0, 32],
-            [16, 0],
-            [32, 0],
-            [64, 0],
-            [1, 0],
-            [2, 0],
-            [4, 0],
-            [8, 0],
-        ],
-        [],
-        [BLOCK_M // 2, BLOCK_K],
+    sharedLayoutA: gl.constexpr = ttgl_cdna4.compute_efficient_padded_shared_layout(
+        dotOpLayoutA, [BLOCK_M // 2, BLOCK_K], a_ptr.dtype.element_ty
     )
-    # Half-N padded shared layout
-    sharedLayoutB: gl.constexpr = gl.PaddedSharedLayout(
-        [[512, 16]],
-        [
-            [1, 0],
-            [2, 0],
-            [4, 0],
-            [8, 0],
-            [16, 0],
-            [32, 0],
-            [0, 16],
-            [0, 32],
-            [0, 64],
-            [0, 1],
-            [0, 2],
-            [0, 4],
-            [0, 8],
-        ],
-        [],
-        [BLOCK_K, BLOCK_N // 2],
+    sharedLayoutB: gl.constexpr = ttgl_cdna4.compute_efficient_padded_shared_layout(
+        dotOpLayoutB, [BLOCK_K, BLOCK_N // 2], b_ptr.dtype.element_ty
     )
+    gLoadLayoutA: gl.constexpr = compute_gload_layout(sharedLayoutA, 8, 4)
+    gLoadLayoutB: gl.constexpr = compute_gload_layout(sharedLayoutB, 8, 4)
 
     nBuffers: gl.constexpr = 2
     smemA_top = gl.allocate_shared_memory(
@@ -157,13 +155,6 @@ def v9_beyond_hotloop(
     a_bot_offsets_next = a_bot_offsets + BLOCK_K * stride_ak
     b_left_offsets_next = b_left_offsets + BLOCK_K * stride_bk
     b_right_offsets_next = b_right_offsets + BLOCK_K * stride_bk
-
-    mfmaLayout: gl.constexpr = gl.amd.AMDMFMALayout(
-        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[2, 2]
-    )
-
-    dotOpLayoutA: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mfmaLayout, k_width=8)
-    dotOpLayoutB: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mfmaLayout, k_width=8)
 
     acc_tl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
     acc_bl = gl.zeros((BLOCK_M // 2, BLOCK_N // 2), gl.float32, mfmaLayout)
@@ -326,7 +317,16 @@ def v9_beyond_hotloop(
     ## is unchanged from v8 because the sub-tile variant produced only ~200 cycles
     ## of additional savings — within noise relative to the full kernel.
 
-    gStoreLayoutC: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
+    # Store layout, sized to the half-tile rather than fixed at [4, 16].
+    # 8 contiguous elements per thread keeps the 16-byte (dwordx4) store; the lane grid is
+    # then chosen so one warp spans exactly BLOCK_N // 2 columns: at BLOCK_N = 256 this is
+    # [4, 16] (the original constant), at BLOCK_N = 128 it becomes [8, 8].
+    STORE_CONTIG: gl.constexpr = 8
+    STORE_LANES_N: gl.constexpr = (BLOCK_N // 2) // STORE_CONTIG
+    STORE_LANES_M: gl.constexpr = 64 // STORE_LANES_N
+    gStoreLayoutC: gl.constexpr = gl.BlockedLayout(
+        [1, STORE_CONTIG], [STORE_LANES_M, STORE_LANES_N], [4, 1], [1, 0]
+    )
 
     offs_cm = gl.arange(0, BLOCK_M // 2, gl.SliceLayout(1, gStoreLayoutC))
     offs_cn = gl.arange(0, BLOCK_N // 2, gl.SliceLayout(0, gStoreLayoutC))
@@ -387,12 +387,20 @@ def v9_beyond_hotloop(
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_br_offsets, stored_value=c_br)
 
 
-def matmul(a, b, c=None):
+def matmul(a, b, c=None, block=None):
+    """``block`` overrides the tile as (BLOCK_M, BLOCK_N, BLOCK_K); default keeps 256x256x64.
+
+    The tile can be overridden per call (or by TILE_MNK="128,128,64" in the environment) now
+    that every layout is derived from it.
+    """
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     assert a.is_contiguous(), "Matrix A must be contiguous"
     M, K = a.shape
     K, N = b.shape
-    BLOCK_M, BLOCK_N, BLOCK_K = 256, 256, 64
+    if block is None:
+        env = os.environ.get("TILE_MNK")
+        block = tuple(int(x) for x in env.split(",")) if env else (256, 256, 64)
+    BLOCK_M, BLOCK_N, BLOCK_K = block
     num_warps = 4
     if c is None:
         c = torch.empty((M, N), device=a.device, dtype=a.dtype)

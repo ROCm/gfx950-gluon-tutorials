@@ -23,6 +23,7 @@
 ##############################################################################
 
 import argparse
+import functools
 import importlib
 import os
 import sys
@@ -81,8 +82,10 @@ def get_x_vals():
     ]
 
 
-def get_gemm_sizes(selected_k=None):
+def get_gemm_sizes(selected_k=None, M=None, N=None):
     sizes = get_x_vals()
+    if M is not None or N is not None:
+        sizes = [(M or m, N or n, k) for m, n, k in sizes]
 
     if selected_k is None:
         return sizes
@@ -120,6 +123,13 @@ def parse_args():
 
     parser = argparse.ArgumentParser(description="GEMM benchmark")
     parser.add_argument("--K", type=int, default=None, help="Select GEMM problem size with given K")
+    parser.add_argument("--M", type=int, default=None, help="Override M (default 4096)")
+    parser.add_argument("--N", type=int, default=None, help="Override N (default 4096)")
+    parser.add_argument(
+        "--tile",
+        default=None,
+        help="Tile as BLOCK_M,BLOCK_N,BLOCK_K for kernels that take one (v9), e.g. 128,128,64",
+    )
     parser.add_argument(
         "--schedule-hint",
         default="",
@@ -240,8 +250,10 @@ def main():
     version_dir = VERSION_MAP[args.version]
     module = importlib.import_module(f"{version_dir}.matmul_kernel")
     matmul = module.matmul
+    if args.tile:
+        matmul = functools.partial(matmul, block=tuple(int(x) for x in args.tile.split(",")))
 
-    gemm_sizes = get_gemm_sizes(args.K)
+    gemm_sizes = get_gemm_sizes(args.K, args.M, args.N)
     dtypes = get_dtypes(args.dtype)
 
     for dtype in dtypes:
