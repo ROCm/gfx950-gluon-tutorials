@@ -219,21 +219,21 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 ## 4. Performance
 
-Measured on a well-performing MI355X with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.2`:
+Measured on a well-performing MI355X with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.3`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|
-| base           |   4699 |   512 |     16 |    58.63% |
-| llir           |   5137 |   512 |     28 |    75.79% |
-| llir+amdgcnas  |   5397 |   512 |     28 |    82.13% |
+| base           |   4619 |   512 |     16 |    58.57% |
+| llir           |   4978 |   512 |     28 |    75.83% |
+| llir+amdgcnas  |   5377 |   512 |     28 |    81.54% |
 
 See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
 
 **The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../../a16w16/v7_sliceN/README.md)), so all three configurations keep the accumulators in AGPRs and the loop has no `v_accvgpr_*` copies. v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and with the accumulators fixed in AGPRs the remaining VGPR demand no longer fits: the kernel spills 16 VGPRs in `base` and 28 under `llir`, all outside the hot loop (no scratch access in the loop). v1_sliceMN, with its balanced M+N tiling, does not spill under the same pins.
 
-**Effect of the LLIR scheduler**: interleaving the MFMAs with the memory operations lifts the kernel to 5137 TFLOPS / 75.79% MFMA efficiency (+9.3% over `base`). On `gfx950-tutorial-v2.1`, where the accumulators were not pinned, the same config spilled 186 VGPRs and collapsed to ~710 TFLOPS.
+**Effect of the LLIR scheduler**: interleaving the MFMAs with the memory operations lifts the kernel to 4978 TFLOPS / 75.83% MFMA efficiency (+7.8% over `base`). On `gfx950-tutorial-v2.1`, where the accumulators were not pinned, the same config spilled 186 VGPRs and collapsed to ~710 TFLOPS.
 
-**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 82.13% (5397 TFLOPS).
+**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.54% (5377 TFLOPS).
 
 ## 5. How to Run
 

@@ -188,17 +188,17 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1158 |   511 |      8 |    89.83% |
-| v7 (`base`)                    |   1186 |   512 |      8 |    65.99% |
-| v7 + LLIR scheduler            |   1551 |   512 |      8 |    97.15% |
-| v7 + LLIR scheduler + amdgcnas |   1569 |   512 |      8 |    97.92% |
+| v6 + LLIR scheduler            |   1162 |   511 |      8 |    90.20% |
+| v7 (`base`)                    |   1210 |   512 |      8 |    66.52% |
+| v7 + LLIR scheduler            |   1554 |   512 |      8 |    97.33% |
+| v7 + LLIR scheduler + amdgcnas |   1583 |   512 |      8 |    98.06% |
 
 v7 makes two changes, and the table shows their sum: under the LLIR scheduler it runs 34% ahead
-of v6 (1551 vs 1158). The first is the N-slicing above, which brings the register budget under
+of v6 (1554 vs 1162). The first is the N-slicing above, which brings the register budget under
 the ceiling **by construction** instead of leaving it to the allocator (v6 spills 8 registers under
 `llir` on this pin, and 241 in its stock build). The second is pinning every MFMA accumulator to an
 AGPR (§4.3), which removes the copy traffic that slicing alone leaves in the loop (§4.2). Measured
-side by side, slicing alone takes the `llir` build to 1435 TFLOPS and the pins add the rest.
+side by side, slicing alone takes the `llir` build to 1423 TFLOPS and the pins add the rest.
 
 ### 4.2. The AGPR↔VGPR copy bottleneck
 
@@ -214,8 +214,8 @@ pins:
 
 | v7 without pins                | in-loop `v_accvgpr_*` copies | TFLOPS |
 |--------------------------------|------------------------------|--------|
-| `base`                         |                          280 |   1237 |
-| + LLIR scheduler               |                          116 |   1435 |
+| `base`                         |                          280 |   1244 |
+| + LLIR scheduler               |                          116 |   1423 |
 
 116 copies against 256 MFMAs are the dominant non-MFMA cost under the LLIR scheduler, and the next
 section removes them.
@@ -243,11 +243,11 @@ side by side (two rounds each):
 
 | v7, FP16 K=8192                | without pins               | with pins (this kernel)   |
 |--------------------------------|----------------------------|---------------------------|
-| `base`                         | 1237 (280 copies, 6 spills) | 1203 (0 copies, 8 spills) |
-| + LLIR scheduler               | 1435 (116 copies)          | **1556** (0 copies)       |
+| `base`                         | 1244 (280 copies, 6 spills) | 1207 (0 copies, 8 spills) |
+| + LLIR scheduler               | 1423 (116 copies)          | **1548** (0 copies)       |
 
-Under the LLIR scheduler the pins are worth **+8.4%**: the loop keeps its interleave and loses all
-116 copies, and MFMA efficiency reaches 97.2%. The stock build gives up about 3%: without the
+Under the LLIR scheduler the pins are worth **+8.8%**: the loop keeps its interleave and loses all
+116 copies, and MFMA efficiency reaches 97.3%. The stock build gives up about 3%: without the
 scheduler the copies are not what limits it (the pinned stock loop still runs at only 66% MFMA
 efficiency).
 The pinned build spills 8 registers, all outside the main loop (no scratch access inside it).
@@ -270,7 +270,7 @@ Enable it on top of the LLIR scheduler by setting the environment variable:
 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
-The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + amdgcnas), v7 reaches **97.9% MFMA efficiency** — near the theoretical maximum.
+The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + amdgcnas), v7 reaches **98.1% MFMA efficiency** — near the theoretical maximum.
 
 The trace below shows tightly packed MFMA instructions with minimal gaps between iterations:
 

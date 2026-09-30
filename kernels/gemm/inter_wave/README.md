@@ -19,16 +19,16 @@ Instead of the LLIR scheduler + AGPR-pinned accumulators + amdgcnas, they launch
 
 ## 2. Performance
 
-Measured on a well-performing MI355X, 4096×4096, Triton `gfx950-tutorial-v2.2`, plain rocprofv3
+Measured on a well-performing MI355X, 4096×4096, Triton `gfx950-tutorial-v2.3`, plain rocprofv3
 with rotating tensors (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
 
 | Kernel | K | TFLOPS / MFMA eff | VGPR / spills |
 |---|---|---|---|
-| inter_wave/a16w16 (fp16) | 8192 | 1478 / 99.84% | 242 / 0 |
-| inter_wave/a8w8 (BF8) | 16384 | 3131 / 99.84% | 256 / 8 |
-| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4402 / 67.04% | 256 / 34 |
-| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 5043 / 81.32% | 256 / 12 |
-| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 5196 / 98.92% | 244 / 0 |
+| inter_wave/a16w16 (fp16) | 8192 | 1479 / 99.84% | 242 / 0 |
+| inter_wave/a8w8 (BF8) | 16384 | 3132 / 99.86% | 256 / 8 |
+| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4383 / 66.92% | 256 / 26 |
+| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 5051 / 81.34% | 256 / 12 |
+| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 5136 / 98.90% | 244 / 0 |
 
 ## 3. Running
 

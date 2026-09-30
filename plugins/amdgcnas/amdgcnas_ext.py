@@ -1113,6 +1113,17 @@ def can_hoist(inst, bb, invariant_regs):
 
     # 2. No redefinition after inst
     reg_flat = flatten_regs(reg)
+    # The def-use chains are linear, so a use at the top of the loop that reads this value
+    # around the back edge is not among inst.users. If inst is the last def of its register in
+    # the loop and the register is read before its first def, leave it where it is.
+    def_indices = [i.index for i in bb.instructions if i.defs & reg_flat]
+    if inst.index == max(def_indices) and any(
+        user.uses & reg_flat
+        for user in bb.instructions
+        if user.index < min(def_indices) and not user.mark_dead
+    ):
+        logging.debug("  value is loop-carried to a use before its def, cannot hoist")
+        return False
     for later in bb.instructions:
         if later == inst:
             continue
@@ -1145,10 +1156,20 @@ def can_hoist(inst, bb, invariant_regs):
                 )
                 return False
 
-        free_reg = pick_and_remove_contiguous_regs(bb.free_regs, num, kind)
+        ## bb.free_regs only says a register is free inside the loop. If the value is also
+        ## read after the loop, those users are renamed too, and the epilogue may overwrite a
+        ## loop-free register before they run (accumulator read-backs do). Such a def takes a
+        ## register that no other block touches.
+        loop_insts = set(bb.instructions)
+        pool = bb.free_regs
+        if any(user not in loop_insts for user in inst.users):
+            pool = bb.free_regs - getattr(bb, "regs_outside_loop", set())
+            logging.debug("  has users outside the loop, renaming to a register unused elsewhere")
+        free_reg = pick_and_remove_contiguous_regs(pool, num, kind)
         if not free_reg:
             logging.debug("Not enough free regs")
             return False
+        bb.free_regs.difference_update(free_reg)
         free_reg = coalesce_regs(free_reg)[0]
         logging.debug(f"  found free reg: {free_reg.emit()}")
         ## Rename the hoisted inst's output and update its users
@@ -1164,22 +1185,28 @@ def hoist_loop_invariants(bb: BasicBlock):
     invariant_insts, invariant_regs = find_loop_invariants(bb)
 
     hoistable = []
-    for inst in invariant_insts:
+    ## Registers whose loop-invariant def stays in the loop. An instruction that reads one of
+    ## them stays too: hoisted, it would run in the prologue before that def. Walk the loop in
+    ## order so a def is decided before its users.
+    kept_defs = set()
+    for inst in sorted(invariant_insts, key=lambda i: i.index):
         logging.debug(f"loop invariant: {inst.emit()}")
         if inst.users:
             logging.debug(f"  users: {[u.emit() for u in inst.users]}")
-        if can_hoist(inst, bb, invariant_regs):
-            hoistable.append(inst)
-            if "scratch_load" in inst.opcode:
-                next_inst = bb.next_instruction(inst)
-                if (
-                    next_inst is not None
-                    and next_inst.operands
-                    and "vmcnt(0)" in next_inst.operands[0]
-                ):
-                    logging.debug(f"    Also hoist {next_inst.emit()}")
-                    hoistable.append(next_inst)
-            logging.debug("  can hoist!!")
+        if inst.uses & kept_defs:
+            logging.debug("  reads a def that stays in the loop, cannot hoist")
+            kept_defs |= inst.defs
+            continue
+        if not can_hoist(inst, bb, invariant_regs):
+            kept_defs |= inst.defs
+            continue
+        hoistable.append(inst)
+        if "scratch_load" in inst.opcode:
+            next_inst = bb.next_instruction(inst)
+            if next_inst is not None and next_inst.operands and "vmcnt(0)" in next_inst.operands[0]:
+                logging.debug(f"    Also hoist {next_inst.emit()}")
+                hoistable.append(next_inst)
+        logging.debug("  can hoist!!")
 
     if not hoistable:
         return [], bb.instructions
@@ -1306,6 +1333,14 @@ def licm(program):
         # (guard placed before any mutation so no hoisted instruction is dropped).
         logging.debug("no loop/prologue found; skipping LICM")
         return
+    ## Every register another block reads or writes (see can_hoist).
+    loop.regs_outside_loop = set()
+    for bb in program.blocks:
+        if bb is loop:
+            continue
+        for inst in bb.instructions:
+            if not inst.mark_dead:
+                loop.regs_outside_loop |= inst.defs | inst.uses
     hoisted, new_loop = hoist_loop_invariants(loop)
     loop.instructions = new_loop
 
