@@ -22,16 +22,16 @@ applications.
 
 The LLIR Scheduler and amdgcnas ship as **out-of-tree plugins in this repo** — [`plugins/llir_scheduler/`](../../../plugins/llir_scheduler/README.md) (an LLVM pass plugin, `libLlirSched.so`) and [`plugins/amdgcnas/`](../../../plugins/amdgcnas/README.md) (a pure-Python post-assembly hook). The kernels themselves keep their MFMA accumulators in AGPRs from a16w16 v7 on (and in a8w8 and a4w4), through Gluon's per-call `cd_regclass="a"` option — not a plugin, see [a16w16 v7 §4.3](a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass). Both plugins and the pins are essential for the kernels' performance; see the component table below.
 
-**Build.** Build Triton from the [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) annotated tag on `triton-lang/triton`, **with default symbol visibility** (`TRITON_EXT_ENABLED=1`) so the LLVM plugin can resolve LLVM symbols from `libtriton` at load time:
+**Build.** Build Triton from the [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3) annotated tag on `triton-lang/triton`, **with default symbol visibility** (`TRITON_EXT_ENABLED=1`) so the LLVM plugin can resolve LLVM symbols from `libtriton` at load time:
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.2 /tmp/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v2.3 /tmp/triton
 cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-The tag is upstream `main` at the commit that added `cd_regclass` ([#11792](https://github.com/triton-lang/triton/pull/11792)) plus two open upstream PRs: [#10849](https://github.com/triton-lang/triton/pull/10849), which keeps the target machine for LLVM pass plugins, and [#11663](https://github.com/triton-lang/triton/pull/11663), which enables `amdgpu-use-amdgpu-trackers` only when `waves_per_eu > 1`. Upstream Triton now builds AMDGCN with a separately pinned LLVM: the core LLVM is `b010a18d` and the AMD codegen LLVM is `ce3529423`.
+The tag is plain upstream `main` at `d19d4ca14`: nothing is carried on top of it. What the tutorial relies on is all upstream at that commit — `cd_regclass` ([#11792](https://github.com/triton-lang/triton/pull/11792)); [#10849](https://github.com/triton-lang/triton/pull/10849), which keeps the target machine for LLVM pass plugins; and [#11763](https://github.com/triton-lang/triton/pull/11763), which stops passing `amdgpu-use-amdgpu-trackers` for gfx950. Upstream Triton builds AMDGCN with a separately pinned LLVM: the core LLVM is `b010a18d` and the AMD codegen LLVM is `6bc4aaf6`.
 
-Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to the core LLVM (`b010a18d`); if that pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers quoted in this tutorial are reproduced against `gfx950-tutorial-v2.2` on a well-performing MI355X; the relative structure (`base` vs. `llir` vs. `llir+amdgcnas`) is expected to remain stable across later pins.
+Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports no LLVM symbols and `PassPlugin::Load` fails with `undefined symbol`. The prebuilt `plugins/llir_scheduler/libLlirSched.so` is ABI-locked to the core LLVM (`b010a18d`); if that pin moves, rebuild it from `plugins/llir_scheduler/LlirSchedPlugin.cpp` (see that plugin's README). The TFLOPS numbers quoted in this tutorial are reproduced against `gfx950-tutorial-v2.3` on a well-performing MI355X; the relative structure (`base` vs. `llir` vs. `llir+amdgcnas`) is expected to remain stable across later pins.
 
 **Upstream trajectory.** Shipping these as out-of-tree plugins is a stopgap — both plugins, and the accumulator pinning, are targeted for the LLVM backend. The LLIR scheduler will be implemented as a scheduling pass in the LLVM backend; the AGPR placement is already a per-MFMA Gluon option (`cd_regclass`), and the LLVM backend's AMDGPU register allocator is gaining the same choice (the `RewriteMFMAFormStage` pass); the post-assembly peephole is a longer-term target for an LLVM MachineInstr-level pass. See [`/docs/performance_philosophy.md §4–§5`](../../../docs/performance_philosophy.md#4-llirsched-cd_regclass-pins-and-amdgcnas-scaffolding-for-the-new-model) for the full reasoning.
 
@@ -50,7 +50,7 @@ Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports n
 
 > **Before `gfx950-tutorial-v2.2`, pinning was a process-wide switch** called force-agpr (`TRITON_FORCE_MFMA_AGPR=1`, carried on the tutorial's Triton fork): it set `amdgpu-mfma-vgpr-form=false` for every kernel and asked the kernels for `amdgpu-agpr-alloc=256`, and the perf tables carried it as a separate config. `cd_regclass` makes the same choice per MFMA call, from the kernel source, on upstream Triton. The LLVM team's **`RewriteMFMAFormStage`** pass, which chooses AGPR vs. VGPR form for each MFMA's C/D based on register pressure, is the longer-term replacement for both.
 
-**Requirements.** Both plugins need Triton built from the `gfx950-tutorial-v2.2` tag. **llirSched** additionally requires the `TRITON_EXT_ENABLED=1` (default-visibility) build and libtriton loaded with `RTLD_GLOBAL` so the LLVM plugin can resolve LLVM symbols — `bench.py` sets `RTLD_GLOBAL` automatically whenever `LLVM_PASS_PLUGIN_PATH` is set. **amdgcnas** is pure Python and needs neither `TRITON_EXT_ENABLED` nor the plugin `.so`. The pins need only upstream Triton's `cd_regclass` (any build after [#11792](https://github.com/triton-lang/triton/pull/11792)).
+**Requirements.** Both plugins need Triton built from the `gfx950-tutorial-v2.3` tag. **llirSched** additionally requires the `TRITON_EXT_ENABLED=1` (default-visibility) build and libtriton loaded with `RTLD_GLOBAL` so the LLVM plugin can resolve LLVM symbols — `bench.py` sets `RTLD_GLOBAL` automatically whenever `LLVM_PASS_PLUGIN_PATH` is set. **amdgcnas** is pure Python and needs neither `TRITON_EXT_ENABLED` nor the plugin `.so`. The pins need only upstream Triton's `cd_regclass` (any build after [#11792](https://github.com/triton-lang/triton/pull/11792)).
 
 **1. llirSched — the LLIR scheduler** (out-of-tree LLVM pass plugin [`plugins/llir_scheduler/`](../../../plugins/llir_scheduler/README.md), `libLlirSched.so`) is an LLVM-IR-level pass that interleaves MFMA instructions with memory operations (global loads, LDS reads/writes, async copies) based on the **throughput model** of those memory operations, matching MFMA issue rate to memory-operation completion rate. To preserve this scheduling, it pins each region with `llvm.amdgcn.sched.barrier(0)` in front of every memory anchor, so LLVM's machine scheduler keeps the interleave instead of clustering the MFMAs (no misched-disable needed). Without it, the backend clusters all MFMAs together, causing register spills and MFMA stalls. See [a16w16 v5 section 5](a16w16/v5_local_prefetch/README.md#5-introduction-to-the-llir-scheduler) for the motivation and [`plugins/llir_scheduler/`](../../../plugins/llir_scheduler/README.md) for the plugin itself. The scheduler:
 - Classifies memory operations into GR (global read), LR (local read), and LW (local write) anchors
@@ -61,21 +61,21 @@ Without `TRITON_EXT_ENABLED=1` the default `-fvisibility=hidden` build exports n
 - **LICM (Loop Invariant Code Motion)**: Hoists loop-invariant instructions (e.g., LDS address calculations) to the loop prologue, with register renaming when the hoisted output is redefined inside the loop.
 - **Peephole optimizations**: Interleaves MFMA with scalar instructions (`s_waitcnt`, `s_barrier`, scalar address computation for buffer loads) to maintain continuous MFMA throughput. These scalar instructions are inserted during MIR-level codegen, after the LLIR scheduler has run, so `llirSched` structurally cannot reach them — this peephole is the only pass that can.
 
-**Relative contributions.** On the `gfx950-tutorial-v2.2` pin, all four kernels
+**Relative contributions.** On the `gfx950-tutorial-v2.3` pin, all four kernels
 below carry the pins in every config, so the split is between the two plugins:
 
 | kernel | `base` | `llir` | `llir+amdgcnas` |
 |---|---|---|---|
-| a16w16 v7 | 1186 TFLOPS, 66.0% | 1551, 97.2% | 1569, 97.9% |
-| a16w16 v9 | 1414, 71.8% | 1587, 96.2% | 1608, 97.8% |
-| a8w8      | 2902, 72.2% | 3381, 96.3% | 3476, 99.7% |
-| a4w4 v1   | 5265, 67.7% | 5648, 83.7% | 5804, 93.6% |
+| a16w16 v7 | 1210 TFLOPS, 66.5% | 1554, 97.3% | 1583, 98.1% |
+| a16w16 v9 | 1389, 71.8% | 1591, 95.9% | 1605, 98.4% |
+| a8w8      | 2807, 72.0% | 3351, 96.2% | 3417, 99.7% |
+| a4w4 v1   | 5134, 68.0% | 5644, 84.2% | 5815, 94.1% |
 
-The LLIR scheduler is the large step: +7% to +31% of throughput and 16–31 points of MFMA
+The LLIR scheduler is the large step: +10% to +28% of throughput and 16–31 points of MFMA
 efficiency, because the stock scheduler does not interleave the MFMA and memory streams. amdgcnas
 adds another 1–10 points of efficiency — most on MXFP4, where the scale pipeline leaves the densest
 SALU activity — worth 1–3% of throughput. The pins do their work underneath both: measured on
-v7 with and without them, they take the `llir` loop from 116 `v_accvgpr_*` copies to none (+8.4%)
+v7 with and without them, they take the `llir` loop from 116 `v_accvgpr_*` copies to none (+8.8%)
 ([v7 §4.3](a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass)), and amdgcnas
 runs only on the pinned kernels, since it assumes the accumulators are in AGPRs. The kernels
 that sit at the 512-register ceiling without pins remain at the mercy of allocator policy — on this
@@ -141,7 +141,7 @@ For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 
 
 ## 3. FP16: The Optimization Journey
 
-The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 543 TFLOPS baseline to a near-optimal 1608 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
+The [a16w16/](a16w16/) directory documents a step-by-step optimization journey from a naive 542 TFLOPS baseline to a near-optimal 1605 TFLOPS implementation—a **~3.0× improvement** through 10 versions (v0–v9).
 
 **Start here** to learn how to write high-performance Gluon kernels. Then proceed to [a8w8/](a8w8/) and [a4w4/](a4w4/) in that order.
 

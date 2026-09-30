@@ -111,23 +111,25 @@ derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelinin
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
 kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
 reference (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | 1478 | 99.84% | **1608** | 97.82% |
-| 16384 | 1529 | 99.24% | **1651** | 97.06% |
-| 32768 | 1328 | 76.54% | **1432** | 83.51% |
+| 8192  | 1479 | 99.84% | **1605** | 98.40% |
+| 16384 | 1501 | 99.52% | **1659** | 97.30% |
+| 32768 | 1311 | 72.18% | **1324** | 72.10% |
 
-VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **448 / 0**.
+VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **456 / 0**.
 
-**The 4-wave route leads at every K**, by **~8.8%** at K=8192 (1608 vs 1478), **~8.0%** at 16384
-(1651 vs 1529) and **~7.8%** at 32768 (1432 vs 1328). This kernel wins on loop MFMA efficiency at
-K=8192 and 16384 (99.84%, 99.24%); at K=32768 both fall away as the buffer-load stall sets in, the
-8-wave kernel further (76.54% vs 83.51%). (MFMA-eff is a single-dispatch ATT reading —
-treat the last digit as noise.)
+**The 4-wave route leads at every K**, by **~8.5%** at K=8192 (1605 vs 1479), **~10.5%** at 16384
+(1659 vs 1501) and **~1.0%** at 32768 (1324 vs 1311). This kernel wins on loop MFMA efficiency at
+K=8192 and 16384 (99.84%, 99.52%); at K=32768 both fall away as the buffer-load stall sets in, to
+the same level (72.18% vs 72.10%). (MFMA-eff is a single-dispatch ATT reading —
+treat the last digit as noise. `intra_wave/v9` at K=16384 has two levels: about one run in four
+reads ~1540 instead of ~1655, on this pin and the previous one; see the v2.3 entry in
+[`CHANGELOG.md`](../../../../CHANGELOG.md).)
 
 ### Trace (MI355X, K=8192)
 

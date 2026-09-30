@@ -29,6 +29,18 @@ The kernels it is used on (a16w16 v7 and later, a8w8, a4w4) keep their MFMA accu
 AGPRs with `cd_regclass="a"`, and the peephole assumes that, so it is only used on these pinned
 kernels.
 
+## What LICM may hoist
+LICM moves a loop-invariant instruction to the end of the prologue. When the register it writes is
+written again inside the loop, the hoisted copy is renamed to a free register and its users are
+renamed with it. Three rules keep that safe whatever registers the compiler assigned:
+
+- A free register is free *inside the loop*. If the value is also read after the loop, the
+  epilogue can overwrite such a register before those reads (the accumulator read-backs do), so the
+  hoisted copy takes a register that no other block touches.
+- An instruction that reads a loop-invariant value whose definition stays in the loop stays in the
+  loop too.
+- A value that is carried around the back edge to a use at the top of the loop is not hoisted.
+
 `scripts/run_perf_table.py` wires these into the tutorial's configs; see
 [gemm/README §2.1](../../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)
 for the component stack.

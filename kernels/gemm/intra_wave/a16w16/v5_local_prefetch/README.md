@@ -147,11 +147,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1072 |   434 |    57.38% |
-| v5             |   1062 |   452 |    58.30% |
-| v5 + llirSched |   1204 |   512 |    80.32% |
+| v4             |   1061 |   434 |    57.29% |
+| v5             |   1060 |   452 |    58.50% |
+| v5 + llirSched |   1216 |   512 |    80.36% |
 
-On its own the 3-stage pipeline buys nothing in the baseline case (1072 → 1062 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1204 TFLOPS and MFMA efficiency from 58.3% to 80.3% — a **13% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
+On its own the 3-stage pipeline buys nothing in the baseline case (1061 → 1060 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1216 TFLOPS and MFMA efficiency from 58.5% to 80.4% — a **15% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).

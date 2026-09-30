@@ -58,12 +58,12 @@ faster.
 
 ## 4. Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
 average), `llir+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
-| v0_sliceN  | 5397 | 82.1% |
-| v1_sliceMN | 5804 | 93.6% |
+| v0_sliceN  | 5377 | 81.5% |
+| v1_sliceMN | 5815 | 94.1% |
 
 See each version's README for the full per-config table.

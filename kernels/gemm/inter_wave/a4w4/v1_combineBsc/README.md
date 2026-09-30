@@ -51,17 +51,17 @@ for a `[128,8]` half because there the 128-N span equals the tile's N.
 
 ## 2. Performance
 
-A well-performing MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating
+A well-performing MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating
 (`--rotating-buffer-size 2048` for K ≥ 16384):
 
 | K | v0 TFLOPS | **v1 TFLOPS** | v0 MFMA | **v1 MFMA** | speedup |
 |---|---|---|---|---|---|
-| 8192  | 3505 | **4202** | 65.3% | **80.9%** | +19.9% |
-| 16384 | 4087 | **4746** | 65.8% | **81.2%** | +16.1% |
-| 32768 | 4402 | **5043** | 67.0% | **81.3%** | +14.6% |
+| 8192  | 3659 | **4209** | 65.6% | **80.9%** | +15.0% |
+| 16384 | 4119 | **4741** | 65.7% | **81.2%** | +15.1% |
+| 32768 | 4383 | **5051** | 66.9% | **81.3%** | +15.2% |
 
 Codegen (K=8192): B-scale `v_perm` **11 → 0**, `ds_read_u8` **16 → 0**; VGPR/spills
-**256 / 34 → 256 / 12**.
+**256 / 26 → 256 / 12**.
 
 ```bash
 # correctness + do_bench TFLOPS (from this v1_combineBsc dir)

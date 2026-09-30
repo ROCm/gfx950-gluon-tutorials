@@ -49,16 +49,16 @@ tile reads and keep the MFMA fed.
 
 | kernel | TFLOPS | MFMA eff |
 |---|---|---|
-| v1 | 5043 | 81.3% |
-| v2 | **5196** | **98.9%** |
+| v1 | 5051 | 81.3% |
+| v2 | **5136** | **98.9%** |
 
-MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.2`, rocprof cold-rotating.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating.
 
 The conflict-free layout removes the ds stall → **~99% MFMA efficiency** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in far fewer cycles than v1. v2 leads on wall-clock at
-every K: **+6.6%** at K=8192 (4479 vs 4202), +3.2% at K=16384 and **+3.0%** at K=32768 (5196 vs
-5043). The lead is smaller than the cycle win because the bigger 32×32×64 MFMAs are power-hungrier and
-the GPU **frequency-throttles** harder; on a slower MI355X measured the same day, the throttling took
+every K: **+5.4%** at K=8192 (4436 vs 4209), +3.8% at K=16384 and **+1.7%** at K=32768 (5136 vs
+5051). The lead is smaller than the cycle win because the bigger 32×32×64 MFMAs are power-hungrier and
+the GPU **frequency-throttles** harder; on a slower MI355X (measured on the v2.2 pin) the throttling took
 the whole win back at K ≥ 16384 and v1 was ahead. v2 is the only spill-free version of the three.
 
 This is

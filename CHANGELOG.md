@@ -5,6 +5,101 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-09-28 — Re-pin to `gfx950-tutorial-v2.3`
+
+[`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3)
+is upstream Triton `main` at `d19d4ca14`, with **nothing on top**. Everything `v2.2` carried or was
+waiting for has landed, so a plain upstream build now reproduces the tutorial.
+
+### What changed, and why it matters
+
+1. **The pin is plain upstream.** The three open items of `v2.2` are closed:
+
+   | item | `v2.2` | `v2.3` |
+   |---|---|---|
+   | target machine when a pass plugin is loaded | carried [#10849](https://github.com/triton-lang/triton/pull/10849) | merged (`4fd7cc5cf`) |
+   | `amdgpu-use-amdgpu-trackers` | carried [#11663](https://github.com/triton-lang/triton/pull/11663): passed only when `waves_per_eu > 1` | upstream no longer passes the flag at all ([#11763](https://github.com/triton-lang/triton/pull/11763)) |
+   | AMD codegen LLVM | `ce3529423`; the pin stopped short of `d26ff26e`, which broke register pressure tracking on gfx950 | `6bc4aaf6` = `d26ff26e` plus the fix, "Do not always set DAG.Pressure" ([#12003](https://github.com/triton-lang/triton/pull/12003), [#12016](https://github.com/triton-lang/triton/pull/12016)) |
+
+   The core LLVM stays `b010a18d`, so the llirSched `.so` keeps its ABI. For the tutorial kernels
+   the trackers are off on both pins, since none of them requests `waves_per_eu > 1`.
+2. **`amdgcnas` LICM fix — the re-pin exposed a wrong-result bug in the plugin.** When LICM hoists
+   an instruction whose register is written again inside the loop, it renames the hoisted copy to
+   a register that is free *inside the loop*. If the value is also read after the loop, the
+   epilogue can overwrite that register before those reads: the accumulator read-backs
+   (`v_accvgpr_read_b32`) do. With the register assignment of the new LLVM this hit `intra_wave`
+   a4w4 v1, whose `llir+amdgcnas` build returned wrong results (max abs error ~390) at full speed.
+   The bug does not depend on the pin; on `v2.2` the renamed register happened to survive. A
+   hoisted value that is read outside the loop now takes a register no other block touches, and two
+   related holes are closed
+   ([plugin README](plugins/amdgcnas/README.md#what-licm-may-hoist)). All 27 `intra_wave`
+   configurations check against the reference on both pins, the fix costs nothing (a4w4 v1 still
+   hoists 21 instructions, same register count), and every `llir+amdgcnas` number below was
+   measured with it.
+
+### What happened to the three v2.1 causes
+
+1. **`amdgpu-use-amdgpu-trackers`** — gone upstream (#11763). Same effect on the tutorial as
+   `v2.2`'s #11663; the A/B is below.
+2. **`computePSetLimit` underflow** — fixed since `v2.2`, unchanged.
+3. **`ConvertWarpPipeline` head barrier** — unchanged upstream. Attention still gets about half of
+   the lost efficiency back, from a different change (below).
+
+### Findings on v2.3
+
+Every number was re-measured on a well-performing MI355X with the protocol of the 2026-09-03
+refresh, and `v2.2` was re-measured on the same GPU the same day, alternating with `v2.3` row by
+row. The comparisons below are against that control. Headline: **542 -> 1605 TFLOPS (~3.0x)** on
+a16w16 FP16; a8w8 **3417**, a4w4 v1 **5815**, BF16 v9 **1694**, `fmha_v4` **1289** (0.987x FlyDSL).
+
+- **The GEMMs are at parity with `v2.2`.** The `llir`, `llir+amdgcnas` and `inter_wave` headline
+  rows are within 2% of the same-day control, which is the run-to-run spread of those rows. The
+  loops of `inter_wave` a16w16 and a8w8 are instruction-for-instruction identical on the two pins;
+  the a4w4 ones differ in register assignment only.
+- **Attention gains ~2% and 4 to 4.6 points of in-loop MFMA efficiency.** Tuned `fmha_v4`
+  1261 -> **1289** (84.7% -> 89.3%), tuned `fmha_v3` 1191 -> **1216** (76.9% -> 81.0%). The cause
+  is [#11719](https://github.com/triton-lang/triton/pull/11719), a correctness fix to the membar
+  filter that makes `ConvertWarpPipeline` close each memory stage with an LDS-synchronizing
+  barrier. One `s_waitcnt lgkmcnt(0)` per memory stage then replaces the 42 waits LLVM used to
+  spread between the MFMAs of the compute stages, and the loop goes from 594 to 556 instructions.
+  Confirmed by reverting that one change on the pin, which gives back the `v2.2` loop. The
+  trackers, FP fusion and the codegen LLVM were each ruled out
+  ([attention §9](kernels/attention/README.md#9-results)). The 8-wave GEMMs have the same barriers
+  and waits on both pins.
+- **Turning the trackers off regresses nothing against `v2.2`,** which already had them off for
+  these kernels. Forcing them back on, stock `base` build, FP16 K=8192:
+
+  | | trackers off (the pin) | trackers forced on |
+  |---|---|---|
+  | a16w16 v5 | 1075 | 1042 |
+  | a16w16 v6 | **218**, 241 spills | 1043, no spills |
+  | a16w16 v7 | 1211, 8 spills | 1187, 68 spills |
+  | a16w16 v9 | 1378 | 1386 |
+
+  The unpinned stock v6 is still the one kernel that needs them, and the pinned v7 the one they
+  hurt.
+- **Pins cost the stock build and pay under llirSched,** as on `v2.2`. On v7, with vs without pins:
+  `base` 1207 vs 1244, `llir` 1548 vs 1423.
+- **Register counts move with the new codegen LLVM, without effect:** a16w16 v8 and v9 use 456
+  VGPRs (448 on `v2.2`), a4w4 v1 464 (452 to 456). `inter_wave` a4w4 v0 spills 26 registers instead
+  of 34 and v1 still 12.
+- **`inter_wave` a4w4 v0 at K=8192 is 3.6% faster** (3508 -> 3635, three rounds each). At K=32768
+  it is +1.3%, within noise.
+- **The K=32768 a16w16 rows are lower than published on `v2.2`, and it is not the pin:**
+  `intra_wave` v9 reads 1324 / 72.1% (was 1432 / 83.5%) and `inter_wave` 1311 / 72.2% (was
+  1328 / 76.5%), but `v2.2` re-measured the same day reads the same: 1321 vs 1327 and 1311 vs 1316
+  over three rounds.
+- **Stock rows are the noisy ones.** Single runs of the `base` configs, and of a4w4 v0 `llir`,
+  differ by up to ~5% on either pin (a4w4 v1 `base` read 4985 to 5245 over four runs). The
+  `llir+amdgcnas` rows repeat within 1 to 2%, with one exception: a16w16 v9 at K=16384 has two
+  levels, ~1655 and ~1540, and about one run in four lands on the lower one, on both pins (3 of 12
+  runs on `v2.2`, 4 of 14 on `v2.3`). v7 at the same shape does not (1566 to 1578 over 16 runs).
+- **FP fusion is off by default upstream** ([#11270](https://github.com/triton-lang/triton/pull/11270)).
+  The attention kernels compile to the same code either way, and their error against the fp32
+  reference is unchanged.
+- **Not re-measured:** the L2 counter table in `a16w16/v9_beyond_hotloop` §3.5, and the
+  head-barrier experiment of the 2026-09-03 refresh (attention cause 3).
+
 ## 2026-09-26 — Re-pin to `gfx950-tutorial-v2.2`
 
 [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2)

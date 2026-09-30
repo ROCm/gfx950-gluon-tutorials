@@ -50,10 +50,10 @@ branch.
 
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
-Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.2`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.2) for both the GEMM and the
+Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3) for both the GEMM and the
 attention kernels. Triton now uses two LLVMs: the **core LLVM `b010a18d`** (see `cmake/llvm-info.json`)
 runs the LLVM-IR pipeline, including this plugin, and a separately pinned AMD codegen LLVM
-(`ce3529423`, see `cmake/amd-llvm-info.json`) turns the result into AMDGCN. The plugin only sees
+(`6bc4aaf6`, see `cmake/amd-llvm-info.json`) turns the result into AMDGCN. The plugin only sees
 the core LLVM, and the prebuilt `.so` here is built against it. If the core LLVM pin moves,
 **rebuild the `.so`** — the v2.0 `.so` (LLVM `850a2b1b`) segfaults against this pin.
 
@@ -70,7 +70,7 @@ The plugin does **not** link LLVM; it resolves LLVM symbols from `libtriton` at
 load time (see prerequisites).
 
 ## Triton prerequisites
-The pin carries the source change this plugin needs,
+The pin includes the source change this plugin needs,
 [triton-lang/triton#10849](https://github.com/triton-lang/triton/pull/10849): Triton
 *always sets the TargetMachine when an arch is given*, without which `optimize_module` runs
 all of O3 with no target machine and codegen regresses (v9 loses ~11%). The one thing left to

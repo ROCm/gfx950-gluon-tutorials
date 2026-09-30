@@ -166,18 +166,18 @@ For an explanation of MFMA efficiency and how to measure it, see [MFMA Efficienc
 
 ## 4. Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.2`, plain rocprofv3 with
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, plain rocprofv3 with
 rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16. `llir+amdgcnas` is
 the shipping stack.
 
 | Version              | Config          | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|-----------------|--------|-------|--------|-----------|
-| v8_sliceMN           | `base`          |   1382 |   448 |      0 |    71.53% |
-| v9_beyond_hotloop    | `base`          |   1414 |   448 |      0 |    71.79% |
-| v8_sliceMN           | `llir`          |   1552 |   448 |      0 |    95.37% |
-| v9_beyond_hotloop    | `llir`          |   1587 |   448 |      0 |    96.15% |
-| v8_sliceMN           | `llir+amdgcnas` |   1593 |   448 |      0 |    98.56% |
-| v9_beyond_hotloop    | `llir+amdgcnas` |   1608 |   448 |      0 |    97.82% |
+| v8_sliceMN           | `base`          |   1326 |   456 |      0 |    71.55% |
+| v9_beyond_hotloop    | `base`          |   1389 |   456 |      0 |    71.80% |
+| v8_sliceMN           | `llir`          |   1555 |   456 |      0 |    94.78% |
+| v9_beyond_hotloop    | `llir`          |   1591 |   456 |      0 |    95.88% |
+| v8_sliceMN           | `llir+amdgcnas` |   1588 |   456 |      0 |    98.39% |
+| v9_beyond_hotloop    | `llir+amdgcnas` |   1605 |   456 |      0 |    98.40% |
 
 v9 adds no instructions to the hot loop — the gain is entirely outside it, from the L2
 locality the XCD-aware PID remapping buys. MFMA efficiency is essentially unchanged (the loop

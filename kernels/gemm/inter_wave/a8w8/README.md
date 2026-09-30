@@ -52,17 +52,17 @@ epilogue (which carries no MFMA).
 ## 2. Performance
 
 MI355X, gfx950, 4096×4096, BF8, rocprof cold-rotating (last-100 average of 1000 dispatches;
-`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.2`, on a well-performing MI355X. The 8-wave kernel
+`--rotating-buffer-size 2048` for K ≥ 16384), Triton `gfx950-tutorial-v2.3`, on a well-performing MI355X. The 8-wave kernel
 (`scripts/collect_perf.py`, **no-AGPR**) vs the 4-wave `intra_wave/a8w8` reference
 (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | 8-wave TFLOPS | 8-wave MFMA eff | 4-wave TFLOPS | 4-wave MFMA eff |
 |---|---|---|---|---|
-| 8192  | 2949 | 99.70% | **3215** | 99.73% |
-| 16384 | 3131 | 99.84% | **3476** | 99.72% |
-| 32768 | **3202** | 98.58% | 3090 | 98.11% |
+| 8192  | 2911 | 99.70% | **3223** | 99.73% |
+| 16384 | 3132 | 99.86% | **3417** | 99.72% |
+| 32768 | **3167** | 99.14% | 3085 | 96.43% |
 
-The 4-wave kernel leads at K ≤ 16384 (+9.0% and +11.0%); at K=32768 the 8-wave kernel is ahead by 3.6%.
+The 4-wave kernel leads at K ≤ 16384 (+10.7% and +9.1%); at K=32768 the 8-wave kernel is ahead by 2.7%.
 
 ## 3. Running
 
