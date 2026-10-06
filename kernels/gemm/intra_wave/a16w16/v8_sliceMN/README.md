@@ -135,7 +135,7 @@ Compared to v7's 448, this is 64 fewer registers — headroom that accommodates 
 
 This section explains a throughput limitation that affects v7 at large K values and how v8's four-region structure resolves it.
 
-The central concept is the **TCP (Texture Cache Per-CU)** — a 32 KB L1 cache that all memory requests must pass through. The TCP limits how many bytes can be in flight per CU at any given time, and this limit governs whether `buffer_load` instructions stall waiting for earlier requests to complete. For a comprehensive treatment of how TCP capacity interacts with pipeline depth, occupancy, and HBM latency, see the [Memory Bandwidth Model](../../../../../docs/memory_bandwidth_model.md).
+The central concept is the **TCP (Texture Cache Per-CU)** — a 32 KB L1 cache that all memory requests must pass through. The TCP limits how many bytes can be in flight per CU at any given time, and this limit governs whether `buffer_load` instructions stall waiting for earlier requests to complete. For a comprehensive treatment of how TCP capacity interacts with pipeline depth, occupancy, and HBM latency, see the [Memory Bandwidth Model](../../../../../docs/memory_bandwidth_model.md). For a per-tile test that turns these limits into a compute-bound / TCP-bound verdict before the kernel is written, see [Compute-Bound or TCP-Bound?](../../../../../docs/tcp_bound_tile_model.md).
 
 ### 4.1. Memory Hierarchy
 
