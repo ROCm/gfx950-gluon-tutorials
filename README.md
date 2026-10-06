@@ -60,7 +60,7 @@ Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |
 | Build a mental model for LDS or HBM throughput           | `docs/`                     |
-| Tell whether a tile size can be compute-bound at all     | `docs/tcp_bound_tile_model.md` |
+| Tell whether a tile is compute-, bandwidth- or latency-bound | `docs/tcp_bound_tile_model.md` |
 | Automate rocprof, collect counters, generate perf tables | `scripts/`                  |
 | See what changed with a Triton or compiler bump          | `CHANGELOG.md`              |
 | Know what's planned next                                 | `ROADMAP.md`                |
