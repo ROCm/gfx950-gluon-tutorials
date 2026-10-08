@@ -89,11 +89,16 @@ LLVM_PASS_PLUGIN_PATH=/abs/path/plugins/llir_scheduler/libLlirSched.so \
     python bench.py --version 8 --K 8192 --dtype fp16
 ```
 `scripts/run_perf_table.py` wires this into the `llir` and `llir+amdgcnas` configs
-automatically.
+automatically. The plugin reads no environment variables of its own; debug output goes through
+`LLVM_DEBUG` (`TRITON_LLVM_DEBUG_ONLY=tritonamdgpu-llir-schedule`). A kernel that already
+carries `sched.barrier`s is scheduled span by span between them, each span by the model its
+contents ask for (design reference, §8).
 
 ## The plugin source
-`LlirSchedPlugin.cpp` is the maintained plugin source — a self-contained
-new-PassManager LLVM pass plugin: it carries no Triton headers and registers
-itself via `llvmGetPassPluginInfo`,
-auto-inserted at the `OptimizerLast` extension point. Edit it and rebuild the
-`.so` with the `g++` command in **Build** above.
+`LlirSchedPlugin.cpp` is the maintained plugin source — a self-contained new-PassManager
+LLVM pass plugin: it carries no Triton headers and registers itself via
+`llvmGetPassPluginInfo`, auto-inserted at the `OptimizerLast` extension point. Edit it and
+rebuild the `.so` with the `g++` command in **Build** above. The same pass body is proposed
+upstream as an in-tree Triton pass (opt-in `schedule_hint="mfma-mem-interleave"`); the
+plugin wrapper at the end of the file and the inlined MFMA predicate are the only lines
+the two copies do not share.
