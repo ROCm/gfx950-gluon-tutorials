@@ -4,7 +4,7 @@
     .lbl  { font-size: 11.5px; fill: #767676; }
     .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
     .in   { font-size: 11px; fill: #1a1a1a; }
-    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .ins  { font-size: 10.5px; fill: #1a1a1a; }
     .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
     .note { font-size: 11.5px; fill: #767676; }
     .bad  { font-size: 11.5px; fill: #c8443c; }

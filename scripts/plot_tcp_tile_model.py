@@ -67,7 +67,7 @@ STYLE = f"""
     .lbl  {{ font-size: 11.5px; fill: {GREY_T}; }}
     .lblb {{ font-size: 11.5px; font-weight: 600; fill: {GREY_T}; }}
     .in   {{ font-size: 11px; fill: {INK}; }}
-    .ins  {{ font-size: 9.5px; fill: {INK}; }}
+    .ins  {{ font-size: 10.5px; fill: {INK}; }}
     .inb  {{ font-size: 11.5px; font-weight: 600; fill: {INK}; }}
     .note {{ font-size: 11.5px; fill: {GREY_T}; }}
     .bad  {{ font-size: 11.5px; fill: {RED[1]}; }}
@@ -444,7 +444,7 @@ def fig_tiles():
         ("128 x 64", 469, 512, 47, 47, "bw"),
         ("64 x 128", 469, 512, 47, 47, "bw"),
     ]
-    W, H = 760, 380
+    W, H = 760, 452
     s = svg_open(
         W,
         H,
@@ -461,7 +461,7 @@ def fig_tiles():
     )
     x0, xmax = 92, 1600
     scale = 340 / xmax
-    y0, rh, gap = 52, 24, 10
+    y0, rh, gap = 66, 24, 10
     ybot = y0 + len(rows) * (rh + gap)
     for c in (0, 500, 1000, 1500):
         x = x0 + c * scale
@@ -482,7 +482,7 @@ def fig_tiles():
         "boundary": ("on the line", "warnb"),
         "bw": ("bandwidth-bound", "badb"),
     }
-    vx, ex = 452, 580
+    vx, ex = 462, 592
     for i, (tile, c44, c48, ceil, meas, v) in enumerate(rows):
         y = y0 + i * (rh + gap)
         s += text(x0 - 8, y + rh / 2 + 4, tile, "in", "end")
@@ -735,16 +735,17 @@ def fig_depth():
 
 
 # ---------------------------------------------------------------------------
-# Figure 7: the checklist as a decision flow
+# Figure 7: the checklist as a decision flow (top to bottom, outcomes to the right)
 # ---------------------------------------------------------------------------
 def fig_flow():
-    W, H = 760, 384
+    W, H = 760, 560
     s = svg_open(
         W,
         H,
-        "Decision flow for a new tile: compute B and T; if T times C over B is under L the loop is bandwidth-bound with "
-        "ceiling T C over B L; else if num_stages minus one times T is under L it is latency-bound, deepen the pipeline and "
-        "re-test; else if it still waits read which instruction waits; else the gap is a scheduling problem.",
+        "Decision flow for a new tile: compute B and T; if T times C over B is under L the loop is "
+        "bandwidth-bound with ceiling T C over B L; else if num_stages minus one times T is under L it is "
+        "latency-bound, deepen the pipeline and re-test; else if it still waits read which instruction "
+        "waits; else the gap is a scheduling problem.",
     )
     s += text(
         8,
@@ -753,97 +754,140 @@ def fig_flow():
         "h",
     )
 
-    def node(x, y, w, h, lines, col, cls="ins", rx=4):
+    def node(x, y, w, h, lines, col, rx=4):
         s_ = rect(x, y, w, h, col, rx=rx)
         n = len(lines)
-        for i, ln in enumerate(lines):
-            s_ += text(x + w / 2, y + h / 2 + 3.5 + (i - (n - 1) / 2) * 13, ln, cls, "middle")
+        for i, (ln, cls) in enumerate(lines):
+            s_ += text(x + w / 2, y + h / 2 + 4 + (i - (n - 1) / 2) * 16, ln, cls, "middle")
         return s_
 
-    bw, gp = 160, 34
-    xs = [8 + i * (bw + gp) for i in range(4)]
-    y1, h1 = 40, 44
+    lx, lw = 8, 318  # the tests, stacked on the left
+    rx_, rw = 392, 360  # the outcomes, to the right
+    gap = 30
+    y = 36
+    # 1
+    h1 = 52
     s += node(
-        xs[0],
-        y1,
-        bw,
+        lx,
+        y,
+        lw,
         h1,
-        ["1.  B = A+B bytes per K tile", "T = 16 x MFMAs per wave"],
+        [("1.  B = A + B bytes per K tile", "inb"), ("T = 16 x MFMAs per wave per K tile", "in")],
         ("#ffffff", GREY_T),
     )
-    s += node(xs[1], y1, bw, h1, ["2.  T x C / B  ≥  L ?", "fp16: 11 BM BN / (BM + BN)"], YELLOW)
+    s += arrow(lx + lw / 2, y + h1, lx + lw / 2, y + h1 + gap - 2)
+    y += h1 + gap
+    # 2
+    h2 = 52
     s += node(
-        xs[2], y1, bw, h1, ["3.  (stages − 1) x T  ≥  L ?", "buffers = what LDS allows"], YELLOW
+        lx,
+        y,
+        lw,
+        h2,
+        [("2.  T x C / B  ≥  L ?", "inb"), ("fp16, 16x16x32: 11 x BM x BN / (BM + BN)", "in")],
+        YELLOW,
     )
-    s += node(xs[3], y1, bw, h1, ["4.  still waits on vmcnt?", "which instruction waits?"], YELLOW)
-    for i in range(3):
-        s += arrow(xs[i] + bw, y1 + h1 / 2, xs[i + 1] - 2, y1 + h1 / 2)
-        if i:
-            s += text(xs[i] + bw + gp / 2, y1 + h1 / 2 - 6, "yes", "lbl", "middle")
-    y2 = 124
-    for i in (1, 2):
-        s += text(xs[i] + bw / 2 + 10, y2 - 18, "no", "lbl")
-        s += arrow(xs[i] + bw / 2, y1 + h1, xs[i] + bw / 2, y2 - 2)
+    s += arrow(lx + lw, y + h2 / 2, rx_ - 2, y + h2 / 2)
+    s += text((lx + lw + rx_) / 2, y + h2 / 2 - 6, "no", "lbl", "middle")
     s += node(
-        xs[1],
-        y2,
-        bw,
-        74,
+        rx_,
+        y - 8,
+        rw,
+        h2 + 16,
         [
-            "bandwidth-bound",
-            "spread the loads; then the",
-            "ceiling is T x C / (B x L).",
-            "levers: tile shape, dtype, L",
+            ("bandwidth-bound", "badb"),
+            ("spread the loads; then the ceiling is T x C / (B x L).", "in"),
+            ("Levers: tile shape, element type, L. Not LDS buffers.", "in"),
         ],
         RED,
     )
+    s += arrow(lx + lw / 2, y + h2, lx + lw / 2, y + h2 + gap - 2)
+    s += text(lx + lw / 2 + 8, y + h2 + gap / 2 + 4, "yes", "lbl")
+    y += h2 + gap
+    # 3
+    h3 = 52
     s += node(
-        xs[2],
-        y2,
-        bw,
-        74,
-        ["latency-bound", "deepen the pipeline, then", "back to test 2's verdict"],
+        lx,
+        y,
+        lw,
+        h3,
+        [
+            ("3.  (num_stages − 1) x T  ≥  L ?", "inb"),
+            ("with as many buffers as the LDS allows", "in"),
+        ],
+        YELLOW,
+    )
+    s += arrow(lx + lw, y + h3 / 2, rx_ - 2, y + h3 / 2)
+    s += text((lx + lw + rx_) / 2, y + h3 / 2 - 6, "no", "lbl", "middle")
+    s += node(
+        rx_,
+        y - 8,
+        rw,
+        h3 + 16,
+        [
+            ("latency-bound", "badb"),
+            ("deepen the pipeline, which moves the wait", "in"),
+            ("to the TCP cap: back to test 2's verdict.", "in"),
+        ],
         RED,
     )
-    # node 4: no -> scheduling problem (row 2, narrower); yes -> read the trace (row 3)
-    s += text(xs[3] + (bw - 30) / 2 + 10, y2 - 18, "no", "lbl")
-    s += arrow(xs[3] + (bw - 30) / 2, y1 + h1, xs[3] + (bw - 30) / 2, y2 - 2)
+    s += arrow(lx + lw / 2, y + h3, lx + lw / 2, y + h3 + gap - 2)
+    s += text(lx + lw / 2 + 8, y + h3 + gap / 2 + 4, "yes", "lbl")
+    y += h3 + gap
+    # 4
+    h4 = 52
     s += node(
-        xs[3],
-        y2,
-        bw - 30,
-        74,
-        ["5. scheduling", "problem: LLIR", "scheduler, the", "v7 → v9 steps"],
+        lx,
+        y,
+        lw,
+        h4,
+        [
+            ("4.  still waiting on vmcnt?", "inb"),
+            ("read the trace: which instruction waits?", "in"),
+        ],
+        YELLOW,
+    )
+    s += arrow(lx + lw, y + h4 / 2, rx_ - 2, y + h4 / 2)
+    s += text((lx + lw + rx_) / 2, y + h4 / 2 - 6, "yes", "lbl", "middle")
+    s += node(
+        rx_,
+        y - 8,
+        rw,
+        h4 + 16,
+        [
+            ("a stretched buffer_load → the cap of test 2", "bad"),
+            ("a long s_waitcnt before the ds_reads", "bad"),
+            ("→ the depth of test 3", "bad"),
+        ],
+        RED,
+    )
+    s += arrow(lx + lw / 2, y + h4, lx + lw / 2, y + h4 + gap - 2)
+    s += text(lx + lw / 2 + 8, y + h4 + gap / 2 + 4, "no", "lbl")
+    y += h4 + gap
+    # 5
+    h5 = 52
+    s += node(
+        lx,
+        y,
+        lw,
+        h5,
+        [
+            ("5.  a scheduling problem", "okb"),
+            ("the LLIR scheduler and the v7 → v9 steps apply", "in"),
+        ],
         GREEN,
     )
-    y3 = 224
-    s += text(xs[3] + bw - 16, y2 + 30, "yes", "lbl", "end")
-    s += path(f"M {xs[3] + bw - 10} {y1 + h1} V {y3 - 2}", "wire", ' marker-end="url(#arr)"')
-    s += node(
-        xs[3] - 60,
-        y3,
-        bw + 60,
-        60,
-        [
-            "a stretched buffer_load",
-            "→ the cap of test 2",
-            "a long s_waitcnt before the",
-            "ds_reads → the depth of test 3",
-        ],
-        RED,
-    )
-    s = s.replace(f'y="{y3 + 30 + 3.5 - 19.5}"', f'y="{y3 + 30 + 3.5 - 19.5}"')
-    y = 310
+    y += h5 + 28
     s += text(
         8,
         y,
-        "C = 44 KB per CU (one workgroup per CU). L ≈ 1000 cycles at L2-friendly K; it grows with the L2 miss rate, so the",
+        "C = 44 KB per CU (one workgroup per CU). L ≈ 1000 cycles at L2-friendly K; it grows with the L2 miss rate,",
         "note",
     )
     s += text(
         8,
         y + 16,
-        "verdicts are optimistic at large K. An 8-bit element type halves B at the same T, so it doubles a tile's budget.",
+        "so the verdicts are optimistic at large K. An 8-bit element type halves B at the same T: twice the budget.",
         "note",
     )
     s += text(

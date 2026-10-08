@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 384" width="760" height="384" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="Decision flow for a new tile: compute B and T; if T times C over B is under L the loop is bandwidth-bound with ceiling T C over B L; else if num_stages minus one times T is under L it is latency-bound, deepen the pipeline and re-test; else if it still waits read which instruction waits; else the gap is a scheduling problem.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" width="760" height="560" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="Decision flow for a new tile: compute B and T; if T times C over B is under L the loop is bandwidth-bound with ceiling T C over B L; else if num_stages minus one times T is under L it is latency-bound, deepen the pipeline and re-test; else if it still waits read which instruction waits; else the gap is a scheduling problem.">
   <style>
     .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
     .lbl  { font-size: 11.5px; fill: #767676; }
     .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
     .in   { font-size: 11px; fill: #1a1a1a; }
-    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .ins  { font-size: 10.5px; fill: #1a1a1a; }
     .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
     .note { font-size: 11.5px; fill: #767676; }
     .bad  { font-size: 11.5px; fill: #c8443c; }
@@ -26,53 +26,49 @@
     <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
     <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
   </defs>
-  <rect x="0" y="0" width="760" height="384" fill="#ffffff"/>
+  <rect x="0" y="0" width="760" height="560" fill="#ffffff"/>
   <text class="h" x="8" y="16">The checklist as a flow. Two tests, then the trace tells you which one you failed.</text>
-  <rect x="8" y="40" width="160" height="44" fill="#ffffff" stroke="#767676" rx="4"/>
-  <text class="ins" x="88.0" y="59.0" text-anchor="middle">1.  B = A+B bytes per K tile</text>
-  <text class="ins" x="88.0" y="72.0" text-anchor="middle">T = 16 x MFMAs per wave</text>
-  <rect x="202" y="40" width="160" height="44" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
-  <text class="ins" x="282.0" y="59.0" text-anchor="middle">2.  T x C / B  ≥  L ?</text>
-  <text class="ins" x="282.0" y="72.0" text-anchor="middle">fp16: 11 BM BN / (BM + BN)</text>
-  <rect x="396" y="40" width="160" height="44" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
-  <text class="ins" x="476.0" y="59.0" text-anchor="middle">3.  (stages − 1) x T  ≥  L ?</text>
-  <text class="ins" x="476.0" y="72.0" text-anchor="middle">buffers = what LDS allows</text>
-  <rect x="590" y="40" width="160" height="44" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
-  <text class="ins" x="670.0" y="59.0" text-anchor="middle">4.  still waits on vmcnt?</text>
-  <text class="ins" x="670.0" y="72.0" text-anchor="middle">which instruction waits?</text>
-  <line x1="168" y1="62.0" x2="200" y2="62.0" class="wire" marker-end="url(#arr)"/>
-  <line x1="362" y1="62.0" x2="394" y2="62.0" class="wire" marker-end="url(#arr)"/>
-  <text class="lbl" x="379.0" y="56.0" text-anchor="middle">yes</text>
-  <line x1="556" y1="62.0" x2="588" y2="62.0" class="wire" marker-end="url(#arr)"/>
-  <text class="lbl" x="573.0" y="56.0" text-anchor="middle">yes</text>
-  <text class="lbl" x="292.0" y="106">no</text>
-  <line x1="282.0" y1="84" x2="282.0" y2="122" class="wire" marker-end="url(#arr)"/>
-  <text class="lbl" x="486.0" y="106">no</text>
-  <line x1="476.0" y1="84" x2="476.0" y2="122" class="wire" marker-end="url(#arr)"/>
-  <rect x="202" y="124" width="160" height="74" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
-  <text class="ins" x="282.0" y="145.0" text-anchor="middle">bandwidth-bound</text>
-  <text class="ins" x="282.0" y="158.0" text-anchor="middle">spread the loads; then the</text>
-  <text class="ins" x="282.0" y="171.0" text-anchor="middle">ceiling is T x C / (B x L).</text>
-  <text class="ins" x="282.0" y="184.0" text-anchor="middle">levers: tile shape, dtype, L</text>
-  <rect x="396" y="124" width="160" height="74" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
-  <text class="ins" x="476.0" y="151.5" text-anchor="middle">latency-bound</text>
-  <text class="ins" x="476.0" y="164.5" text-anchor="middle">deepen the pipeline, then</text>
-  <text class="ins" x="476.0" y="177.5" text-anchor="middle">back to test 2's verdict</text>
-  <text class="lbl" x="665.0" y="106">no</text>
-  <line x1="655.0" y1="84" x2="655.0" y2="122" class="wire" marker-end="url(#arr)"/>
-  <rect x="590" y="124" width="130" height="74" fill="#cde8d3" stroke="#4c9a5a" rx="4"/>
-  <text class="ins" x="655.0" y="145.0" text-anchor="middle">5. scheduling</text>
-  <text class="ins" x="655.0" y="158.0" text-anchor="middle">problem: LLIR</text>
-  <text class="ins" x="655.0" y="171.0" text-anchor="middle">scheduler, the</text>
-  <text class="ins" x="655.0" y="184.0" text-anchor="middle">v7 → v9 steps</text>
-  <text class="lbl" x="734" y="154" text-anchor="end">yes</text>
-  <path d="M 740 84 V 222" class="wire" marker-end="url(#arr)"/>
-  <rect x="530" y="224" width="220" height="60" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
-  <text class="ins" x="640.0" y="238.0" text-anchor="middle">a stretched buffer_load</text>
-  <text class="ins" x="640.0" y="251.0" text-anchor="middle">→ the cap of test 2</text>
-  <text class="ins" x="640.0" y="264.0" text-anchor="middle">a long s_waitcnt before the</text>
-  <text class="ins" x="640.0" y="277.0" text-anchor="middle">ds_reads → the depth of test 3</text>
-  <text class="note" x="8" y="310">C = 44 KB per CU (one workgroup per CU). L ≈ 1000 cycles at L2-friendly K; it grows with the L2 miss rate, so the</text>
-  <text class="note" x="8" y="326">verdicts are optimistic at large K. An 8-bit element type halves B at the same T, so it doubles a tile's budget.</text>
-  <text class="lblb" x="8" y="350">Only when both tests pass is the remaining gap something a schedule can close.</text>
+  <rect x="8" y="36" width="318" height="52" fill="#ffffff" stroke="#767676" rx="4"/>
+  <text class="inb" x="167.0" y="58.0" text-anchor="middle">1.  B = A + B bytes per K tile</text>
+  <text class="in" x="167.0" y="74.0" text-anchor="middle">T = 16 x MFMAs per wave per K tile</text>
+  <line x1="167.0" y1="88" x2="167.0" y2="116" class="wire" marker-end="url(#arr)"/>
+  <rect x="8" y="118" width="318" height="52" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
+  <text class="inb" x="167.0" y="140.0" text-anchor="middle">2.  T x C / B  ≥  L ?</text>
+  <text class="in" x="167.0" y="156.0" text-anchor="middle">fp16, 16x16x32: 11 x BM x BN / (BM + BN)</text>
+  <line x1="326" y1="144.0" x2="390" y2="144.0" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="359.0" y="138.0" text-anchor="middle">no</text>
+  <rect x="392" y="110" width="360" height="68" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
+  <text class="badb" x="572.0" y="132.0" text-anchor="middle">bandwidth-bound</text>
+  <text class="in" x="572.0" y="148.0" text-anchor="middle">spread the loads; then the ceiling is T x C / (B x L).</text>
+  <text class="in" x="572.0" y="164.0" text-anchor="middle">Levers: tile shape, element type, L. Not LDS buffers.</text>
+  <line x1="167.0" y1="170" x2="167.0" y2="198" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="175.0" y="189.0">yes</text>
+  <rect x="8" y="200" width="318" height="52" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
+  <text class="inb" x="167.0" y="222.0" text-anchor="middle">3.  (num_stages − 1) x T  ≥  L ?</text>
+  <text class="in" x="167.0" y="238.0" text-anchor="middle">with as many buffers as the LDS allows</text>
+  <line x1="326" y1="226.0" x2="390" y2="226.0" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="359.0" y="220.0" text-anchor="middle">no</text>
+  <rect x="392" y="192" width="360" height="68" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
+  <text class="badb" x="572.0" y="214.0" text-anchor="middle">latency-bound</text>
+  <text class="in" x="572.0" y="230.0" text-anchor="middle">deepen the pipeline, which moves the wait</text>
+  <text class="in" x="572.0" y="246.0" text-anchor="middle">to the TCP cap: back to test 2's verdict.</text>
+  <line x1="167.0" y1="252" x2="167.0" y2="280" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="175.0" y="271.0">yes</text>
+  <rect x="8" y="282" width="318" height="52" fill="#f7eec6" stroke="#d4a72c" rx="4"/>
+  <text class="inb" x="167.0" y="304.0" text-anchor="middle">4.  still waiting on vmcnt?</text>
+  <text class="in" x="167.0" y="320.0" text-anchor="middle">read the trace: which instruction waits?</text>
+  <line x1="326" y1="308.0" x2="390" y2="308.0" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="359.0" y="302.0" text-anchor="middle">yes</text>
+  <rect x="392" y="274" width="360" height="68" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
+  <text class="bad" x="572.0" y="296.0" text-anchor="middle">a stretched buffer_load → the cap of test 2</text>
+  <text class="bad" x="572.0" y="312.0" text-anchor="middle">a long s_waitcnt before the ds_reads</text>
+  <text class="bad" x="572.0" y="328.0" text-anchor="middle">→ the depth of test 3</text>
+  <line x1="167.0" y1="334" x2="167.0" y2="362" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="175.0" y="353.0">no</text>
+  <rect x="8" y="364" width="318" height="52" fill="#cde8d3" stroke="#4c9a5a" rx="4"/>
+  <text class="okb" x="167.0" y="386.0" text-anchor="middle">5.  a scheduling problem</text>
+  <text class="in" x="167.0" y="402.0" text-anchor="middle">the LLIR scheduler and the v7 → v9 steps apply</text>
+  <text class="note" x="8" y="444">C = 44 KB per CU (one workgroup per CU). L ≈ 1000 cycles at L2-friendly K; it grows with the L2 miss rate,</text>
+  <text class="note" x="8" y="460">so the verdicts are optimistic at large K. An 8-bit element type halves B at the same T: twice the budget.</text>
+  <text class="lblb" x="8" y="484">Only when both tests pass is the remaining gap something a schedule can close.</text>
 </svg>
