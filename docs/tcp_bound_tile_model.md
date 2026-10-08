@@ -20,7 +20,11 @@ C = 32 KB (TCP) + 12 KB (queue) = 44 KB
 
 of loads through. (Counting 12 queue entries per wave gives 48 KB; the table below shows both, and the verdicts do not depend on the choice.) By Little's law the CU's bandwidth is capped at `C / L` bytes per cycle, whatever the kernel does.
 
+![one CU: four waves, the 12-entry VMEM queue, the 32 KB TCP, and the round trip a load holds its slot for](images/tcp_budget.svg)
+
 **A full TCP is a saturated memory system seen from the CU.** Summed over the 256 CUs of an MI355X, 44 KB per 1000 cycles is 11.5 KB per cycle, about 27 TB/s at 2.4 GHz, more than three times the 8 TB/s HBM delivers. The TCPs cannot all be full at a 1000-cycle round trip unless L2 is serving most of the requests; when it is not, the round trip stretches until the bytes in flight divided by it equal what the memory system can deliver. So **TCP-bound and memory-bandwidth-bound are the same condition**: every CU is issuing as fast as the hardware allows, and the memory system cannot absorb more. The cap on the CU side is `C`; the latency `L` it sees is set by the load on the other side.
+
+![256 full TCPs demand 27 TB/s against 8 TB/s of HBM; the round trip stretches to match](images/tcp_saturation.svg)
 
 `L` is therefore not a constant. The v8 README's trace at K = 8192 puts the round trip at **about 1000 cycles**, with the working set largely in L2; at large K the L2 miss rate rises and the round trip grows past that (v8 README, §4.5). Use 1000 cycles for a first pass and remember it is the optimistic end.
 
@@ -56,6 +60,8 @@ T x C / B  <   L     -->  bandwidth-bound: issue stalls; the K tile takes B x L 
 
 The left-hand side reads as "**MFMA cycles per C bytes of loads**". If the CU spends more than one round trip of matrix-core time per 44 KB it loads, the loads retire faster than new ones are issued and the loop is compute-bound. If it spends less, the wave is waiting on issue slots and the loop is paced by `C / L`.
 
+![the test on 256x256 and 128x128: one round trip holds 31 KB of the first tile's loads and would need 62 KB of the second's](images/tcp_test_timelines.svg)
+
 For 16-bit elements and the `16x16x32` MFMA, `BK` cancels and the test is a function of the tile shape alone:
 
 ```
@@ -83,6 +89,8 @@ BK = 64, fp16, 4 waves, `L` = 1000 cycles. "Measured" is the in-loop MFMA effici
 | 128 x 64 | 64 | 16 | 256 | 24 KB | 469 | 512 | bandwidth-bound | 47% | 47% |
 | 64 x 128 | 64 | 16 | 256 | 24 KB | 469 | 512 | bandwidth-bound | 47% | 47% |
 
+![the eight tiles' MFMA cycles per 44 KB against the 1000-cycle line, with the predicted and measured efficiency](images/tcp_tiles_vs_L.svg)
+
 Three things to read off the table:
 
 - **Below 256 x 128 the loop is bandwidth-bound at 256 workgroups**, and the predicted ceiling matches the measured in-loop MFMA efficiency to within a few points on every such tile. No schedule reaches higher there: a scheduler can spread the loads, it cannot shrink `B / T`.
@@ -97,6 +105,8 @@ When a loop is not compute-bound, some instruction is waiting for a load's round
 |---|---|---|---|
 | the next `buffer_load` itself | the TCP and the queue are full; it needs the oldest load to retire | **bandwidth-bound**: the CU is at its in-flight cap `C`, the memory system cannot absorb more | the `buffer_load` instruction stretches (the yellow rectangles in the v8 README, §4.5); the `s_waitcnt` in front of the LDS reads is short |
 | the consumer: `s_waitcnt vmcnt(N)` in front of the `ds_read`s (or the barrier before them) | the `buffer_load_to_lds` it depends on has not landed | **latency-bound**: the loads are issued at a rate the memory system could serve, but each one is issued too late, so the round trip is exposed | long `s_waitcnt` before the reads; the `buffer_load`s issue promptly |
+
+![the same instruction stream stalled two ways: a stretched buffer_load, or a long s_waitcnt before the ds_reads](images/tcp_who_waits.svg)
 
 Both are "waiting on vmcnt", and a stall-count summary does not separate them; which instruction carries the wait does. The fixes are opposite, and applying one to the other's symptom does nothing.
 
@@ -129,6 +139,8 @@ This is the `effective_pipeline_depth` term of the [Memory Bandwidth Model, §3.
 
 (Padding for bank-conflict-free LDS layouts takes a few KB per buffer; the v9 kernel's two padded buffers use 135040 bytes at 256 x 256.)
 
+![128x128 with 2 and with 3 LDS buffers: how far ahead the loads issue against the 1000-cycle round trip](images/tcp_prefetch_depth.svg)
+
 Deepening the pipeline does not make a loop compute-bound by itself; it **moves the bound**. With more loads in flight per wave the consumer stops waiting, the TCP fills instead, and the loop lands wherever the §2 test puts it: compute-bound if the test passes, bandwidth-bound if it does not. A 128 x 128 tile with 5 buffers passes the prefetch test (2048 >= 1000) and then meets the cap (704 < 1000) at the same 70% ceiling. A 256 x 128 tile with 2 buffers passes both only just (1024 against 1000 on each side), and a third buffer is the cheap way to take the latency side out of the picture while the schedule works on the bandwidth side.
 
 ## 7. Checklist
@@ -140,3 +152,5 @@ For a new tile or data type:
 3. `(num_stages - 1) x T` against the same `L` for the buffer count the LDS allows. Under: latency-bound; deepen the pipeline, which moves the loop to step 2's verdict.
 4. If the loop still waits, read the trace for *which* instruction waits: a stretched `buffer_load` is the cap of step 2, a long `s_waitcnt` before the reads is the depth of step 3.
 5. Only when both pass is the loop's remaining gap a scheduling problem, which is where the LLIR scheduler and the v7 → v9 steps apply.
+
+![the checklist as a flow: two tests, then the trace says which one failed](images/tcp_decision_flow.svg)

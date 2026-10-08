@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 392" width="760" height="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="The test on two tiles. 256x256 issues 64 KB over 2048 MFMA cycles, so one round trip holds 31 KB, under the 44 KB cap: no stall. 128x128 issues 32 KB over 512 cycles, 62 KB per round trip, over the cap: the loads issue at the cap rate, the K tile stretches from 512 to 727 cycles and the MFMA pipe idles 30%.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="392" fill="#ffffff"/>
+  <text class="h" x="8" y="16">One K tile, loads spread evenly over its MFMAs. Does one round trip hold more than C = 44 KB of them?</text>
+  <text class="inb" x="8" y="50">256 x 256</text>
+  <text class="lbl" x="8" y="65">T = 2048 cycles</text>
+  <text class="lbl" x="8" y="80">B = 64 KB</text>
+  <rect x="118" y="44" width="614.4" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="425.2" y="57" text-anchor="middle">128 MFMAs per wave x 16 cycles = 2048 cycles, no gaps</text>
+  <text class="lbl" x="8" y="96">loads (CU)</text>
+  <rect x="118.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="127.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="137.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="146.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="156.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="166.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="175.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="185.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="194.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="204.39999999999998" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="214.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="223.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="233.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="242.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="252.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="262.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="271.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="281.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="290.79999999999995" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="300.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="310.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="319.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="329.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="338.79999999999995" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="348.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="358.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="367.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="377.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="386.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="396.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="406.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="415.59999999999997" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="425.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="434.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="444.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="454.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="463.59999999999997" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="473.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="482.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="492.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="502.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="511.59999999999997" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="521.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="530.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="540.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="550.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="559.5999999999999" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="569.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="578.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="588.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="598.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="607.5999999999999" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="617.2" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="626.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="636.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="646.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="655.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="665.1999999999999" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="674.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="684.4" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="694.0" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="703.6" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="713.1999999999999" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="722.8" y="84" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="118" y="81" width="300.0" height="20" fill="none" stroke="#1a1a1a" stroke-dasharray="4 2"/>
+  <text class="okb" x="424.0" y="76">← one round trip (1000 cycles) holds 31 KB  &lt;  44 KB</text>
+  <line x1="118.0" y1="106" x2="118.0" y2="110" class="wire"/>
+  <text class="lbl" x="118.0" y="121" text-anchor="middle">0</text>
+  <line x1="268.0" y1="106" x2="268.0" y2="110" class="wire"/>
+  <text class="lbl" x="268.0" y="121" text-anchor="middle">500</text>
+  <line x1="418.0" y1="106" x2="418.0" y2="110" class="wire"/>
+  <text class="lbl" x="418.0" y="121" text-anchor="middle">1000</text>
+  <line x1="568.0" y1="106" x2="568.0" y2="110" class="wire"/>
+  <text class="lbl" x="568.0" y="121" text-anchor="middle">1500</text>
+  <line x1="718.0" y1="106" x2="718.0" y2="110" class="wire"/>
+  <text class="lbl" x="718.0" y="121" text-anchor="middle">2000</text>
+  <line x1="118" y1="106" x2="732.4" y2="106" class="wire"/>
+  <text class="ok" x="118" y="134">compute-bound (T x C / B = 1408 ≥ L): a slot is always free when the next load issues; the K tile takes T.</text>
+  <text class="inb" x="8" y="184">128 x 128</text>
+  <text class="lbl" x="8" y="199">T = 512 cycles</text>
+  <text class="lbl" x="8" y="214">B = 32 KB</text>
+  <rect x="118" y="178" width="153.6" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="194.8" y="191" text-anchor="middle">32 MFMAs = 512 cycles</text>
+  <text class="lblb" x="279.6" y="191">as scheduled</text>
+  <text class="lbl" x="8" y="230">loads (CU)</text>
+  <rect x="118.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="122.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="127.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="132.4" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="137.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="142.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="146.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="151.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="156.4" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="161.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="166.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="170.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="175.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="180.4" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="185.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="190.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="194.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="199.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="204.39999999999998" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="209.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="214.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="218.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="223.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="228.39999999999998" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="233.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="238.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="242.8" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="247.6" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="252.4" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="257.2" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="262.0" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="266.79999999999995" y="218" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="118" y="215" width="300.0" height="20" fill="none" stroke="#1a1a1a" stroke-dasharray="4 2"/>
+  <text class="badb" x="424.0" y="230">one round trip would hold 62 KB  &gt;  44 KB</text>
+  <text class="lblb" x="8" y="278">as executed</text>
+  <text class="lbl" x="8" y="293">44 KB per</text>
+  <text class="lbl" x="8" y="308">1000 cycles</text>
+  <rect x="118" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="137.2" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="145.27272727272725" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="164.47272727272724" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="172.5454545454545" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="191.7454545454545" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="199.81818181818176" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="219.01818181818174" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="227.090909090909" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="246.290909090909" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="254.36363636363626" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="273.56363636363625" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="281.6363636363635" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="300.8363636363635" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <rect x="308.90909090909076" y="272" width="19.2" height="18" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="328.10909090909075" y="272" width="8.072727272727272" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="3 3"/>
+  <text class="badb" x="344.18181818181813" y="285">K tile = B x L / C = 727 cycles</text>
+  <text class="lbl" x="8" y="324">loads (CU)</text>
+  <rect x="118.0" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="124.81818181818181" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="131.63636363636363" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="138.45454545454547" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="145.27272727272728" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="152.0909090909091" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="158.9090909090909" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="165.72727272727272" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="172.54545454545453" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="179.36363636363637" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="186.1818181818182" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="193.0" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="199.8181818181818" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="206.63636363636363" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="213.45454545454544" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="220.27272727272725" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="227.09090909090907" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="233.9090909090909" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="240.72727272727272" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="247.54545454545453" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="254.36363636363635" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="261.18181818181813" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="268.0" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="274.8181818181818" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="281.6363636363636" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="288.45454545454544" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="295.27272727272725" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="302.0909090909091" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="308.9090909090909" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="315.72727272727275" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="322.5454545454545" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="329.3636363636364" y="312" width="2.2" height="14" fill="#f7e0c6" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="118" y="309" width="300.0" height="20" fill="none" stroke="#1a1a1a" stroke-dasharray="4 2"/>
+  <text class="bad" x="424.0" y="324">holds exactly 44 KB: each load waits for a slot</text>
+  <line x1="118.0" y1="334" x2="118.0" y2="338" class="wire"/>
+  <text class="lbl" x="118.0" y="349" text-anchor="middle">0</text>
+  <line x1="268.0" y1="334" x2="268.0" y2="338" class="wire"/>
+  <text class="lbl" x="268.0" y="349" text-anchor="middle">500</text>
+  <line x1="418.0" y1="334" x2="418.0" y2="338" class="wire"/>
+  <text class="lbl" x="418.0" y="349" text-anchor="middle">1000</text>
+  <line x1="118" y1="334" x2="418.0" y2="334" class="wire"/>
+  <text class="bad" x="118" y="362">bandwidth-bound (T x C / B = 704 &lt; L): paced by C / L. MFMA efficiency ≤ T x C / (B x L) = 512 / 727 = 70%.</text>
+  <text class="note" x="118" y="378">(where the idle cycles fall depends on the schedule; their total is what the cap fixes)</text>
+</svg>

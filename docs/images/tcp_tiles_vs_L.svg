@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="Bar chart: MFMA cycles per 44 KB of loads for the eight a16w16 tiles against the 1000-cycle round trip. 256x256 clears it at 1408; 256x128 and 128x256 reach 939 (1024 with a 48 KB budget), on the line; 128x128 and smaller fall short and their predicted efficiency ceilings 70, 56 and 47 percent match the measured 69, 55 to 57 and 47 percent.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="380" fill="#ffffff"/>
+  <text class="h" x="8" y="16">The eight a16w16 tiles: MFMA cycles per 44 KB of loads (= 11 x BM x BN / (BM + BN)) against L = 1000.</text>
+  <line x1="92.0" y1="46" x2="92.0" y2="324" class="wire"/>
+  <text class="lbl" x="92.0" y="338" text-anchor="middle">0</text>
+  <line x1="198.25" y1="46" x2="198.25" y2="324" class="dash"/>
+  <text class="lbl" x="198.25" y="338" text-anchor="middle">500</text>
+  <line x1="304.5" y1="46" x2="304.5" y2="324" class="dash"/>
+  <text class="lbl" x="304.5" y="338" text-anchor="middle">1000</text>
+  <line x1="410.75" y1="46" x2="410.75" y2="324" class="dash"/>
+  <text class="lbl" x="410.75" y="338" text-anchor="middle">1500</text>
+  <text class="inb" x="304.5" y="40" text-anchor="middle">L = 1000 cycles</text>
+  <line x1="304.5" y1="46" x2="304.5" y2="324" class="wire" stroke="#1a1a1a" stroke-width="1.4"/>
+  <text class="in" x="84" y="68.0" text-anchor="end">256 x 256</text>
+  <rect x="92" y="52" width="299.2" height="24" fill="#cde8d3" stroke="#4c9a5a"/>
+  <rect x="391.2" y="52" width="27.2" height="24" fill="none" stroke="#4c9a5a" stroke-dasharray="2 2"/>
+  <text class="ins" x="387.2" y="68.0" text-anchor="end">1408</text>
+  <text class="ins" x="423.4" y="68.0">1536</text>
+  <text class="okb" x="452" y="68.0">compute-bound</text>
+  <text class="in" x="580" y="68.0">100%</text>
+  <text class="in" x="640" y="68.0">96%</text>
+  <text class="in" x="84" y="102.0" text-anchor="end">256 x 128</text>
+  <rect x="92" y="86" width="199.5375" height="24" fill="#f7eec6" stroke="#d4a72c"/>
+  <rect x="291.5375" y="86" width="18.0625" height="24" fill="none" stroke="#d4a72c" stroke-dasharray="2 2"/>
+  <text class="ins" x="287.5375" y="102.0" text-anchor="end">939</text>
+  <text class="ins" x="314.6" y="102.0">1024</text>
+  <text class="warnb" x="452" y="102.0">on the line</text>
+  <text class="in" x="580" y="102.0">94%</text>
+  <text class="in" x="640" y="102.0">83%</text>
+  <text class="in" x="84" y="136.0" text-anchor="end">128 x 256</text>
+  <rect x="92" y="120" width="199.5375" height="24" fill="#f7eec6" stroke="#d4a72c"/>
+  <rect x="291.5375" y="120" width="18.0625" height="24" fill="none" stroke="#d4a72c" stroke-dasharray="2 2"/>
+  <text class="ins" x="287.5375" y="136.0" text-anchor="end">939</text>
+  <text class="ins" x="314.6" y="136.0">1024</text>
+  <text class="warnb" x="452" y="136.0">on the line</text>
+  <text class="in" x="580" y="136.0">94%</text>
+  <text class="in" x="640" y="136.0">84%</text>
+  <text class="in" x="84" y="170.0" text-anchor="end">128 x 128</text>
+  <rect x="92" y="154" width="149.6" height="24" fill="#f7d2cf" stroke="#c8443c"/>
+  <rect x="241.6" y="154" width="13.6" height="24" fill="none" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="ins" x="237.6" y="170.0" text-anchor="end">704</text>
+  <text class="ins" x="260.2" y="170.0">768</text>
+  <text class="badb" x="452" y="170.0">bandwidth-bound</text>
+  <text class="in" x="580" y="170.0">70%</text>
+  <text class="in" x="640" y="170.0">69%</text>
+  <text class="in" x="84" y="204.0" text-anchor="end">256 x 64</text>
+  <rect x="92" y="188" width="119.6375" height="24" fill="#f7d2cf" stroke="#c8443c"/>
+  <rect x="211.6375" y="188" width="10.8375" height="24" fill="none" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="ins" x="207.6375" y="204.0" text-anchor="end">563</text>
+  <text class="ins" x="227.475" y="204.0">614</text>
+  <text class="badb" x="452" y="204.0">bandwidth-bound</text>
+  <text class="in" x="580" y="204.0">56%</text>
+  <text class="in" x="640" y="204.0">55%</text>
+  <text class="in" x="84" y="238.0" text-anchor="end">64 x 256</text>
+  <rect x="92" y="222" width="119.6375" height="24" fill="#f7d2cf" stroke="#c8443c"/>
+  <rect x="211.6375" y="222" width="10.8375" height="24" fill="none" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="ins" x="207.6375" y="238.0" text-anchor="end">563</text>
+  <text class="ins" x="227.475" y="238.0">614</text>
+  <text class="badb" x="452" y="238.0">bandwidth-bound</text>
+  <text class="in" x="580" y="238.0">56%</text>
+  <text class="in" x="640" y="238.0">57%</text>
+  <text class="in" x="84" y="272.0" text-anchor="end">128 x 64</text>
+  <rect x="92" y="256" width="99.6625" height="24" fill="#f7d2cf" stroke="#c8443c"/>
+  <rect x="191.6625" y="256" width="9.1375" height="24" fill="none" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="ins" x="187.6625" y="272.0" text-anchor="end">469</text>
+  <text class="ins" x="205.8" y="272.0">512</text>
+  <text class="badb" x="452" y="272.0">bandwidth-bound</text>
+  <text class="in" x="580" y="272.0">47%</text>
+  <text class="in" x="640" y="272.0">47%</text>
+  <text class="in" x="84" y="306.0" text-anchor="end">64 x 128</text>
+  <rect x="92" y="290" width="99.6625" height="24" fill="#f7d2cf" stroke="#c8443c"/>
+  <rect x="191.6625" y="290" width="9.1375" height="24" fill="none" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="ins" x="187.6625" y="306.0" text-anchor="end">469</text>
+  <text class="ins" x="205.8" y="306.0">512</text>
+  <text class="badb" x="452" y="306.0">bandwidth-bound</text>
+  <text class="in" x="580" y="306.0">47%</text>
+  <text class="in" x="640" y="306.0">47%</text>
+  <text class="lblb" x="452" y="26">verdict</text>
+  <text class="lblb" x="452" y="40">at L = 1000</text>
+  <text class="lblb" x="580" y="26">in-loop MFMA efficiency</text>
+  <text class="lblb" x="580" y="40">ceiling</text>
+  <text class="lblb" x="640" y="40">measured</text>
+  <rect x="92" y="358" width="18" height="12" fill="#ffffff" stroke="#767676"/>
+  <text class="lbl" x="116" y="368">solid: C = 44 KB</text>
+  <rect x="222" y="358" width="18" height="12" fill="none" stroke="#767676" stroke-dasharray="2 2"/>
+  <text class="lbl" x="246" y="368">dashed extension: C = 48 KB (queue counted per wave)</text>
+  <text class="note" x="8" y="390">ceiling = T x C / (B x L), capped at 100%; measured = tile-parametric v9 under the LLIR scheduler, K = 8192, 256 workgroups.</text>
+  <text class="note" x="8" y="406">Only the two boundary tiles change side with the choice of C; there the loop schedule decides. Below them no</text>
+  <text class="note" x="8" y="422">schedule can lift the ceiling: it cannot shrink B / T.</text>
+</svg>

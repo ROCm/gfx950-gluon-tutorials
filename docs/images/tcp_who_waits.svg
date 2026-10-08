@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 352" width="760" height="352" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="Two instruction streams of one wave. Bandwidth-bound: the buffer_load itself stretches because the TCP and queue are full, the s_waitcnt before the ds_reads is short. Latency-bound: the buffer_loads issue promptly, the s_waitcnt before the ds_reads is long because the load it depends on has not landed.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="352" fill="#ffffff"/>
+  <text class="h" x="8" y="16">Same instructions, one wave, two stalls. Which instruction carries the wait names the bound.</text>
+  <text class="badb" x="118" y="40">A. bandwidth-bound — the TCP and the queue are full</text>
+  <text class="inb" x="8" y="65.0">wave 0</text>
+  <rect x="118" y="48" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="138.0" y="65.0" text-anchor="middle">MFMA</text>
+  <rect x="160" y="48" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="180.0" y="65.0" text-anchor="middle">MFMA</text>
+  <rect x="202" y="48" width="250" height="26" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="ins" x="327.0" y="65.0" text-anchor="middle">buffer_load — waits for a free slot</text>
+  <rect x="454" y="48" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="474.0" y="65.0" text-anchor="middle">MFMA</text>
+  <rect x="496" y="48" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="516.0" y="65.0" text-anchor="middle">MFMA</text>
+  <rect x="538" y="48" width="34" height="26" fill="#f7d2cf" stroke="#c8443c"/>
+  <text class="ins" x="555.0" y="65.0" text-anchor="middle">wait</text>
+  <rect x="574" y="48" width="46" height="26" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="ins" x="597.0" y="65.0" text-anchor="middle">ds_read</text>
+  <rect x="622" y="48" width="46" height="26" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="ins" x="645.0" y="65.0" text-anchor="middle">ds_read</text>
+  <path d="M 202 75 V 80 H 452 V 75" class="brk"/>
+  <text class="bad" x="327.0" y="94" text-anchor="middle">stretched buffer_load: no free slot</text>
+  <text class="note" x="555.0" y="94" text-anchor="middle">short s_waitcnt</text>
+  <text class="badb" x="118" y="152">B. latency-bound — the loads issue promptly, but too late</text>
+  <text class="inb" x="8" y="177.0">wave 0</text>
+  <rect x="118" y="160" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="138.0" y="177.0" text-anchor="middle">MFMA</text>
+  <rect x="160" y="160" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="180.0" y="177.0" text-anchor="middle">MFMA</text>
+  <rect x="202" y="160" width="36" height="26" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="ins" x="220.0" y="177.0" text-anchor="middle">load</text>
+  <rect x="240" y="160" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="260.0" y="177.0" text-anchor="middle">MFMA</text>
+  <rect x="282" y="160" width="40" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="302.0" y="177.0" text-anchor="middle">MFMA</text>
+  <rect x="324" y="160" width="250" height="26" fill="#f7d2cf" stroke="#c8443c"/>
+  <text class="ins" x="449.0" y="177.0" text-anchor="middle">s_waitcnt vmcnt — data not landed yet</text>
+  <rect x="576" y="160" width="46" height="26" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="ins" x="599.0" y="177.0" text-anchor="middle">ds_read</text>
+  <rect x="624" y="160" width="46" height="26" fill="#f7eec6" stroke="#d4a72c"/>
+  <text class="ins" x="647.0" y="177.0" text-anchor="middle">ds_read</text>
+  <path d="M 324 187 V 192 H 574 V 187" class="brk"/>
+  <text class="bad" x="449.0" y="206" text-anchor="middle">long s_waitcnt: the round trip is exposed</text>
+  <text class="note" x="220.0" y="206" text-anchor="middle">issues on time</text>
+  <text class="lblb" x="8" y="240">Both are 'waiting on vmcnt' in a stall summary. The fixes are opposite:</text>
+  <text class="badb" x="8" y="262">A</text>
+  <text class="in" x="26" y="262">spread the loads evenly first: a burst stalls even when the average rate passes. Still stalling?</text>
+  <text class="in" x="26" y="278">Then the loop is at the cap C / L, and only the tile shape (BM x BN / (BM + BN)), the element type</text>
+  <text class="in" x="26" y="294">or L itself (L2 locality) move it. More LDS buffers do nothing here.</text>
+  <text class="badb" x="8" y="318">B</text>
+  <text class="in" x="26" y="318">deepen the pipeline: issue the loads (num_stages − 1) tiles ahead so that (num_stages − 1) x T ≥ L.</text>
+  <text class="in" x="26" y="334">That moves the wait from the s_waitcnt to the TCP cap, and the loop lands on the test's verdict.</text>
+</svg>

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" width="760" height="250" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="256 CUs each with 44 KB in flight demand about 27 TB/s at a 1000-cycle round trip, more than three times what HBM delivers, so the round trip stretches until in-flight bytes over L equals the delivered bandwidth.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="250" fill="#ffffff"/>
+  <text class="h" x="8" y="16">Every TCP full at once is more than the memory system can serve: L stretches to match.</text>
+  <rect x="8" y="40" width="120" height="70" fill="#ffffff" stroke="#4c9a5a"/>
+  <rect x="12" y="44" width="120" height="70" fill="#ffffff" stroke="#4c9a5a"/>
+  <rect x="16" y="48" width="120" height="70" fill="#ffffff" stroke="#4c9a5a"/>
+  <rect x="20" y="52" width="120" height="70" fill="#ffffff" stroke="#4c9a5a"/>
+  <rect x="24" y="56" width="120" height="70" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="inb" x="84" y="84" text-anchor="middle">CU</text>
+  <text class="in" x="84" y="102" text-anchor="middle">44 KB in flight</text>
+  <text class="in" x="84" y="118" text-anchor="middle">per L cycles</text>
+  <text class="inb" x="84" y="150" text-anchor="middle">x 256</text>
+  <line x1="160" y1="91" x2="400" y2="91" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="280.0" y="69" text-anchor="middle">demand at L = 1000 cycles</text>
+  <text class="lbl" x="280.0" y="83" text-anchor="middle">256 x 44 KB per 1000 cycles</text>
+  <text class="inb" x="280.0" y="109" text-anchor="middle">≈ 27 TB/s at 2.4 GHz</text>
+  <rect x="406" y="66" width="150" height="50" fill="#cfe0f7" stroke="#3b7dd8" rx="4"/>
+  <text class="inb" x="481.0" y="88" text-anchor="middle">HBM</text>
+  <text class="in" x="481.0" y="105" text-anchor="middle">delivers 8 TB/s</text>
+  <line x1="556" y1="91" x2="600" y2="91" class="wire" marker-end="url(#arr)"/>
+  <rect x="602" y="66" width="150" height="50" fill="#f7d2cf" stroke="#c8443c" rx="4"/>
+  <text class="in" x="677" y="88" text-anchor="middle">requests queue up:</text>
+  <text class="inb" x="677" y="105" text-anchor="middle">L stretches</text>
+  <text class="mono" x="8" y="172">L  =  bytes in flight / delivered bandwidth  =  256 x 44 KB / 8 TB/s  ≈  3400 cycles if nothing hit L2</text>
+  <text class="note" x="8" y="196">So TCP-bound and bandwidth-bound are one condition: every CU issues as fast as the hardware allows and the</text>
+  <text class="note" x="8" y="212">memory system cannot absorb more. The cap on the CU side is C; the L the CU sees is set by the other side.</text>
+  <text class="note" x="8" y="236">L2 hits shorten the queue: at K = 8192 enough requests are served from L2 that L stays near 1000 cycles.</text>
+</svg>

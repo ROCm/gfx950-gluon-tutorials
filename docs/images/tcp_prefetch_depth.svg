@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" height="340" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="Prefetch depth on a 128x128 tile, T = 512 cycles. With 2 LDS buffers the loads for tile n+1 are issued one tile ahead, 512 cycles before they are read, so each tile waits 488 cycles for the 1000-cycle round trip. With 3 buffers they are issued two tiles ahead, 1024 cycles, and arrive in time; the loop then meets the TCP cap instead.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="340" fill="#ffffff"/>
+  <text class="h" x="8" y="16">128 x 128 (T = 512): how far ahead the loads issue decides whether the ds_reads wait.</text>
+  <text class="badb" x="118" y="40">2 buffers: loads issue one tile ahead → (num_stages − 1) x T = 512 &lt; L</text>
+  <text class="inb" x="8" y="65">num_stages = 2</text>
+  <rect x="118" y="50" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="169.2" y="65" text-anchor="middle">tile 0</text>
+  <rect x="220.4" y="50" width="97.60000000000001" height="22" fill="#f7d2cf" stroke="#c8443c"/>
+  <text class="ins" x="269.2" y="65" text-anchor="middle">wait</text>
+  <rect x="318.0" y="50" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="369.2" y="65" text-anchor="middle">tile 1</text>
+  <rect x="420.4" y="50" width="97.60000000000001" height="22" fill="#f7d2cf" stroke="#c8443c"/>
+  <text class="ins" x="469.2" y="65" text-anchor="middle">wait</text>
+  <rect x="518.0" y="50" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="569.2" y="65" text-anchor="middle">tile 2</text>
+  <rect x="620.4" y="50" width="97.60000000000001" height="22" fill="#f7d2cf" stroke="#c8443c"/>
+  <text class="ins" x="669.1999999999999" y="65" text-anchor="middle">wait</text>
+  <line x1="118" y1="86" x2="318.0" y2="86" class="wireO" marker-end="url(#arrO)"/>
+  <text class="lbl" x="118" y="102">round trip L = 1000 for tile 1's loads, issued at the start of tile 0</text>
+  <line x1="220.4" y1="50" x2="220.4" y2="108" class="dash"/>
+  <text class="bad" x="224.4" y="120">tile 1 wants its ds_reads here (T = 512): it waits 488 cycles</text>
+  <text class="okb" x="118" y="158">3 buffers: loads issue two tiles ahead → (num_stages − 1) x T = 1024 ≥ L</text>
+  <text class="inb" x="8" y="183">num_stages = 3</text>
+  <rect x="118" y="168" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="169.2" y="183" text-anchor="middle">tile 0</text>
+  <rect x="220.4" y="168" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="271.6" y="183" text-anchor="middle">tile 1</text>
+  <rect x="322.8" y="168" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="374.0" y="183" text-anchor="middle">tile 2</text>
+  <rect x="425.20000000000005" y="168" width="102.4" height="22" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="ins" x="476.40000000000003" y="183" text-anchor="middle">tile 3</text>
+  <line x1="118" y1="204" x2="318.0" y2="204" class="wireO" marker-end="url(#arrO)"/>
+  <text class="lbl" x="118" y="220">round trip L = 1000 for tile 2's loads, issued at the start of tile 0</text>
+  <line x1="322.8" y1="168" x2="322.8" y2="226" class="dash"/>
+  <text class="ok" x="326.8" y="238">tile 2 reads here (2T = 1024): the data landed 24 cycles earlier</text>
+  <text class="note" x="8" y="262">Deepening does not make the loop compute-bound; it moves the bound. With two tiles of loads in flight,</text>
+  <text class="note" x="8" y="278">the CU asks for 62 KB per round trip against the 44 KB cap, and 128 x 128 lands on the §2 verdict: a 70% ceiling.</text>
+  <text class="note" x="8" y="302">LDS decides how deep you can go (160 KB, unpadded tiles):</text>
+  <text class="note" x="8" y="318">256 x 256 → 2 buffers,  256 x 128 → 3,  128 x 128 → 5,  256 x 64 → 4,  128 x 64 → 6.</text>
+</svg>

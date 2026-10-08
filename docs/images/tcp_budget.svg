@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 304" width="760" height="304" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" aria-label="One CU: four waves issue buffer_loads into a 12-entry VMEM queue and a 32 KB TCP; a load holds its slot for the whole round trip L, so at most 44 KB is in flight per CU.">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11.5px; fill: #767676; }
+    .lblb { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .ins  { font-size: 9.5px; fill: #1a1a1a; }
+    .inb  { font-size: 11.5px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .bad  { font-size: 11.5px; fill: #c8443c; }
+    .badb { font-size: 11.5px; font-weight: 600; fill: #c8443c; }
+    .ok   { font-size: 11.5px; fill: #4c9a5a; }
+    .okb  { font-size: 11.5px; font-weight: 600; fill: #4c9a5a; }
+    .warn { font-size: 11.5px; fill: #d4a72c; }
+    .warnb{ font-size: 11.5px; font-weight: 600; fill: #d4a72c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #1a1a1a; }
+    .monog{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #767676; }
+    .idle { fill: #ececec; stroke: #b9b9b9; stroke-dasharray: 3 3; }
+    .wire { fill: none; stroke: #767676; stroke-width: 1.2; }
+    .dash { fill: none; stroke: #767676; stroke-width: 1; stroke-dasharray: 3 3; }
+    .brk  { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .wireO{ fill: none; stroke: #d9822b; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#767676"/></marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c8443c"/></marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/></marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="304" fill="#ffffff"/>
+  <text class="h" x="8" y="16">One CU. A buffer_load holds a 1 KB slot from issue until its data is back: the whole round trip L.</text>
+  <rect x="8" y="46" width="70" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="43.0" y="63.0" text-anchor="middle">wave 0</text>
+  <line x1="78" y1="59.0" x2="150" y2="59.0" class="wire" marker-end="url(#arr)"/>
+  <rect x="8" y="80" width="70" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="43.0" y="97.0" text-anchor="middle">wave 1</text>
+  <line x1="78" y1="93.0" x2="150" y2="93.0" class="wire" marker-end="url(#arr)"/>
+  <rect x="8" y="114" width="70" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="43.0" y="131.0" text-anchor="middle">wave 2</text>
+  <line x1="78" y1="127.0" x2="150" y2="127.0" class="wire" marker-end="url(#arr)"/>
+  <rect x="8" y="148" width="70" height="26" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="in" x="43.0" y="165.0" text-anchor="middle">wave 3</text>
+  <line x1="78" y1="161.0" x2="150" y2="161.0" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="8" y="190">one per SIMD</text>
+  <text class="lbl" x="8" y="204">dwordx4 = 1 KB</text>
+  <rect x="152" y="46" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="152" y="66" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="152" y="86" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="152" y="106" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="152" y="126" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="152" y="146" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="46" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="66" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="86" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="106" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="126" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="176" y="146" width="24" height="20" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="lblb" x="176" y="38" text-anchor="middle">VMEM queue</text>
+  <text class="lbl" x="176" y="180" text-anchor="middle">12 x 1 KB</text>
+  <text class="lbl" x="176" y="194" text-anchor="middle">issued,</text>
+  <text class="lbl" x="176" y="208" text-anchor="middle">not started</text>
+  <rect x="236" y="46" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="61" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="76" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="91" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="106" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="121" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="136" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="236" y="151" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="46" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="61" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="76" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="91" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="106" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="121" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="136" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="260" y="151" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="46" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="61" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="76" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="91" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="106" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="121" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="136" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="284" y="151" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="46" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="61" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="76" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="91" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="106" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="121" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="136" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="308" y="151" width="24" height="15" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="lblb" x="284" y="38" text-anchor="middle">TCP (L1)</text>
+  <text class="lbl" x="284" y="180" text-anchor="middle">32 x 1 KB in flight</text>
+  <line x1="200" y1="106.0" x2="236" y2="106.0" class="wire" marker-end="url(#arr)"/>
+  <rect x="420" y="46" width="90" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in" x="465.0" y="63.0" text-anchor="middle">L2</text>
+  <rect x="530" y="46" width="90" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="in" x="575.0" y="63.0" text-anchor="middle">HBM / MALL</text>
+  <line x1="332" y1="59" x2="420" y2="59" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="376.0" y="54" text-anchor="middle">request</text>
+  <line x1="510" y1="59" x2="530" y2="59" class="wire" marker-end="url(#arr)"/>
+  <path d="M 575 72 V 150 H 344" class="wire" marker-end="url(#arr)"/>
+  <text class="lbl" x="581" y="115.0">data back</text>
+  <text class="lbl" x="344" y="168">round trip L ≈ 1000 cycles at K = 8192 (L2-friendly),</text>
+  <text class="lbl" x="344" y="183">longer as L2 misses rise. The slot retires only when the data is back.</text>
+  <path d="M 152 217 V 222 H 332 V 217" class="brk"/>
+  <text class="inb" x="242.0" y="236" text-anchor="middle">C = 12 KB + 32 KB = 44 KB in flight per CU</text>
+  <text class="badb" x="8" y="268">Both full → the next buffer_load of any wave waits until the oldest slot retires.</text>
+  <text class="note" x="8" y="286">Little's law: the CU cannot move more than C / L bytes per cycle, whatever the kernel does.</text>
+</svg>
