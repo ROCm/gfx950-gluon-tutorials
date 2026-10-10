@@ -188,12 +188,12 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1158 |   511 |      8 |    89.90% |
+| v6 + MFMA scheduler            |   1158 |   511 |      8 |    89.90% |
 | v7 (`base`)                    |   1223 |   512 |      8 |    66.33% |
-| v7 + LLIR scheduler            |   1549 |   512 |      8 |    97.17% |
-| v7 + LLIR scheduler + amdgcnas |   1574 |   512 |      8 |    97.93% |
+| v7 + MFMA scheduler            |   1549 |   512 |      8 |    97.17% |
+| v7 + MFMA scheduler + amdgcnas |   1574 |   512 |      8 |    97.93% |
 
-v7 makes two changes, and the table shows their sum: under the LLIR scheduler it runs 34% ahead
+v7 makes two changes, and the table shows their sum: under the MFMA scheduler it runs 34% ahead
 of v6 (1549 vs 1158). The first is the N-slicing above, which brings the register budget under
 the ceiling **by construction** instead of leaving it to the allocator (v6 spills 8 registers under
 `llir` on this pin, and 241 in its stock build). The second is pinning every MFMA accumulator to an
@@ -207,7 +207,7 @@ MFMA accumulators are free to live in either register file, the allocator splits
 and VGPRs and inserts `v_accvgpr_*` copies to move accumulator values into the register file each
 MFMA needs — and every such copy on the MFMA critical path opens a gap in the MFMA stream. The copy
 problem started in [v5](../v5_local_prefetch/README.md#54-bottleneck-analysis) (105 copies once the
-LLIR scheduler filled the register file) and v6's unroll did not remove it.
+MFMA scheduler filled the register file) and v6's unroll did not remove it.
 
 Counting `v_accvgpr_*` instructions in one main-loop body (256 MFMAs) of v7 built **without** the
 pins:
@@ -215,9 +215,9 @@ pins:
 | v7 without pins                | in-loop `v_accvgpr_*` copies | TFLOPS |
 |--------------------------------|------------------------------|--------|
 | `base`                         |                          280 |   1244 |
-| + LLIR scheduler               |                          116 |   1423 |
+| + MFMA scheduler               |                          116 |   1423 |
 
-116 copies against 256 MFMAs are the dominant non-MFMA cost under the LLIR scheduler, and the next
+116 copies against 256 MFMAs are the dominant non-MFMA cost under the MFMA scheduler, and the next
 section removes them.
 
 ### 4.3. Pinning the accumulators: `cd_regclass`
@@ -231,7 +231,7 @@ acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
 ```
 
 Triton wraps the MFMA's C and D in empty tied inline asm (`"=a,0"`), which pins both to the AGPR
-class, so the register allocator has no VGPR form to choose. The LLIR scheduler keeps each pin
+class, so the register allocator has no VGPR form to choose. The MFMA scheduler keeps each pin
 next to its MFMA when it reorders the loop (see
 the design reference [`llir_scheduler.html` §7](../../../../../plugins/llir_scheduler/llir_scheduler.html)).
 (Before `gfx950-tutorial-v2.2` this was a process-wide switch, `TRITON_FORCE_MFMA_AGPR`, called
@@ -244,9 +244,9 @@ side by side (two rounds each):
 | v7, FP16 K=8192                | without pins               | with pins (this kernel)   |
 |--------------------------------|----------------------------|---------------------------|
 | `base`                         | 1244 (280 copies, 6 spills) | 1207 (0 copies, 8 spills) |
-| + LLIR scheduler               | 1423 (116 copies)          | **1548** (0 copies)       |
+| + MFMA scheduler               | 1423 (116 copies)          | **1548** (0 copies)       |
 
-Under the LLIR scheduler the pins are worth **+8.8%**: the loop keeps its interleave and loses all
+Under the MFMA scheduler the pins are worth **+8.8%**: the loop keeps its interleave and loses all
 116 copies, and MFMA efficiency reaches 97.2%. The stock build gives up about 3%: without the
 scheduler the copies are not what limits it (the pinned stock loop still runs at only 66% MFMA
 efficiency).
@@ -264,13 +264,13 @@ The trace above shows that removing the in-loop copies also eliminates the VALU 
 
 **amdgcnas** is an assembly post-processor that applies peephole optimizations to compress the remaining non-MFMA gaps. It ships as an out-of-tree plugin in this repo ([`plugins/amdgcnas/`](../../../../../plugins/amdgcnas/README.md)).
 
-Enable it on top of the LLIR scheduler by setting the environment variable:
+Enable it on top of the MFMA scheduler by setting the environment variable:
 
 ```bash
 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
-The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + amdgcnas), v7 reaches **97.9% MFMA efficiency** — near the theoretical maximum.
+The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (MFMA scheduler + amdgcnas), v7 reaches **97.9% MFMA efficiency** — near the theoretical maximum.
 
 The trace below shows tightly packed MFMA instructions with minimal gaps between iterations:
 

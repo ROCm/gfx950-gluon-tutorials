@@ -13,7 +13,7 @@ If you haven't completed the a16w16 journey (v0–v9), start there first — thi
 
 After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel. Unlike a8w8, a4w4 *does* add a genuinely new element (a per-group scale pipeline) on top of the inherited tile pipeline, so it reads as a continuation rather than another checklist proof.
 
-This kernel requires the LLIR scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
+This kernel requires the MFMA scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
 
 ## 1. Directory Structure
 
@@ -41,7 +41,7 @@ The BF8 kernel uses the same optimization techniques as the final a16w16 design 
 
 BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same total MFMA compute time per iteration, BLOCK_K doubles from 64 to 128.
 
-Each BF8 MFMA also takes 32 cycles to execute (vs. 16 for FP16), so pipelining works on a coarser grain: the LLIR scheduler interleaves half as many MFMAs between each memory operation (2 MFMAs per `buffer_load` instead of 4, 2 per `ds_read` instead of 4). `BLOCK_K=128` ensures each iteration still has enough MFMA work to fully hide memory latency behind compute.
+Each BF8 MFMA also takes 32 cycles to execute (vs. 16 for FP16), so pipelining works on a coarser grain: the MFMA scheduler interleaves half as many MFMAs between each memory operation (2 MFMAs per `buffer_load` instead of 4, 2 per `ds_read` instead of 4). `BLOCK_K=128` ensures each iteration still has enough MFMA work to fully hide memory latency behind compute.
 
 ### 2.2 Scaled MFMA
 

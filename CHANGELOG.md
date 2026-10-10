@@ -10,7 +10,7 @@ compiler / Triton evolution.
 [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0)
 is upstream Triton `main` at `3b0c7f081`, the merge of
 [triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209): **the GEMM model of
-the LLIR scheduler is now an opt-in pass in Triton**, `schedule_hint="mfma-schedule"`. Nothing is
+the LLIR scheduler — from here on the MFMA scheduler — is now an opt-in pass in Triton**, `schedule_hint="mfma-schedule"`. Nothing is
 carried on top. The two LLVM pins are unchanged from `v2.3` (core `b010a18d`, AMD codegen
 `6bc4aaf6`), so the attention plugin keeps its ABI.
 
@@ -22,20 +22,13 @@ carried on top. The two LLVM pins are unchanged from `v2.3` (core `b010a18d`, AM
    memory anchor and after each `cd_regclass` pin, the wider MFMA cycle table, per-block rollback,
    no environment knobs. The intra_wave kernels that used the plugin — a16w16 v5–v9, a8w8, a4w4 v0
    and v1 — now pass `schedule_hint="mfma-schedule"` to their launch themselves (`matmul()` in each
-   `matmul_kernel.py`); v0–v4 accept the option but leave it off. The three intra_wave `bench.py`
+   `matmul_kernel.py`); v0–v4 predate the scheduler and take no such option. The three intra_wave `bench.py`
    lose the `LLVM_PASS_PLUGIN_PATH` dlopen hook and take `--schedule-hint` instead (`""` turns the
    scheduler off); `run_perf_table.py` and `run_counter_collection.py` express `base` as that
    argument and keep only amdgcnas in the environment. The config names (`base`, `llir`,
    `llir+amdgcnas`) do not change. Measured against the `v2.3` plugin on the same build, same GPU,
    back to back, every `llir` and `llir+amdgcnas` row is within ±1.5% and the in-loop MFMA
-   efficiency within a point:
-
-   | kernel | config | plugin (`v2.3` `.so` on this build) | `schedule_hint` |
-   |---|---|---:|---:|
-   | a16w16 v9 fp16 | `llir` / `llir+amdgcnas` | 1579 / 1608 | 1594 / 1600 |
-   | a16w16 v9 bf16 | `llir+amdgcnas` | 1690 | 1682 |
-   | a8w8 | `llir` / `llir+amdgcnas` | 3394 / 3427 | 3342 / 3433 |
-   | a4w4 v1 | `llir` / `llir+amdgcnas` | 5695 / 5815 | 5677 / 5810 |
+   efficiency within a point.
 
 2. **The plugin keeps only the co-execution model.**
    `plugins/llir_scheduler/LlirSchedPlugin.cpp` (1463 lines, from 2135) is the MFMA ↔ VALU model the
@@ -48,9 +41,6 @@ carried on top. The two LLVM pins are unchanged from `v2.3` (core `b010a18d`, AM
    is worth +0.8 and +2.1 points of in-loop efficiency. `fmha_v4` and `fmha_v3` on the co-exec-only
    plugin against the `v2.3` plugin on this build: 1285.1 vs 1286.8 and 1213.1 vs 1213.2 TFLOPS, with
    identical efficiency and cycles per iteration.
-
-3. **Python.** Triton declares Python ≥ 3.11 at this commit. On 3.10 build with
-   `pip install --ignore-requires-python`; this re-pin was measured that way.
 
 ### Numbers
 

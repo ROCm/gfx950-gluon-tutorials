@@ -110,7 +110,7 @@ def main():
     ax.set_xticklabels(labels, fontsize=10)
     ax.set_ylim(0, 6500)
     legend = [
-        Patch(facecolor=C4, label="4-wave  (LLIR + amdgcnas)"),
+        Patch(facecolor=C4, label="4-wave  (MFMA scheduler + amdgcnas)"),
         Patch(facecolor=C8, label="8-wave  (warp-pipeline, no AGPRs)"),
         plt.Line2D(
             [],

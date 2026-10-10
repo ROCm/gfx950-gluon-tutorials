@@ -740,7 +740,7 @@ tag. Build it with default symbol visibility so the scheduler plugin can resolve
 
 ```bash
 git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v3.0 /tmp/triton
-cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .      # on Python 3.10 add --ignore-requires-python
+cd /tmp/triton && TRITON_EXT_ENABLED=1 pip install -e .      # Triton requires Python >= 3.11 at this pin
 ```
 
 Then, from `kernels/attention/`, at the shape the table above uses:

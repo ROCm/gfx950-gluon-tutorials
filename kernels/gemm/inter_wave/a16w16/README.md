@@ -30,7 +30,7 @@ in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/righ
 | LDS allocation | 4 separate per-quadrant | 4 separate per-quadrant |
 | K-unroll | 2× | 2× |
 | `local_load` | non-relaxed (separate allocs) | non-relaxed (separate allocs) |
-| Hot-loop scheduling | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
+| Hot-loop scheduling | `warp_pipeline_stage` | MFMA scheduler + amdgcnas |
 | XCD PID remap | yes (v9-style) | yes |
 
 ## 2. What changes from the 4-wave kernel
@@ -51,7 +51,7 @@ acc_bl += DOT(A_bot, B_left)     acc_br += DOT(A_bot, B_right)
 ```
 
 In the 4-wave `v9`, a region is a single block — one `mfma` immediately followed by the
-`local_load` + async refill for the next region — and the LLIR scheduler interleaves the
+`local_load` + async refill for the next region — and the MFMA scheduler interleaves the
 two. The 8-wave kernel takes that **same region** and only splits its `mfma` and its memory
 ops into two `warp_pipeline_stage` clusters; the wave-level pipeliner then stripes one wave
 group's mfma cluster over the other group's mem cluster:

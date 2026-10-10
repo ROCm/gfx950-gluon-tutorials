@@ -126,7 +126,7 @@ def main():
     ax.set_yticks([0, 500, 1000, 1500])
     legend = [
         Patch(facecolor=C_STOCK, label="stock LLVM  (no plugin, no env)"),
-        Patch(facecolor=C_TUNED, label="llirSched, tuned  (SCALE_ON_Q=1, MEMNOP=2)"),
+        Patch(facecolor=C_TUNED, label="llirSched, tuned  (SCALE_ON_Q=1)"),
         Patch(facecolor=C_REF, label="ROCm/FlyDSL  (its own tuned config)"),
         plt.Line2D(
             [],

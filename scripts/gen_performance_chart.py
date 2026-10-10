@@ -48,8 +48,8 @@ from matplotlib.patches import Patch
 # Config styling, in cumulative order.
 CONFIGS = {
     "base": dict(color="#4E95D9", label="Base kernel", tag=""),
-    "llir": dict(color="#E8973A", label="+ llir", tag="+llir"),
-    "llir+amdgcnas": dict(color="#5BA85B", label="+ llir + amdgcnas", tag="+asm"),
+    "llir": dict(color="#E8973A", label="+ MFMA scheduler", tag="+llir"),
+    "llir+amdgcnas": dict(color="#5BA85B", label="+ MFMA scheduler + amdgcnas", tag="+asm"),
 }
 
 # (version, config, TFLOPS, MFMA%) in plotting order.

@@ -108,9 +108,9 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version             | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler |   1209 |   512 |      0 |    80.36% |
+| v5 + MFMA scheduler |   1209 |   512 |      0 |    80.36% |
 | v6 (`base`)         |    219 |   512 |    241 |     8.63% |
-| v6 + LLIR scheduler |   1158 |   511 |      8 |    89.90% |
+| v6 + MFMA scheduler |   1158 |   511 |      8 |    89.90% |
 
 The unroll-by-2 removes the per-iteration operand copy as designed: under `llir` the loop body's
 `v_accvgpr_mov` copies drop from v5's 88 to 12, and MFMA efficiency rises from v5's 80.4% to

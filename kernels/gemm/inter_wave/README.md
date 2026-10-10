@@ -5,7 +5,7 @@
 
 The repo carries an **8-wave warp-pipeline** version of each GEMM — [`inter_wave/a16w16/`](a16w16/), [`inter_wave/a8w8/`](a8w8/), and [`inter_wave/a4w4/`](a4w4/). These reach high MFMA utilization on the *same* problems by a different route.
 
-Instead of the LLIR scheduler + AGPR-pinned accumulators + amdgcnas, they launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD are kept out of phase so one issues MFMAs while the other issues loads, then they swap (a "ping-pong"). They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), so the f32 accumulators live in VGPRs and **no environment variables are needed**. The theory is in [`docs/warp_pipelining.md`](../../../docs/warp_pipelining.md).
+Instead of the MFMA scheduler + AGPR-pinned accumulators + amdgcnas, they launch **8 warps/CTA (2 waves/SIMD)** and schedule the hot loop at the **wave level** with `warp_pipeline_stage`: the two resident waves per SIMD are kept out of phase so one issues MFMAs while the other issues loads, then they swap (a "ping-pong"). They run with **no AGPRs** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`), so the f32 accumulators live in VGPRs and **no environment variables are needed**. The theory is in [`docs/warp_pipelining.md`](../../../docs/warp_pipelining.md).
 
 ## 1. The kernels
 

@@ -48,7 +48,7 @@ This section tells the story of how we transformed a 542 TFLOPS naive kernel int
 | v2 | async_copy | Codegen | Direct-to-LDS, eliminates register staging |
 | v3 | lds | Codegen | LDS layout design: swizzling vs padding |
 | v4 | global_prefetch | Latency hiding | 2-stage pipeline, double buffering |
-| v5 | local_prefetch | Latency hiding | 3-stage pipeline, LLIR scheduler introduction |
+| v5 | local_prefetch | Latency hiding | 3-stage pipeline, MFMA scheduler introduction |
 | v6 | loop_unroll | Codegen | Eliminate copy overhead, DIDT/PIT analysis |
 | v7 | sliceN | Register pressure | N-slicing, accumulators pinned to AGPRs (`cd_regclass`) |
 | v8 | sliceMN | Register pressure, throughput | M+N slicing, buffer load TCP stall analysis |
@@ -70,11 +70,11 @@ This section tells the story of how we transformed a 542 TFLOPS naive kernel int
 
 **v5 — One More Stage.** MFMA still waits for `ds_read`. We add a third pipeline stage: while MFMA computes iteration k, `ds_read` loads iteration k+1, and `buffer_load` prefetches iteration k+2. Now MFMA, `ds_read`, and `buffer_load` can all run concurrently—if only the compiler would schedule them that way.
 
-Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler operating at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With LLIR scheduling, MFMA efficiency jumps from 58.6% to 80.4%. The price is register pressure: the register file fills up (256 VGPRs + 256 AGPRs) and the loop picks up 105 `v_accvgpr_*` copies.
+Enter the **MFMA Scheduler**. The backend wasn't interleaving instructions as we hoped, so we built a custom scheduler operating at LLVM IR level. It interleaves MFMA with memory operations based on hardware throughput models. With MFMA scheduling, MFMA efficiency jumps from 58.6% to 80.4%. The price is register pressure: the register file fills up (256 VGPRs + 256 AGPRs) and the loop picks up 105 `v_accvgpr_*` copies.
 
 ### Act III: Taming the Hardware (v6–v8)
 
-**v6 — Loop Unrolling.** The v5 trace reveals copy instructions at iteration boundaries—data moved between register sets for the prefetch. The fix: unroll by 2, alternating register sets naturally. Under the LLIR scheduler the operand copies mostly disappear and MFMA efficiency rises to 89.9% (1158 TFLOPS), but the kernel now presses against the 512-register ceiling: the two register sets are live at once, leaving no headroom, and the allocator still moves 50 values per loop between the register files and spills 8 registers. The stock build is worse off: on `gfx950-tutorial-v3.0` it spills 241 registers and collapses to **219 TFLOPS** (upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950; with them forced on, the same build runs at 1043 with no spills). v6 has no margin at all—whether it spills is decided by allocator policy, not by the kernel.
+**v6 — Loop Unrolling.** The v5 trace reveals copy instructions at iteration boundaries—data moved between register sets for the prefetch. The fix: unroll by 2, alternating register sets naturally. Under the MFMA scheduler the operand copies mostly disappear and MFMA efficiency rises to 89.9% (1158 TFLOPS), but the kernel now presses against the 512-register ceiling: the two register sets are live at once, leaving no headroom, and the allocator still moves 50 values per loop between the register files and spills 8 registers. The stock build is worse off: on `gfx950-tutorial-v3.0` it spills 241 registers and collapses to **219 TFLOPS** (upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950; with them forced on, the same build runs at 1043 with no spills). v6 has no margin at all—whether it spills is decided by allocator policy, not by the kernel.
 
 **v7 — Fixing the Register Budget by Design.** With 256×256 tiles and prefetching, we need ~512 registers—exactly what gfx950 provides. No headroom. v7 slices along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448 by construction. That headroom is the enabler for the real fix. Left to itself the allocator still shuffles accumulators between AGPRs and VGPRs—116 `v_accvgpr_*` copies per loop body under `llir`. So v7 also **pins every MFMA accumulator to an AGPR**, passing Gluon's `cd_regclass="a"` to each MFMA: the in-loop copies vanish and MFMA efficiency reaches **97.2%** at 1549 TFLOPS (the build spills 8 registers, all outside the loop). Pinning is part of the kernel from v7 on.
 
@@ -119,7 +119,7 @@ Recommended order:
 3. Use thread traces and layout visualizations to build intuition
 4. Pay attention to bottleneck analysis sections—they motivate the next version
 
-If you only want the fastest kernel, jump to v9 with `llirSched + amdgcnas`. If you want to understand **why** it is fast, start from the beginning.
+If you only want the fastest kernel, jump to v9 with the MFMA scheduler + amdgcnas (the `llir+amdgcnas` config). If you want to understand **why** it is fast, start from the beginning.
 
 > [!TIP]
 > Each README follows a consistent structure: Motivation → Design → Performance Analysis → What Comes Next. This progression builds understanding incrementally.

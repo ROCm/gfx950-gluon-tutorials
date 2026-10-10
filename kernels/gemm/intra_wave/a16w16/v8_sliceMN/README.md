@@ -78,7 +78,7 @@ This ordering ensures that:
 
 ### 3.3. Why the Copy Problem Disappears
 
-In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), we identified a fundamental problem: when the LLIR scheduler interleaves `ds_read` with MFMA inside a single iteration, the `ds_read` results must remain live across the MFMAs that follow. The register allocator is forced to place `ds_read` results in *different* registers from those expected by the next iteration's MFMA, requiring copy instructions (`v_accvgpr_mov_b32`) at the iteration boundary. This overhead motivated loop unrolling in v6.
+In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), we identified a fundamental problem: when the MFMA scheduler interleaves `ds_read` with MFMA inside a single iteration, the `ds_read` results must remain live across the MFMAs that follow. The register allocator is forced to place `ds_read` results in *different* registers from those expected by the next iteration's MFMA, requiring copy instructions (`v_accvgpr_mov_b32`) at the iteration boundary. This overhead motivated loop unrolling in v6.
 
 With four regions per K-step, this problem disappears — but only because the **load order** is carefully chosen. Consider how the order `B_left -> A_top -> A_bot -> B_right` maps onto the regions:
 
@@ -173,7 +173,7 @@ Note that `dwordx4` and `dword` have the same efficiency (1 byte/cycle), while `
 Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dwordx4` must wait 64 cycles to be issued — 16 cycles per `buffer_load` x 4 waves sharing the TCP. This 64-cycle interval is the expected steady-state issue latency for the 5th through 11th `buffer_load` from each wave.
 
 > [!NOTE]
-> This 64-cycle issue latency is what the LLIR scheduler uses as the throughput model: 4 MFMAs (at 16 cycles each) per `buffer_load` in the interleaving schedule.
+> This 64-cycle issue latency is what the MFMA scheduler uses as the throughput model: 4 MFMAs (at 16 cycles each) per `buffer_load` in the interleaving schedule.
 
 ### 4.5. The v7 Stall Problem at Large K
 
@@ -208,7 +208,7 @@ In the trace above (yellow rectangles = `buffer_load_to_lds`), the phases unfold
 
 ### 4.6. How v8 Solves the Stall
 
-In v8, each region issues only **4 `buffer_load_to_lds_dwordx4` per wave** (one half-tile), and there are 4 regions per K-step. The LLIR scheduler interleaves these 4 buffer loads with 32 MFMAs within each region — so buffer loads are evenly distributed rather than clustered.
+In v8, each region issues only **4 `buffer_load_to_lds_dwordx4` per wave** (one half-tile), and there are 4 regions per K-step. The MFMA scheduler interleaves these 4 buffer loads with 32 MFMAs within each region — so buffer loads are evenly distributed rather than clustered.
 
 ![v8 buffer load distribution](../images/v8_sliceMN_buffer_load_distribution.png)
 

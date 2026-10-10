@@ -26,7 +26,7 @@ All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`*
 
 ![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
 
-A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
+A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the MFMA scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
 
 This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
 
@@ -61,14 +61,14 @@ The larger question this repository asks is **where the scheduling intelligence 
 ```
 gemm/
 ├── utils/                                # shared Gluon device helpers (get_pids), used by both routes
-├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + amdgcnas)
+├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (MFMA sched + amdgcnas)
 │   ├── a16w16/                            # FP16/BF16 — the v0→v9 optimization journey (start here)
 │   │   ├── v0_naive/                      #   baseline: explicit layouts, correctness-first
 │   │   ├── v1_buffer_load/                #   buffer_load for hardware OOB (branch elimination)
 │   │   ├── v2_async_copy/                 #   direct-to-LDS async copy
 │   │   ├── v3_lds/                        #   LDS layout design: swizzle vs padding
 │   │   ├── v4_global_prefetch/            #   2-stage pipeline (double buffering)
-│   │   ├── v5_local_prefetch/             #   3-stage pipeline + LLIR scheduler
+│   │   ├── v5_local_prefetch/             #   3-stage pipeline + MFMA scheduler
 │   │   ├── v6_loop_unroll/                #   loop unrolling
 │   │   ├── v7_sliceN/                     #   N-slicing (register pressure)
 │   │   ├── v8_sliceMN/                    #   M+N slicing
