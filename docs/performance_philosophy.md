@@ -52,11 +52,11 @@ See [kernels/gemm/intra_wave/README.md §2.1](../kernels/gemm/intra_wave/README.
 
 The goal is not to keep `llirSched`, the `cd_regclass` pins, and `amdgcnas` outside the standard Triton/LLVM flow forever. The goal is to fold their ideas into the LLVM backend in three phases, smallest-lift first:
 
-1. **`llirSched` → an opt-in pass in upstream Triton** — done in `v3.0` ([triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209)): users on upstream Triton reach the O(n)-interleaving regime without loading a plugin, by passing `schedule_hint="mfma-schedule"`. Pushing it further down, into the LLVM backend's own scheduling, is still open.
+1. **`llirSched` → an LLVM backend scheduling pass**, gated on backend and kernel shape. This retires most of the friction: users on stock Triton + LLVM reach the O(n)-interleaving regime without loading a plugin. The first step is taken: since `v3.0` the pass lives in upstream Triton as an opt-in LLVM-IR pass ([triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209), `schedule_hint="mfma-schedule"`), so upstream Triton users need no plugin; moving it into the LLVM backend itself, where it would also serve non-Triton front ends, is still ahead.
 2. **`cd_regclass` pins → LLVM's AMDGPU register allocator.** Pinning is already a per-MFMA Gluon option; the remaining work is making the policy *selective* — the `RewriteMFMAFormStage` pass, which chooses AGPR vs. VGPR form per MFMA by register pressure so kernels need not fall back to the blunt all-AGPR form where the epilogue is a larger share of runtime (see [a16w16 v7 §4.3](../kernels/gemm/intra_wave/a16w16/v7_sliceN/README.md#43-pinning-the-accumulators-cd_regclass)).
 3. **`amdgcnas` → an LLVM AMDGPU MachineInstr-level pass.** The biggest engineering lift and the smallest measured impact on FP16/BF8 (~1–3pp MFMA efficiency); may remain a prototype indefinitely.
 
-This work is in progress in collaboration with LLVM engineers. Phase 1 has landed. When phase 2 lands, upstream Triton + stock LLVM will produce most of what the three components produce today on the tutorial's Triton pin, and the GEMM kernels will need no pins either.
+This work is in progress in collaboration with LLVM engineers. When phases 1 and 2 land, upstream Triton + stock LLVM will produce most of what the three components produce today on the tutorial's Triton pin. As of `v3.0` the GEMM kernels already run without a plugin (the scheduler is in Triton, the pins are in the kernels); the attention kernels still load one for the co-execution model.
 
 The lasting contribution is not the tools. It is the **design split**:
 
