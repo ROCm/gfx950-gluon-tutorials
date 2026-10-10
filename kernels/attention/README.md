@@ -868,6 +868,34 @@ per CU predict 4595 µs against 4590 measured. The causal kernel runs at non-cau
 tile and per block, and the remaining 4% is the diagonal's waste (3%) plus the hand-over weighing
 twice as much (1%).
 
+An ATT trace says the same from inside the loop. One dispatch, one CU, read with
+[`scripts/att_loops.py`](../../scripts/att_loops.py) (`process_json.py` times a loop from its first
+entry, which assumes one entry per wave; `fmha_v5` enters its inner loops once per q-block). MFMA
+efficiency is per SIMD (per wave x 2), and one iteration is two K/V tiles:
+
+| kernel | loop | iterations / wave | cycles / iteration | share of wave time | MFMA eff |
+|---|---|---:|---:|---:|---:|
+| `fmha_v4` non-causal | main loop | 62 | 4660 | 92.3% | 87.90% |
+| `fmha_v5` non-causal | inner loop | 2016 | 4662 | 94.6% | 87.86% |
+| | whole q-block (outer loop) | 32 | -- | 100% | 84.45% |
+| **`fmha_v5` causal** | **plain inner loop** | 960 | 4644 | 82.3% | **88.21%** |
+| | masked inner loop | 64 | 6029 | 7.1% | 67.94% |
+| | whole q-block (outer loop) | 32 | -- | 99.9% | 79.43% |
+| `fmha_v4_causal` | main loop | 32 | 5485 | 79.9% | 74.68% |
+
+* **The hot loop does not know it is causal.** The plain inner loop, 82% of the causal kernel's
+  time, matches `fmha_v4`'s loop in both cycles and MFMA efficiency.
+* **The gap is everything around it:** the masked loop (two iterations per pair, at 68%) and code
+  outside the loops, 10.6% of the wave's time against 5.4% non-causal -- the hand-over paid against
+  half the tiles.
+* **`fmha_v4_causal`'s loop is 18% slower per iteration** with no scratch access inside it (its
+  spills are all in the prologue and drain): that is the in-loop mask branch of §10.2 costing the PV
+  cluster its interleave.
+
+MFMA efficiency counts the diagonal's masked-out MFMAs as busy, so the 3% waste of §10.1 does not
+show here, only in TFLOPS. These are cycles, not time: on this power-capped part a less MFMA-dense
+kernel can run at a higher clock, so cycle ratios do not carry over one to one to the table above.
+
 ### 10.5 Skipping fully masked waves: `gl.amd.warp_id()`
 
 Within a diagonal tile, a wave whose rows are all above the diagonal has nothing to compute, but
@@ -909,7 +937,8 @@ python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --
 `scripts/fa_check.py` checks O and LSE against fp32 references and that repeated launches are
 bit-identical (a race between the async copies and the LDS reads shows up as drift first);
 `scripts/fa_qblock_timing.py` prints the per-q-block breakdown from in-kernel clocks
-(`FA_WG_TIMING=1`). The persistent kernel needs `S % 512 == 0` and `S >= 1024` for causal: with a
+(`FA_WG_TIMING=1`); `scripts/att_loops.py <ui_output_dir>` prints the per-loop table of §10.4 from
+an ATT trace. The persistent kernel needs `S % 512 == 0` and `S >= 1024` for causal: with a
 single pair per `(batch, head)`, every trip count becomes a compile-time 1, MLIR folds the
 warp-pipelined loops away, and their stage markers land in the outer loop.
 
