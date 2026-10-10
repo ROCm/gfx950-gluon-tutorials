@@ -14,11 +14,11 @@ Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/t
 
 The three components the tutorial depends on are on a planned upstreaming path:
 
-- **llirSched** — the LLIR scheduler (out-of-tree LLVM pass plugin, enabled via `LLVM_PASS_PLUGIN_PATH`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
+- **llirSched** — the GEMM scheduler has landed: since `gfx950-tutorial-v3.0` it is Triton's opt-in MFMA scheduler ([triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209), `schedule_hint="mfma-schedule"`), and the GEMM kernels pass that option themselves. The plugin in `plugins/llir_scheduler/` now carries only the co-execution model the attention kernels use (still loaded via `LLVM_PASS_PLUGIN_PATH`); upstreaming that model is a separate proposal.
 - **AGPR-pinned accumulators** (formerly the force-agpr component) — no longer a plugin or a switch: from `a16w16` v7 on, and in `a8w8` and `a4w4`, the kernels pass upstream Gluon's per-call `cd_regclass="a"` ([triton-lang/triton#11792](https://github.com/triton-lang/triton/pull/11792)) to every MFMA. It replaced the process-wide `TRITON_FORCE_MFMA_AGPR` hook in `gfx950-tutorial-v2.2`. LLVM's upcoming `RewriteMFMAFormStage` pass, which picks AGPR vs. VGPR form per MFMA by register pressure, is the longer-term replacement.
 - **`amdgcnas`** — the post-assembly peephole (out-of-tree plugin, enabled via `TRITON_AMDGCNAS_PLUGIN`) — a longer-term target for an LLVM MachineInstr-level pass.
 
-Once these land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
+Once the remaining components land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
 
 ## Issues and pull requests
 

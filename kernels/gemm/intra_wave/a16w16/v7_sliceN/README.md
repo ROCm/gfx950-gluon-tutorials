@@ -188,13 +188,13 @@ This command can be run from anywhere in the repository. See [run_perf_table.py]
 
 | Version                        | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |--------------------------------|--------|-------|--------|-----------|
-| v6 + LLIR scheduler            |   1162 |   511 |      8 |    90.20% |
-| v7 (`base`)                    |   1210 |   512 |      8 |    66.52% |
-| v7 + LLIR scheduler            |   1554 |   512 |      8 |    97.33% |
-| v7 + LLIR scheduler + amdgcnas |   1583 |   512 |      8 |    98.06% |
+| v6 + LLIR scheduler            |   1158 |   511 |      8 |    89.90% |
+| v7 (`base`)                    |   1223 |   512 |      8 |    66.33% |
+| v7 + LLIR scheduler            |   1549 |   512 |      8 |    97.17% |
+| v7 + LLIR scheduler + amdgcnas |   1574 |   512 |      8 |    97.93% |
 
 v7 makes two changes, and the table shows their sum: under the LLIR scheduler it runs 34% ahead
-of v6 (1554 vs 1162). The first is the N-slicing above, which brings the register budget under
+of v6 (1549 vs 1158). The first is the N-slicing above, which brings the register budget under
 the ceiling **by construction** instead of leaving it to the allocator (v6 spills 8 registers under
 `llir` on this pin, and 241 in its stock build). The second is pinning every MFMA accumulator to an
 AGPR (§4.3), which removes the copy traffic that slicing alone leaves in the loop (§4.2). Measured
@@ -233,7 +233,7 @@ acc_left = gl.amd.cdna3.mfma(a, b_left, acc_left, cd_regclass="a")
 Triton wraps the MFMA's C and D in empty tied inline asm (`"=a,0"`), which pins both to the AGPR
 class, so the register allocator has no VGPR form to choose. The LLIR scheduler keeps each pin
 next to its MFMA when it reorders the loop (see
-[`plugins/llir_scheduler/`](../../../../../plugins/llir_scheduler/README.md#register-class-pins)).
+the design reference [`llir_scheduler.html` §7](../../../../../plugins/llir_scheduler/llir_scheduler.html)).
 (Before `gfx950-tutorial-v2.2` this was a process-wide switch, `TRITON_FORCE_MFMA_AGPR`, called
 force-agpr in earlier versions of this tutorial.)
 
@@ -247,7 +247,7 @@ side by side (two rounds each):
 | + LLIR scheduler               | 1423 (116 copies)          | **1548** (0 copies)       |
 
 Under the LLIR scheduler the pins are worth **+8.8%**: the loop keeps its interleave and loses all
-116 copies, and MFMA efficiency reaches 97.3%. The stock build gives up about 3%: without the
+116 copies, and MFMA efficiency reaches 97.2%. The stock build gives up about 3%: without the
 scheduler the copies are not what limits it (the pinned stock loop still runs at only 66% MFMA
 efficiency).
 The pinned build spills 8 registers, all outside the main loop (no scratch access inside it).
@@ -270,7 +270,7 @@ Enable it on top of the LLIR scheduler by setting the environment variable:
 TRITON_AMDGCNAS_PLUGIN=1
 ```
 
-The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + amdgcnas), v7 reaches **98.1% MFMA efficiency** — near the theoretical maximum.
+The peephole packs the scattered SALU regions at iteration boundaries. With the full stack (LLIR scheduler + amdgcnas), v7 reaches **97.9% MFMA efficiency** — near the theoretical maximum.
 
 The trace below shows tightly packed MFMA instructions with minimal gaps between iterations:
 

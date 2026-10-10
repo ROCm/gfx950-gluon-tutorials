@@ -206,7 +206,7 @@ Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v0_naive        |    542 |   428 |      0 |    25.62% |
+| v0_naive        |    542 |   428 |      0 |    26.06% |
 
 ## 5. What Comes Next
 

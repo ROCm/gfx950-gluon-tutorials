@@ -24,11 +24,11 @@ with rotating tensors (which carries the always-on warp-pipeline barrier, #10840
 
 | Kernel | K | TFLOPS / MFMA eff | VGPR / spills |
 |---|---|---|---|
-| inter_wave/a16w16 (fp16) | 8192 | 1479 / 99.84% | 242 / 0 |
-| inter_wave/a8w8 (BF8) | 16384 | 3132 / 99.86% | 256 / 8 |
-| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4383 / 66.92% | 256 / 26 |
-| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 5051 / 81.34% | 256 / 12 |
-| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 5136 / 98.90% | 244 / 0 |
+| inter_wave/a16w16 (fp16) | 8192 | 1502 / 99.84% | 242 / 0 |
+| inter_wave/a8w8 (BF8) | 16384 | 3123 / 99.84% | 256 / 8 |
+| inter_wave/a4w4 `v0` (MXFP4) | 32768 | 4368 / 67.14% | 256 / 26 |
+| inter_wave/a4w4 `v1` (MXFP4) | 32768 | 5047 / 81.32% | 256 / 12 |
+| inter_wave/a4w4 `v2` (MXFP4) | 32768 | 5200 / 98.90% | 244 / 0 |
 
 ## 3. Running
 

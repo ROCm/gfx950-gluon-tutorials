@@ -147,11 +147,11 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1061 |   434 |    57.29% |
-| v5             |   1060 |   452 |    58.50% |
-| v5 + llirSched |   1216 |   512 |    80.36% |
+| v4             |   1056 |   434 |    57.59% |
+| v5             |   1064 |   452 |    58.60% |
+| v5 + llirSched |   1209 |   512 |    80.36% |
 
-On its own the 3-stage pipeline buys nothing in the baseline case (1061 → 1060 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1216 TFLOPS and MFMA efficiency from 58.5% to 80.4% — a **15% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
+On its own the 3-stage pipeline buys nothing in the baseline case (1056 → 1064 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1209 TFLOPS and MFMA efficiency from 58.6% to 80.4% — a **15% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
 
 > [!NOTE]
 > **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).
@@ -213,13 +213,11 @@ For a full walkthrough of the algorithm — region formation, the MFMA↔memory 
 
 ### 5.2. How to Use It
 
-The LLIR scheduler ships as an out-of-tree LLVM pass plugin in this repo ([`plugins/llir_scheduler/`](../../../../../plugins/llir_scheduler/README.md)).
-
-Enable it by pointing `LLVM_PASS_PLUGIN_PATH` at the built `.so`:
+The scheduler is part of the pinned Triton (since `gfx950-tutorial-v3.0`, [triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209); until `v2.3` it was the `llirSched` plugin in this repo). v5 opts in itself: its `matmul()` passes `schedule_hint="mfma-schedule"` to the launch, so a plain run uses it, and `--schedule-hint ""` gives the stock schedule:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-python bench.py --K 8192 --dtype fp16 --version 5
+python bench.py --K 8192 --dtype fp16 --version 5                      # scheduled (the `llir` config)
+python bench.py --K 8192 --dtype fp16 --version 5 --schedule-hint ""   # stock LLVM (`base`)
 ```
 
 Or when using `run_perf_table.py`, use the `llir` config:

@@ -5,6 +5,66 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-10-10 — Re-pin to `gfx950-tutorial-v3.0`
+
+[`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0)
+is upstream Triton `main` at `3b0c7f081`, the merge of
+[triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209): **the GEMM model of
+the LLIR scheduler is now an opt-in pass in Triton**, `schedule_hint="mfma-schedule"`. Nothing is
+carried on top. The two LLVM pins are unchanged from `v2.3` (core `b010a18d`, AMD codegen
+`6bc4aaf6`), so the attention plugin keeps its ABI.
+
+### What changed, and why it matters
+
+1. **The GEMM scheduler moved into Triton.**
+   `third_party/amd/lib/Target/MFMASchedule/MFMASchedule.cpp` is the plugin's MFMA ↔ memory model
+   after its review round: spans cut at pre-existing `sched.barrier`s, a fence in front of each
+   memory anchor and after each `cd_regclass` pin, the wider MFMA cycle table, per-block rollback,
+   no environment knobs. The intra_wave kernels that used the plugin — a16w16 v5–v9, a8w8, a4w4 v0
+   and v1 — now pass `schedule_hint="mfma-schedule"` to their launch themselves (`matmul()` in each
+   `matmul_kernel.py`); v0–v4 accept the option but leave it off. The three intra_wave `bench.py`
+   lose the `LLVM_PASS_PLUGIN_PATH` dlopen hook and take `--schedule-hint` instead (`""` turns the
+   scheduler off); `run_perf_table.py` and `run_counter_collection.py` express `base` as that
+   argument and keep only amdgcnas in the environment. The config names (`base`, `llir`,
+   `llir+amdgcnas`) do not change. Measured against the `v2.3` plugin on the same build, same GPU,
+   back to back, every `llir` and `llir+amdgcnas` row is within ±1.5% and the in-loop MFMA
+   efficiency within a point:
+
+   | kernel | config | plugin (`v2.3` `.so` on this build) | `schedule_hint` |
+   |---|---|---:|---:|
+   | a16w16 v9 fp16 | `llir` / `llir+amdgcnas` | 1579 / 1608 | 1594 / 1600 |
+   | a16w16 v9 bf16 | `llir+amdgcnas` | 1690 | 1682 |
+   | a8w8 | `llir` / `llir+amdgcnas` | 3394 / 3427 | 3342 / 3433 |
+   | a4w4 v1 | `llir` / `llir+amdgcnas` | 5695 / 5815 | 5677 / 5810 |
+
+2. **The plugin keeps only the co-execution model.**
+   `plugins/llir_scheduler/LlirSchedPlugin.cpp` (1463 lines, from 2135) is the MFMA ↔ VALU model the
+   attention kernels use: span classification between `ConvertWarpPipeline`'s barriers,
+   `sched_group_barrier` declarations, the over-capacity path, memory-stage pacing. A kernel without
+   `sched.barrier`s is left untouched. The `.so` is rebuilt against the core LLVM `b010a18d`. The
+   plugin has no environment knobs any more: the memory-stage pacing is two `s_nop`s, built in, so
+   the attention README's "no `s_nop`" ablation row, which needed `LLIRSCHED_WP_MEMNOP=0`, is
+   retired. Its `v2.3` numbers were 1199 / 79.5% (`fmha_v3`) and 1274 / 85.9% (`fmha_v4`): the pacing
+   is worth +0.8 and +2.1 points of in-loop efficiency. `fmha_v4` and `fmha_v3` on the co-exec-only
+   plugin against the `v2.3` plugin on this build: 1285.1 vs 1286.8 and 1213.1 vs 1213.2 TFLOPS, with
+   identical efficiency and cycles per iteration.
+
+3. **Python.** Triton declares Python ≥ 3.11 at this commit. On 3.10 build with
+   `pip install --ignore-requires-python`; this re-pin was measured that way.
+
+### Numbers
+
+Re-measured on one MI355X on 2026-10-10. The `v3.0` build reproduces every `v2.3` number within
+noise before any kernel change: `llir` rows within ±1.3%, attention identical to the decimal
+(`fmha_v4` tuned 1286.8 vs 1289.0 at 89.2% vs 89.3%, the same 4589 cycles per iteration; every
+attention row, FlyDSL included, reads −0.2%, the day's clock), stock `base` rows within their usual
+±5%. The tables now carry the `schedule_hint` kernels and the co-exec-only plugin: a16w16 v9 fp16
+1354 / 1594 / 1600 (`base` / `llir` / `llir+amdgcnas`), v9 bf16 1682, a8w8 2976 / 3342 / 3433,
+a4w4 v1 5188 / 5677 / 5810, `fmha_v4` 1285 at 89.2%, `fmha_v3` 1213 at 81.0%. The FP16 headline
+moves from 1605 to 1600 TFLOPS, which is noise.
+
+---
+
 ## 2026-09-28 — Re-pin to `gfx950-tutorial-v2.3`
 
 [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3)

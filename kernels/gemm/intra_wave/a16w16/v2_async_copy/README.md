@@ -104,8 +104,8 @@ Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v1_buffer_load  |    544 |   512 |      0 |    25.90% |
-| v2_async_copy   |    675 |   358 |      0 |    32.25% |
+| v1_buffer_load  |    546 |   512 |      0 |    25.90% |
+| v2_async_copy   |    673 |   358 |      0 |    32.27% |
 
 ## 6. What Comes Next
 

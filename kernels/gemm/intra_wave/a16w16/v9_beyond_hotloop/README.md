@@ -172,12 +172,12 @@ the shipping stack.
 
 | Version              | Config          | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------------|-----------------|--------|-------|--------|-----------|
-| v8_sliceMN           | `base`          |   1326 |   456 |      0 |    71.55% |
-| v9_beyond_hotloop    | `base`          |   1389 |   456 |      0 |    71.80% |
-| v8_sliceMN           | `llir`          |   1555 |   456 |      0 |    94.78% |
-| v9_beyond_hotloop    | `llir`          |   1591 |   456 |      0 |    95.88% |
-| v8_sliceMN           | `llir+amdgcnas` |   1588 |   456 |      0 |    98.39% |
-| v9_beyond_hotloop    | `llir+amdgcnas` |   1605 |   456 |      0 |    98.40% |
+| v8_sliceMN           | `base`          |   1310 |   456 |      0 |    71.51% |
+| v9_beyond_hotloop    | `base`          |   1354 |   456 |      0 |    71.77% |
+| v8_sliceMN           | `llir`          |   1555 |   456 |      0 |    95.78% |
+| v9_beyond_hotloop    | `llir`          |   1594 |   456 |      0 |    95.49% |
+| v8_sliceMN           | `llir+amdgcnas` |   1583 |   456 |      0 |    98.58% |
+| v9_beyond_hotloop    | `llir+amdgcnas` |   1600 |   456 |      0 |    98.32% |
 
 v9 adds no instructions to the hot loop — the gain is entirely outside it, from the L2
 locality the XCD-aware PID remapping buys. MFMA efficiency is essentially unchanged (the loop

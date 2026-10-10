@@ -117,16 +117,16 @@ reference (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | 1479 | 99.84% | **1605** | 98.40% |
-| 16384 | 1501 | 99.52% | **1659** | 97.30% |
-| 32768 | 1311 | 72.18% | **1324** | 72.10% |
+| 8192  | 1502 | 99.84% | **1600** | 98.32% |
+| 16384 | 1541 | 99.42% | **1657** | 97.47% |
+| 32768 | 1308 | 80.52% | **1318** | 71.84% |
 
 VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **456 / 0**.
 
-**The 4-wave route leads at every K**, by **~8.5%** at K=8192 (1605 vs 1479), **~10.5%** at 16384
-(1659 vs 1501) and **~1.0%** at 32768 (1324 vs 1311). This kernel wins on loop MFMA efficiency at
-K=8192 and 16384 (99.84%, 99.52%); at K=32768 both fall away as the buffer-load stall sets in, to
-the same level (72.18% vs 72.10%). (MFMA-eff is a single-dispatch ATT reading —
+**The 4-wave route leads at every K**, by **~8.6%** at K=8192 (1600 vs 1502), **~10.5%** at 16384
+(1657 vs 1541) and **~1.0%** at 32768 (1318 vs 1308). This kernel wins on loop MFMA efficiency at
+K=8192 and 16384 (99.84%, 99.42%); at K=32768 both fall away as the buffer-load stall sets in, to
+the same level (80.52% vs 71.84%). (MFMA-eff is a single-dispatch ATT reading —
 treat the last digit as noise. `intra_wave/v9` at K=16384 has two levels: about one run in four
 reads ~1540 instead of ~1655, on this pin and the previous one; see the v2.3 entry in
 [`CHANGELOG.md`](../../../../CHANGELOG.md).)
