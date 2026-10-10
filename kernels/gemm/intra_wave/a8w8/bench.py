@@ -23,20 +23,11 @@
 ##############################################################################
 
 import argparse
-
-# The out-of-tree LLIR scheduler ships as an LLVM pass plugin (see ../../../../plugins/).
-# Loaded via LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at
-# dlopen time, which requires libtriton in the *global* symbol scope. CPython
-# loads C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the
-# first `import triton`. Only takes effect when the plugin is in use.
+import functools
 import os
 import sys
 
 import torch
-
-if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-
 import triton
 
 # Out-of-tree amdgcnas peephole (post-assembly): install the amdgcn-stage hook
@@ -63,7 +54,7 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 # `from common import get_pids` resolves to the shared helper.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
 
-from matmul_kernel import matmul  # noqa: E402
+from matmul_kernel import matmul as _matmul  # noqa: E402
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
@@ -123,10 +114,16 @@ def parse_args():
         help="Total size (MB) of rotating tensors (a, b) for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
     )
+    parser.add_argument(
+        "--schedule-hint",
+        default=None,
+        help='Triton schedule_hint compile option for the kernel ("" turns the MFMA scheduler '
+        "off; default: the kernel's own choice, see matmul() in matmul_kernel.py)",
+    )
     return parser.parse_args()
 
 
-def test_correctness(gemm_sizes):
+def test_correctness(matmul, gemm_sizes):
     torch_dtype = torch.float16
 
     for M, N, K in gemm_sizes:
@@ -167,7 +164,7 @@ def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
     return a_list, b_list, block_count
 
 
-def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
+def run_rocprof_iterations(matmul, gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512):
     """Run the kernel n_iters times for each size using rotating tensors.
 
     Rotating tensors ensure each iteration reads from different memory addresses,
@@ -193,13 +190,18 @@ def run_rocprof_iterations(gemm_sizes, n_iters=1000, rotating_buffer_size_mb=512
 
 def main():
     args = parse_args()
+    matmul = _matmul
+    if args.schedule_hint is not None:
+        matmul = functools.partial(matmul, schedule_hint=args.schedule_hint)
 
     gemm_sizes = get_gemm_sizes(args.K)
 
-    test_correctness(gemm_sizes)
+    test_correctness(matmul, gemm_sizes)
 
     if args.rocprof:
-        run_rocprof_iterations(gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size)
+        run_rocprof_iterations(
+            matmul, gemm_sizes, rotating_buffer_size_mb=args.rotating_buffer_size
+        )
         return
 
     configs = [

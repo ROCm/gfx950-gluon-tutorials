@@ -90,10 +90,7 @@ def load_kernel(args):
     # before importing a kernel. Inter-wave runs require no compiler plugins.
     bench = importlib.import_module("bench")
     if args.route == "inter":
-        forbidden = (
-            "LLVM_PASS_PLUGIN_PATH",
-            "TRITON_AMDGCNAS_PLUGIN",
-        )
+        forbidden = ("TRITON_AMDGCNAS_PLUGIN",)
         active = [name for name in forbidden if os.environ.get(name)]
         if active:
             raise RuntimeError(

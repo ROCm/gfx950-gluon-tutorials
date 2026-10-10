@@ -65,25 +65,19 @@ A4W4_VERSION_MAP = {
     1: "v1_sliceMN",
 }
 
-# As of gfx950-tutorial-v1.0 the LLIR scheduler and amdgcnas peephole are
-# out-of-tree plugins (see plugins/). The scheduler is an LLVM pass plugin loaded
-# via LLVM_PASS_PLUGIN_PATH (the pinned Triton keeps the O3 TargetMachine for
-# plugins on its own); bench.py opts libtriton into the global dlopen scope when
-# LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with TRITON_EXT_ENABLED=1.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
-_LLIR_SCHED_ENV = {
-    "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-}
 
-# Cumulative configs: each adds one component on top of the previous.
-CONFIG_ENV = {
-    "base": {},
-    "llir": {**_LLIR_SCHED_ENV},
-    "llir+amdgcnas": {
-        **_LLIR_SCHED_ENV,
-        "TRITON_AMDGCNAS_PLUGIN": "1",
-    },
+# Scheduler configs. The MFMA scheduler is part of the pinned Triton
+# (triton-lang/triton#12209): the kernels that use it pass
+# schedule_hint="mfma-schedule" themselves, so "llir" needs nothing from the
+# harness and "base" turns the hint off on the bench.py command line. amdgcnas
+# is still the out-of-tree post-assembly peephole, enabled through the
+# environment. Each config adds one component on top of the previous one, so a
+# perf table row's number reflects that stack.
+CONFIGS = {
+    "base": {"env": {}, "args": ["--schedule-hint", ""]},
+    "llir": {"env": {}, "args": []},
+    "llir+amdgcnas": {"env": {"TRITON_AMDGCNAS_PLUGIN": "1"}, "args": []},
 }
 
 TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
@@ -191,13 +185,11 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
     # Clear any scheduler/peephole config vars (old in-tree names and the current
     # plugin names) so each config starts from a clean slate.
     for key in (
-        "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
-        "LLVM_PASS_PLUGIN_PATH",
         "TRITON_AMDGCNAS_PLUGIN",
     ):
         env.pop(key, None)
-    env.update(CONFIG_ENV[config])
+    env.update(CONFIGS[config]["env"])
 
     # Build benchmark command
     bench_cmd = ["python", "bench.py", "--rocprof", "--K", str(K)]
@@ -205,6 +197,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         bench_cmd.extend(["--dtype", dtype, "--version", str(version)])
     elif kernel == "a4w4":
         bench_cmd.extend(["--version", str(version)])
+    bench_cmd.extend(CONFIGS[config]["args"])
 
     cmd = [
         "rocprofv3",
@@ -303,8 +296,8 @@ def parse_args():
     parser.add_argument(
         "--configs",
         nargs="+",
-        choices=list(CONFIG_ENV.keys()),
-        default=list(CONFIG_ENV.keys()),
+        choices=list(CONFIGS),
+        default=list(CONFIGS),
         help="Scheduler configs to test (default: all)",
     )
     parser.add_argument(

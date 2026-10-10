@@ -352,7 +352,7 @@ def v7_sliceN(
     gl.amd.cdna3.buffer_store(ptr=c_base, offsets=c_right_offsets, stored_value=c_right)
 
 
-def matmul(a, b, c=None):
+def matmul(a, b, c=None, schedule_hint="mfma-schedule"):
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     assert a.is_contiguous(), "Matrix A must be contiguous"
     M, K = a.shape
@@ -380,5 +380,6 @@ def matmul(a, b, c=None):
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
         num_warps=num_warps,
+        schedule_hint=schedule_hint,
     )
     return c

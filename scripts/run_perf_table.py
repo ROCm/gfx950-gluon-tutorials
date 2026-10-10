@@ -71,30 +71,19 @@ VERSION_MAP = {
     9: "v9_beyond_hotloop",
 }
 
-# The LLIR scheduler now ships as an out-of-tree LLVM pass plugin
-# (plugins/llir_scheduler/). Enable it by pointing LLVM_PASS_PLUGIN_PATH at the
-# built .so; the pinned Triton keeps the target machine for the O3 pipeline on
-# its own (triton-lang/triton#10849). bench.py opts libtriton into the global
-# dlopen scope when LLVM_PASS_PLUGIN_PATH is set. Requires Triton built with
-# TRITON_EXT_ENABLED=1. See plugins/llir_scheduler/README.md.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LLIR_PLUGIN_SO = os.path.join(_REPO_ROOT, "plugins", "llir_scheduler", "libLlirSched.so")
-_LLIR_SCHED_ENV = {
-    "LLVM_PASS_PLUGIN_PATH": _LLIR_PLUGIN_SO,
-}
 
-# Cumulative configs: each adds one component on top of the previous, so a perf
-# table row's number reflects that stack (llirSched, then + the out-of-tree
-# amdgcnas post-assembly peephole). Keeping MFMA accumulators in AGPRs is not a
-# config: from a16w16 v7 on (and in a8w8 and a4w4) the kernels pass
-# cd_regclass="a" to every MFMA themselves.
-CONFIG_ENV = {
-    "base": {},
-    "llir": {**_LLIR_SCHED_ENV},
-    "llir+amdgcnas": {
-        **_LLIR_SCHED_ENV,
-        "TRITON_AMDGCNAS_PLUGIN": "1",
-    },
+# Scheduler configs. The MFMA scheduler is part of the pinned Triton
+# (triton-lang/triton#12209): the kernels that use it pass
+# schedule_hint="mfma-schedule" themselves, so "llir" needs nothing from the
+# harness and "base" turns the hint off on the bench.py command line. amdgcnas
+# is still the out-of-tree post-assembly peephole, enabled through the
+# environment. Each config adds one component on top of the previous one, so a
+# perf table row's number reflects that stack.
+CONFIGS = {
+    "base": {"env": {}, "args": ["--schedule-hint", ""]},
+    "llir": {"env": {}, "args": []},
+    "llir+amdgcnas": {"env": {"TRITON_AMDGCNAS_PLUGIN": "1"}, "args": []},
 }
 
 # (kernel, config) -> set of versions that have a published TFLOPS / MFMA-eff
@@ -297,6 +286,7 @@ def run_rocprof_trace(
     iters=1000,
     rotating_sets=3,
     last_n=100,
+    config="base",
 ):
     """Run rocprofv3 --kernel-trace to collect kernel timestamps.
 
@@ -318,6 +308,11 @@ def run_rocprof_trace(
         trace_dir,
         "--",
     ]
+    if prepared and CONFIGS[config]["args"]:
+        raise ValueError(
+            "--prepared times the kernel as bench.py compiles it by default (the kernel's own "
+            f"schedule_hint); config {config!r} would need bench.py arguments, use llir or llir+amdgcnas"
+        )
     if prepared:
         prepared_driver = os.path.join(_REPO_ROOT, "scripts", "benchmark_prepared.py")
         cmd.extend(
@@ -348,6 +343,7 @@ def run_rocprof_trace(
             cmd.extend(["--dtype", dtype, "--version", str(version)])
         elif kernel_type == "a4w4":
             cmd.extend(["--version", str(version)])
+        cmd.extend(CONFIGS[config]["args"])
 
     rocprof_env = env.copy()
     rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
@@ -436,14 +432,12 @@ def run_benchmark(
     env = os.environ.copy()
     # Clear any previous config env vars
     for key in (
-        "LLVM_PASS_PLUGIN_PATH",
         "TRITON_AMDGCNAS_PLUGIN",
-        "TRITON_ENABLE_LLIR_SCHED",
         "TRITON_ENABLE_AMDGCN_AS",
     ):
         env.pop(key, None)
     # Set config-specific env vars
-    env.update(CONFIG_ENV[config])
+    env.update(CONFIGS[config]["env"])
 
     cmd = [
         sys.executable,
@@ -459,6 +453,7 @@ def run_benchmark(
         cmd.extend(["--dtype", dtype, "--version", str(version)])
     elif kernel == "a4w4":
         cmd.extend(["--version", str(version)])
+    cmd.extend(CONFIGS[config]["args"])
 
     if kernel == "a8w8":
         print(f"  Running: {kernel} config={config}")
@@ -506,6 +501,7 @@ def run_benchmark(
             work_dir,
             env,
             kernel_type=kernel,
+            config=config,
             prepared=prepared,
             warmup=warmup,
             iters=iters,
@@ -566,8 +562,8 @@ def parse_args():
     parser.add_argument(
         "--configs",
         nargs="+",
-        choices=list(CONFIG_ENV.keys()),
-        default=list(CONFIG_ENV.keys()),
+        choices=list(CONFIGS),
+        default=list(CONFIGS),
         help="Scheduler configs to test (default: all)",
     )
     parser.add_argument(

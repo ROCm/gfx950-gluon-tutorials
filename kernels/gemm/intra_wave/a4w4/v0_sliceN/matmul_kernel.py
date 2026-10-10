@@ -568,7 +568,7 @@ def v0_sliceN(
     gl.amd.cdna4.buffer_store(c_right, c_tile_base, c_right_offsets)
 
 
-def matmul(a, b, a_scales, b_scales):
+def matmul(a, b, a_scales, b_scales, schedule_hint="mfma-schedule"):
     # A: (M, K//2) uint8, K-contiguous
     # B: (N, K//2) uint8, K-contiguous
     M = a.shape[0]
@@ -611,5 +611,6 @@ def matmul(a, b, a_scales, b_scales):
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
         num_warps=num_warps,
+        schedule_hint=schedule_hint,
     )
     return c
