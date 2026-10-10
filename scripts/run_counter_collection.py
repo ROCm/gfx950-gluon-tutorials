@@ -192,7 +192,7 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
     env.update(CONFIGS[config]["env"])
 
     # Build benchmark command
-    bench_cmd = ["python", "bench.py", "--rocprof", "--K", str(K)]
+    bench_cmd = [sys.executable, "bench.py", "--rocprof", "--K", str(K)]
     if kernel == "a16w16":
         bench_cmd.extend(["--dtype", dtype, "--version", str(version)])
     elif kernel == "a4w4":

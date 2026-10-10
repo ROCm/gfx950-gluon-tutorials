@@ -444,7 +444,7 @@ def run_benchmark(
         run_att_path,
         "--att-output",
         "tmp",
-        "python",
+        sys.executable,
         "bench.py",
         "--K",
         str(K),
