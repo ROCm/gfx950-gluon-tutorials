@@ -35,7 +35,7 @@ kernels using rocprof. One tool for all three inter_wave kernels; the 4-wave
   * VGPRs/spills — parsed from the kernel's .amdgcn in the triton cache.
 
 The inter_wave kernels schedule themselves via warp_pipeline_stage and run
-"base" (no TRITON_ENABLE_LLIR_SCHED / TRITON_ENABLE_AMDGCN_AS), so no env vars.
+"base" (no schedule_hint, no amdgcnas), so no env vars.
 
 Usage:
     python scripts/collect_perf.py --kernel a16w16 --K 8192 --dtype fp16

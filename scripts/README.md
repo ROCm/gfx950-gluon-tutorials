@@ -157,10 +157,10 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+amd
 
 ### Configs
 
-Each config sets different environment variables before running the benchmark (see [gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins) for the out-of-tree plugin mechanism):
+Each config adds one component (see [gemm/README.md §2.1](../kernels/gemm/intra_wave/README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin) for the components):
 
-- **base** — no extra env vars (default Triton scheduling)
-- **llir** — `LLVM_PASS_PLUGIN_PATH=…/plugins/llir_scheduler/libLlirSched.so`
+- **base** — `bench.py --schedule-hint ""`: the MFMA scheduler off, stock LLVM scheduling
+- **llir** — nothing to set: the kernels pass `schedule_hint="mfma-schedule"` to their launch themselves
 - **llir+amdgcnas** — `llir` + `TRITON_AMDGCNAS_PLUGIN=1` (adds the post-assembly peephole)
 
 Keeping MFMA accumulators in AGPRs is not a config: a16w16 v7 and later, a8w8 and a4w4 pass

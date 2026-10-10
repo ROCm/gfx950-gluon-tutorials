@@ -13,7 +13,7 @@ If you haven't completed the a16w16 journey (v0–v9), start there first — thi
 
 After understanding this kernel, proceed to [a4w4/](../a4w4/) for the MXFP4 kernel. Unlike a8w8, a4w4 *does* add a genuinely new element (a per-group scale pipeline) on top of the inherited tile pipeline, so it reads as a continuation rather than another checklist proof.
 
-This kernel requires the LLIR scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
+This kernel requires the MFMA scheduler and amdgcnas for peak performance. See [`/docs/performance_philosophy.md`](../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
 
 ## 1. Directory Structure
 
@@ -41,7 +41,7 @@ The BF8 kernel uses the same optimization techniques as the final a16w16 design 
 
 BF8 MFMA processes 128 elements along the K dimension per instruction (vs. 32 for FP16). To maintain the same total MFMA compute time per iteration, BLOCK_K doubles from 64 to 128.
 
-Each BF8 MFMA also takes 32 cycles to execute (vs. 16 for FP16), so pipelining works on a coarser grain: the LLIR scheduler interleaves half as many MFMAs between each memory operation (2 MFMAs per `buffer_load` instead of 4, 2 per `ds_read` instead of 4). `BLOCK_K=128` ensures each iteration still has enough MFMA work to fully hide memory latency behind compute.
+Each BF8 MFMA also takes 32 cycles to execute (vs. 16 for FP16), so pipelining works on a coarser grain: the MFMA scheduler interleaves half as many MFMAs between each memory operation (2 MFMAs per `buffer_load` instead of 4, 2 per `ds_read` instead of 4). `BLOCK_K=128` ensures each iteration still has enough MFMA work to fully hide memory latency behind compute.
 
 ### 2.2 Scaled MFMA
 
@@ -134,19 +134,19 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.3`:
+Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v3.0`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|
-| base           |   2807 |   448 |      0 |    72.05% |
-| llir           |   3351 |   448 |      0 |    96.16% |
-| llir+amdgcnas  |   3417 |   448 |      0 |    99.72% |
+| base           |   2976 |   448 |      0 |    72.09% |
+| llir           |   3342 |   448 |      0 |    96.31% |
+| llir+amdgcnas  |   3433 |   448 |      0 |    99.72% |
 
 **M+N slicing keeps the kernel spill-free.** Splitting A across two `smemA_top` / `smemA_bot` allocations gives four 128×128 accumulator quadrants, keeping peak register pressure in budget.
 
-**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../a16w16/v7_sliceN/README.md)), so all three configurations run with the accumulators in AGPRs, 448 arch VGPRs and no in-loop `v_accvgpr_*` copies. `llir` then interleaves the loop to **3351 TFLOPS / 96.16%**, and `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
+**The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../a16w16/v7_sliceN/README.md)), so all three configurations run with the accumulators in AGPRs, 448 arch VGPRs and no in-loop `v_accvgpr_*` copies. `llir` then interleaves the loop to **3342 TFLOPS / 96.31%**, and `amdgcnas` packs the remaining SALU gaps to reach **99.72% MFMA efficiency** — the hot loop is fully saturated.
 
-The [LLIR Scheduler](../../../../plugins/llir_scheduler/README.md) and [amdgcnas](../../../../plugins/amdgcnas/README.md) ship as out-of-tree plugins in this repo; see [gemm/README §2.1](../README.md#21-triton-build-and-the-out-of-tree-plugins) for how to build Triton and enable them.
+The MFMA scheduler is part of the pinned Triton (the kernel passes `schedule_hint="mfma-schedule"` itself; `--schedule-hint ""` turns it off) and [amdgcnas](../../../../plugins/amdgcnas/README.md) is an out-of-tree plugin in this repo; see [gemm/README §2.1](../README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin) for how to build Triton and enable them.
 
 ## 5. How to Run
 

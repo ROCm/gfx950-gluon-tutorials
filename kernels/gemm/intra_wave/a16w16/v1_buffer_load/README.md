@@ -105,15 +105,15 @@ We will explore register pressure in more depth in later versions.
 
 ## Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, plain rocprofv3 with
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v3.0`, plain rocprofv3 with
 rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `base` (no compiler plugins).
 
 | Version         | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |-----------------|--------|-------|--------|-----------|
-| v0_naive        |    542 |   428 |      0 |    25.62% |
-| v1_buffer_load  |    544 |   512 |      0 |    25.90% |
+| v0_naive        |    542 |   428 |      0 |    26.06% |
+| v1_buffer_load  |    546 |   512 |      0 |    25.90% |
 
 ## 6. What Comes Next
 

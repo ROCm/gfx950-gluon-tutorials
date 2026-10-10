@@ -6,19 +6,19 @@ This repository is **educational reference material**, not a supported product. 
 
 ## Reproducibility
 
-The performance numbers in this repository are reproduced against the [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3) annotated tag in `triton-lang/triton` — **the current pin** — on a well-performing MI355X (see `CHANGELOG.md`). The committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration is pending). Those tags are immutable — they will not be moved or deleted. Building Triton from the relevant tag (or any commit reachable from it) reproduces the measurements within run-to-run noise on the same GPU and day; absolute TFLOPS differ by up to ~17% between MI355X parts and drift between measurement days with the compiler unchanged (see the v2.2 entry in `CHANGELOG.md`), so compare configurations measured together on one GPU.
+The performance numbers in this repository are reproduced against the [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0) annotated tag in `triton-lang/triton` — **the current pin** — on a well-performing MI355X (see `CHANGELOG.md`). The committed IR/assembly dumps predate the v1.1 re-pin and are reproduced against [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) (regeneration is pending). Those tags are immutable — they will not be moved or deleted. Building Triton from the relevant tag (or any commit reachable from it) reproduces the measurements within run-to-run noise on the same GPU and day; absolute TFLOPS differ by up to ~17% between MI355X parts and drift between measurement days with the compiler unchanged (see the v2.2 entry in `CHANGELOG.md`), so compare configurations measured together on one GPU.
 
-Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llirSched` vs `llirSched + amdgcnas`) is expected to remain stable.
+Later commits on the [`gfx950-tutorial`](https://github.com/triton-lang/triton/tree/gfx950-tutorial) development branch may shift absolute numbers as the compiler evolves; the relative structure (`base` vs `llir` vs `llir+amdgcnas`) is expected to remain stable.
 
 ## Upstream trajectory
 
 The three components the tutorial depends on are on a planned upstreaming path:
 
-- **llirSched** — the LLIR scheduler (out-of-tree LLVM pass plugin, enabled via `LLVM_PASS_PLUGIN_PATH`) — targeted for upstream Triton (`triton-lang/triton`) around June 2026, as an opt-in pass.
+- **MFMA scheduler** (`llirSched` until `v2.3`) — landed: since `gfx950-tutorial-v3.0` it is Triton's opt-in MFMA scheduler ([triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209), `schedule_hint="mfma-schedule"`), and the GEMM kernels pass that option themselves. The plugin in `plugins/llir_scheduler/` now carries only the co-execution model the attention kernels use (still loaded via `LLVM_PASS_PLUGIN_PATH`); upstreaming that model is a separate proposal.
 - **AGPR-pinned accumulators** (formerly the force-agpr component) — no longer a plugin or a switch: from `a16w16` v7 on, and in `a8w8` and `a4w4`, the kernels pass upstream Gluon's per-call `cd_regclass="a"` ([triton-lang/triton#11792](https://github.com/triton-lang/triton/pull/11792)) to every MFMA. It replaced the process-wide `TRITON_FORCE_MFMA_AGPR` hook in `gfx950-tutorial-v2.2`. LLVM's upcoming `RewriteMFMAFormStage` pass, which picks AGPR vs. VGPR form per MFMA by register pressure, is the longer-term replacement.
 - **`amdgcnas`** — the post-assembly peephole (out-of-tree plugin, enabled via `TRITON_AMDGCNAS_PLUGIN`) — a longer-term target for an LLVM MachineInstr-level pass.
 
-Once these land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
+Once the remaining components land upstream, a future revision of this repository will track the corresponding stable Triton/LLVM releases and retire the out-of-tree plugins.
 
 ## Issues and pull requests
 

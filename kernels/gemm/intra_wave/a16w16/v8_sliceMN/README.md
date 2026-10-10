@@ -78,7 +78,7 @@ This ordering ensures that:
 
 ### 3.3. Why the Copy Problem Disappears
 
-In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), we identified a fundamental problem: when the LLIR scheduler interleaves `ds_read` with MFMA inside a single iteration, the `ds_read` results must remain live across the MFMAs that follow. The register allocator is forced to place `ds_read` results in *different* registers from those expected by the next iteration's MFMA, requiring copy instructions (`v_accvgpr_mov_b32`) at the iteration boundary. This overhead motivated loop unrolling in v6.
+In [v5_local_prefetch](../v5_local_prefetch/README.md#54-bottleneck-analysis), we identified a fundamental problem: when the MFMA scheduler interleaves `ds_read` with MFMA inside a single iteration, the `ds_read` results must remain live across the MFMAs that follow. The register allocator is forced to place `ds_read` results in *different* registers from those expected by the next iteration's MFMA, requiring copy instructions (`v_accvgpr_mov_b32`) at the iteration boundary. This overhead motivated loop unrolling in v6.
 
 With four regions per K-step, this problem disappears — but only because the **load order** is carefully chosen. Consider how the order `B_left -> A_top -> A_bot -> B_right` maps onto the regions:
 
@@ -173,7 +173,7 @@ Note that `dwordx4` and `dword` have the same efficiency (1 byte/cycle), while `
 Taking `dwordx4` as an example: when the queue is full, the next `buffer_load_dwordx4` must wait 64 cycles to be issued — 16 cycles per `buffer_load` x 4 waves sharing the TCP. This 64-cycle interval is the expected steady-state issue latency for the 5th through 11th `buffer_load` from each wave.
 
 > [!NOTE]
-> This 64-cycle issue latency is what the LLIR scheduler uses as the throughput model: 4 MFMAs (at 16 cycles each) per `buffer_load` in the interleaving schedule.
+> This 64-cycle issue latency is what the MFMA scheduler uses as the throughput model: 4 MFMAs (at 16 cycles each) per `buffer_load` in the interleaving schedule.
 
 ### 4.5. The v7 Stall Problem at Large K
 
@@ -208,7 +208,7 @@ In the trace above (yellow rectangles = `buffer_load_to_lds`), the phases unfold
 
 ### 4.6. How v8 Solves the Stall
 
-In v8, each region issues only **4 `buffer_load_to_lds_dwordx4` per wave** (one half-tile), and there are 4 regions per K-step. The LLIR scheduler interleaves these 4 buffer loads with 32 MFMAs within each region — so buffer loads are evenly distributed rather than clustered.
+In v8, each region issues only **4 `buffer_load_to_lds_dwordx4` per wave** (one half-tile), and there are 4 regions per K-step. The MFMA scheduler interleaves these 4 buffer loads with 32 MFMAs within each region — so buffer loads are evenly distributed rather than clustered.
 
 ![v8 buffer load distribution](../images/v8_sliceMN_buffer_load_distribution.png)
 
@@ -245,10 +245,10 @@ The buffer load stall described above is directly measurable. We compare v7 (sli
 
 | Version                        |     K | TFLOPS | MFMA Eff. |
 |--------------------------------|-------|--------|-----------|
-| v7_sliceN + llir+amdgcnas      |  8192 |   1583 |    98.06% |
-| v7_sliceN + llir+amdgcnas      | 16384 |   1571 |    96.92% |
-| v8_sliceMN + llir+amdgcnas     |  8192 |   1588 |    98.39% |
-| v8_sliceMN + llir+amdgcnas     | 16384 |   1605 |    97.88% |
+| v7_sliceN + llir+amdgcnas      |  8192 |   1574 |    97.93% |
+| v7_sliceN + llir+amdgcnas      | 16384 |   1570 |    97.26% |
+| v8_sliceMN + llir+amdgcnas     |  8192 |   1583 |    98.58% |
+| v8_sliceMN + llir+amdgcnas     | 16384 |   1596 |    98.09% |
 
 Performance is collected using:
 ```bash
@@ -256,7 +256,7 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+a
 python scripts/run_perf_table.py --kernel a16w16 --versions 7 8 --configs llir+amdgcnas --K 16384 --dtype fp16 --rocprof
 ```
 
-At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 v7 drops to 96.92% while v8 holds at 97.88%. That drop is the signature of the TCP stall: v7's 16 consecutive buffer loads per wave press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
+At K=8192, both kernels achieve ~98% MFMA efficiency — HBM latency is moderate and v7's ~1000-cycle budget is sufficient. At K=16384 v7 drops to 97.26% while v8 holds at 98.09%. That drop is the signature of the TCP stall: v7's 16 consecutive buffer loads per wave press against the ~1000-cycle HBM budget at large K, while v8's distributed 4-loads-per-region structure stays comfortably within the ~1500-cycle budget.
 
 ## 6. What Comes Next
 

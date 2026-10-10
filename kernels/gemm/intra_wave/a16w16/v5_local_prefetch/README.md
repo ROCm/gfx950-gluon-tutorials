@@ -16,7 +16,7 @@ v5_local_prefetch/
 ├── matmul_kernel.py              # The kernel implementation
 ├── README.md                     # This file
 ├── ir_dump_K4096_fp16/           # IR dumps for analysis
-└── ir_dump_K4096_fp16_llirSched/ # IR dumps with llirSched enabled
+└── ir_dump_K4096_fp16_llirSched/ # IR dumps with the MFMA scheduler enabled
 ```
 
 The dump artifacts are reproduced against the [`gfx950-tutorial-v1.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v1.0) Triton tag. To regenerate them, see [`docs/regenerating_ir_dumps.md`](../../../../../docs/regenerating_ir_dumps.md).
@@ -147,14 +147,14 @@ acc = gl.amd.cdna3.mfma(a, b, acc)
 
 | Version        | TFLOPS | VGPRs | MFMA Eff. |
 |----------------|--------|-------|-----------|
-| v4             |   1061 |   434 |    57.29% |
-| v5             |   1060 |   452 |    58.50% |
-| v5 + llirSched |   1216 |   512 |    80.36% |
+| v4             |   1056 |   434 |    57.59% |
+| v5             |   1064 |   452 |    58.60% |
+| v5 + MFMA scheduler |   1209 |   512 |    80.36% |
 
-On its own the 3-stage pipeline buys nothing in the baseline case (1061 → 1060 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the LLIR scheduler, throughput jumps to 1216 TFLOPS and MFMA efficiency from 58.5% to 80.4% — a **15% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
+On its own the 3-stage pipeline buys nothing in the baseline case (1056 → 1064 TFLOPS): the compiler does not interleave the extra stage's work with the MFMAs. Combined with the MFMA scheduler, throughput jumps to 1209 TFLOPS and MFMA efficiency from 58.6% to 80.4% — a **15% improvement** over the v5 baseline by interleaving MFMA with memory operations. Local prefetch and the scheduler are a unit: neither is worth much without the other.
 
 > [!NOTE]
-> **`v5 + llirSched` is the canonical v5.** All later versions (v6–v9) build on v5 with the LLIR scheduler enabled, and this README's performance tables list `v5 + llirSched` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the LLIR scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).
+> **`v5 + MFMA scheduler` is the canonical v5.** All later versions (v6–v9) build on v5 with the MFMA scheduler enabled, and this README's performance tables list `v5 + MFMA scheduler` as the reference point. When later READMEs refer to "v5" without qualification, they mean this configuration — the MFMA scheduler is always assumed on from here forward. For the design rationale behind why a block-level programming model lets us build a scheduler this simple, see [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md).
 
 Performance is collected using:
 ```bash
@@ -188,16 +188,16 @@ Note that MFMA, `buffer_load`, and `ds_read` can co-execute on the hardware. How
 >
 > Currently, the backend does not yet produce the expected fine-grained scheduling in this case. This represents an opportunity for collaboration: Gluon kernels like this one serve as concrete use cases to guide backend improvements.
 
-## 5. Introduction to the LLIR Scheduler
+## 5. Introduction to the MFMA Scheduler
 
-To address the scheduling gap identified above, we developed the **LLIR scheduler** as a solution for faster iteration and preview of optimal scheduling. This enables continued progress on analyzing other bottlenecks in the kernel — without it, exploration of remaining optimization opportunities would be blocked at this stage.
+To address the scheduling gap identified above, we developed the **MFMA scheduler** as a solution for faster iteration and preview of optimal scheduling. This enables continued progress on analyzing other bottlenecks in the kernel — without it, exploration of remaining optimization opportunities would be blocked at this stage.
 
 As discussed earlier, the Gluon pipeline design ensures that operations inside the loop are independent: MFMA, `local_load`, and `buffer_load` have no dependencies on each other within the same iteration. To achieve the best MFMA efficiency, we want MFMA to be running throughout the entire iteration, which requires interleaving MFMA with memory operations. The independence between these operations makes interleaving straightforward.
 
 > [!IMPORTANT]
 > Thanks to the Gluon pipeline design, the scheduling problem is reduced to an interleaving problem. This interleaving is also all we need from the backend regarding instruction scheduling.
 
-The term "scheduler" may be an overstatement. Traditional instruction scheduling is NP-hard — optimal scheduling with resource constraints and register pressure is NP-complete, which is why production compilers rely on heuristics. In contrast, because Gluon's pipeline design eliminates dependencies between MFMA and memory operations, the problem becomes simple interleaving based on the throughput model — essentially O(n) where n is the number of instructions. The LLIR scheduler operates at the LLVM IR level, after Gluon/Triton lowering but before final code generation.
+The term "scheduler" may be an overstatement. Traditional instruction scheduling is NP-hard — optimal scheduling with resource constraints and register pressure is NP-complete, which is why production compilers rely on heuristics. In contrast, because Gluon's pipeline design eliminates dependencies between MFMA and memory operations, the problem becomes simple interleaving based on the throughput model — essentially O(n) where n is the number of instructions. The MFMA scheduler operates at the LLVM IR level, after Gluon/Triton lowering but before final code generation.
 
 ### 5.1. How It Works
 
@@ -213,13 +213,11 @@ For a full walkthrough of the algorithm — region formation, the MFMA↔memory 
 
 ### 5.2. How to Use It
 
-The LLIR scheduler ships as an out-of-tree LLVM pass plugin in this repo ([`plugins/llir_scheduler/`](../../../../../plugins/llir_scheduler/README.md)).
-
-Enable it by pointing `LLVM_PASS_PLUGIN_PATH` at the built `.so`:
+The scheduler is part of the pinned Triton (since `gfx950-tutorial-v3.0`, [triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209); until `v2.3` it was the `llirSched` plugin in this repo). v5 opts in itself: its `matmul()` passes `schedule_hint="mfma-schedule"` to the launch, so a plain run uses it, and `--schedule-hint ""` gives the stock schedule:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-python bench.py --K 8192 --dtype fp16 --version 5
+python bench.py --K 8192 --dtype fp16 --version 5                      # scheduled (the `llir` config)
+python bench.py --K 8192 --dtype fp16 --version 5 --schedule-hint ""   # stock LLVM (`base`)
 ```
 
 Or when using `run_perf_table.py`, use the `llir` config:
@@ -230,13 +228,13 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 --configs llir --K
 
 The implementation is at [`plugins/llir_scheduler/LlirSchedPlugin.cpp`](../../../../../plugins/llir_scheduler/LlirSchedPlugin.cpp).
 
-### 5.3. What Changed (v5 → v5 + llirSched)
+### 5.3. What Changed (v5 → v5 + MFMA scheduler)
 
-Comparing the thread trace of v5 with llirSched to the v5 baseline (bottom image in section 4.1):
+Comparing the thread trace of v5 with the MFMA scheduler to the v5 baseline (bottom image in section 4.1):
 
-![v5 with llirSched trace](../images/v5-llirSched_bottleneck.png)
+![v5 with the MFMA scheduler trace](../images/v5-llirSched_bottleneck.png)
 
-The LLIR scheduler interleaves MFMA instructions with `buffer_load` and `ds_read` operations. The improvements are significant:
+The MFMA scheduler interleaves MFMA instructions with `buffer_load` and `ds_read` operations. The improvements are significant:
 - Total cycles per iteration are reduced substantially
 - Stalls for `buffer_load` and `ds_read` are also reduced
 
@@ -244,7 +242,7 @@ This improvement directly reflects the throughput model of memory operations —
 
 ### 5.4. Bottleneck Analysis
 
-Even with the LLIR scheduler, MFMA efficiency is 80% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
+Even with the MFMA scheduler, MFMA efficiency is 80% — there is still room for improvement. Looking at the trace above, at the end of the iteration (marked by the **purple rectangle**), there are many VALU instructions issued back-to-back.
 
 Examining the generated assembly in [`ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s`](./ir_dump_K4096_fp16_llirSched/v5_local_prefetch.s) (lines 828–921), we see a block of copy instructions at the end of each iteration:
 
@@ -259,13 +257,13 @@ v_accvgpr_mov_b32 a29, a205
 
 These instructions copy the `ds_read` results (which landed in registers like `a[128:131]`, `a[204:207]`) to the registers that MFMA will consume in the next iteration (like `a[72:75]`, `a[28:31]`). This overhead is inherent to the prefetch design: since `a_next` and `b_next` are loaded into different registers than `a` and `b`, the data must be copied before the next iteration can use it.
 
-A natural question arises: why do these copy instructions not appear in the v5 trace *without* the LLIR scheduler?
+A natural question arises: why do these copy instructions not appear in the v5 trace *without* the MFMA scheduler?
 
-Without the LLIR scheduler, `ds_read` instructions are clustered at the very end of the iteration. Their results land in registers that can be directly consumed by the MFMA instructions at the beginning of the next iteration — no copies are needed because the register allocator can assign the same physical registers to both the `ds_read` destinations and the MFMA inputs.
+Without the MFMA scheduler, `ds_read` instructions are clustered at the very end of the iteration. Their results land in registers that can be directly consumed by the MFMA instructions at the beginning of the next iteration — no copies are needed because the register allocator can assign the same physical registers to both the `ds_read` destinations and the MFMA inputs.
 
 However, when we interleave `ds_read` with MFMA, the situation changes. The `ds_read` results must remain live across intervening MFMA instructions until the next iteration. This extended live range overlaps with the registers actively used by the current iteration's MFMA. The register allocator must therefore place the `ds_read` results in a *different* set of registers to avoid conflicts. At the iteration boundary, the data must be copied from these temporary registers to the registers expected by the next iteration's MFMA.
 
-This is a fundamental trade-off: interleaving improves instruction-level parallelism but increases register pressure and introduces copy overhead. The copies are the price we pay for the extended live ranges that interleaving creates. Counted in the current build, the loop body carries **105** `v_accvgpr_*` copies under the LLIR scheduler against 18 without it, and the register file is full: 256 VGPRs and 256 AGPRs. This is where the accumulator-copy problem that v6 and v7 deal with begins.
+This is a fundamental trade-off: interleaving improves instruction-level parallelism but increases register pressure and introduces copy overhead. The copies are the price we pay for the extended live ranges that interleaving creates. Counted in the current build, the loop body carries **105** `v_accvgpr_*` copies under the MFMA scheduler against 18 without it, and the register file is full: 256 VGPRs and 256 AGPRs. This is where the accumulator-copy problem that v6 and v7 deal with begins.
 
 This copy overhead is unavoidable in a single-iteration loop body—unless we unroll the loop.
 

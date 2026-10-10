@@ -28,7 +28,7 @@ Bars = TFLOPS (left axis), red line = MFMA efficiency (right axis), one bar per
 (version, config).  Configs: base / llir / llir+amdgcnas. From v7 on the kernels pin their MFMA
 accumulators to AGPRs (cd_regclass) in every config; v0-v6 are unpinned.
 
-Data: a well-performing MI355X, Triton gfx950-tutorial-v2.3, 4096x4096x8192, FP16,
+Data: a well-performing MI355X, Triton gfx950-tutorial-v3.0, 4096x4096x8192, FP16,
 rocprofv3 (1000 dispatches, last-100 avg),
 collected with:
     python scripts/run_perf_table.py --kernel a16w16 --versions <v> \
@@ -48,30 +48,30 @@ from matplotlib.patches import Patch
 # Config styling, in cumulative order.
 CONFIGS = {
     "base": dict(color="#4E95D9", label="Base kernel", tag=""),
-    "llir": dict(color="#E8973A", label="+ llir", tag="+llir"),
-    "llir+amdgcnas": dict(color="#5BA85B", label="+ llir + amdgcnas", tag="+asm"),
+    "llir": dict(color="#E8973A", label="+ MFMA scheduler", tag="+llir"),
+    "llir+amdgcnas": dict(color="#5BA85B", label="+ MFMA scheduler + amdgcnas", tag="+asm"),
 }
 
 # (version, config, TFLOPS, MFMA%) in plotting order.
 DATA = [
     (0, "base", 542, 25.62),
-    (1, "base", 544, 25.90),
-    (2, "base", 675, 32.25),
-    (3, "base", 773, 43.10),
-    (4, "base", 1061, 57.29),
-    (5, "base", 1060, 58.50),
-    (5, "llir", 1216, 80.36),
-    (6, "base", 218, 8.51),
-    (6, "llir", 1162, 90.20),
-    (7, "base", 1210, 66.52),
-    (7, "llir", 1554, 97.33),
-    (7, "llir+amdgcnas", 1583, 98.06),
-    (8, "base", 1326, 71.55),
+    (1, "base", 546, 25.90),
+    (2, "base", 673, 32.25),
+    (3, "base", 746, 43.10),
+    (4, "base", 1056, 57.29),
+    (5, "base", 1064, 58.50),
+    (5, "llir", 1209, 80.36),
+    (6, "base", 219, 8.51),
+    (6, "llir", 1158, 90.20),
+    (7, "base", 1223, 66.52),
+    (7, "llir", 1549, 97.33),
+    (7, "llir+amdgcnas", 1574, 98.06),
+    (8, "base", 1310, 71.55),
     (8, "llir", 1555, 94.78),
-    (8, "llir+amdgcnas", 1588, 98.39),
-    (9, "base", 1389, 71.80),
-    (9, "llir", 1591, 95.88),
-    (9, "llir+amdgcnas", 1605, 98.40),
+    (8, "llir+amdgcnas", 1583, 98.39),
+    (9, "base", 1354, 71.80),
+    (9, "llir", 1594, 95.88),
+    (9, "llir+amdgcnas", 1600, 98.40),
 ]
 
 x = list(range(len(DATA)))

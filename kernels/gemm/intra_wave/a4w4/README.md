@@ -4,13 +4,13 @@ This directory implements a high-performance **MXFP4 (e2m1) GEMM** in Gluon,
 targeting **AMD MI350/355 GPUs** (gfx950). It builds directly on the techniques
 from the [a16w16](../a16w16/) FP16 journey and the [a8w8](../a8w8/) BF8 kernel —
 the same double-buffered async-copy tile pipeline, 3-stage pipelining, loop
-unrolling, LLIR scheduler, and amdgcnas. What's new and specific to MXFP4 is the
+unrolling, MFMA scheduler, and amdgcnas. What's new and specific to MXFP4 is the
 **scale pipeline**: every group of 32 e2m1 elements shares an 8-bit e8m0 scale,
 which must be loaded, laid out for the hardware, and fed to `mfma_scaled`.
 
 If you haven't completed the a16w16 journey and reviewed a8w8, start there
 first — this kernel assumes familiarity with N/M+N slicing, 3-stage pipelining,
-loop unrolling, the LLIR scheduler, and amdgcnas.
+loop unrolling, the MFMA scheduler, and amdgcnas.
 
 ## 1. Directory Structure
 
@@ -27,13 +27,11 @@ a4w4/
 From the `a4w4` directory:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-TRITON_AMDGCNAS_PLUGIN=1 \
-python bench.py --version 1 --K 32768
+TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 1 --K 32768
 ```
 
 This runs correctness against a dequantized `torch.matmul` reference and reports
-TFLOPS. Use `--version 0|1` to select the kernel and `--rocprof` for accurate
+TFLOPS. The MFMA scheduler is on by default (`--schedule-hint ""` turns it off). Use `--version 0|1` to select the kernel and `--rocprof` for accurate
 timing + MFMA efficiency. For the full version × config table:
 
 ```bash
@@ -58,12 +56,12 @@ faster.
 
 ## 4. Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v3.0`, 4096×4096×32768, rocprof timing (1000 dispatches, last-100
 average), `llir+amdgcnas`:
 
 | Version | TFLOPS | MFMA Eff. |
 |---------|--------|-----------|
-| v0_sliceN  | 5377 | 81.5% |
-| v1_sliceMN | 5815 | 94.1% |
+| v0_sliceN  | 5350 | 81.4% |
+| v1_sliceMN | 5810 | 94.1% |
 
 See each version's README for the full per-config table.

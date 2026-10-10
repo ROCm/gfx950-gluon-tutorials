@@ -30,7 +30,7 @@ in its **own** double-buffered LDS allocation (`smemA_top/bot`, `smemB_left/righ
 | LDS allocation | 4 separate per-quadrant | 4 separate per-quadrant |
 | K-unroll | 2× | 2× |
 | `local_load` | non-relaxed (separate allocs) | non-relaxed (separate allocs) |
-| Hot-loop scheduling | `warp_pipeline_stage` | LLIR scheduler + amdgcnas |
+| Hot-loop scheduling | `warp_pipeline_stage` | MFMA scheduler + amdgcnas |
 | XCD PID remap | yes (v9-style) | yes |
 
 ## 2. What changes from the 4-wave kernel
@@ -51,7 +51,7 @@ acc_bl += DOT(A_bot, B_left)     acc_br += DOT(A_bot, B_right)
 ```
 
 In the 4-wave `v9`, a region is a single block — one `mfma` immediately followed by the
-`local_load` + async refill for the next region — and the LLIR scheduler interleaves the
+`local_load` + async refill for the next region — and the MFMA scheduler interleaves the
 two. The 8-wave kernel takes that **same region** and only splits its `mfma` and its memory
 ops into two `warp_pipeline_stage` clusters; the wave-level pipeliner then stripes one wave
 group's mfma cluster over the other group's mem cluster:
@@ -111,22 +111,22 @@ derivation is in [`docs/warp_pipelining.md §7`](../../../../docs/warp_pipelinin
 ## 3. Performance
 
 MI355X, gfx950, 4096×4096, fp16, **no-AGPR** (`amdgpu-agpr-alloc=0,0` via `llvm_fn_attrs`),
-Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
+Triton `gfx950-tutorial-v3.0`, rocprof cold-rotating (`--rotating-buffer-size 2048`). This
 kernel (`scripts/collect_perf.py`) vs the 4-wave [`intra_wave/v9`](../../intra_wave/a16w16/v9_beyond_hotloop/README.md)
 reference (`scripts/run_perf_table.py --configs llir+amdgcnas --rocprof`):
 
 | K | this kernel TFLOPS | this kernel MFMA eff | `intra_wave/v9` TFLOPS | `intra_wave/v9` MFMA eff |
 |---|---|---|---|---|
-| 8192  | 1479 | 99.84% | **1605** | 98.40% |
-| 16384 | 1501 | 99.52% | **1659** | 97.30% |
-| 32768 | 1311 | 72.18% | **1324** | 72.10% |
+| 8192  | 1502 | 99.84% | **1600** | 98.32% |
+| 16384 | 1541 | 99.42% | **1657** | 97.47% |
+| 32768 | 1308 | 80.52% | **1318** | 71.84% |
 
 VGPRs / spills: this kernel **242 / 0**, `intra_wave/v9` **456 / 0**.
 
-**The 4-wave route leads at every K**, by **~8.5%** at K=8192 (1605 vs 1479), **~10.5%** at 16384
-(1659 vs 1501) and **~1.0%** at 32768 (1324 vs 1311). This kernel wins on loop MFMA efficiency at
-K=8192 and 16384 (99.84%, 99.52%); at K=32768 both fall away as the buffer-load stall sets in, to
-the same level (72.18% vs 72.10%). (MFMA-eff is a single-dispatch ATT reading —
+**The 4-wave route leads at every K**, by **~8.6%** at K=8192 (1600 vs 1502), **~10.5%** at 16384
+(1657 vs 1541) and **~1.0%** at 32768 (1318 vs 1308). This kernel wins on loop MFMA efficiency at
+K=8192 and 16384 (99.84%, 99.42%); at K=32768 both fall away as the buffer-load stall sets in, to
+the same level (80.52% vs 71.84%). (MFMA-eff is a single-dispatch ATT reading —
 treat the last digit as noise. `intra_wave/v9` at K=16384 has two levels: about one run in four
 reads ~1540 instead of ~1655, on this pin and the previous one; see the v2.3 entry in
 [`CHANGELOG.md`](../../../../CHANGELOG.md).)

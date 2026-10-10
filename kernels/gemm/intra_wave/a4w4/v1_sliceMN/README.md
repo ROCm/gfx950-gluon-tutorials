@@ -74,14 +74,14 @@ quadrant is always in registers right before its DOT.
 
 ## 3. Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v3.0`, 4096×4096×K, rocprof timing (1000 dispatches, last-100
 average), one config per invocation:
 
 | Config (K=32768) | v0_sliceN | v1_sliceMN | v1 MFMA Eff. |
 |------------------|-----------|------------|--------------|
-| base | 4619 (16 spills) | 5134 | 68.0% |
-| llir | 4978 (28 spills) | 5644 | 84.2% |
-| llir+amdgcnas | 5377 (28 spills) | 5815 | 94.1% |
+| base | 4711 (16 spills) | 5188 | 67.9% |
+| llir | 5142 (28 spills) | 5677 | 84.2% |
+| llir+amdgcnas | 5350 (28 spills) | 5810 | 94.1% |
 
 Both versions pin their accumulators to AGPRs (`cd_regclass="a"` on every `mfma_scaled`), so
 every row runs with no `v_accvgpr_*` copies in the loop. `llir` is worth +9.9% on v1_sliceMN and
@@ -95,9 +95,8 @@ registers on v0_sliceN and 12 on v1_sliceMN.)
 From the `a4w4` directory:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-TRITON_AMDGCNAS_PLUGIN=1 \
-python bench.py --version 1
+# the MFMA scheduler is on by default; --schedule-hint "" turns it off
+TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 1
 
 # Full table (v0 vs v1, all configs):
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \

@@ -134,30 +134,34 @@
 
 <header class="hero">
   <div class="wrap">
-    <span class="tag">gfx950 · CDNA4 · out‑of‑tree plugin</span>
+    <span class="tag">gfx950 · CDNA4 · design reference</span>
     <h1>The LLIR Scheduler</h1>
     <p>An LLVM‑IR pass that keeps the matrix cores busy, by one of <b>two models chosen per region</b>: interleave
        MFMA with the LDS / global traffic that feeds it (a <b>throughput</b> ratio — §1–§7, typical of an intra‑wave
        GEMM hot loop), or fill each MFMA's co‑execution shadow with VALU and declare it with
        <code>sched_group_barrier</code> (<b>co‑exec</b> — §8–§9, typical of an inter‑wave Flash‑Attention DOT
        cluster, which is register‑only and has no memory latency to pair against).</p>
+    <div class="note"><b>Where the code lives since gfx950‑tutorial‑v3.0.</b> The throughput model (§1–§7) is upstream Triton's MFMA scheduler, <code>third_party/amd/lib/Target/MFMASchedule/MFMASchedule.cpp</code> (<a href="https://github.com/triton-lang/triton/pull/12209">triton-lang/triton#12209</a>), opt‑in per kernel with <code>schedule_hint="mfma-schedule"</code>; the GEMM kernels pass that option themselves. The co‑exec model (§8–§9) is the plugin in this directory, <code>LlirSchedPlugin.cpp</code>, which the attention kernels load with <code>LLVM_PASS_PLUGIN_PATH</code>. Both are the one algorithm this page describes.</div>
   </div>
 </header>
 
 <main>
 
   <section class="card">
-    <p class="lede">The pass runs on LLVM IR (at the <code class="mono">OptimizerLast</code> extension point of the O3
-    pipeline, before codegen) and reorders the instructions of a GEMM hot loop so <b>MFMA compute overlaps memory
-    latency</b>. To make that ordering survive codegen it <b>pins each scheduled region with an
-    <code class="mono">llvm.amdgcn.sched.barrier</code></b> rather than turning LLVM's machine schedulers off — so
-    misched still runs everywhere else (§7). It ships as an <b>out‑of‑tree LLVM pass plugin</b>
-    (<code class="mono">libLlirSched.so</code>) and is gfx950‑only: load it with
-    <code class="mono">LLVM_PASS_PLUGIN_PATH</code>.</p>
+    <p class="lede">The pass runs on LLVM IR after the O3 pipeline, before codegen, and reorders the instructions of a
+    GEMM hot loop so <b>MFMA compute overlaps memory latency</b>. To make that ordering survive codegen it <b>pins
+    each scheduled region with an <code class="mono">llvm.amdgcn.sched.barrier</code></b> rather than turning LLVM's
+    machine schedulers off — so misched still runs everywhere else (§7). It is gfx950‑only. This page is about the
+    pass itself; the same pass ships two ways — as this directory's out‑of‑tree plugin
+    (<code class="mono">libLlirSched.so</code>, loaded with <code class="mono">LLVM_PASS_PLUGIN_PATH</code> at the
+    <code class="mono">OptimizerLast</code> extension point) and, proposed upstream, as an in‑tree Triton pass (opt in
+    per kernel with <code class="mono">schedule_hint="mfma-mem-interleave"</code>) — and everything below holds for
+    both.</p>
     <div class="note"><b>Scope.</b> gfx950 (CDNA4) MFMA kernels — GEMM and Flash‑Attention. The pass identifies its
       eligible regions <i>structurally</i>, from what each region contains rather than from which kernel it came
       from (§8), and leaves everything else untouched — so it is safe to enable on any kernel: it simply does
-      nothing on code that matches neither shape.</div>
+      nothing on code that matches neither shape. A kernel that already carries <code>sched.barrier</code>s is cut at
+      them and scheduled span by span (§8).</div>
     <nav class="toc">
       <a href="#pipeline">1 · Pipeline</a>
       <a href="#classes">2 · Classification</a>
@@ -181,6 +185,7 @@
       <span class="step">For <b>each basic block</b></span>
       <span class="ar">→</span>
       <span class="sub">
+        <span class="step">Cut into spans at pre‑existing <code>sched.barrier</code>s (else: the block)</span><span class="ar">›</span>
         <span class="step">Detect regions</span><span class="ar">›</span>
         <span class="step">Schedule regions</span>
       </span>
@@ -188,12 +193,13 @@
     <p>Each block is scheduled <b>transactionally and independently</b>: the pass snapshots the block, schedules it,
        runs <code>verifyFunction</code>, and—if that block's result is invalid—reverts <i>only that block</i>, leaving
        every other block's schedule intact. A failure in one block therefore does not throw away the work done on the
-       others: the pass still reports success as long as <i>at least one</i> block was scheduled. A whole‑function
-       clone‑and‑rollback wraps the entire pass as a backstop — it fires only in the rare case that the function is
-       <i>still</i> invalid after the per‑block reverts, and only then does the whole kernel fall back to the default
-       machine‑scheduled lowering.</p>
-    <div class="tip"><b>It pins only what it schedules.</b> The pass returns <code>true</code> if it scheduled at least
-      one region, but nothing downstream depends on that signal: each scheduled region carries its own
+       others. The snapshot is the block's instruction order; rolling back erases what the pass inserted
+       (<code>sched.barrier</code>, <code>sched_group_barrier</code>, region markers, pacing nops) and restores that
+       order, so the block keeps its debug metadata. There is no function‑level clone: the per‑block snapshot is the
+       whole rollback.</p>
+    <div class="tip"><b>It pins only what it schedules.</b> The pass returns <code>true</code> iff it scheduled at
+      least one region (the in‑tree pass records that as <code>metadata["llir_scheduled"]</code>); the memory‑stage
+      pacing of §8 does not count. Nothing else downstream depends on the signal: each scheduled region carries its own
       <code>sched.barrier</code> pins (§7). On a kernel where the pass finds nothing to do — or in a region it bails
       on — codegen is exactly the backend default, machine‑scheduled as usual.</div>
   </section>
@@ -212,7 +218,7 @@
     <table>
       <tr><th>Kind</th><th>Meaning</th><th>Matched by (gfx950 intrinsic / op)</th></tr>
       <tr><td><span class="pill" style="background:#e0e7ff;color:#3730a3">MFMA</span></td><td>matrix multiply‑accumulate</td><td>intrinsic name contains <code>mfma</code></td></tr>
-      <tr><td><span class="pill" style="background:#dbeafe;color:#1e40af">GR</span></td><td>global &amp; buffer memory</td><td><code>buffer.load</code>, <code>buffer.load.lds</code> / <code>buffer.load.async.lds</code>, <code>raw.ptr.buffer.store</code></td></tr>
+      <tr><td><span class="pill" style="background:#dbeafe;color:#1e40af">GR</span></td><td>global &amp; buffer memory</td><td><code>buffer.load</code>, <code>buffer.load.lds</code> / <code>buffer.load.async.lds</code>, <code>raw.ptr.buffer.store</code>; <code>global.load.lds</code> and the other <code>global.*</code> memory intrinsics; a plain <code>load</code> / <code>store</code> on address space&nbsp;1 (a kernel compiled without buffer ops)</td></tr>
       <tr><td><span class="pill" style="background:#d1fae5;color:#065f46">LR</span></td><td>LDS read</td><td><code>ds.read</code> / <code>ds.load</code>, or a <code>load</code> from address space&nbsp;3</td></tr>
       <tr><td><span class="pill" style="background:#fef3c7;color:#92400e">LW</span></td><td>LDS write</td><td>a <code>store</code> to address space&nbsp;3</td></tr>
     </table>
@@ -381,16 +387,22 @@ mfma                 <span class="cmt">; no memory since the region began → sa
   <!-- 6 COST -->
   <section class="card" id="cost">
     <h2><span class="num">6</span> Cost model</h2>
-    <p class="lede">MFMA cycle counts drive both the per‑GR budget and the per‑LR pairing. Scaled f8f6f4 shapes read
+    <p class="lede">MFMA cycle counts drive both the per‑GR budget and the per‑LR pairing. A count is the MFMA's pass
+       count × 4, the matrix unit's issue‑to‑issue cost on gfx950 (LLVM's <code>SISchedule.td</code>: every
+       16×16×K shape is 4 passes and every 32×32×K shape 8, whatever the element type). Scaled f8f6f4 shapes read
        <code>cbsz</code>/<code>blgp</code> to tell the input format apart.</p>
     <table>
       <tr><th>Intrinsic</th><th>Cycles</th></tr>
-      <tr><td><code>mfma.scale.f32.16x16x128.f8f6f4</code></td><td><b>16</b> if a sub‑byte input (f4; cbsz or blgp&gt;1) else <b>32</b> (f8)</td></tr>
-      <tr><td><code>mfma.scale.f32.32x32x64.f8f6f4</code></td><td><b>32</b> if both inputs f4 else <b>64</b> (either f8)</td></tr>
+      <tr><td><code>mfma.scale.f32.16x16x128.f8f6f4</code></td><td><b>16</b> if both inputs are 4‑ or 6‑bit (cbsz and blgp &gt; 1) else <b>32</b> (either f8)</td></tr>
+      <tr><td><code>mfma.scale.f32.32x32x64.f8f6f4</code></td><td><b>32</b> if both inputs are 4‑ or 6‑bit else <b>64</b> (either f8)</td></tr>
       <tr><td><code>mfma.f32.16x16x32.f16</code> / <code>.bf16</code></td><td><b>16</b></td></tr>
       <tr><td><code>mfma.f32.32x32x16.f16</code> / <code>.bf16</code></td><td><b>32</b></td></tr>
       <tr><td><code>mfma.i32.16x16x64.i8</code></td><td><b>16</b></td></tr>
       <tr><td><code>mfma.i32.32x32x32.i8</code></td><td><b>32</b></td></tr>
+      <tr><td><code>mfma.f32.16x16x32.fp8.fp8</code> and the other fp8/bf8 combinations</td><td><b>16</b></td></tr>
+      <tr><td><code>mfma.f32.32x32x16.fp8.fp8</code> and the other fp8/bf8 combinations</td><td><b>32</b></td></tr>
+      <tr><td><code>mfma.f32.16x16x16f16</code> / <code>16x16x16bf16.1k</code> (the K = 16 fallback)</td><td><b>16</b></td></tr>
+      <tr><td><code>mfma.f32.32x32x8f16</code> / <code>32x32x8bf16.1k</code> (the K = 8 fallback)</td><td><b>32</b></td></tr>
       <tr><td><i>anything else</i></td><td><b>unknown</b> → the region is left unscheduled rather than guessed</td></tr>
     </table>
     <div class="note">A 32‑cycle MFMA provides twice the cover per op, so it pairs with <b>2× the LDS accesses per
@@ -403,35 +415,46 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     <h2><span class="num">7</span> Pinning the schedule with <code>sched.barrier</code></h2>
     <p class="lede">For the interleave to reach assembly it has to survive LLVM's pre‑ and post‑RA machine schedulers.
        The pass holds its ordering by pinning each region locally, so misched keeps running everywhere else.</p>
-    <p>After a region is spaced out (§5), the pass drops an <code>llvm.amdgcn.sched.barrier(0)</code> immediately after
-       <b>each memory anchor</b> in that region. A mask‑0 sched.barrier is a hard reorder barrier: misched may not move
-       any instruction across it, so the exact MFMA↔memory ordering the pass chose is frozen — while the prologue, the
-       epilogue, and any region the pass leaves unscheduled are still machine‑scheduled normally. The scheduler is never
-       disabled globally, and nothing downstream (<code>make_amdgcn</code>) has to turn it off.</p>
+    <p>After a region is spaced out (§5), the pass drops an <code>llvm.amdgcn.sched.barrier(0)</code> directly
+       <b>in front of each memory anchor</b> in that region, so every window between two fences starts with its memory
+       op. A mask‑0 sched.barrier is a hard reorder barrier: misched may not move any instruction across it, so the
+       exact MFMA↔memory ordering the pass chose is frozen — while the prologue, the epilogue, and any region the pass
+       leaves unscheduled are still machine‑scheduled normally. The scheduler is never disabled globally, and nothing
+       downstream (<code>make_amdgcn</code>) has to turn it off.</p>
+    <p><b>Register‑class pins.</b> Kernels that pin their accumulators with Gluon's <code>cd_regclass</code> carry an
+       empty tied inline asm (<code>"=a,0"</code> / <code>"=v,0"</code>) on each MFMA tile's C and D. A pin only works
+       where it sits, so the pass moves an MFMA together with its pins — the C pin directly before it, the D pin
+       directly after — looks through pins when it hoists MFMA inputs and sinks result extracts, and adds a
+       <code>sched.barrier(0)</code> after each D pin so the machine scheduler cannot reorder pinned MFMAs between two
+       anchors. Without those fences the pins turn into <code>v_accvgpr</code> copies (v9's loop kept 200 of them).
+       Kernels without pins get no pin fences.</p>
     <div class="ribbon" style="gap:22px">
-      <span class="grp"><span class="lbl">each anchor is pinned</span><span class="ins gr">GR</span><span class="ins m">M</span><span class="ins m">M</span><span class="ins m">M</span><span class="ins m">M</span><span class="ins bar">sched.barrier(0)</span></span>
-      <span class="grp g-lr"><span class="lbl">…so misched can't undo it</span><span class="ins lr">LR</span><span class="ins m">M</span><span class="ins bar">sched.barrier(0)</span></span>
+      <span class="grp"><span class="lbl">a fence in front of each anchor</span><span class="ins bar">sched.barrier(0)</span><span class="ins gr">GR</span><span class="ins m">M</span><span class="ins m">M</span><span class="ins m">M</span><span class="ins m">M</span></span>
+      <span class="grp g-lr"><span class="lbl">…so misched can't undo it</span><span class="ins bar">sched.barrier(0)</span><span class="ins lr">LR</span><span class="ins m">M</span></span>
     </div>
     <div class="note"><b>Self‑contained.</b> Because it pins locally, the pass needs no companion change in the compiler
-      to hold its schedule, so it loads as a plugin via <code>LLVM_PASS_PLUGIN_PATH</code> at the
-      <code>OptimizerLast</code> extension point. (Its one compiler‑side requirement is unrelated to scheduling —
-      the O3 run must keep its target machine when a plugin is loaded, which the pinned Triton does on its own
-      (<a href="https://github.com/triton-lang/triton/pull/10849">triton-lang/triton#10849</a>).)</div>
+      to hold its schedule: as a plugin it loads via <code>LLVM_PASS_PLUGIN_PATH</code> at the
+      <code>OptimizerLast</code> extension point, and in‑tree it runs right after <code>optimize_module</code> in
+      <code>make_llir</code>. (The plugin's one compiler‑side requirement is unrelated to scheduling — the O3 run must keep its target machine when
+      a plugin is loaded, which upstream Triton does since
+      <a href="https://github.com/triton-lang/triton/pull/10849">triton-lang/triton#10849</a>.)</div>
   </section>
 
   <section class="card">
     <h2><span class="num">★</span> Cheat‑sheet (gfx950)</h2>
     <table>
       <tr><th>Decision</th><th>Value</th></tr>
-      <tr><td>Enable</td><td><code>LLVM_PASS_PLUGIN_PATH=…/libLlirSched.so</code>, gfx950 only</td></tr>
-      <tr><td>Scope</td><td>every basic block; per‑block transactional bail‑out (no loop selection)</td></tr>
+      <tr><td>Enable</td><td>plugin: <code>LLVM_PASS_PLUGIN_PATH=…/libLlirSched.so</code>; in‑tree: <code>schedule_hint="mfma-mem-interleave"</code> (unknown tokens are rejected); gfx950 only</td></tr>
+      <tr><td>Scope</td><td>every basic block, cut at pre‑existing <code>sched.barrier</code>s into spans; per‑block transactional bail‑out (no loop selection)</td></tr>
+      <tr><td>Kernel with <code>sched.barrier</code>s</td><td>each span goes to the model its contents ask for (§8); nothing moves across a pre‑existing barrier</td></tr>
       <tr><td>Region boundary</td><td>at each MFMA that follows a memory op since the region began</td></tr>
       <tr><td>Region eligible?</td><td>recognized‑shape MFMA + ≥1 memory anchor (dependency safety is a structural invariant, §3)</td></tr>
       <tr><td>MFMA : LDS access (LR &amp; LW)</td><td>throughput ratio <b>cycles_per_access / mfma_cycles</b> (one carried balance over reads and writes): cheap accesses share an MFMA (e.g. 1 MFMA : 2 accesses), wide ones draw several</td></tr>
       <tr><td>MFMA per GR</td><td><b>ceil(64 / mfma_cycles)</b> = <b>4</b> (16‑cyc) / <b>2</b> (32‑cyc); <b>1</b> if GR→LR</td></tr>
       <tr><td>tail / head</td><td>2 drain at end; surplus compute split evenly head/tail (odd favors head)</td></tr>
-      <tr><td>Schedule pinning</td><td><code>llvm.amdgcn.sched.barrier(0)</code> in front of each memory anchor — misched stays enabled elsewhere</td></tr>
+      <tr><td>Schedule pinning</td><td><code>llvm.amdgcn.sched.barrier(0)</code> in front of each memory anchor, and after each <code>cd_regclass</code> D pin — misched stays enabled elsewhere</td></tr>
       <tr><td>Unknown MFMA shape</td><td>region left unscheduled</td></tr>
+      <tr><td>Reported</td><td><code>metadata["llir_scheduled"]</code> iff a region was scheduled (pacing nops do not count)</td></tr>
     </table>
   </section>
 
@@ -440,6 +463,12 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     <p class="lede">The choice is a property of what a region <b>contains</b>, not of which kernel it came from
        (<code>WP::classifyRegion</code>). It reuses the same <code>classifySchedInst</code> used in §2, so the two
        models can never disagree about what counts as memory.</p>
+    <p>A kernel <b>without</b> <code>sched.barrier</code>s is one span per block, and the throughput model finds its own
+       regions inside it (§3). A kernel that <b>already carries</b> <code>sched.barrier</code>s — ConvertWarpPipeline's
+       stage boundaries, BlockPingpong's clusters, an explicit <code>gl.amd.hint.sched_barrier</code> — is cut at them,
+       and each span is classified and handed to the model its contents ask for. Nothing ever moves across a
+       pre‑existing barrier, so a pingpong'd <code>tl.dot</code> GEMM still gets its MFMA + memory spans interleaved
+       while an attention kernel's dot clusters get the co‑exec declaration.</p>
     <table>
       <tr><th>Region contains</th><th>Model</th><th>What happens</th></tr>
       <tr>
@@ -452,8 +481,8 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       <tr>
         <td>MFMA + VALU, no memory</td>
         <td><b>co‑exec</b></td>
-        <td>§9. The inter‑wave FA case — <code>TRITON_WP_DEBUG</code> confirms those DOT clusters carry
-            <i>zero</i> LDS effects, so there is no latency to pair against.</td>
+        <td>§9. The inter‑wave FA case — those DOT clusters carry no LDS traffic, so there is no latency to pair
+            against.</td>
       </tr>
       <tr>
         <td>MFMA + VALU + memory</td>
@@ -465,14 +494,16 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       <tr>
         <td>no MFMA</td>
         <td>—</td>
-        <td>Nothing to schedule around. FA's <i>mem</i> stages are this case; <code>LLIRSCHED_WP_MEMNOP</code>
-            paces them separately with <code>s_nop</code> at the stage head.</td>
+        <td>Nothing to schedule around. FA's <i>mem</i> stages are this case: when a co‑exec region was declared in
+            the kernel, the pass paces each mem stage with 2 × <code>s_nop 7</code> at its head
+            (<code>insertMemRegionNops</code>) — a pacing, not a schedule, so it does not set
+            <code>llir_scheduled</code>.</td>
       </tr>
     </table>
     <div class="note"><b>Inter‑wave GEMM</b> needs no scheduling at all and simply produces no qualifying region.
       Region boundaries for the co‑exec path come pre‑made: <code>ConvertWarpPipeline</code> lowers every
       warp‑pipeline stage boundary to <code>llvm.amdgcn.sched.barrier(i32 0)</code>, so a region is the span
-      between two of them.</div>
+      between two of them — and the same spans feed the throughput model wherever they contain MFMA + memory.</div>
   </section>
 
   <section class="card" id="coexec">
@@ -528,8 +559,7 @@ mfma                 <span class="cmt">; no memory since the region began → sa
     <h3>② The VALU does <i>not</i> fit</h3>
     <p>fmha_v3 carries 476 and 496 cycles of VALU against 384 of capacity, so no arrangement hides it and the balanced
        packer merges cheap pairs into 48‑cycle groups. The question changes to <b>which ops get a window and what
-       shape the rest take</b> (<code>declareRegionGroupsOverCap</code>; opt out with
-       <code>LLIRSCHED_WP_NOOVERCAP</code>):</p>
+       shape the rest take</b> (<code>declareRegionGroupsOverCap</code>):</p>
     <table>
       <tr><th>#</th><th>Rule</th><th>Why</th></tr>
       <tr><td>1</td><td>Non‑splittable ops claim windows first — TRANS, the max3 reduction, <code>v_cvt_pk</code>, permlane</td><td>Packing cannot help them, so they have first call on scarce capacity</td></tr>
@@ -544,24 +574,19 @@ mfma                 <span class="cmt">; no memory since the region began → sa
       unpackable, so only 16 cycles (2 <code>v_pk_fma</code>) can ever be bought while rule 1 holds. The 14 that stay
       packed are arithmetic, not a packing failure.</div>
 
-    <h3>Knobs</h3>
-    <p class="small"><b>None of these is needed for the measured configuration</b> — the two that used to be are now
-       defaults. With no <code>LLIRSCHED_*</code> set, the pass declares via
-       <code>sched_group_barrier</code> and paces mem stages with 2 <code>s_nop</code>, which builds byte‑identical
-       assembly to the old explicit recipe.</p>
-    <table>
-      <tr><th>Env var</th><th>Effect</th></tr>
-      <tr><td><code>LLIRSCHED_WP_NOSGB</code></td><td>fall back to physically reordering + pinning (§7) instead of declaring (§9) — slower, kept for A/B</td></tr>
-      <tr><td><code>LLIRSCHED_WP_MEMNOP=k</code></td><td>override the mem‑stage pacing; default <b>2</b>, <code>0</code> disables</td></tr>
-      <tr><td><code>LLIRSCHED_WP_NOOVERCAP</code></td><td>keep the fitting packer (①) even over capacity — for bisecting a regression to ②</td></tr>
-      <tr><td><code>LLIRSCHED_WP_DEBUG</code></td><td>per‑region model, counts, group sizes and the chosen window</td></tr>
-    </table>
-    <div class="note"><b>Everything else is hardwired to the measured winner.</b> The heuristics that were once
-      env‑selectable — counting the max/min reduction, the 2:1 <code>v_maximum3</code> fold, adaptive group weight,
-      pinning the physical interleave, the legacy error‑diffusion spread, pre‑reordering before a declaration — each
-      had a losing alternative, so the loser is gone rather than left as a flag.</div>
-    <div class="note"><b>Safety.</b> The whole pass is transactional — clone the function, schedule, run
-      <code>verifyFunction</code>, and roll back to the pristine body on failure — so a bad schedule can never reach
+    <h3>No knobs</h3>
+    <p class="small">The pass reads <b>no environment variables</b>: a knob read with <code>getenv</code> is invisible
+       to Triton's cache key, so toggling one would hand back a stale binary. The choices that were once
+       env‑selectable are fixed at the measured winner: the schedule is declared via
+       <code>sched_group_barrier</code> (the physical‑interleave fallback is gone), the over‑capacity path is always
+       tried, and mem stages are paced with 2 × <code>s_nop 7</code> (k = 2 won on both attention kernels). The other
+       heuristics that once had a flag — counting the max/min reduction, the 2:1 <code>v_maximum3</code> fold, adaptive
+       group weight, the legacy error‑diffusion spread, pre‑reordering before a declaration — each had a losing
+       alternative, so the loser is gone rather than left as a flag. Debug output (every span's model, counts, group
+       sizes and the chosen window) goes through <code>LLVM_DEBUG</code>:
+       <code>TRITON_LLVM_DEBUG_ONLY=tritonamdgpu-llir-schedule</code>.</p>
+    <div class="note"><b>Safety.</b> Every block is transactional — snapshot, schedule, run
+      <code>verifyFunction</code>, and roll the block back on failure (§1) — so a bad schedule can never reach
       codegen. It earned its keep: a phi‑led region once rolled back an entire interleave, costing 8%, until the
       region walk learned to advance past phis.</div>
   </section>
@@ -569,9 +594,9 @@ mfma                 <span class="cmt">; no memory since the region began → sa
 </main>
 
 <footer>
-  Design reference for the gfx950 <b>LLIR scheduler</b> — throughput model (§1–§7) and co‑exec model (§8–§9) —
-  an out‑of‑tree LLVM pass plugin
-  (<code>plugins/llir_scheduler/LlirSchedPlugin.cpp</code>, loaded via <code>LLVM_PASS_PLUGIN_PATH</code>).
+  Design reference for the gfx950 <b>LLIR scheduler</b> — throughput model (§1–§7) and co‑exec model (§8–§9).
+  The pass as shipped here: <code>plugins/llir_scheduler/LlirSchedPlugin.cpp</code>, an out‑of‑tree LLVM pass plugin
+  loaded via <code>LLVM_PASS_PLUGIN_PATH</code>; the same pass body is proposed upstream as an in‑tree Triton pass.
 </footer>
 
 </body>

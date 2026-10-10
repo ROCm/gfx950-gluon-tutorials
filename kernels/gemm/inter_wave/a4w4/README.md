@@ -12,13 +12,13 @@ kernel versions, and the measured performance.
 
 | ver | dir | B-scale handling | K=8192 | K=32768 | loop MFMA eff |
 |---|---|---|---|---|---|
-| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3659 | 4383 | ~67% |
-| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | combined `[256,8]` → `ds_read_b64_tr_b8` | 4209 | 5051 | ~81% |
-| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4436** | **5136** | **~99%** |
+| **v0** | [`v0_sliceMN`](v0_sliceMN/README.md) | N-sliced `[128,8]` halves → `ds_read_u8` + `v_perm` | 3584 | 4368 | ~67% |
+| **v1** | [`v1_combineBsc`](v1_combineBsc/README.md) | combined `[256,8]` → `ds_read_b64_tr_b8` | 4343 | 5047 | ~81% |
+| **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4463** | **5200** | **~99%** |
 
 > [!IMPORTANT]
-> **v2 is the one to use.** On `gfx950-tutorial-v2.3` it leads v1 at every K: +5.4% at K=8192,
-> +3.8% at K=16384 (4923 vs 4741) and +1.7% at K=32768. It runs its loop at ~99% MFMA efficiency
+> **v2 is the one to use.** On `gfx950-tutorial-v3.0` it leads v1 at every K: +5.4% at K=8192,
+> +3.8% at K=16384 (4946 vs 4742) and +1.7% at K=32768. It runs its loop at ~99% MFMA efficiency
 > against v1's ~81%, but its denser MFMA stream draws more power, so its margin depends on the clock
 > the die sustains: on a slower MI355X (measured on the v2.2 pin), v1 was ahead at K ≥ 16384.
 > `bench.py` defaults to v2 (`--version 2`).

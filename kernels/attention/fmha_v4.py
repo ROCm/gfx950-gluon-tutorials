@@ -35,7 +35,7 @@ be told so the vector work lands inside an MFMA's shadow -- is written up in
 
 Build environment: both kernels want the llirSched plugin loaded and MachineSink
 disabled (see the README). The two settings the README's numbers use are already
-the defaults -- the plugin paces the mem stages with ``LLIRSCHED_WP_MEMNOP=2``,
+the defaults -- the plugin paces the mem stages with two ``s_nop``s (built in),
 and ``SCALE_ON_Q`` below defaults to True -- so a plain run is the tuned one.
 Neither kernel wants ``AMDGCN_SCALARIZE_PACKED_FOPS``: both start from packed
 math and the plugin declares its groups in instructions, so the backend peephole

@@ -7,9 +7,9 @@
 **Optimization maturity (rough).** Axes — codegen, global latency, LDS latency, LDS bank conflict, scheduling, L2 locality — are defined in the [`v0_naive` README](../../a16w16/v0_naive/README.md); the polygon vs the dashed "optimal" envelope shows how mature this kernel is.
 
 
-This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). The **tile pipeline** is unchanged from [a16w16](../../a16w16/) and [a8w8](../../a8w8/) — same double-buffered async copy, 3-stage pipeline, N-slicing, loop unrolling by 2, LLIR scheduler, and amdgcnas. What's new is a **separate scale pipeline**: per-group 8-bit scales require a GR → LW → LR round-trip through LDS for layout conversion, with its own register buffering and scheduling considerations. Read the rest of this README with the tile pipeline as inherited background; the new material — scale layouts (§2.2–§2.4), `ds_read_tr` (§2.5), and scale-pipeline scheduling (§3.5–§3.6) — is where the real work of this kernel lives.
+This kernel implements a high-performance MXFP4 (e2m1) GEMM targeting AMD MI350/355 GPUs (gfx950). The **tile pipeline** is unchanged from [a16w16](../../a16w16/) and [a8w8](../../a8w8/) — same double-buffered async copy, 3-stage pipeline, N-slicing, loop unrolling by 2, MFMA scheduler, and amdgcnas. What's new is a **separate scale pipeline**: per-group 8-bit scales require a GR → LW → LR round-trip through LDS for layout conversion, with its own register buffering and scheduling considerations. Read the rest of this README with the tile pipeline as inherited background; the new material — scale layouts (§2.2–§2.4), `ds_read_tr` (§2.5), and scale-pipeline scheduling (§3.5–§3.6) — is where the real work of this kernel lives.
 
-If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, the LLIR scheduler, and amdgcnas. See [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
+If you haven't completed the a16w16 journey and reviewed the a8w8 kernel, start there first. This README assumes familiarity with N-slicing, 3-stage pipelining, loop unrolling, the MFMA scheduler, and amdgcnas. See [`/docs/performance_philosophy.md`](../../../../../docs/performance_philosophy.md) for the design rationale behind these tools.
 
 ## 1. Directory Structure
 
@@ -210,7 +210,7 @@ A critical hardware limitation affects ds_write scheduling: **ds_write and buffe
 
 This is why Option A in section 3.5 fails — ds_read cannot hide ds_write latency because they share the same FIFO queue, and the slow ds_write at the head blocks everything behind it.
 
-Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each), which is more than enough to cover the 400-cycle ds_write latency. The LLIR scheduler places MFMA instructions after ds_write to provide this coverage (see section 4).
+Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each), which is more than enough to cover the 400-cycle ds_write latency. The MFMA scheduler places MFMA instructions after ds_write to provide this coverage (see section 4).
 
 ### 3.7 Other design choices
 
@@ -219,45 +219,40 @@ Fortunately, each region has 64 MFMA instructions (1024 cycles at 16 cycles each
 
 ## 4. Performance
 
-Measured on a well-performing MI355X with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v2.3`:
+Measured on a well-performing MI355X with shape 4096x4096x32768, MXFP4 (e2m1), Triton `gfx950-tutorial-v3.0`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|
-| base           |   4619 |   512 |     16 |    58.57% |
-| llir           |   4978 |   512 |     28 |    75.83% |
-| llir+amdgcnas  |   5377 |   512 |     28 |    81.54% |
+| base           |   4711 |   512 |     16 |    58.60% |
+| llir           |   5142 |   512 |     28 |    75.93% |
+| llir+amdgcnas  |   5350 |   512 |     28 |    81.39% |
 
-See the [gemm README section 2.1](../../README.md#21-triton-build-and-the-out-of-tree-plugins) for an overview of the LLIR scheduler and amdgcnas passes.
+See the [gemm README section 2.1](../../README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin) for an overview of the MFMA scheduler and amdgcnas.
 
 **The accumulators are pinned to AGPRs in the kernel.** Every `mfma_scaled` call passes `cd_regclass="a"` (see [a16w16 v7 §4.3](../../a16w16/v7_sliceN/README.md)), so all three configurations keep the accumulators in AGPRs and the loop has no `v_accvgpr_*` copies. v0's scale pipeline is register-heavy — the MFMA accumulators plus the LDS scale buffers press against the 512-register budget — and with the accumulators fixed in AGPRs the remaining VGPR demand no longer fits: the kernel spills 16 VGPRs in `base` and 28 under `llir`, all outside the hot loop (no scratch access in the loop). v1_sliceMN, with its balanced M+N tiling, does not spill under the same pins.
 
-**Effect of the LLIR scheduler**: interleaving the MFMAs with the memory operations lifts the kernel to 4978 TFLOPS / 75.83% MFMA efficiency (+7.8% over `base`). On `gfx950-tutorial-v2.1`, where the accumulators were not pinned, the same config spilled 186 VGPRs and collapsed to ~710 TFLOPS.
+**Effect of the MFMA scheduler**: interleaving the MFMAs with the memory operations lifts the kernel to 5142 TFLOPS / 75.93% MFMA efficiency (+7.8% over `base`). On `gfx950-tutorial-v2.1`, where the accumulators were not pinned, the same config spilled 186 VGPRs and collapsed to ~710 TFLOPS.
 
-**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.54% (5377 TFLOPS).
+**Effect of amdgcnas**: The post-assembly peephole — LICM hoisting loop-invariant LDS address math to the prologue, plus SALU packing at iteration boundaries — lifts MFMA efficiency to 81.39% (5350 TFLOPS).
 
 ## 5. How to Run
 
 From the `a4w4` directory:
 
 ```bash
-LLIR=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so
-
 # Without optimizations (base)
+python bench.py --K 32768 --schedule-hint ""
+
+# With the MFMA scheduler only (the kernel's default)
 python bench.py --K 32768
 
-# With LLIR scheduler only
-LLVM_PASS_PLUGIN_PATH=$LLIR \
-    python bench.py --K 32768
-
-# With both LLIR scheduler and amdgcnas
-LLVM_PASS_PLUGIN_PATH=$LLIR \
-    TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
+# With both the MFMA scheduler and amdgcnas
+TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
 ```
 
 For accurate performance measurement with rocprof:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=$(git rev-parse --show-toplevel)/plugins/llir_scheduler/libLlirSched.so \
-    TRITON_AMDGCNAS_PLUGIN=1 \
+TRITON_AMDGCNAS_PLUGIN=1 \
     rocprofv3 --kernel-trace -d out -- python bench.py --K 32768 --rocprof
 ```

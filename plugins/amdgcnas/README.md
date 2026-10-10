@@ -16,13 +16,11 @@ no Triton rebuild — it works on stock Triton.
 
 ## Use
 `bench.py` installs the hook when `TRITON_AMDGCNAS_PLUGIN=1` (set it to `2` for
-verbose peephole logging). The peephole runs on top of the LLIR scheduler; to
-reproduce the full `llir+amdgcnas` stack:
+verbose peephole logging). The peephole runs on top of Triton's MFMA scheduler, which the
+kernels enable themselves; to reproduce the full `llir+amdgcnas` stack:
 
 ```bash
-LLVM_PASS_PLUGIN_PATH=.../plugins/llir_scheduler/libLlirSched.so \
-TRITON_AMDGCNAS_PLUGIN=1 \
-    python bench.py --version 8 --K 8192 --dtype fp16
+TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 8 --K 8192 --dtype fp16
 ```
 
 The kernels it is used on (a16w16 v7 and later, a8w8, a4w4) keep their MFMA accumulators in
@@ -42,5 +40,5 @@ renamed with it. Three rules keep that safe whatever registers the compiler assi
 - A value that is carried around the back edge to a use at the top of the loop is not hoisted.
 
 `scripts/run_perf_table.py` wires these into the tutorial's configs; see
-[gemm/README §2.1](../../kernels/gemm/intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)
+[gemm/README §2.1](../../kernels/gemm/intra_wave/README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin)
 for the component stack.

@@ -26,7 +26,7 @@ All three diagrams below model the same SIMD0 workload: **2 regions of 4 `mfma`*
 
 ![intra-wave schedule: one wave interleaves memory into its mfma stream](images/sched_intra_wave.png)
 
-A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the LLIR scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
+A **single wave per SIMD** does everything. Its one issue stream has to **weave** the `ds_read`/`buffer_load` in among the `mfma`, and — critically — issue the memory for a *future* region early enough that its latency is hidden behind the `mfma` executing now (the dependency arrow spans a full region). The matrix pipe stays busy only if that interleaving is created; nothing in the hardware does it automatically. Here the scheduling intelligence lives in the **compiler**: the MFMA scheduler recovers and preserves the interleaved schedule the Gluon kernel expresses.
 
 This is the [`intra_wave/`](intra_wave/README.md) route (`a16w16` v0→v9, `a8w8`, `a4w4`): **one wave per SIMD**, compiler-interleaved.
 
@@ -61,14 +61,14 @@ The larger question this repository asks is **where the scheduling intelligence 
 ```
 gemm/
 ├── utils/                                # shared Gluon device helpers (get_pids), used by both routes
-├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (LLIR sched + amdgcnas)
+├── intra_wave/                            # 4-wave — compiler interleaves MFMA + loads (MFMA sched + amdgcnas)
 │   ├── a16w16/                            # FP16/BF16 — the v0→v9 optimization journey (start here)
 │   │   ├── v0_naive/                      #   baseline: explicit layouts, correctness-first
 │   │   ├── v1_buffer_load/                #   buffer_load for hardware OOB (branch elimination)
 │   │   ├── v2_async_copy/                 #   direct-to-LDS async copy
 │   │   ├── v3_lds/                        #   LDS layout design: swizzle vs padding
 │   │   ├── v4_global_prefetch/            #   2-stage pipeline (double buffering)
-│   │   ├── v5_local_prefetch/             #   3-stage pipeline + LLIR scheduler
+│   │   ├── v5_local_prefetch/             #   3-stage pipeline + MFMA scheduler
 │   │   ├── v6_loop_unroll/                #   loop unrolling
 │   │   ├── v7_sliceN/                     #   N-slicing (register pressure)
 │   │   ├── v8_sliceMN/                    #   M+N slicing
@@ -88,26 +88,26 @@ gemm/
 
 ## 3. Performance Summary
 
-Measured on a single well-performing MI355X (gfx950), Triton built from the [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3) tag, rocprof
-cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with the LLIR
-scheduler + amdgcnas, with their MFMA accumulators pinned to AGPRs in the kernels (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins)); the
+Measured on a single well-performing MI355X (gfx950), Triton built from the [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0) tag, rocprof
+cold-rotating (1000 dispatches, last-100 average). The **4-wave** kernels run with Triton's MFMA
+scheduler + amdgcnas, with their MFMA accumulators pinned to AGPRs in the kernels (see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin)); the
 **8-wave** kernels run `warp_pipeline_stage` with no AGPRs (no env vars — see [`inter_wave/README.md`](inter_wave/README.md)).
 
 ![GEMM peak throughput: 4-wave vs 8-wave, per precision](images/perf_summary.png)
 
-Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v2). The MXFP4 8-wave bar is **v2** (5136 TFLOPS / 98.9% MFMA), 1.7% ahead of v1 (5051 / 81.3%) at this shape — each bar is its route's best variant at that shape.
+Bars are peak TFLOPS at each precision's headline shape (FP16/BF16 K=8192, BF8 K=16384, MXFP4 K=32768); the **red** label inside each bar is the per-SIMD loop MFMA efficiency. The 4-wave bars are `intra_wave` (a16w16 v9, a8w8, a4w4 v1); the 8-wave bars are `inter_wave` (a16w16, a8w8, a4w4 v2). The MXFP4 8-wave bar is **v2** (5200 TFLOPS / 98.9% MFMA), 1.7% ahead of v1 (5047 / 81.3%) at this shape — each bar is its route's best variant at that shape.
 
 > [!NOTE]
-> The **4-wave** bars are the `gfx950-tutorial-v2.3`-build numbers from
+> The **4-wave** bars are the `gfx950-tutorial-v3.0`-build numbers from
 > `scripts/run_perf_table.py --rocprof` (1000 dispatches, last-100 average). The **8-wave** bars
 > come from `scripts/collect_perf.py`, whose MFMA efficiency is the ATT per-SIMD loop-only figure
 > (2 waves/SIMD → per-wave fraction × 2).
 > Numbers vary run to run (GPU clock) and across MI350-class parts / ROCm / Triton versions. The
-> FP16 optimization journey's near-optimal headline (1605 TFLOPS on `gfx950-tutorial-v2.3`) is
+> FP16 optimization journey's near-optimal headline (1600 TFLOPS on `gfx950-tutorial-v3.0`) is
 > documented in [`a16w16/`](intra_wave/a16w16/). Absolute TFLOPS differ by up to ~17% between MI355X
 > parts; see the v2.2 entry in [`CHANGELOG.md`](../../CHANGELOG.md).
 
-The 4-wave kernels require the [LLIR Scheduler](../../plugins/llir_scheduler/README.md) and [amdgcnas](../../plugins/amdgcnas/README.md) plugins — build them and enable the stack per [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-and-the-out-of-tree-plugins). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
+The 4-wave kernels use Triton's MFMA scheduler (in the pinned Triton; the kernels pass `schedule_hint="mfma-schedule"` themselves) and the [amdgcnas](../../plugins/amdgcnas/README.md) plugin — see [`intra_wave/README.md §2.1`](intra_wave/README.md#21-triton-build-the-mfma-scheduler-and-the-amdgcnas-plugin). The 8-wave kernels schedule themselves with `warp_pipeline_stage` (no plugins, no env vars).
 
 ## 4. ROCm
 

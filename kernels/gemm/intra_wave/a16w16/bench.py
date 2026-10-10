@@ -23,21 +23,13 @@
 ##############################################################################
 
 import argparse
+import functools
 import importlib
-
-# The out-of-tree LLIR scheduler ships as an LLVM pass plugin (see ../../../../plugins/).
-# Loaded via LLVM_PASS_PLUGIN_PATH, it resolves LLVM symbols from libtriton at
-# dlopen time, which requires libtriton in the *global* symbol scope. CPython
-# loads C-extensions RTLD_LOCAL by default, so opt into RTLD_GLOBAL before the
-# first `import triton`. Only takes effect when the plugin is in use.
+import inspect
 import os
 import sys
 
 import torch
-
-if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-
 import triton
 
 # Out-of-tree amdgcnas peephole (post-assembly): install the amdgcn-stage hook
@@ -161,6 +153,12 @@ def parse_args():
         help="Total size (MB) of rotating tensors (a, b, c) for rocprof mode. "
         "Should exceed GPU cache (L2+MALL) size. (default: 512)",
     )
+    parser.add_argument(
+        "--schedule-hint",
+        default=None,
+        help='Triton schedule_hint compile option for the kernel ("" turns the MFMA scheduler '
+        "off; default: the kernel's own choice, see matmul() in matmul_kernel.py; ignored by v0-v4)",
+    )
     return parser.parse_args()
 
 
@@ -246,6 +244,13 @@ def main():
     version_dir = VERSION_MAP[args.version]
     module = importlib.import_module(f"{version_dir}.matmul_kernel")
     matmul = module.matmul
+    if args.schedule_hint is not None:
+        # v0-v4 predate the MFMA scheduler and take no schedule_hint; the option only
+        # applies to the kernels that use it (v5 and later).
+        if "schedule_hint" in inspect.signature(matmul).parameters:
+            matmul = functools.partial(matmul, schedule_hint=args.schedule_hint)
+        else:
+            print(f"[{version_dir}] does not use the MFMA scheduler; --schedule-hint ignored")
 
     gemm_sizes = get_gemm_sizes(args.K)
     dtypes = get_dtypes(args.dtype)

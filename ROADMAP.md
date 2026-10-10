@@ -7,7 +7,7 @@ This document outlines the development roadmap for the GFX9 Gluon Tutorials proj
 Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 - Step-by-step optimization tutorials
 - Performance analysis and profiling
-- Scheduler tooling (llirSched + amdgcnas)
+- Scheduler tooling (MFMA scheduler + amdgcnas)
 - Coverage of compute-bound and memory-bound workloads
 
 ## Status Legend
@@ -26,10 +26,10 @@ Build a comprehensive collection of optimized GPU kernels using Gluon, with:
 |------------|------|:------:|
 | **Compute-Bound GEMM** | | |
 | Tile Sizes | Generalize v9_beyond_hotloop with tile 128×256×64, 256×128×64, and 128×128×128 | :calendar: |
-| Tile Sizes | Generalize llirSched and amdgcnas to work with more tile sizes | :calendar: |
+| Tile Sizes | Generalize the MFMA scheduler and amdgcnas to work with more tile sizes | :calendar: |
 | Tile Sizes | Design heuristic to pick tile size based on problem size | :calendar: |
 | 4-bit + Scales | Implement baseline 4-bit MoE kernel in Gluon | :calendar: |
-| 4-bit + Scales | Optimize with llirSched + amdgcnas | :calendar: |
+| 4-bit + Scales | Optimize with the MFMA scheduler + amdgcnas | :calendar: |
 | 4-bit + Scales | Document preshuffling and related optimizations | :calendar: |
 | 8-wave Warp-Pipeline | Ship warp-pipeline (pingpong) GEMM — a16w16, a8w8, a4w4 (`kernels/gemm/*-8wave/`) | :white_check_mark: |
 | **FlashAttention** | | |

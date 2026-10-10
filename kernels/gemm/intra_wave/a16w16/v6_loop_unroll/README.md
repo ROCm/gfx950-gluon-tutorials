@@ -108,13 +108,13 @@ If `iterMax` is odd, only one iteration remains in the epilogue, containing just
 
 | Version             | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |---------------------|--------|-------|--------|-----------|
-| v5 + LLIR scheduler |   1216 |   512 |      0 |    80.36% |
-| v6 (`base`)         |    218 |   512 |    241 |     8.51% |
-| v6 + LLIR scheduler |   1162 |   511 |      8 |    90.20% |
+| v5 + MFMA scheduler |   1209 |   512 |      0 |    80.36% |
+| v6 (`base`)         |    219 |   512 |    241 |     8.63% |
+| v6 + MFMA scheduler |   1158 |   511 |      8 |    89.90% |
 
 The unroll-by-2 removes the per-iteration operand copy as designed: under `llir` the loop body's
 `v_accvgpr_mov` copies drop from v5's 88 to 12, and MFMA efficiency rises from v5's 80.4% to
-**90.2%**. The scheduler no longer has to place a copy block between the MFMA streams, so more of
+**89.9%**. The scheduler no longer has to place a copy block between the MFMA streams, so more of
 each iteration is MFMA.
 
 The cost lands in register pressure. v6 alternates buffer roles instead of copying — the two
@@ -125,11 +125,11 @@ spill.
 
 > [!WARNING]
 > **v6 has no register headroom, so allocator policy decides whether it spills.** On the
-> `gfx950-tutorial-v2.3` pin the stock (`base`) build spills 241 registers, puts 76 scratch
-> accesses and 340 `v_accvgpr_*` copies into the loop, and collapses to **218 TFLOPS / 8.5%**.
+> `gfx950-tutorial-v3.0` pin the stock (`base`) build spills 241 registers, puts 76 scratch
+> accesses and 340 `v_accvgpr_*` copies into the loop, and collapses to **219 TFLOPS / 8.6%**.
 > Upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950
 > ([triton-lang/triton#11763](https://github.com/triton-lang/triton/pull/11763)); with the trackers
-> forced back on, the same build runs at 1043 TFLOPS with no spills. Under `llir` v6 holds at 1162
+> forced back on, the same build runs at 1043 TFLOPS with no spills. Under `llir` v6 holds at 1158
 > with 8 spills (on `gfx950-tutorial-v2.1` it spilled 129 and
 > collapsed to 226 TFLOPS). Either way, whether v6 spills is decided by the toolchain, not by the
 > kernel.
