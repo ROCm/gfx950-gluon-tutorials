@@ -37,8 +37,8 @@ then determines the loop structure ([§4](#4-designing-the-loop)), the differenc
 the compiler has to do for them ([§6](#6-making-the-compiler-co-operate)). [§7](#7-advanced-the-lds-burst-and-the-head-of-a-dot-cluster) is an appendix for one conflict too subtle to belong in
 the main line. [§8](#8-applying-this-to-your-own-kernel) is the part meant to travel: the rules the kernel author owns, a procedure for
 diagnosing a kernel of your own, and which of these numbers are gfx950's rather than the
-architecture's. [§9](#9-results) measures the result and prices each step of it; [§10](#10-where-to-go-deeper) is where to read
-further.
+architecture's. [§9](#9-results) measures the result and prices each step of it; [§10](#10-causal-attention-fmha_v5) adds causal
+masking; [§11](#11-where-to-go-deeper) is where to read further.
 
 **Before you start.** Read [`../gemm/README.md`](../gemm/README.md) first: [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) below uses its
 intra-wave / inter-wave taxonomy, and the two-wave ping-pong of `gemm/inter_wave/` is the
@@ -765,7 +765,155 @@ LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
 python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --launch jit
 ```
 
-## 10. Where to go deeper
+## 10. Causal attention: `fmha_v5`
+
+Causal masking halves the work -- a 256-row q-block `m` attends to `(m + 1) * 256` keys -- and the
+FLOP count halves with it (`(N² + N) / 2` score entries). The bar this section sets is **causal
+TFLOPS within 5% of non-causal**, on the same shape. Two kernels:
+
+* [`fmha_v4_causal.py`](fmha_v4_causal.py) -- `fmha_v4` with the causal bounds and the mask, and
+  little else: the direct port, and the home of `causal_mask`.
+* [`fmha_v5.py`](fmha_v5.py) -- the same pipeline run persistently. Its hot loop is `fmha_v4`'s;
+  everything new is around the loop. It also runs non-causal.
+
+`B=32, S=8192, H=8, D=128, bf16`, rocprofv3 kernel time (`fa_kernel_time.py --launch jit`), five
+configurations interleaved, three rounds, spread under 1.5 TFLOPS. This GPU is a power-capped
+part (~20% below the §9 board), so compare rows with each other, not with §9:
+
+| | TFLOPS | vs `fmha_v4` non-causal |
+|---|---:|---:|
+| `fmha_v4` non-causal | 998.7 | -- |
+| `fmha_v5` non-causal | 1003.1 | 100.4% |
+| **`fmha_v5` causal** | **959.1** | **96.0%** |
+| `fmha_v5` causal, pinned Triton (no `gl.amd.warp_id`) | 955.5 | 95.7% |
+| `fmha_v4_causal` | 868.0 | 86.9% |
+| `fmha_v4_causal`, generic `gl.where` mask (`FA_MASK_IMPL=generic`) ¹ | 793.9 | 79.5% |
+| first port: generic mask, runtime drain slots ¹ | 743.8 | 74.5% |
+
+¹ single runs, outside the interleaved rounds.
+
+### 10.1 What causal changes
+
+Only the last four K/V tiles of a q-block straddle the diagonal. Everything before them is a
+plain `fmha_v4` tile, so the per-tile work is unchanged; what changes is the *shape* of the work.
+Blocks now range from 4 to 128 tiles, every block carries the same prologue, drain and epilogue,
+and the diagonal tiles compute a full 256 x 64 tile of which only the lower triangle is kept:
+2112 tiles per `(batch, head)` computed for 2048 tiles' worth of useful FLOPs, **3.0% of the
+work is waste** that no schedule of a 256-row block removes. That makes the 5% budget mostly a
+question of how much of the rest goes to the edges of each block.
+
+### 10.2 The mask ([triton-tickets#812](https://github.com/AMD-Triton/triton-tickets/issues/812))
+
+The generic mask, `gl.where(row - col >= delta, qk, -inf)`, is the one the issue describes: it
+computes `row - col` for each of a thread's 32 score registers. LLVM sees those as loop-invariant,
+hoists them, keeps them live through the hot loop, and a kernel at 256 VGPRs spills (96 VGPRs in
+`fmha_v4_causal`) -- the 794-to-868 step in the table.
+
+The issue's observation is that a causal mask is not generic: with the layout known, the pattern
+is a compile-time fact. In the transposed 32x32 MFMA layout, register `e` of a lane holds column
+`e%4 + 8*(e//4 % 4) + 32*(e//16)` (plus 4 in the upper half of the wave) of that lane's row. So:
+
+* per wave, each 32x32 block of the score tile is in one of **three states** -- fully kept, fully
+  masked, or the diagonal block -- and the state is wave-uniform;
+* in the diagonal block, register `e` is kept iff `d0 >= COL[e]`, where `d0 = row - delta - 4h` is
+  one per-lane value and `COL[e]` a constant. One compare and one `v_cndmask`, no extra VGPRs.
+
+`causal_mask` implements both through `gl.map_elementwise(pack=32)`, which hands a thread's 32
+registers to a scalar body as separate arguments (the bodies are generated:
+[`fmha_causal_mask.py`](fmha_causal_mask.py), by `scripts/gen_causal_mask.py`). In plain code the
+3-state body branches per wave; inside the warp-pipelined loop the branch-free one compares every
+register. Measured end to end, **all masking costs 0.6%** of the causal run, so the issue's further
+step -- SGPR lane masks advanced by `s_lshl` to halve the VALU -- would buy at most 0.3% here.
+
+Where the mask goes mattered more than what it costs. The masked tiles are the last three loop
+iterations; a uniform branch inside the loop (skip the mask on the other iterations) costs **5% on
+every tile**: it splits the PV cluster's basic block, LLVM sinks the `p` downcast into the join, and
+IGroupLP no longer builds the cluster's MFMA/VALU interleave. `fmha_v5` instead runs two
+warp-pipelined loops -- the plain pairs, then the masked pairs -- each branch-free.
+
+### 10.3 The launch: persistent, in balanced pairs
+
+`fmha_v4_causal` launches one workgroup per q-block, longest first. Per-workgroup timestamps
+(`s_memrealtime` at start and end) show the dispatcher leaving a CU idle ~10 µs at every handover
+between such uneven workgroups -- ~6% of all CU time -- where `fmha_v4`'s uniform workgroups hand
+over in under 1 µs.
+
+`fmha_v5` launches one workgroup per CU, and each walks a fixed list of q-blocks in pairs `(M-1-j,
+j)`: every pair is `(M + 1) * 4` tiles, so every workgroup does the same work and they finish
+together. Jobs are numbered `(batch, head)`-major and the workgroups on one XCD take consecutive
+jobs, so an XCD's L2 serves one or two `(batch, head)` at a time. (Walking the short block of each
+pair backwards would put an XCD's workgroups on the same two tiles at every step; it measured the
+same, because causal's L2 misses are already near the compulsory floor -- its hit *rate* is lower
+than non-causal's only because it re-reads K/V half as often.)
+
+### 10.4 The hand-over between q-blocks
+
+With 32 q-blocks per CU, each one's prologue, drain and epilogue are paid as often as in
+non-causal, against half the tiles. A persistent workgroup can overlap them:
+
+* **Prefetch the next q-block** as soon as this one's last K/V read is done: its Q straight into the
+  MFMA operand registers (the current Q is dead after the last QK, so no LDS staging), and its first
+  three K/V tiles into the ring.
+* **O through LDS in two 32 KB halves.** A single 64 KB conversion scratch is the largest buffer, so
+  the size-sorted allocator places it first and pushes the K/V ring above 64 KB, where its `ds_read`
+  offsets no longer fit the 16-bit immediate (the same effect that sank `FA_Q_DIRECT_LDS` in
+  `fmha_v4`); each half is smaller than a K or V buffer, so the ring stays at the bottom. Storing
+  straight from the MFMA layout avoids LDS but makes every 8-byte store span 32 rows: +4 µs per block.
+* **LSE straight from the row layout** -- the two lanes that share a row write the same value -- which
+  saves an LDS round trip and two barriers.
+
+Fitting `fmha_v5`'s non-causal time over `S = 2048, 4096, 8192` at a constant 8192 q-blocks gives
+**~2.13 µs per tile and ~3 µs per q-block** of hand-over; the causal run's 2112 tiles and 32 blocks
+per CU predict 4595 µs against 4590 measured. The causal kernel runs at non-causal efficiency per
+tile and per block, and the remaining 4% is the diagonal's waste (3%) plus the hand-over weighing
+twice as much (1%).
+
+### 10.5 Skipping fully masked waves: `gl.amd.warp_id()`
+
+Within a diagonal tile, a wave whose rows are all above the diagonal has nothing to compute, but
+every wave executes every MFMA. Skipping them needs control flow that differs between waves, which
+Gluon has no way to express: its scalars are uniform across the program. The Triton branch adds
+`gl.amd.warp_id()` -- the existing `ttg.warp_id`, lowered to `v_readfirstlane(tid / 64)`, so branches
+on it are wave-uniform. The drain's last tile is masked entirely for waves 0-5, which now skip its QK
+MFMA (+0.4%). The same skip around the PV MFMAs would save more, but the accumulator then merges two
+control-flow paths and the register allocator spills ~170 VGPRs. Without `warp_id` the kernel runs
+as before.
+
+### 10.6 What spilled, and why
+
+The kernel sits at 256 VGPRs, and most of the work on `fmha_v5` was keeping it there. Every one of
+these cost between a few and ~650 spilled VGPRs, and is now avoided (see the comments in the code):
+
+| cause | fix |
+|---|---|
+| `row - col` per register, hoisted by LLVM (generic mask) | the 3-state mask (§10.2) |
+| runtime LDS slot indices in the drain | slots are constants again (`n` is a multiple of 4) |
+| setup hoisted out of the persistent loop and kept live through the hot loop | `tl.range(..., disable_licm=True)` + `DISABLE_LLVM_OPT=disable-machine-licm` |
+| LLVM's zero-trip guard on a runtime-count loop (a second path into the drain) | `gl.assume(main_loop_pairs > 0)` |
+| next q-block's Q offsets computed before the loop | computed at the prefetch |
+| a branch merging the accumulator | none: the PV skip stays off (§10.5) |
+| plain-code peeling of the masked iterations | the masked loop is a warp-pipelined loop |
+
+### 10.7 Running it
+
+`fmha_v5` takes the `fmha_v4` environment plus `disable-machine-licm`; `--causal` selects the mask.
+`gl.amd.warp_id()` is on the Triton branch `fa-causal-warp-id` (the pinned tag plus that one op);
+on the pinned tag the drain skip is simply off.
+
+```bash
+FA_MODULE=fmha_v5 DISABLE_LLVM_OPT=disable-machine-sink,disable-machine-licm \
+LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
+python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --causal --launch jit
+```
+
+`scripts/fa_check.py` checks O and LSE against fp32 references and that repeated launches are
+bit-identical (a race between the async copies and the LDS reads shows up as drift first);
+`scripts/fa_qblock_timing.py` prints the per-q-block breakdown from in-kernel clocks
+(`FA_WG_TIMING=1`). The persistent kernel needs `S % 512 == 0` and `S >= 1024` for causal: with a
+single pair per `(batch, head)`, every trip count becomes a compile-time 1, MLIR folds the
+warp-pipelined loops away, and their stage markers land in the outer loop.
+
+## 11. Where to go deeper
 
 - [`../gemm/README.md`](../gemm/README.md) — read this **first** if you have not. [§3](#3-where-attention-sits-in-the-taxonomy--a-hybrid-per-region) above
   assumes its intra-wave / inter-wave taxonomy, and `gemm/inter_wave/` is the two-wave

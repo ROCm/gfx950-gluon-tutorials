@@ -121,6 +121,7 @@ def parse_args():
         choices=[0, 1],
         help="0 applies qk_scale per element inside VEC1 instead of pre-scaling Q",
     )
+    p.add_argument("--causal", action="store_true", help="causal masking (half the FLOPs)")
     p.add_argument(
         "--launch",
         choices=["jit", "prepared", "both"],
@@ -141,12 +142,15 @@ def parse_args():
 
 
 def fa_flops(args):
-    """Total FLOPs per dispatch: two B*HQ*M*N*D GEMMs, non-causal.
+    """Total FLOPs per dispatch: two B*HQ*M*N*D GEMMs (M == N here).
 
-    Same expression as ``kernels/attention/common.py``'s ``compute_flops(..., causal=False)``,
-    duplicated here so the script does not need to import torch/triton.
+    Same expression as ``kernels/attention/common.py``'s ``compute_flops``, duplicated here
+    so the script does not need to import torch/triton. Causal counts the (N^2 + N) / 2
+    score entries on and below the diagonal.
     """
-    return 2 * (2.0 * args.batch * args.hq * args.seqlen * args.seqlen * args.d)
+    n = args.seqlen
+    valid = (n * n + n) / 2 if args.causal else n * n
+    return 2 * (2.0 * args.batch * args.hq * valid * args.d)
 
 
 def collect(args, launch_mode, trace_root):
@@ -190,7 +194,7 @@ def collect(args, launch_mode, trace_root):
         str(args.rotating_buffer_size),
         "--scale-on-q",
         str(args.scale_on_q),
-    ]
+    ] + (["--causal"] if args.causal else [])
     if launch_mode == "prepared":
         cmd += ["--prepared", "--n-warmup", str(args.warmup)]
 
@@ -242,7 +246,8 @@ def main():
     print(
         f"FA kernel-time TFLOPS | module={os.environ.get('FA_MODULE', 'fmha_v3')} "
         f"B={args.batch} HQ={args.hq} HK={args.hk} N={args.seqlen} D={args.d} "
-        f"{args.dtype} {args.layout} non-causal | {fa_flops(args) * 1e-12:.2f} TFLOP/dispatch"
+        f"{args.dtype} {args.layout} {'causal' if args.causal else 'non-causal'} | "
+        f"{fa_flops(args) * 1e-12:.2f} TFLOP/dispatch"
     )
     print(
         f"  averaging the last {args.last_n} of {args.iters} dispatches"

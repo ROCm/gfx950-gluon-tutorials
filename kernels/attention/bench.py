@@ -59,8 +59,9 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
 # Ported FMHA kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Select the kernel implementation: FA_MODULE=fmha_v3 (default, eager rescale) or
-# fmha_v4 (lazy-rescale variant). Both expose run_gluon_attention.
+# Select the kernel implementation: FA_MODULE=fmha_v3 (default, eager rescale), fmha_v4
+# (lazy-rescale variant), fmha_v4_causal (fmha_v4 + causal masking) or fmha_v5 (persistent;
+# causal and non-causal). All expose run_gluon_attention; --causal needs one of the last two.
 import importlib  # noqa: E402
 
 from common import (
@@ -82,6 +83,8 @@ import inspect  # noqa: E402
 
 _SCALE_ON_Q_ARG = "scale_on_q" in inspect.signature(run_gluon_attention).parameters
 _SCALE_ON_Q = True
+# Causal masking (--causal). Only kernels whose launcher honours metadata.causal take it.
+_CAUSAL = False
 
 
 def launch_attention(q, k, v, o, md):
@@ -135,6 +138,7 @@ def parse_args():
         "consecutive dispatches read different memory. 0 (default) derives the count from "
         "--rotating-buffer-size",
     )
+    p.add_argument("--causal", action="store_true", help="causal (lower-triangular) masking")
     p.add_argument(
         "--scale-on-q",
         type=int,
@@ -156,6 +160,7 @@ def parse_args():
 
 def make_inputs(B, HQ, HK, N_CTX, D, dtype, layout):
     q, k, v, md = input_helper(B, HQ, HK, N_CTX, N_CTX, D, dtype, layout)
+    md.causal = _CAUSAL
     o = torch.empty_like(q)
     return q, k, v, o, md
 
@@ -173,11 +178,12 @@ def test_correctness(B, HQ, HK, N_CTX, D, dtype, layout):
         o_cmp = o.transpose(1, 2)
     else:
         q_ref, k_ref, v_ref, o_cmp = q, k, v, o
-    o_ref = sdpa_reference(q_ref, k_ref, v_ref, causal=False, sm_scale=md.sm_scale)
+    o_ref = sdpa_reference(q_ref, k_ref, v_ref, causal=_CAUSAL, sm_scale=md.sm_scale)
     ok, max_diff, mean_diff = _check_output(o_cmp, o_ref)
     tag = "✅ match" if ok else "❌ MISMATCH"
     print(
-        f"[FMHA] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} non-causal {layout} "
+        f"[FMHA] B={B} HQ={HQ} HK={HK} N={N_CTX} D={D} "
+        f"{'causal' if _CAUSAL else 'non-causal'} {layout} "
         f"{q.dtype}: {tag}  (max={max_diff:.2e} mean={mean_diff:.2e})"
     )
     return ok
@@ -257,7 +263,7 @@ def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
             HQ=nheads_q,
             HK=nheads_k,
             N_CTX=N_CTX,
-            IS_CAUSAL=False,
+            IS_CAUSAL=_CAUSAL,
             BLOCK_M=BLOCK_M,
             BLOCK_DMODEL=head_size,
             BLOCK_N=BLOCK_N,
@@ -273,6 +279,11 @@ def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
 
 def run_prepared_iterations(args, torch_dtype, seqlens):
     """Prepared-launch rocprof mode: n_warmup unmeasured + n_iters measured dispatches."""
+    if not hasattr(sys.modules[_FA_MODULE], "get_gluon_cdna_autotune_configs"):
+        # The persistent kernel (fmha_v5) binds its own grid and constexpr strides; there
+        # is no autotuned grid launch to pre-bind, so time the ordinary launch.
+        print(f"[FMHA] {_FA_MODULE} has no prepared launch; timing the JIT launch instead")
+        return run_rocprof_iterations(args, torch_dtype, seqlens)
     for N_CTX in seqlens:
         prepared, sets = make_prepared_kernel(
             N_CTX, args, torch_dtype, rotating_set_count(args, torch_dtype, N_CTX)
@@ -307,8 +318,9 @@ def run_prepared_iterations(args, torch_dtype, seqlens):
 
 def main():
     args = parse_args()
-    global _SCALE_ON_Q
+    global _SCALE_ON_Q, _CAUSAL
     _SCALE_ON_Q = bool(args.scale_on_q)
+    _CAUSAL = args.causal
     if not _SCALE_ON_Q and not _SCALE_ON_Q_ARG:
         print(f"Error: {_FA_MODULE} has no scale_on_q parameter")
         sys.exit(2)
@@ -334,7 +346,7 @@ def main():
             x_vals=seqlens,
             line_arg="provider",
             line_vals=["gluon"],
-            line_names=["non-causal"],
+            line_names=["causal" if _CAUSAL else "non-causal"],
             styles=[("blue", "-")],
             ylabel="TFLOPS",
             plot_name=(
@@ -354,11 +366,12 @@ def main():
         fn()  # trigger autotune + warm compile before timing
         torch.cuda.synchronize()
         ms = triton.testing.do_bench(fn, warmup=25, rep=100, return_mode="median")
-        return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, False) / ms * 1e-9
+        return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, _CAUSAL) / ms * 1e-9
 
     print(
         f"\nFMHA rotated-4cluster attention | B={args.batch} HQ={args.hq} HK={args.hk} "
-        f"D={args.d} layout={args.layout} dtype={args.dtype} non-causal"
+        f"D={args.d} layout={args.layout} dtype={args.dtype} "
+        f"{'causal' if _CAUSAL else 'non-causal'}"
     )
     benchmark.run(show_plots=False, print_data=True)
 

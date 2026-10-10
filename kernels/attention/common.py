@@ -127,9 +127,11 @@ def sdpa_reference(q, k, v, causal=False, sm_scale=None):
         r = q.shape[1] // k.shape[1]
         k = k.repeat_interleave(r, dim=1)
         v = v.repeat_interleave(r, dim=1)
-    if not causal:
+    if not causal or q.shape[2] == k.shape[2]:
+        # With M == N, SDPA's top-left causal alignment is the tril(diagonal=N-M) mask
+        # below, and the memory-efficient backend never materializes [S, S].
         return torch.nn.functional.scaled_dot_product_attention(
-            q, k, v, is_causal=False, scale=sm_scale
+            q, k, v, is_causal=causal, scale=sm_scale
         )
     M, N = q.shape[2], k.shape[2]
     scores = torch.matmul(q, k.transpose(-2, -1)) * sm_scale
