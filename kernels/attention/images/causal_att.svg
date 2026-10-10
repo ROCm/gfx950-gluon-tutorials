@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 270" width="760" height="270" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .st   { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11px; fill: #767676; }
+    .sm   { font-size: 9.5px; fill: #767676; }
+    .in   { font-size: 10px; fill: #1a1a1a; }
+    .ins  { font-size: 9px; fill: #1a1a1a; }
+    .inb  { font-size: 10px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .bad  { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+
+  <text class="h" x="8" y="16">Where a wave's cycles go (ATT, one CU): the hot loop is as dense causal as non-causal</text>
+  <text class="lbl" x="138" y="61" text-anchor="end">fmha_v4 non-causal</text>
+  <rect x="148" y="44" width="516.88" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <rect x="148" y="65" width="454.34" height="5" fill="#3b7dd8" stroke="none" fill-opacity="0.55"/>
+  <text class="in" x="156" y="59">main loop &#183; 92.3% of cycles &#183; MFMA 87.9%</text>
+  <rect x="664.88" y="44" width="43.12" height="26" fill="#e6e6e6" stroke="#909090"/>
+  <text class="sm" x="714" y="61">7.7%</text>
+  <text class="lbl" x="138" y="107" text-anchor="end">fmha_v5 non-causal</text>
+  <rect x="148" y="90" width="529.76" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <rect x="148" y="111" width="465.45" height="5" fill="#3b7dd8" stroke="none" fill-opacity="0.55"/>
+  <text class="in" x="156" y="105">inner loop &#183; 94.6% of cycles &#183; MFMA 87.9%</text>
+  <rect x="677.76" y="90" width="30.24" height="26" fill="#e6e6e6" stroke="#909090"/>
+  <text class="sm" x="714" y="107">5.4%</text>
+  <text class="st" x="138" y="153" text-anchor="end">fmha_v5 causal</text>
+  <rect x="148" y="136" width="460.88" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <rect x="148" y="157" width="406.54" height="5" fill="#3b7dd8" stroke="none" fill-opacity="0.55"/>
+  <text class="in" x="156" y="151">plain inner loop &#183; 82.3% of cycles &#183; MFMA 88.2%</text>
+  <rect x="608.88" y="136" width="39.76" height="26" fill="#f7e0c6" stroke="#d9822b"/>
+  <rect x="608.88" y="157" width="27.01" height="5" fill="#d9822b" stroke="none" fill-opacity="0.55"/>
+  <text class="ins" x="628.76" y="151" text-anchor="middle">masked</text>
+  <rect x="648.64" y="136" width="59.36" height="26" fill="#e6e6e6" stroke="#909090"/>
+  <text class="sm" x="714" y="153">10.6%</text>
+  <text class="lbl" x="138" y="199" text-anchor="end">fmha_v4_causal</text>
+  <rect x="148" y="182" width="447.44" height="26" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <rect x="148" y="203" width="334.15" height="5" fill="#3b7dd8" stroke="none" fill-opacity="0.55"/>
+  <text class="in" x="156" y="197">main loop, mask branch inside &#183; 79.9% of cycles &#183; MFMA 74.7%</text>
+  <rect x="595.44" y="182" width="112.56" height="26" fill="#e6e6e6" stroke="#909090"/>
+  <text class="sm" x="714" y="199">20.1%</text>
+  <rect x="148" y="234" width="14" height="12" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="168" y="244">loop</text>
+  <rect x="212" y="234" width="14" height="12" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="lbl" x="232" y="244">masked loop (67.9% MFMA)</text>
+  <rect x="398" y="234" width="14" height="12" fill="#e6e6e6" stroke="#909090"/>
+  <text class="lbl" x="418" y="244">outside the loops: prologue, drain, epilogue, hand-over</text>
+  <rect x="148" y="256" width="40" height="5" fill="#3b7dd8" stroke="none" fill-opacity="0.55"/>
+  <text class="lbl" x="196" y="262">bottom band: the loop's MFMA efficiency (per SIMD), as a fraction of its width</text>
+</svg>

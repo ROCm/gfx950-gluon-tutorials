@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 446" width="760" height="446" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .st   { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11px; fill: #767676; }
+    .sm   { font-size: 9.5px; fill: #767676; }
+    .in   { font-size: 10px; fill: #1a1a1a; }
+    .ins  { font-size: 9px; fill: #1a1a1a; }
+    .inb  { font-size: 10px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .bad  { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+  <defs>
+    <pattern id="waste" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)">
+      <rect width="5" height="5" fill="#f7d2cf"/>
+      <line x1="0" y1="0" x2="0" y2="5" stroke="#c8443c" stroke-width="1.1" stroke-opacity="0.55"/>
+    </pattern>
+  </defs>
+
+  <text class="h" x="8" y="16">Causal attention at q-block x K/V-tile granularity (drawn at S = 2048)</text>
+  <text class="lbl" x="294" y="40" text-anchor="middle">keys: K/V tiles of 64 &#8594;</text>
+  <text class="sm" x="118" y="56" text-anchor="middle">0</text>
+  <text class="sm" x="162" y="56" text-anchor="middle">4</text>
+  <text class="sm" x="206" y="56" text-anchor="middle">8</text>
+  <text class="sm" x="250" y="56" text-anchor="middle">12</text>
+  <text class="sm" x="294" y="56" text-anchor="middle">16</text>
+  <text class="sm" x="338" y="56" text-anchor="middle">20</text>
+  <text class="sm" x="382" y="56" text-anchor="middle">24</text>
+  <text class="sm" x="426" y="56" text-anchor="middle">28</text>
+  <text class="sm" x="470" y="56" text-anchor="middle">32</text>
+  <rect x="118" y="62" width="352" height="352" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="2 3"/>
+  <text class="lbl" x="108" y="82" text-anchor="end">q-block 0</text>
+  <text class="sm" x="108" y="95" text-anchor="end">4 tiles</text>
+  <polygon points="118,62 162,106 118,106" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="118,62 162,62 162,106" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="118" y="62" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="129" y="62" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="140" y="62" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="151" y="62" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="126" text-anchor="end">q-block 1</text>
+  <text class="sm" x="108" y="139" text-anchor="end">8 tiles</text>
+  <rect x="118" y="106" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="106" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="106" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="106" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="162,106 206,150 162,150" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="162,106 206,106 206,150" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="162" y="106" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="173" y="106" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="184" y="106" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="195" y="106" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="170" text-anchor="end">q-block 2</text>
+  <text class="sm" x="108" y="183" text-anchor="end">12 tiles</text>
+  <rect x="118" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="150" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="206,150 250,194 206,194" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="206,150 250,150 250,194" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="206" y="150" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="217" y="150" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="228" y="150" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="239" y="150" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="214" text-anchor="end">q-block 3</text>
+  <text class="sm" x="108" y="227" text-anchor="end">16 tiles</text>
+  <rect x="118" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="206" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="217" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="228" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="239" y="194" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="250,194 294,238 250,238" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="250,194 294,194 294,238" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="250" y="194" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="261" y="194" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="272" y="194" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="283" y="194" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="258" text-anchor="end">q-block 4</text>
+  <text class="sm" x="108" y="271" text-anchor="end">20 tiles</text>
+  <rect x="118" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="206" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="217" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="228" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="239" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="250" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="261" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="272" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="283" y="238" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="294,238 338,282 294,282" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="294,238 338,238 338,282" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="294" y="238" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="305" y="238" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="316" y="238" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="327" y="238" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="302" text-anchor="end">q-block 5</text>
+  <text class="sm" x="108" y="315" text-anchor="end">24 tiles</text>
+  <rect x="118" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="206" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="217" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="228" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="239" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="250" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="261" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="272" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="283" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="294" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="305" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="316" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="327" y="282" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="338,282 382,326 338,326" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="338,282 382,282 382,326" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="338" y="282" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="349" y="282" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="360" y="282" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="371" y="282" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="346" text-anchor="end">q-block 6</text>
+  <text class="sm" x="108" y="359" text-anchor="end">28 tiles</text>
+  <rect x="118" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="206" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="217" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="228" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="239" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="250" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="261" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="272" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="283" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="294" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="305" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="316" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="327" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="338" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="349" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="360" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="371" y="326" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="382,326 426,370 382,370" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="382,326 426,326 426,370" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="382" y="326" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="393" y="326" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="404" y="326" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="415" y="326" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <text class="lbl" x="108" y="390" text-anchor="end">q-block 7</text>
+  <text class="sm" x="108" y="403" text-anchor="end">32 tiles</text>
+  <rect x="118" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="129" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="140" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="151" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="162" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="173" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="184" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="195" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="206" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="217" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="228" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="239" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="250" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="261" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="272" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="283" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="294" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="305" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="316" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="327" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="338" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="349" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="360" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="371" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="382" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="393" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="404" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <rect x="415" y="370" width="11" height="44" fill="#cfe0f7" stroke="#3b7dd8" stroke-width="0.6"/>
+  <polygon points="426,370 470,414 426,414" fill="#f7e0c6" stroke="none" stroke-width="1"/>
+  <polygon points="426,370 470,370 470,414" fill="url(#waste)" stroke="none" stroke-width="1"/>
+  <rect x="426" y="370" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="437" y="370" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="448" y="370" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <rect x="459" y="370" width="11" height="44" fill="none" stroke="#d9822b" stroke-width="0.6"/>
+  <line x1="118" y1="62" x2="470" y2="414" stroke="#c8443c" stroke-width="1.2"/>
+  <text class="bad" x="407.44" y="279.44" text-anchor="middle" transform="rotate(45 407.44 279.44)">row = col</text>
+  <rect x="504" y="78" width="18" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="st" x="532" y="86">plain tile</text>
+  <text class="lbl" x="532" y="99">fmha_v4's loop body, unchanged</text>
+  <rect x="504" y="118" width="18" height="18" fill="#f7e0c6" stroke="#d9822b"/>
+  <text class="st" x="532" y="126">diagonal tile</text>
+  <text class="lbl" x="532" y="139">computed in full, then masked</text>
+  <rect x="504" y="158" width="18" height="18" fill="url(#waste)" stroke="#c8443c"/>
+  <text class="st" x="532" y="166">masked-out half</text>
+  <text class="lbl" x="532" y="179">computed and thrown away</text>
+  <rect x="504" y="198" width="18" height="18" fill="#ececec" stroke="#b9b9b9" stroke-dasharray="2 3"/>
+  <text class="st" x="532" y="206">above the diagonal</text>
+  <text class="lbl" x="532" y="219">never loaded</text>
+  <text class="lbl" x="504" y="256">q-block m: 4m plain + 4 diagonal tiles.</text>
+  <text class="lbl" x="504" y="272">Blocks range from 4 to 4M tiles, and</text>
+  <text class="lbl" x="504" y="288">each pays the same prologue, drain</text>
+  <text class="lbl" x="504" y="304">and epilogue.</text>
+  <text class="lbl" x="504" y="320"></text>
+  <text class="lbl" x="504" y="336">At S = 8192 (M = 32), one (batch, head)</text>
+  <text class="lbl" x="504" y="352">computes 2112 tiles for 2048 tiles'</text>
+  <text class="lbl" x="504" y="368">worth of kept scores:</text>
+  <text class="bad" x="504" y="384">3.0% of the work is the diagonal's</text>
+  <text class="bad" x="504" y="400">waste, however a 256-row block</text>
+  <text class="bad" x="504" y="416">is scheduled.</text>
+  <text class="note" x="8" y="438">The diagonal looks wider here than it is: at S = 8192 it is 4 of up to 128 tiles in a row.</text>
+</svg>

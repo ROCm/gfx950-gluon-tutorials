@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" width="760" height="520" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 12.5px; font-weight: 600; fill: #767676; }
+    .st   { font-size: 11.5px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 11px; fill: #767676; }
+    .sm   { font-size: 9.5px; fill: #767676; }
+    .in   { font-size: 10px; fill: #1a1a1a; }
+    .ins  { font-size: 9px; fill: #1a1a1a; }
+    .inb  { font-size: 10px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #767676; }
+    .bad  { font-size: 11px; fill: #c8443c; }
+    .ok   { font-size: 11px; fill: #2f7d43; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#909090"/>
+    </marker>
+  </defs>
+
+  <text class="h" x="8" y="16">Uneven q-blocks: launched one per workgroup, or walked in balanced pairs</text>
+  <text class="lbl" x="8" y="42">one (batch, head), M = 8:</text>
+  <text class="sm" x="8" y="55">q-block m is 4(m + 1) tiles</text>
+  <text class="lbl" x="62" y="69" text-anchor="end">0</text>
+  <rect x="70" y="58" width="15" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="87" text-anchor="end">1</text>
+  <rect x="70" y="76" width="30" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="105" text-anchor="end">2</text>
+  <rect x="70" y="94" width="45" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="123" text-anchor="end">3</text>
+  <rect x="70" y="112" width="60" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="141" text-anchor="end">4</text>
+  <rect x="70" y="130" width="75" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="159" text-anchor="end">5</text>
+  <rect x="70" y="148" width="90" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="177" text-anchor="end">6</text>
+  <rect x="70" y="166" width="105" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="lbl" x="62" y="195" text-anchor="end">7</text>
+  <rect x="70" y="184" width="120" height="14" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <path d="M224,128 L294,128" fill="none" stroke="#909090" stroke-width="1.4" marker-end="url(#ar)"/>
+  <text class="sm" x="259" y="120" text-anchor="middle">pair up</text>
+  <text class="sm" x="259" y="144" text-anchor="middle">(M&#8722;1&#8722;j, j)</text>
+  <text class="lbl" x="304" y="42">every pair is (M + 1) &#183; 4 tiles:</text>
+  <text class="sm" x="304" y="55">the same work for every workgroup</text>
+  <rect x="352" y="76" width="120" height="20" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="412" y="89.5" text-anchor="middle">q-block 7</text>
+  <rect x="472" y="76" width="15" height="20" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="479.5" y="89.5" text-anchor="middle">0</text>
+  <text class="sm" x="344" y="90" text-anchor="end">j = 0</text>
+  <rect x="352" y="102" width="105" height="20" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="404.5" y="115.5" text-anchor="middle">q-block 6</text>
+  <rect x="457" y="102" width="30" height="20" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="472" y="115.5" text-anchor="middle">1</text>
+  <text class="sm" x="344" y="116" text-anchor="end">j = 1</text>
+  <rect x="352" y="128" width="90" height="20" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="397" y="141.5" text-anchor="middle">q-block 5</text>
+  <rect x="442" y="128" width="45" height="20" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="464.5" y="141.5" text-anchor="middle">2</text>
+  <text class="sm" x="344" y="142" text-anchor="end">j = 2</text>
+  <rect x="352" y="154" width="75" height="20" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="389.5" y="167.5" text-anchor="middle">q-block 4</text>
+  <rect x="427" y="154" width="60" height="20" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="457" y="167.5" text-anchor="middle">3</text>
+  <text class="sm" x="344" y="168" text-anchor="end">j = 3</text>
+  <line x1="491" y1="72" x2="491" y2="178" stroke="#4c9a5a" stroke-width="1.2"/>
+  <text class="ok" x="497" y="124">same</text>
+  <text class="ok" x="497" y="138">length</text>
+  <text class="st" x="8" y="244">1</text>
+  <text class="lbl" x="22" y="244">grid launch (fmha_v4_causal): one workgroup per q-block, longest first</text>
+  <text class="lbl" x="110" y="269" text-anchor="end">CU 0</text>
+  <rect x="120" y="256" width="120" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="180" y="268.5" text-anchor="middle">7</text>
+  <rect x="240" y="256" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="255" y="256" width="75" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="292.5" y="268.5" text-anchor="middle">4</text>
+  <rect x="330" y="256" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="345" y="256" width="60" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="375" y="268.5" text-anchor="middle">3</text>
+  <rect x="405" y="256" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="420" y="256" width="15" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="427.5" y="268.5" text-anchor="middle"></text>
+  <text class="lbl" x="110" y="293" text-anchor="end">CU 1</text>
+  <rect x="120" y="280" width="120" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="180" y="292.5" text-anchor="middle">7</text>
+  <rect x="240" y="280" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="255" y="280" width="75" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="292.5" y="292.5" text-anchor="middle">4</text>
+  <rect x="330" y="280" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="345" y="280" width="60" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="375" y="292.5" text-anchor="middle">3</text>
+  <rect x="405" y="280" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="420" y="280" width="15" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="427.5" y="292.5" text-anchor="middle"></text>
+  <text class="lbl" x="110" y="317" text-anchor="end">CU 2</text>
+  <rect x="120" y="304" width="105" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="172.5" y="316.5" text-anchor="middle">6</text>
+  <rect x="225" y="304" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="240" y="304" width="90" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="285" y="316.5" text-anchor="middle">5</text>
+  <rect x="330" y="304" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="345" y="304" width="45" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="367.5" y="316.5" text-anchor="middle">2</text>
+  <rect x="390" y="304" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="405" y="304" width="30" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="420" y="316.5" text-anchor="middle">1</text>
+  <text class="lbl" x="110" y="341" text-anchor="end">CU 3</text>
+  <rect x="120" y="328" width="105" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="172.5" y="340.5" text-anchor="middle">6</text>
+  <rect x="225" y="328" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="240" y="328" width="90" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="285" y="340.5" text-anchor="middle">5</text>
+  <rect x="330" y="328" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="345" y="328" width="45" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="367.5" y="340.5" text-anchor="middle">2</text>
+  <rect x="390" y="328" width="15" height="18" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <rect x="405" y="328" width="30" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="420" y="340.5" text-anchor="middle">1</text>
+  <line x1="435" y1="252" x2="435" y2="352" stroke="#c8443c" stroke-width="1" stroke-dasharray="3 3"/>
+  <text class="bad" x="441" y="296">done</text>
+  <rect x="441" y="320" width="14" height="10" fill="#f7d2cf" stroke="#c8443c" stroke-dasharray="2 2"/>
+  <text class="bad" x="461" y="329">~10 &#181;s idle at every</text>
+  <text class="bad" x="461" y="343">hand-over: ~6% of CU time</text>
+  <text class="st" x="8" y="384">2</text>
+  <text class="lbl" x="22" y="384">persistent (fmha_v5): one workgroup per CU, each walking a fixed list of pairs</text>
+  <text class="lbl" x="110" y="409" text-anchor="end">CU 0</text>
+  <rect x="120" y="396" width="120" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="180" y="408.5" text-anchor="middle">7</text>
+  <rect x="240" y="396" width="15" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="247.5" y="408.5" text-anchor="middle">0</text>
+  <rect x="257" y="396" width="105" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="309.5" y="408.5" text-anchor="middle">6</text>
+  <rect x="362" y="396" width="30" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="377" y="408.5" text-anchor="middle">1</text>
+  <text class="lbl" x="110" y="433" text-anchor="end">CU 1</text>
+  <rect x="120" y="420" width="90" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="165" y="432.5" text-anchor="middle">5</text>
+  <rect x="210" y="420" width="45" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="232.5" y="432.5" text-anchor="middle">2</text>
+  <rect x="257" y="420" width="75" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="294.5" y="432.5" text-anchor="middle">4</text>
+  <rect x="332" y="420" width="60" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="362" y="432.5" text-anchor="middle">3</text>
+  <text class="lbl" x="110" y="457" text-anchor="end">CU 2</text>
+  <rect x="120" y="444" width="120" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="180" y="456.5" text-anchor="middle">7</text>
+  <rect x="240" y="444" width="15" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="247.5" y="456.5" text-anchor="middle">0</text>
+  <rect x="257" y="444" width="105" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="309.5" y="456.5" text-anchor="middle">6</text>
+  <rect x="362" y="444" width="30" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="377" y="456.5" text-anchor="middle">1</text>
+  <text class="lbl" x="110" y="481" text-anchor="end">CU 3</text>
+  <rect x="120" y="468" width="90" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="165" y="480.5" text-anchor="middle">5</text>
+  <rect x="210" y="468" width="45" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="232.5" y="480.5" text-anchor="middle">2</text>
+  <rect x="257" y="468" width="75" height="18" fill="#cfe0f7" stroke="#3b7dd8"/>
+  <text class="ins" x="294.5" y="480.5" text-anchor="middle">4</text>
+  <rect x="332" y="468" width="60" height="18" fill="#ded3f5" stroke="#7a5ac9"/>
+  <text class="ins" x="362" y="480.5" text-anchor="middle">3</text>
+  <line x1="392" y1="392" x2="392" y2="492" stroke="#4c9a5a" stroke-width="1" stroke-dasharray="3 3"/>
+  <text class="ok" x="400" y="436">all done together;</text>
+  <text class="ok" x="400" y="452">hand-overs overlap (&#167;10.4)</text>
+  <text class="note" x="8" y="510">Drawn for 2 (batch, head) x 8 q-blocks on 4 CUs; a box's length is its tile count.</text>
+</svg>

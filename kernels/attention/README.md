@@ -802,6 +802,8 @@ and the diagonal tiles compute a full 256 x 64 tile of which only the lower tria
 work is waste** that no schedule of a 256-row block removes. That makes the 5% budget mostly a
 question of how much of the rest goes to the edges of each block.
 
+![the causal score matrix in q-blocks and K/V tiles: plain tiles, the four diagonal tiles per block, and the masked-out half they waste](images/causal_tiles.svg)
+
 ### 10.2 The mask ([triton-tickets#812](https://github.com/AMD-Triton/triton-tickets/issues/812))
 
 The generic mask, `gl.where(row - col >= delta, qk, -inf)`, is the one the issue describes: it
@@ -818,6 +820,10 @@ is a compile-time fact. In the transposed 32x32 MFMA layout, register `e` of a l
 * in the diagonal block, register `e` is kept iff `d0 >= COL[e]`, where `d0 = row - delta - 4h` is
   one per-lane value and `COL[e]` a constant. One compare and one `v_cndmask`, no extra VGPRs.
 
+![the diagonal 256 x 256 square in 32 x 32 blocks per wave: fully kept, diagonal, fully masked](images/causal_mask_blocks.svg)
+
+![inside a diagonal block: the two lanes that hold a row, their registers' columns, and the one compare per register](images/causal_mask_lanes.svg)
+
 `causal_mask` implements both through `gl.map_elementwise(pack=32)`, which hands a thread's 32
 registers to a scalar body as separate arguments (the bodies are generated:
 [`fmha_causal_mask.py`](fmha_causal_mask.py), by `scripts/gen_causal_mask.py`). In plain code the
@@ -830,6 +836,8 @@ iterations; a uniform branch inside the loop (skip the mask on the other iterati
 every tile**: it splits the PV cluster's basic block, LLVM sinks the `p` downcast into the join, and
 IGroupLP no longer builds the cluster's MFMA/VALU interleave. `fmha_v5` instead runs two
 warp-pipelined loops -- the plain pairs, then the masked pairs -- each branch-free.
+
+![one loop with the mask behind a branch, against two branch-free loops, and what the branch does to the PV cluster](images/causal_loops.svg)
 
 ### 10.3 The launch: persistent, in balanced pairs
 
@@ -846,6 +854,8 @@ pair backwards would put an XCD's workgroups on the same two tiles at every step
 same, because causal's L2 misses are already near the compulsory floor -- its hit *rate* is lower
 than non-causal's only because it re-reads K/V half as often.)
 
+![q-blocks paired long with short into equal work, and the grid launch's idle hand-overs against the persistent walk](images/causal_pairs.svg)
+
 ### 10.4 The hand-over between q-blocks
 
 With 32 q-blocks per CU, each one's prologue, drain and epilogue are paid as often as in
@@ -861,6 +871,10 @@ non-causal, against half the tiles. A persistent workgroup can overlap them:
   straight from the MFMA layout avoids LDS but makes every 8-byte store span 32 rows: +4 µs per block.
 * **LSE straight from the row layout** -- the two lanes that share a row write the same value -- which
   saves an LDS round trip and two barriers.
+
+![the next q-block's Q and first K/V tiles loading under the last PV and the epilogue](images/causal_handover.svg)
+
+![LDS placement with one 64 KB O scratch against two 32 KB halves](images/causal_lds.svg)
 
 Fitting `fmha_v5`'s non-causal time over `S = 2048, 4096, 8192` at a constant 8192 q-blocks gives
 **~2.13 µs per tile and ~3 µs per q-block** of hand-over; the causal run's 2112 tiles and 32 blocks
@@ -883,6 +897,8 @@ efficiency is per SIMD (per wave x 2), and one iteration is two K/V tiles:
 | | whole q-block (outer loop) | 32 | -- | 99.9% | 79.43% |
 | `fmha_v4_causal` | main loop | 32 | 5485 | 79.9% | 74.68% |
 
+![each kernel's wave time split into its loops and the code around them, with each loop's MFMA efficiency](images/causal_att.svg)
+
 * **The hot loop does not know it is causal.** The plain inner loop, 82% of the causal kernel's
   time, matches `fmha_v4`'s loop in both cycles and MFMA efficiency.
 * **The gap is everything around it:** the masked loop (two iterations per pair, at 68%) and code
@@ -902,8 +918,8 @@ Within a diagonal tile, a wave whose rows are all above the diagonal has nothing
 every wave executes every MFMA. Skipping them needs control flow that differs between waves, which
 Gluon has no way to express: its scalars are uniform across the program. The Triton branch adds
 `gl.amd.warp_id()` -- the existing `ttg.warp_id`, lowered to `v_readfirstlane(tid / 64)`, so branches
-on it are wave-uniform. The drain's last tile is masked entirely for waves 0-5, which now skip its QK
-MFMA (+0.4%). The same skip around the PV MFMAs would save more, but the accumulator then merges two
+on it are wave-uniform. The drain's last tile is masked entirely for waves 0-5 (the dashed outline
+in §10.2's block figure), which now skip its QK MFMA (+0.4%). The same skip around the PV MFMAs would save more, but the accumulator then merges two
 control-flow paths and the register allocator spills ~170 VGPRs. Without `warp_id` the kernel runs
 as before.
 
