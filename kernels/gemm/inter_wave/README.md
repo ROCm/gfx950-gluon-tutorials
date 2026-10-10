@@ -19,7 +19,7 @@ Instead of the LLIR scheduler + AGPR-pinned accumulators + amdgcnas, they launch
 
 ## 2. Performance
 
-Measured on a well-performing MI355X, 4096×4096, Triton `gfx950-tutorial-v2.3`, plain rocprofv3
+Measured on a well-performing MI355X, 4096×4096, Triton `gfx950-tutorial-v3.0`, plain rocprofv3
 with rotating tensors (which carries the always-on warp-pipeline barrier, #10840); rocprof cold-rotating (1000 dispatches, last-100 average), per-SIMD loop MFMA efficiency. One headline shape per data type — FP16 K=8192, BF8 K=16384, MXFP4 K=32768:
 
 | Kernel | K | TFLOPS / MFMA eff | VGPR / spills |

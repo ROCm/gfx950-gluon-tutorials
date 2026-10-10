@@ -52,7 +52,7 @@ tile reads and keep the MFMA fed.
 | v1 | 5051 | 81.3% |
 | v2 | **5136** | **98.9%** |
 
-MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating.
+MI355X, gfx950, MXFP4, K=32768, Triton `gfx950-tutorial-v3.0`, rocprof cold-rotating.
 
 The conflict-free layout removes the ds stall → **~99% MFMA efficiency** (the matrix core is nearly
 saturated *in cycles*), and v2 runs the loop in far fewer cycles than v1. v2 leads on wall-clock at

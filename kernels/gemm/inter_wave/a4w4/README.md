@@ -17,7 +17,7 @@ kernel versions, and the measured performance.
 | **v2** | [`v2_mfma32x32x64`](v2_mfma32x32x64/README.md) | v1's combined `[256,8]`; **32×32×64 MFMA** | **4436** | **5136** | **~99%** |
 
 > [!IMPORTANT]
-> **v2 is the one to use.** On `gfx950-tutorial-v2.3` it leads v1 at every K: +5.4% at K=8192,
+> **v2 is the one to use.** On `gfx950-tutorial-v3.0` it leads v1 at every K: +5.4% at K=8192,
 > +3.8% at K=16384 (4923 vs 4741) and +1.7% at K=32768. It runs its loop at ~99% MFMA efficiency
 > against v1's ~81%, but its denser MFMA stream draws more power, so its margin depends on the clock
 > the die sustains: on a slower MI355X (measured on the v2.2 pin), v1 was ahead at K ≥ 16384.

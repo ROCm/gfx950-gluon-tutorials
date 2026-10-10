@@ -28,7 +28,7 @@ Bars = TFLOPS (left axis), red line = MFMA efficiency (right axis), one bar per
 (version, config).  Configs: base / llir / llir+amdgcnas. From v7 on the kernels pin their MFMA
 accumulators to AGPRs (cd_regclass) in every config; v0-v6 are unpinned.
 
-Data: a well-performing MI355X, Triton gfx950-tutorial-v2.3, 4096x4096x8192, FP16,
+Data: a well-performing MI355X, Triton gfx950-tutorial-v3.0, 4096x4096x8192, FP16,
 rocprofv3 (1000 dispatches, last-100 avg),
 collected with:
     python scripts/run_perf_table.py --kernel a16w16 --versions <v> \

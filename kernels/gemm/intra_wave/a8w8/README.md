@@ -134,7 +134,7 @@ For detailed explanations of these techniques, refer to the corresponding versio
 
 ## 4. Performance
 
-Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v2.3`:
+Measured on a well-performing MI355X with shape 4096×4096×16384, BF8 (e5m2), Triton `gfx950-tutorial-v3.0`:
 
 | Configuration  | TFLOPS | VGPRs | Spills | MFMA Eff. |
 |----------------|--------|-------|--------|-----------|

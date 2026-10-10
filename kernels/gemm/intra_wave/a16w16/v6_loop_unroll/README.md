@@ -125,7 +125,7 @@ spill.
 
 > [!WARNING]
 > **v6 has no register headroom, so allocator policy decides whether it spills.** On the
-> `gfx950-tutorial-v2.3` pin the stock (`base`) build spills 241 registers, puts 76 scratch
+> `gfx950-tutorial-v3.0` pin the stock (`base`) build spills 241 registers, puts 76 scratch
 > accesses and 340 `v_accvgpr_*` copies into the loop, and collapses to **218 TFLOPS / 8.5%**.
 > Upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950
 > ([triton-lang/triton#11763](https://github.com/triton-lang/triton/pull/11763)); with the trackers

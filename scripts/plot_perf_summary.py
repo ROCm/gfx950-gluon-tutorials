@@ -29,7 +29,7 @@ bar chart in kernels/gemm/README.md.
 
 Grouped bars of peak TFLOPS (4-wave vs 8-wave) at each precision's headline
 shape, with the per-SIMD loop MFMA efficiency printed in red inside each bar.
-The numbers mirror the README (MI355X, gfx950, Triton gfx950-tutorial-v2.3,
+The numbers mirror the README (MI355X, gfx950, Triton gfx950-tutorial-v3.0,
 rocprof cold-rotating); edit the `rows` table below when they change.
 
     python scripts/plot_perf_summary.py

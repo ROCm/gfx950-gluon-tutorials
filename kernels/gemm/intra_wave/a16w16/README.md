@@ -74,7 +74,7 @@ Enter the **LLIR Scheduler**. The backend wasn't interleaving instructions as we
 
 ### Act III: Taming the Hardware (v6–v8)
 
-**v6 — Loop Unrolling.** The v5 trace reveals copy instructions at iteration boundaries—data moved between register sets for the prefetch. The fix: unroll by 2, alternating register sets naturally. Under the LLIR scheduler the operand copies mostly disappear and MFMA efficiency rises to 90.2% (1162 TFLOPS), but the kernel now presses against the 512-register ceiling: the two register sets are live at once, leaving no headroom, and the allocator still moves 50 values per loop between the register files and spills 8 registers. The stock build is worse off: on `gfx950-tutorial-v2.3` it spills 241 registers and collapses to **218 TFLOPS** (upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950; with them forced on, the same build runs at 1043 with no spills). v6 has no margin at all—whether it spills is decided by allocator policy, not by the kernel.
+**v6 — Loop Unrolling.** The v5 trace reveals copy instructions at iteration boundaries—data moved between register sets for the prefetch. The fix: unroll by 2, alternating register sets naturally. Under the LLIR scheduler the operand copies mostly disappear and MFMA efficiency rises to 90.2% (1162 TFLOPS), but the kernel now presses against the 512-register ceiling: the two register sets are live at once, leaving no headroom, and the allocator still moves 50 values per loop between the register files and spills 8 registers. The stock build is worse off: on `gfx950-tutorial-v3.0` it spills 241 registers and collapses to **218 TFLOPS** (upstream Triton no longer turns on LLVM's AMDGPU register-pressure trackers for gfx950; with them forced on, the same build runs at 1043 with no spills). v6 has no margin at all—whether it spills is decided by allocator policy, not by the kernel.
 
 **v7 — Fixing the Register Budget by Design.** With 256×256 tiles and prefetching, we need ~512 registers—exactly what gfx950 provides. No headroom. v7 slices along N: instead of loading a full 256-wide B tile, we load two 128-wide halves in sequence. Register pressure drops to 448 by construction. That headroom is the enabler for the real fix. Left to itself the allocator still shuffles accumulators between AGPRs and VGPRs—116 `v_accvgpr_*` copies per loop body under `llir`. So v7 also **pins every MFMA accumulator to an AGPR**, passing Gluon's `cd_regclass="a"` to each MFMA: the in-loop copies vanish and MFMA efficiency reaches **97.3%** at 1554 TFLOPS (the build spills 8 registers, all outside the loop). Pinning is part of the kernel from v7 on.
 
@@ -90,7 +90,7 @@ The last gap is scattered SALU instructions at iteration boundaries. **amdgcnas*
 
 ### The Results
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, shape 4096×4096×8192, FP16.
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v3.0`, shape 4096×4096×8192, FP16.
 
 ![Performance Chart](images/performance_chart.png)
 

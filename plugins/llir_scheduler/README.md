@@ -50,7 +50,7 @@ branch.
 
 ## Pinned toolchain (important — ABI lock)
 The `.so` is a native LLVM plugin and is **ABI-locked to the exact LLVM that
-Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v2.3`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v2.3) for both the GEMM and the
+Triton is built with**. This tutorial pins Triton to [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0) for both the GEMM and the
 attention kernels. Triton now uses two LLVMs: the **core LLVM `b010a18d`** (see `cmake/llvm-info.json`)
 runs the LLVM-IR pipeline, including this plugin, and a separately pinned AMD codegen LLVM
 (`6bc4aaf6`, see `cmake/amd-llvm-info.json`) turns the result into AMDGCN. The plugin only sees

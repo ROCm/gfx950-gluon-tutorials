@@ -294,7 +294,7 @@ Once this mindset is adopted, layout design becomes less mysterious and more pri
 
 ## Performance
 
-Measured on a well-performing MI355X, Triton `gfx950-tutorial-v2.3`, plain rocprofv3 with
+Measured on a well-performing MI355X, Triton `gfx950-tutorial-v3.0`, plain rocprofv3 with
 rotating tensors (1000 dispatches, last-100 average), 4096x4096x8192 fp16.
 
 Config: `base` (no compiler plugins).

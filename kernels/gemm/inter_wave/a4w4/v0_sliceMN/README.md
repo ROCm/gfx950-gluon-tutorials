@@ -49,7 +49,7 @@ between MFMAs and inflates register pressure.
 
 ## 3. Performance
 
-A well-performing MI355X, gfx950, 4096×4096, MXFP4, Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating
+A well-performing MI355X, gfx950, 4096×4096, MXFP4, Triton `gfx950-tutorial-v3.0`, rocprof cold-rotating
 (`--rotating-buffer-size 2048` for K ≥ 16384). This **8-wave, no-AGPR** kernel
 (`scripts/collect_perf.py`) vs the 4-wave
 [`intra_wave/a4w4/v1`](../../../intra_wave/a4w4/v1_sliceMN/README.md) reference

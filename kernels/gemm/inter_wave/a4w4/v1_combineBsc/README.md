@@ -51,7 +51,7 @@ for a `[128,8]` half because there the 128-N span equals the tile's N.
 
 ## 2. Performance
 
-A well-performing MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v2.3`, rocprof cold-rotating
+A well-performing MI355X, gfx950, 4096×4096, MXFP4, no-AGPR, Triton `gfx950-tutorial-v3.0`, rocprof cold-rotating
 (`--rotating-buffer-size 2048` for K ≥ 16384):
 
 | K | v0 TFLOPS | **v1 TFLOPS** | v0 MFMA | **v1 MFMA** | speedup |
