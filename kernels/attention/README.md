@@ -806,35 +806,209 @@ question of how much of the rest goes to the edges of each block.
 
 ### 10.2 The mask ([triton-tickets#812](https://github.com/AMD-Triton/triton-tickets/issues/812))
 
-The generic mask, `gl.where(row - col >= delta, qk, -inf)`, is the one the issue describes: it
-computes `row - col` for each of a thread's 32 score registers. LLVM sees those as loop-invariant,
-hoists them, keeps them live through the hot loop, and a kernel at 256 VGPRs spills (96 VGPRs in
-`fmha_v4_causal`) -- the 794-to-868 step in the table.
+The idea comes from the issue in the heading; this section explains it from scratch.
 
-The issue's observation is that a causal mask is not generic: with the layout known, the pattern
-is a compile-time fact. In the transposed 32x32 MFMA layout, register `e` of a lane holds column
-`e%4 + 8*(e//4 % 4) + 32*(e//16)` (plus 4 in the upper half of the wave) of that lane's row. So:
+**What has to be masked.** Index a score tile by `(r, c)`: `r = 0..255` is the row within the
+q-block (one query each) and `c = 0..63` the column within the K/V tile (one key each). Q-block `m`
+starts at query `256m` and tile `i` at key `64i`. A query may only see keys at or before it,
+`64i + c <= 256m + r`, so
 
-* per wave, each 32x32 block of the score tile is in one of **three states** -- fully kept, fully
-  masked, or the diagonal block -- and the state is wave-uniform;
-* in the diagonal block, register `e` is kept iff `d0 >= COL[e]`, where `d0 = row - delta - 4h` is
-  one per-lane value and `COL[e]` a constant. One compare and one `v_cndmask`, no extra VGPRs.
+```
+keep (r, c)  iff  c <= r - delta,        delta = 64i - 256m
+```
+
+`delta` is the tile's first key minus the block's first query: 0, 64, 128 and 192 for the four
+diagonal tiles of §10.1 (`_delta()` in `fmha_v5.py`). A masked score is set to `-inf`, which the
+softmax's `exp2` turns into 0.
+
+**The generic mask, and why it spills.** As Gluon tensor code the mask is one line:
+
+```python
+rows = gl.arange(0, BLOCK_M, layout=gl.SliceLayout(1, layout))
+cols = gl.arange(0, BLOCK_N, layout=gl.SliceLayout(0, layout))
+qk = gl.where(rows[:, None] - cols[None, :] >= delta, qk, float("-inf"))
+```
+
+Each lane holds 32 of the tile's scores, so this computes 32 values of `rows - cols`, one per score
+register, before the 32 compares. Only `delta` changes from tile to tile; the 32 differences do not,
+so LLVM hoists them out of the loop as loop-invariant and keeps them in 32 VGPRs through the whole
+hot loop. The kernel was already at 256 VGPRs, so they spill: 96 VGPRs in `fmha_v4_causal`, the
+794-to-868 step in the table above.
+
+But a causal mask is not a generic mask. Which score a register holds is fixed by the tile's
+layout, and the layout is fixed when the kernel is compiled. Every register's column is therefore
+a compile-time constant, and the mask can be computed from one value per lane instead of 32.
+
+#### Which score a register holds
+
+The scores come from `v_mfma_f32_32x32x16_bf16`. Its result is a 32 x 32 fp32 block per wave: 1024
+values on 64 lanes, 16 VGPRs per lane. The 256 x 64 tile is split among the 8 waves by rows, so each
+wave holds a 32 x 64 slab -- two such blocks side by side -- and each lane holds 32 score registers,
+numbered `e = 0..31`. The kernels use the *transposed* MFMA layout
+(`AMDMFMALayout(..., transposed=True)`: the MFMA is issued with its two operands swapped, which
+transposes its result) so that a lane holds scores of a single row, and most of the softmax's row
+max and row sum is arithmetic inside the lane.
+
+Triton describes this layout as a *linear layout*: each bit of the register index `e`, of the lane
+id and of the wave id moves an element by a fixed `(row, column)` offset, and an element's position
+combines the offsets of the bits that are set. (Linear layouts combine offsets with XOR; here no two
+offsets overlap, so it is a plain sum.) `gl.to_linear_layout` of the score tile's layout prints
+
+```
+reg_bases  = [[0, 1], [0, 2], [0, 8], [0, 16], [0, 32]]          # (row, col) offset per bit of e
+lane_bases = [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [0, 4]]   # ... per bit of the lane id
+warp_bases = [[32, 0], [64, 0], [128, 0]]                        # ... per bit of the wave id
+```
+
+or, bit by bit:
+
+| bit | of the register index `e` | of the lane id | of the wave id |
+|---|---|---|---|
+| 0 | column +1 | row +1 | row +32 |
+| 1 | column +2 | row +2 | row +64 |
+| 2 | column +8 | row +4 | row +128 |
+| 3 | column +16 | row +8 | |
+| 4 | column +32 | row +16 | |
+| 5 | | column +4 | |
+
+Adding the offsets up gives the position of register `e` of a lane:
+
+```
+row    = 32 * wave + lane % 32
+col    = COL[e] + 4 * h,              h = lane // 32  (0 for lanes 0-31, 1 for lanes 32-63)
+COL[e] = e % 4 + 8 * (e // 4 % 4) + 32 * (e // 16)
+```
+
+So the lane id matters twice: its low five bits (with the wave) give the row, and its top bit `h`
+shifts the column by 4. `COL[e]` is the column register `e` holds in the lanes with `h = 0`, and it
+depends on nothing but `e`. Term by term:
+
+* `e % 4` -- bits 0 and 1 of `e` -- steps through four consecutive columns;
+* `8 * (e // 4 % 4)` -- bits 2 and 3 -- picks one of the four 8-column groups of a 32 x 32 block;
+* `32 * (e // 16)` -- bit 4 -- picks the first or the second 32 x 32 block of the tile.
+
+Bit 2 of `e` jumps 8 columns, not 4, because the four columns in between belong to the other half
+of the wave. Row `r` of a wave's slab (`r = 0..31`) is held by two lanes, `r` and `r + 32`, 32
+scores each, alternating every four columns:
+
+![one wave's 32 x 64 slab: which lane holds each column, and the register index of every score in one row](images/causal_layout.svg)
+
+#### One compare per register: `d0` against `COL[e]`
+
+Put the layout into the mask condition. Register `e` of a lane holds column `c = COL[e] + 4h` of row
+`r = 32 * wave + lane % 32`, so it is kept iff `COL[e] + 4h <= r - delta`:
+
+```
+keep register e  iff  d0 >= COL[e],      d0 = r - delta - 4h
+                                            = 32 * wave + lane % 32 - delta - 4 * (lane // 32)
+```
+
+* `h` is the lane's half of the wave, `lane // 32`.
+* `d0` is one integer per lane: the same for all 32 of the lane's registers, recomputed per tile
+  because `delta` changes. (It is named for register 0: the generic `r - c - delta` of register 0,
+  whose column is `4h`.)
+* `COL[e]` is a different constant for each register, known at compile time.
+
+So each register costs one compare against an immediate and one select, and the only VGPR the mask
+keeps is `d0`. This is what the compiler emits for register 4 (`COL[4] = 8`), with `d0` in `v17`:
+
+```
+v_cmp_lt_i32_e32  vcc, 7, v17          ; 7 < d0, i.e. d0 >= COL[4] = 8
+v_cndmask_b32_e32 v23, v32, v4, vcc    ; v23 = vcc ? v4 : v32, and v32 holds -inf
+```
+
+The figure works through row 13 of wave 0 in the first diagonal tile (`delta = 0`). Lane 13
+(`h = 0`, `d0 = 13`) keeps the registers with `COL[e] <= 13`, which hold columns 0-3 and 8-11.
+Lane 45 (`h = 1`, `d0 = 9`) keeps those with `COL[e] <= 9`, which hold columns 4-7, 12 and 13.
+Together that is columns 0 to 13 of row 13, as the causal rule requires.
+
+![the diagonal block, row 13 as lanes 13 and 45 hold it, and the COL constants](images/causal_mask_lanes.svg)
+
+#### Three states per wave and block
+
+Most of a diagonal tile is not on the diagonal. Cut it into the 32 x 32 blocks a wave holds: wave
+`w` has rows `32w .. 32w+31`, and block `b` (`b = 0, 1`) is the tile's columns `32b .. 32b+31`,
+registers `16b .. 16b+15`. Let `k0 = 32w - delta`, the wave's first row moved by `delta`. Then
+block `b` is
+
+* **fully kept** if even its first row keeps its last column, `k0 >= 32b + 31`. No code.
+* **fully masked** if even its last row masks its first column, `k0 + 31 < 32b`, i.e.
+  `k0 <= 32b - 32`. 16 `v_mov` of `-inf`.
+* **the diagonal block** otherwise. `k0` and `32b` are both multiples of 32, so this is exactly
+  `k0 = 32b`. The 16 compare-and-select pairs above.
+
+`k0` depends on the wave and the tile but not on the lane, so all 64 lanes of a wave take the same
+branch. It is a scalar compare and branch, and no lane diverges. In each diagonal tile only two waves
+have a diagonal block:
 
 ![the diagonal 256 x 256 square in 32 x 32 blocks per wave: fully kept, diagonal, fully masked](images/causal_mask_blocks.svg)
 
-![inside a diagonal block: the two lanes that hold a row, their registers' columns, and the one compare per register](images/causal_mask_lanes.svg)
+#### In Gluon: `gl.map_elementwise(..., pack=32)`
 
-`causal_mask` implements both through `gl.map_elementwise(pack=32)`, which hands a thread's 32
-registers to a scalar body as separate arguments (the bodies are generated:
-[`fmha_causal_mask.py`](fmha_causal_mask.py), by `scripts/gen_causal_mask.py`). In plain code the
-3-state body branches per wave; inside the warp-pipelined loop the branch-free one compares every
-register. Measured end to end, **all masking costs 0.6%** of the causal run, so the issue's further
-step -- SGPR lane masks advanced by `s_lshl` to halve the VALU -- would buy at most 0.3% here.
+Gluon tensor code cannot refer to "register 4 of this lane": an elementwise operation applies the
+same scalar function to every element. `gl.map_elementwise(fn, a, b, ..., pack=32)` is the way in.
+It calls `fn` on 32 consecutive elements of each operand that a lane holds -- here, all 32 score
+registers, in register order -- passed as 32 separate scalar arguments. The body can then give every
+register its own constant:
 
-Where the mask goes mattered more than what it costs. The masked tiles are the last three loop
-iterations; a uniform branch inside the loop (skip the mask on the other iterations) costs **5% on
-every tile**: it splits the PV cluster's basic block, LLVM sinks the `p` downcast into the join, and
-IGroupLP no longer builds the cluster's MFMA/VALU interleave. `fmha_v5` instead runs two
+```python
+@gluon.jit
+def causal_select_pack32(x0, x1, ..., x31, d0, d1, ..., d31):
+    x0 = gl.where(d0 >= 0, x0, NEG)       # COL[0] = 0
+    x1 = gl.where(d0 >= 1, x1, NEG)       # COL[1] = 1
+    ...
+    x4 = gl.where(d0 >= 8, x4, NEG)       # COL[4] = 8
+    ...
+    x31 = gl.where(d0 >= 59, x31, NEG)    # COL[31] = 59
+    return x0, x1, ..., x31
+```
+
+The second operand is the generic difference tensor. The body reads only register 0's element,
+`d0`; the other 31 are dead code and are deleted, so the 32 `rows - cols` values that spilled are
+never computed:
+
+```python
+d = rows[:, None] - cols[None, :] - delta        # only register 0's element, d0, is used
+qk, = gl.map_elementwise(causal_select_pack32, qk, d, pack=32)
+```
+
+Functions with 64 or 96 scalar parameters are generated, not written:
+[`scripts/gen_causal_mask.py`](../../scripts/gen_causal_mask.py) writes
+[`fmha_causal_mask.py`](fmha_causal_mask.py), which has two bodies.
+
+* `causal_select_pack32`, above, compares every register and never branches.
+* `causal_mask_pack32` also takes `k0` as a third operand and branches between the three states,
+  block by block.
+
+`causal_mask(qk, delta, BLOCK_M, BLOCK_N, THREE_STATE)` in `fmha_v4_causal.py` wraps both. Plain
+code (the prologue and the drain) uses the three-state body. The warp-pipelined masked loop uses the
+branch-free one, because a branch there would split a pipeline stage (see "Where the mask goes",
+below).
+
+#### What it costs, and the next step
+
+Measured end to end, **all masking costs 0.6%** of the causal run.
+
+The diagonal block allows one more step, which moves the compare off the vector ALU. Seen per
+register instead of per lane, the diagonal block is a fixed pattern. Register `e` is kept by lanes
+`COL[e] .. 31` of the first half of the wave and by lanes `32 + COL[e] + 4 .. 63` of the second
+half, which is a 64-bit lane mask. Register `e + 1`'s mask is register `e`'s shifted left by one
+lane, or by five when it moves to the next group of four columns.
+
+Held in an SGPR pair, the mask can be `v_cndmask`'s condition directly, and one `s_lshl_b32` per
+32-lane half advances it to the next register. That leaves one VALU instruction per register instead
+of two. Because the diagonal block always sits at `k0 = 32b`, the masks are even compile-time
+constants. Halving the mask's VALU work could buy at most 0.3% here, so it is not implemented.
+
+![per register, which lanes keep it in the diagonal block, and the shift from one register to the next](images/causal_lane_masks.svg)
+
+#### Where the mask goes
+
+Where the mask sits in the loop mattered more than what it costs. The masked tiles are the last
+three loop iterations. A uniform branch inside the loop, skipping the mask on the other iterations,
+costs **5% on every tile**. The branch splits the PV cluster's basic block, LLVM sinks the downcast
+of `p` (the softmax probabilities, converted to bf16 for the PV MFMA) into the join, and IGroupLP no
+longer builds the cluster's MFMA/VALU interleave. `fmha_v5` instead runs two
 warp-pipelined loops -- the plain pairs, then the masked pairs -- each branch-free.
 
 ![one loop with the mask behind a branch, against two branch-free loops, and what the branch does to the PV cluster](images/causal_loops.svg)
@@ -930,7 +1104,7 @@ these cost between a few and ~650 spilled VGPRs, and is now avoided (see the com
 
 | cause | fix |
 |---|---|
-| `row - col` per register, hoisted by LLVM (generic mask) | the 3-state mask (§10.2) |
+| `row - col` per register, hoisted by LLVM (generic mask) | one `d0` per lane against per-register constants (§10.2) |
 | runtime LDS slot indices in the drain | slots are constants again (`n` is a multiple of 4) |
 | setup hoisted out of the persistent loop and kept live through the hot loop | `tl.range(..., disable_licm=True)` + `DISABLE_LLVM_OPT=disable-machine-licm` |
 | LLVM's zero-trip guard on a runtime-count loop (a second path into the drain) | `gl.assume(main_loop_pairs > 0)` |
