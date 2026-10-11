@@ -80,7 +80,7 @@ Two things are genuinely different on CDNA3, and they drive the whole design:
    (8.00 cyc).  See tools/lds_conflict.py --sweep.
 
 Register budget (per lane, 1 wave/SIMD so 256 VGPR + 256 AGPR are available):
-    C accumulators   4 x [128x128] f32  = 256   -> AGPR (amdgpu-agpr-alloc=256)
+    C accumulators   4 x [128x128] f32  = 256   -> AGPR (cd_regclass="a")
     dot operands     4 x half-tile f16  = 128   -> VGPR
     global staging   4 x half-tile f16  =  64   -> VGPR
                                           ----
@@ -288,7 +288,7 @@ def a16w16_intra_wave_gfx942(
         ########################################
         ## Region 0: C_tl = DOT(a_top, b_left)
         ########################################
-        acc_tl = mfma(a_top, b_left, acc_tl)
+        acc_tl = mfma(a_top, b_left, acc_tl, cd_regclass="a")
 
         a_bot = smemA_bot.load(dotOpLayoutA)  # LR A_bot(k)
         smemB_left.store(gB_left)  # LW B_left(k+1)
@@ -297,7 +297,7 @@ def a16w16_intra_wave_gfx942(
         ########################################
         ## Region 1: C_bl = DOT(a_bot, b_left)
         ########################################
-        acc_bl = mfma(a_bot, b_left, acc_bl)
+        acc_bl = mfma(a_bot, b_left, acc_bl, cd_regclass="a")
 
         b_right = smemB_right.load(dotOpLayoutB)  # LR B_right(k)
         smemA_top.store(gA_top)  # LW A_top(k+1)
@@ -306,7 +306,7 @@ def a16w16_intra_wave_gfx942(
         ########################################
         ## Region 2: C_tr = DOT(a_top, b_right)
         ########################################
-        acc_tr = mfma(a_top, b_right, acc_tr)
+        acc_tr = mfma(a_top, b_right, acc_tr, cd_regclass="a")
 
         b_left = smemB_left.load(dotOpLayoutB)  # LR B_left(k+1)
         smemA_bot.store(gA_bot)  # LW A_bot(k+1)
@@ -315,7 +315,7 @@ def a16w16_intra_wave_gfx942(
         ########################################
         ## Region 3: C_br = DOT(a_bot, b_right)
         ########################################
-        acc_br = mfma(a_bot, b_right, acc_br)
+        acc_br = mfma(a_bot, b_right, acc_br, cd_regclass="a")
 
         a_top = smemA_top.load(dotOpLayoutA)  # LR A_top(k+1)
         smemB_right.store(gB_right)  # LW B_right(k+1)
@@ -328,19 +328,19 @@ def a16w16_intra_wave_gfx942(
     ## Peel 1 (k = iterMax - 2): still stores the last tile into LDS, but
     ## there is nothing left to prefetch from global.
     ## ------------------------------------------------------------------
-    acc_tl = mfma(a_top, b_left, acc_tl)
+    acc_tl = mfma(a_top, b_left, acc_tl, cd_regclass="a")
     a_bot = smemA_bot.load(dotOpLayoutA)
     smemB_left.store(gB_left)
 
-    acc_bl = mfma(a_bot, b_left, acc_bl)
+    acc_bl = mfma(a_bot, b_left, acc_bl, cd_regclass="a")
     b_right = smemB_right.load(dotOpLayoutB)
     smemA_top.store(gA_top)
 
-    acc_tr = mfma(a_top, b_right, acc_tr)
+    acc_tr = mfma(a_top, b_right, acc_tr, cd_regclass="a")
     b_left = smemB_left.load(dotOpLayoutB)
     smemA_bot.store(gA_bot)
 
-    acc_br = mfma(a_bot, b_right, acc_br)
+    acc_br = mfma(a_bot, b_right, acc_br, cd_regclass="a")
     a_top = smemA_top.load(dotOpLayoutA)
     smemB_right.store(gB_right)
 
@@ -348,14 +348,14 @@ def a16w16_intra_wave_gfx942(
     ## Peel 2 (k = iterMax - 1): drain -- no LW, no GR, and the two LRs that
     ## would fetch tile iterMax are dropped.
     ## ------------------------------------------------------------------
-    acc_tl = mfma(a_top, b_left, acc_tl)
+    acc_tl = mfma(a_top, b_left, acc_tl, cd_regclass="a")
     a_bot = smemA_bot.load(dotOpLayoutA)
 
-    acc_bl = mfma(a_bot, b_left, acc_bl)
+    acc_bl = mfma(a_bot, b_left, acc_bl, cd_regclass="a")
     b_right = smemB_right.load(dotOpLayoutB)
 
-    acc_tr = mfma(a_top, b_right, acc_tr)
-    acc_br = mfma(a_bot, b_right, acc_br)
+    acc_tr = mfma(a_top, b_right, acc_tr, cd_regclass="a")
+    acc_br = mfma(a_bot, b_right, acc_br, cd_regclass="a")
 
     ## ------------------------------------------------------------------
     ## Epilogue: store the four quadrants straight from the mfma layout.
@@ -389,18 +389,20 @@ def a16w16_intra_wave_gfx942(
     )
 
 
-def _agpr_attrs():
-    """force-agpr RA hint.
+def compile_options(schedule_hint: str = "mfma-schedule") -> dict:
+    """Compile options of this kernel; tools/bench_prepared.py uses them too.
 
-    The 256 f32 accumulator registers do not fit alongside the 192 VGPRs of dot
-    operands + global staging, so the accumulators must live in AGPRs.  Pair
-    with TRITON_FORCE_MFMA_AGPR=1, which additionally sets
-    amdgpu-mfma-vgpr-form=0 so LLVM does not fall back to the VGPR form.
+    `schedule_hint="mfma-schedule"` runs Triton's MFMA scheduler
+    (triton-lang/triton#12209) on the LLVM IR; "" turns it off.  The
+    accumulators need no option: every MFMA pins them to AGPRs with
+    `cd_regclass="a"`.
     """
-    return "amdgpu-agpr-alloc=256" if os.environ.get("TRITON_FORCE_MFMA_AGPR") else ""
+    return {"num_warps": NUM_WARPS, "schedule_hint": schedule_hint}
 
 
-def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+def matmul_kernel_only(
+    a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor, schedule_hint: str = "mfma-schedule"
+) -> torch.Tensor:
     """Kernel-only entry.
 
     `b_t` is B pre-transposed to (N, K) and contiguous; the kernel sees a
@@ -430,13 +432,14 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
-        num_warps=NUM_WARPS,
-        llvm_fn_attrs=_agpr_attrs(),
+        **compile_options(schedule_hint),
     )
     return c
 
 
-def matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor = None) -> torch.Tensor:
+def matmul(
+    a: torch.Tensor, b: torch.Tensor, c: torch.Tensor = None, schedule_hint: str = "mfma-schedule"
+) -> torch.Tensor:
     """C = A @ B.  `b` is (K, N); transposed to (N, K) contiguous for the kernel."""
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     M, K = a.shape
@@ -444,4 +447,4 @@ def matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor = None) -> torch.Te
     b_t = b.t().contiguous()
     if c is None:
         c = torch.empty((M, N), device=a.device, dtype=a.dtype)
-    return matmul_kernel_only(a, b_t, c)
+    return matmul_kernel_only(a, b_t, c, schedule_hint)

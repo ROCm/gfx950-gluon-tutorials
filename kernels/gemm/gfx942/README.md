@@ -30,7 +30,7 @@ sense before §4.
 | §1–2 | setup and how to run |
 | **§3** | **all results** — both kernels, both dtypes, all shapes, one methodology |
 | **§4** | **what CDNA3 forces to change** — the constraints common to both kernels |
-| §5–6 | the out-of-tree plugins, and where the files are |
+| §5–6 | the MFMA scheduler on gfx942, and where the files are |
 
 Then read the kernel you care about. Each of those files assumes §4 and covers
 only its own design:
@@ -49,15 +49,17 @@ only its own design:
 Same Triton pin as the rest of the repository (see [`SUPPORT.md`](../../../SUPPORT.md)):
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v1.1 /path/to/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v3.0 /path/to/triton
 pip uninstall -y triton
 cd /path/to/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-`gfx950-tutorial-v1.1` is the annotated tag the tutorial pins (see its
-`SUPPORT.md`); it reports itself as Triton 3.8.0. `TRITON_EXT_ENABLED=1` is only
-needed if you also want to load the tutorial's out-of-tree LLIR-scheduler plugin
-— see §5.
+`gfx950-tutorial-v3.0` is the annotated tag the tutorial pins; it reports itself
+as Triton 3.9.0 and declares Python >= 3.11 (on a 3.10 environment, add
+`--ignore-requires-python`: the floor is metadata only, and nothing in Triton's
+Python needs 3.11). Neither kernel loads a plugin. **The 4-wave kernel needs a
+change to Triton to be scheduled on gfx942** — upstream runs the MFMA scheduler on
+gfx950 only; see §5.
 
 ## 2. Running
 
@@ -77,6 +79,13 @@ external `rocprofv3 --kernel-trace` timing.
 ## 3. Results
 
 MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`.
+
+> [!NOTE]
+> These tables were measured on the `v1.1` pin with the gfx942-extended LLIR
+> scheduler plugin. On `v3.0` the 8-wave kernel's hot loop is identical, so its
+> rows stand. The 4-wave kernel matches its rows only with the Triton change of §5
+> (about 1% fewer cycles per iteration than below); on stock `v3.0` it is
+> unscheduled, at 68–70% in-loop MFMA efficiency.
 
 **One methodology for every number below**, so the tables are comparable with
 each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family), on
@@ -138,7 +147,8 @@ Cycles per iteration per wave behind the efficiency column, for reference:
 | 8256 | 4587.7 | 4187.7 |
 | 16448 | 4569.8 | 4120.0 |
 
-Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills, 1 wave/SIMD; inter_wave 240
+Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills on `v1.1` (1–2 outside the
+loop on `v3.0`, §5), 1 wave/SIMD; inter_wave 240
 VGPR, 0 AGPR, 0 spills, **2 waves/SIMD**. Both use exactly 65536 B of LDS, and
 both measure `SQ_LDS_BANK_CONFLICT` = **0**.
 
@@ -400,7 +410,7 @@ writes*, and that is the whole difference between the two kernels:
 | | [`intra_wave`](intra_wave/) (4 waves, 1/SIMD) | [`inter_wave`](inter_wave/) (8 waves, 2/SIMD) |
 |---|---|---|
 | hides memory behind | MFMA in the **same** instruction stream | the **other wave group** |
-| needs | the LLIR scheduler plugin to interleave (§5) | `warp_pipeline_stage` and a barrier per region |
+| needs | Triton's MFMA scheduler to interleave (§5) | `warp_pipeline_stage` and a barrier per region |
 | accumulators | AGPR — separate capacity at 1 wave/SIMD | VGPR — 2 waves split one 512-register file |
 | LDS refill | per half-tile, one region after its last read | whole tensors, late in the body |
 | ceiling | `ds_write` issue cost the MFMA stream cannot absorb | ~98% per-SIMD; barriers and write turnaround |
@@ -408,37 +418,63 @@ writes*, and that is the whole difference between the two kernels:
 The 4-wave kernel is the more instructive read and the 8-wave one is the faster
 kernel. Both READMEs assume this section.
 
-## 5. On the tutorial's out-of-tree plugins
+## 5. The MFMA scheduler and accumulator pins on gfx942
 
-The tutorial's `llirSched` plugin, `TRITON_FORCE_MFMA_AGPR`, and the `amdgcnas`
-peephole were all tried here.
+Since `gfx950-tutorial-v3.0` the MFMA <-> memory interleave that the 4-wave kernel
+depends on is a pass in Triton itself,
+[triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209),
+enabled per launch with `schedule_hint="mfma-schedule"`. `intra_wave`'s `matmul()`
+passes it by default; the tutorial's `llirSched` plugin now carries only the
+attention co-execution model and is not used here. Accumulators are pinned to
+AGPRs in the kernel with `cd_regclass="a"`, which replaces `TRITON_FORCE_MFMA_AGPR`.
 
-`TRITON_FORCE_MFMA_AGPR` is **required** by the 4-wave kernel (it is what
-supplies `amdgpu-agpr-alloc=256`; `bench.py` sets it).
+**Upstream Triton runs the pass only for gfx950.** `make_llir` checks
+`options.arch == "gfx950"`, so on gfx942 the hint is a **silent no-op**: the hsaco is
+byte-identical with and without it, and the LLIR has no `sched.barrier`. The pass
+itself already knows the CDNA3 MFMA shapes (`mfma.f32.16x16x16f16`,
+`16x16x16bf16.1k`); what it lacks for gfx942 is the LDS bandwidth. It prices an LDS
+access at `Bits / 8` cycles, CDNA4's 256 B/clk. CDNA3 has 128 B/clk, so with
+all four SIMDs issuing it a `ds_read_b128` needs 32 cycles of MFMA cover, not 16.
 
-`libLlirSched.so` is required on **both** architectures — the in-tree pipeliner
-leaves memory clumped on gfx950 too, which is why the plugin exists (the tutorial
-introduces it at `intra_wave/a16w16/v5_local_prefetch` and it takes v9 from 58% to
-80% MFMA efficiency). What is gfx942-specific is that it did not work.
+Two changes to Triton make it work here, measured on the 4-wave kernel, bf16
+(ATT cycles per K-iteration and per-SIMD in-loop MFMA efficiency; prepared-launch
+TFLOPS, mean over interleaved rounds on one GPU):
 
-It initially appeared to do nothing here (467→472 TFLOPS at 4096²×8192, within
-noise). It was in fact a **silent no-op**: its MFMA table held
-only CDNA4 shape names, so `getMFMACycles()` returned 0 for
-`mfma.f32.16x16x16f16` and the pass dropped every region. Teaching it the CDNA3
-shapes and deriving the LDS cover from bandwidth (128 B/clk on CDNA3 against
-CDNA4's 256) made it fire, and it is now **required** for the 4-wave numbers in
-§3 — from 69.7% to 76.7% in-loop MFMA efficiency, then 84.0% once surplus MFMAs
-are parked between a region's last `local_load` and its first `local_store`.
-Both changes are in `plugins/llir_scheduler/LlirSchedPlugin.cpp`; see
-[`intra_wave/note.md`](intra_wave/note.md) §1-2. Run it with:
+| Triton | K=2112 | K=4160 | K=8256 | K=16448 | TFLOPS, K=16448 |
+|---|---|---|---|---|---|
+| upstream `v3.0` (pass not run) | 6065 / 67.5% | 5967 / 68.7% | 5920 / 69.2% | 5897 / 69.5% | 611 |
+| + run it on gfx942 (CDNA4 LDS model) | 5327 / 76.9% | 5242 / 78.1% | 5372 / 76.2% | 5180 / 79.1% | 650 |
+| + CDNA3 LDS model, 128 B/clk | **4657 / 88.0%** | **4580 / 89.4%** | **4572 / 89.6%** | **4526 / 90.5%** | **690** |
 
-```bash
-LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 python bench.py -k intra_wave
-```
+One trace per cell. At K=8256 repeated traces of one binary vary by up to 15% on
+this GPU (4544 / 4546 / 5213 for the last row), so read that column loosely; the
+other three repeat to within a few cycles.
 
-The 8-wave kernel does not use the plugin — its schedule is expressed directly
-with `warp_pipeline_stage`. `amdgcnas` remains untried on gfx942.
+Together the two changes are worth +8.8% to +12.9% TFLOPS in bf16 and +4.1% to
++10.8% in fp16 over the unscheduled build, and the result runs about 1% fewer
+cycles per iteration than the v1.1 plugin did (§3's last table). Both changes are
+on a local Triton branch, `gfx942-mfma-schedule`, which compiles every gfx950
+tutorial GEMM that uses the pass (a16w16 v5–v9, a8w8, a4w4 v0/v1) byte-identically.
+
+The plugin's other gfx942 change, parking surplus MFMAs between a region's last
+`local_load` and first `local_store` (opt 2 in [`intra_wave/note.md`](intra_wave/note.md)),
+is **not** needed and is not ported: under the in-tree pass, which already fences
+every memory op, it costs 2.1% more cycles per iteration at every K, and
+TFLOPS at 15 of 16 shape/dtype points (by 0.5–2.4%; the 16th, fp16 K=8256, is
++0.3% within that shape's noise).
+
+The in-tree pass also fences each pinned MFMA, so it keeps the MFMAs in program
+order: four-deep dependent chains on one accumulator, with an `s_nop 0` at each
+chain switch (the plugin's loop round-robined accumulators instead). The nops sit
+inside the MFMA shadow, and the cycle counts above already include them.
+
+The pins cost 1–2 VGPRs of spill outside the loop (8–12 B of scratch, stored in the
+prologue and reloaded in the epilogue; no scratch access in the loop). Adding
+`amdgpu-agpr-alloc=256` does not change the binary.
+
+The 8-wave kernel uses neither the scheduler nor AGPRs: its schedule is expressed
+directly with `warp_pipeline_stage`, and its hot loop on `v3.0` is
+instruction-for-instruction the loop of `v1.1` (compared on the bf16 build). `amdgcnas` remains untried on gfx942.
 
 ## 6. Layout
 

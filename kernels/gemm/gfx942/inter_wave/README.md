@@ -27,9 +27,9 @@ python tools/run_att.py inter_wave --K 8256 --out att_inter     # ATT trace
 ```
 
 No environment variables needed — the no-AGPR setting is baked into the launch,
-and unlike [`../intra_wave`](../intra_wave/) this kernel does **not** use the LLIR
-scheduler plugin: its schedule is expressed directly with `warp_pipeline_stage`,
-and letting the plugin reorder the loop undoes the region structure.
+and unlike [`../intra_wave`](../intra_wave/) this kernel does **not** use Triton's
+MFMA scheduler: its schedule is expressed directly with `warp_pipeline_stage`, so
+it passes no `schedule_hint`.
 
 Codegen: **240 VGPR, 0 AGPR, 0 spills, 2 waves/SIMD, 64 KB LDS**, and
 `SQ_LDS_BANK_CONFLICT` measures exactly **0**.
@@ -109,7 +109,7 @@ A,B staging  whole tiles / 8 waves        32 VGPR
 **The register wall is why this ordering exists at all.** Two waves per SIMD split
 the unified 512-register file, so each wave gets **256 registers, VGPR and AGPR
 together** — AGPRs buy no capacity here, which is why this kernel runs with
-`amdgpu-agpr-alloc=0,0` while [`../intra_wave`](../intra_wave/) reserves 256 AGPRs.
+`amdgpu-agpr-alloc=0,0` while [`../intra_wave`](../intra_wave/) pins its accumulators to AGPRs (`cd_regclass="a"`).
 Independent registers for all four half-tiles would cost 96 instead of 64:
 
 ```

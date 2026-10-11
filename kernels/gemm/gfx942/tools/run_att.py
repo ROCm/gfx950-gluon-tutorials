@@ -80,14 +80,9 @@ def _driver_main(argv):
     p.add_argument("--K", type=int, default=8256)
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="fp16")
     p.add_argument("--iters", type=int, default=8)
+    p.add_argument("--schedule-hint", default=None)
     args = p.parse_args(argv)
 
-    # the 4-wave kernel needs the force-agpr hint before it compiles
-    os.environ.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
-    # the LLIR-scheduler plugin resolves LLVM symbols from libtriton at dlopen
-    # time, so libtriton has to be in the global symbol scope (see bench.py)
-    if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-        sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     import torch
     import triton
 
@@ -104,8 +99,9 @@ def _driver_main(argv):
         f"[run_att:driver] {args.kernel} {mod.KERNEL_NAME} {M}x{N}x{K} {args.dtype} "
         f"x{args.iters} dispatches"
     )
+    kwargs = {} if args.schedule_hint is None else {"schedule_hint": args.schedule_hint}
     for _ in range(args.iters):
-        mod.matmul_kernel_only(a, b_t, c)
+        mod.matmul_kernel_only(a, b_t, c, **kwargs)
     torch.cuda.synchronize()
     print("[run_att:driver] done")
     return 0
@@ -130,6 +126,12 @@ def main():
     p.add_argument("--target-cu", type=int, default=0)
     p.add_argument("--se-mask", default="0xF", help="shader-engine bitmask")
     p.add_argument("--gpu", default="0", help="HIP_VISIBLE_DEVICES for the run")
+    p.add_argument(
+        "--schedule-hint",
+        default=None,
+        help='intra_wave only: Triton schedule_hint ("mfma-schedule" is the kernel default, '
+        '"" turns the MFMA scheduler off)',
+    )
     args = p.parse_args()
 
     decoder = "/opt/rocm/lib/librocprof-trace-decoder.so"
@@ -158,7 +160,6 @@ def main():
     env = os.environ.copy()
     env.setdefault("ROCPROF_ATT_LIBRARY_PATH", "/opt/rocm/lib/")
     env["HIP_VISIBLE_DEVICES"] = args.gpu
-    env.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
 
     cmd = [
         "rocprofv3",
@@ -183,6 +184,8 @@ def main():
         "--iters",
         str(args.iters),
     ]
+    if args.schedule_hint is not None:
+        cmd += ["--schedule-hint", args.schedule_hint]
     print(" ".join(cmd))
     subprocess.run(cmd, env=env, check=True, cwd=out)
 

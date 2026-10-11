@@ -24,20 +24,18 @@ python tools/run_att.py intra_wave --K 8256 --out att_intra     # ATT trace
 ```
 
 Two things are **required** for this kernel, unlike
-[`../inter_wave`](../inter_wave/):
+[`../inter_wave`](../inter_wave/), and both are in the kernel itself:
 
-* `TRITON_FORCE_MFMA_AGPR=1` (set by `bench.py`), which supplies the
-  `amdgpu-agpr-alloc=256` hint. Without it the 256 f32 accumulators compete with
-  the 192 VGPRs of operands and staging, and the kernel spills.
-* the LLIR scheduler plugin, which is what interleaves the memory ops through the
-  MFMA stream (see [`note.md`](note.md) §1–2):
+* `cd_regclass="a"` on every MFMA, which pins the 256 f32 accumulators to AGPRs.
+  Without it they compete with the 192 VGPRs of operands and staging.
+* Triton's MFMA scheduler, which is what interleaves the memory ops through the
+  MFMA stream: `matmul()` passes `schedule_hint="mfma-schedule"`, and the tools
+  take `--schedule-hint ""` to turn it off. **Upstream Triton runs it on gfx950
+  only**, so on gfx942 it needs the Triton change described in
+  [`../README.md`](../README.md) §5; without it the hint compiles nothing different.
 
-```bash
-LLVM_PASS_PLUGIN_PATH=<repo>/plugins/llir_scheduler/libLlirSched.so \
-LLVM_PASS_PLUGIN_KEEP_TARGET_MACHINE=1 python bench.py -k intra_wave
-```
-
-Codegen: **256 arch VGPR + 256 AGPR, 0 spills, 1 wave/SIMD** (LDS-bound),
+Codegen: **256 arch VGPR + 256 AGPR, 1 wave/SIMD** (LDS-bound), 1–2 VGPRs of
+spill outside the loop on `v3.0`,
 65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly **0**.
 
 ## Design
@@ -83,7 +81,7 @@ into two K=16 mfmas.
 Per lane, with 1 wave/SIMD so 256 VGPR **and** 256 AGPR are available:
 
 ```
-C accumulators   4 x [128x128] f32   = 256   -> AGPR (amdgpu-agpr-alloc=256)
+C accumulators   4 x [128x128] f32   = 256   -> AGPR (cd_regclass="a")
 dot operands     4 x half-tile f16   = 128   -> VGPR
 global staging   4 x half-tile f16   =  64   -> VGPR
                                        ----
@@ -118,25 +116,25 @@ level is smaller than that list suggests:
 | LDS pipelining | `nBuffers = 2`, double-buffered | **half-tile slot recycling**, 1 buffer |
 | mfma / K-step / wave | 128 | **256** |
 | loop | 2× unrolled | not unrolled |
-| LLIR scheduler | required, works out of the box | required, **had to be taught CDNA3** |
+| MFMA scheduler | required, runs upstream | required, **upstream runs it on gfx950 only** |
 | `amdgcnas` peephole | used (worth the last 97% → 98%) | **not tried** |
 
 Several things are deliberately *the same* and worth noting because they are easy
 to assume differ:
 
-* **Accumulators are in AGPRs on both.** v9 carries the identical
-  `amdgpu-agpr-alloc=256` hint gated on `TRITON_FORCE_MFMA_AGPR`. What differs is
-  only how much slack there is: the register round-trip costs 64 VGPRs of staging
-  gfx950 never spends, so the same hint is doing more work here.
+* **Accumulators are in AGPRs on both.** v9 pins them the same way, with
+  `cd_regclass="a"` on every MFMA. What differs is only how much slack there is:
+  the register round-trip costs 64 VGPRs of staging gfx950 never spends, so the
+  same pins are doing more work here.
   [`../inter_wave`](../inter_wave/) is the genuine contrast — two resident waves
   split one unified 512-register file, so AGPRs buy nothing there and it runs with
   `amdgpu-agpr-alloc=0,0`.
-* **Both need the LLIR scheduler.** The in-tree pipeliner leaves memory clumped on
-  gfx950 too; that is why the plugin exists (v5 introduces it, and it takes v9's
-  MFMA efficiency from 58% to 80%). The difference is that on gfx942 it was a
-  **silent no-op** until extended: its MFMA table held only CDNA4 shape names, so
-  `getMFMACycles()` returned 0 for `mfma.f32.16x16x16f16` and it dropped every
-  region. See [`note.md`](note.md) §1.
+* **Both need the MFMA scheduler.** The stock machine scheduler leaves memory
+  clumped on gfx950 too; that is why the scheduler exists (v5 introduces it, and it
+  takes v9's MFMA efficiency from 58% to 80%). The difference is that on gfx942 it
+  is a **silent no-op** upstream, because Triton runs it for gfx950 only, and that
+  once run it needs CDNA3's LDS bandwidth. See [`../README.md`](../README.md) §5;
+  the plugin era of the same story is [`note.md`](note.md) §1.
 
 The one tooling gap is `amdgcnas`, the post-assembly peephole that packs the
 scattered SALU at iteration boundaries and is worth gfx950's last 97% → 98%. It
@@ -204,6 +202,7 @@ Detailed in [`note.md`](note.md); summarised:
 | opt 4 | — | — | **rejected** — register-form change, 1.1% slower |
 | opt 5 | 4622 | 88.4% | prologue load order pinned; `vmcnt(3)/(1)/(0)` → `(15)/(13)/(12)` |
 | **+ swizzle** | **4588** | **89.3%** | conflict-free LDS layout |
+| `v3.0` rebase | 4572 | 89.6% | Triton's MFMA scheduler, run on gfx942 with the CDNA3 LDS model; opt 2 dropped ([`../README.md`](../README.md) §5) |
 
 Opt 4 and opt 5 are worth reading together: chasing a conservative `vmcnt` led
 first to a wrong conclusion (an LLVM register-form flag) and then to the real

@@ -74,11 +74,8 @@ def _driver_main(argv):
     p.add_argument("--sets", type=int, default=3)
     p.add_argument("--warmup", type=int, default=50)
     p.add_argument("--iters", type=int, default=1000)
+    p.add_argument("--schedule-hint", default=None)
     args = p.parse_args(argv)
-
-    os.environ.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
-    if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-        sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
 
     import torch
     import triton
@@ -132,13 +129,12 @@ def _driver_main(argv):
         value = getattr(mod, name)
         constexprs[name] = getattr(value, "value", value)  # unwrap gl.constexpr
 
-    compiler_options = {"num_warps": mod.NUM_WARPS}
-    if hasattr(mod, "_agpr_attrs"):
-        attrs = mod._agpr_attrs()  # intra_wave: env-gated agpr-alloc=256
+    # The kernel module owns its compile options, so this launch compiles
+    # exactly what the module's own matmul() does.
+    if args.schedule_hint is None:
+        compiler_options = mod.compile_options()
     else:
-        attrs = (("amdgpu-agpr-alloc", "0,0"),)  # inter_wave pins no-AGPR itself
-    if attrs:
-        compiler_options["llvm_fn_attrs"] = attrs
+        compiler_options = mod.compile_options(schedule_hint=args.schedule_hint)
     prepared = PreparedKernel.create(
         jit_kernel,
         (grid_mn, 1),
@@ -207,7 +203,6 @@ def time_one_gpu(args, gpu, out):
     os.makedirs(out, exist_ok=True)
     env = os.environ.copy()
     env["HIP_VISIBLE_DEVICES"] = str(gpu)
-    env.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
     cmd = [
         "rocprofv3",
         "--kernel-trace",
@@ -235,6 +230,8 @@ def time_one_gpu(args, gpu, out):
         "--iters",
         str(args.iters),
     ]
+    if args.schedule_hint is not None:
+        cmd += ["--schedule-hint", args.schedule_hint]
     subprocess.run(
         cmd, env=env, check=True, cwd=out, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
@@ -280,6 +277,12 @@ def main():
     p.add_argument("--warmup", type=int, default=50)
     p.add_argument("--iters", type=int, default=1000)
     p.add_argument("--avg-last", type=int, default=100, help="average the final N dispatches")
+    p.add_argument(
+        "--schedule-hint",
+        default=None,
+        help='intra_wave only: Triton schedule_hint ("mfma-schedule" is the kernel default, '
+        '"" turns the MFMA scheduler off)',
+    )
     p.add_argument("--gpus", default="all", help="'all', or a comma list like 0,3,5")
     p.add_argument("--out", default="/tmp/bench_prepared_gfx942")
     args = p.parse_args()
@@ -291,6 +294,8 @@ def main():
     else:
         gpus = [int(g) for g in args.gpus.split(",")]
 
+    if args.schedule_hint is not None and args.kernel != "intra_wave":
+        p.error("--schedule-hint applies to the intra_wave kernel only")
     print(
         f"{args.kernel} {args.M}x{args.N}x{args.K} {args.dtype} | prepared launch, "
         f"{args.sets} rotating sets | {args.iters} dispatches, mean of last {args.avg_last}"

@@ -44,23 +44,14 @@ is measured in the same loop as a same-conditions reference.
 """
 
 import argparse
+import functools
 import importlib.util
+import inspect
 import math
 import os
 import statistics
 import subprocess
 import sys
-
-# The out-of-tree LLIR scheduler is an LLVM pass plugin; it resolves LLVM symbols
-# from libtriton at dlopen time, which needs libtriton in the *global* symbol
-# scope. CPython loads C-extensions RTLD_LOCAL, so opt in before importing
-# triton. Only takes effect when the plugin is actually in use.
-if os.environ.get("LLVM_PASS_PLUGIN_PATH"):
-    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-
-# The 4-wave kernel needs the force-agpr RA hint (amdgpu-agpr-alloc=256) before
-# it compiles; harmless for the 8-wave kernel, which pins agpr-alloc=0,0 itself.
-os.environ.setdefault("TRITON_FORCE_MFMA_AGPR", "1")
 
 import torch  # noqa: E402
 import triton  # noqa: E402
@@ -284,10 +275,24 @@ def main():
         default=512,
         help="total MB of rotating copies in --rocprof mode",
     )
+    p.add_argument(
+        "--schedule-hint",
+        default=None,
+        help="Triton schedule_hint for the kernels that take one (intra_wave; its default is "
+        '"mfma-schedule", "" turns the MFMA scheduler off)',
+    )
     args = p.parse_args()
 
     which = KERNELS if "both" in args.kernel else tuple(args.kernel)
     mods = {n: load_kernel(n) for n in which}
+    if args.schedule_hint is not None:
+        for name, mod in mods.items():
+            if "schedule_hint" in inspect.signature(mod.matmul_kernel_only).parameters:
+                mod.matmul_kernel_only = functools.partial(
+                    mod.matmul_kernel_only, schedule_hint=args.schedule_hint
+                )
+            else:
+                print(f"[{name}] takes no schedule_hint; --schedule-hint ignored")
 
     sizes = get_x_vals()
     if args.K is not None:

@@ -318,6 +318,17 @@ def a16w16_inter_wave_gfx942(
     )
 
 
+def compile_options() -> dict:
+    """Compile options of this kernel; tools/bench_prepared.py uses them too.
+
+    Forbid AGPRs: with 2 waves/SIMD the unified 512-register file is split
+    between the resident waves, so AGPRs add no capacity and only cost
+    v_accvgpr copies in the epilogue.  No schedule_hint: the warp pipeline
+    places every op itself, so the kernel needs no scheduler.
+    """
+    return {"num_warps": NUM_WARPS, "llvm_fn_attrs": (("amdgpu-agpr-alloc", "0,0"),)}
+
+
 def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
     """Kernel-only entry; `b_t` is B pre-transposed to (N, K) contiguous."""
     M, K = a.shape
@@ -344,11 +355,7 @@ def matmul_kernel_only(a: torch.Tensor, b_t: torch.Tensor, c: torch.Tensor) -> t
         GRID_MN=GRID_MN,
         NUM_XCDS=NUM_XCDS,
         GROUP_SIZE_M=GROUP_SIZE_M,
-        num_warps=NUM_WARPS,
-        # Forbid AGPRs: with 2 waves/SIMD the unified 512-register file is split
-        # between the resident waves, so AGPRs add no capacity and only cost
-        # v_accvgpr copies in the epilogue.
-        llvm_fn_attrs=(("amdgpu-agpr-alloc", "0,0"),),
+        **compile_options(),
     )
     return c
 
