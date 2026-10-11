@@ -252,8 +252,8 @@ def matmul(a, b, c=None, schedule_hint="mfma-schedule"):
     GRID_MN = triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N)
     grid = (GRID_MN, 1)
 
-    ## To enjoy the interleaving of mfma and mem instructions,
-    ## switch to https://github.com/triton-lang/triton/tree/gfx950-tutorial as the triton compiler
+    ## The interleaving of mfma and mem instructions comes from Triton's MFMA scheduler,
+    ## which the schedule_hint argument turns on (default "mfma-schedule"; "" is off)
 
     v5_local_prefetch[grid](
         a,

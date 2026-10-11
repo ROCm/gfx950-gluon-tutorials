@@ -5,6 +5,72 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-10-11 — `gfx950-tutorial-v3.1` for the MI300X (gfx942) kernels
+
+[`gfx950-tutorial-v3.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.1)
+is upstream Triton `main` at `b575c0c38`, the merge of
+[triton-lang/triton#12229](https://github.com/triton-lang/triton/pull/12229): **the MFMA
+scheduler runs on gfx942 (MI300X) too**, with each target's LDS bandwidth in its cost model.
+**It is the pin for [`kernels/gemm/gfx942/`](kernels/gemm/gfx942/README.md) only; the MI355X
+kernels stay on `v3.0`**, where their numbers were measured. Nothing is carried on top, and the
+two LLVM pins are unchanged from `v3.0` (core `b010a18d`, AMD codegen `6bc4aaf6`). Every pin
+since `v2.3` is a plain upstream commit, so the `gfx950-tutorial` development branch on
+`triton-lang/triton` is no longer used; the tags are all there is to build.
+
+### What changed between `v3.0` and `v3.1`
+
+1. **#12229 — the MFMA scheduler on gfx942.** Until `v3.1` `make_llir` ran the pass only for
+   gfx950, so `schedule_hint="mfma-schedule"` was a silent no-op on gfx942 (byte-identical
+   hsaco). The pass already knew the CDNA3 MFMA shapes; #12229 runs it on gfx942 and prices an
+   LDS access at `Bits * 32 / LDSBytesPerClk` cycles, 128 B/clk on gfx942 and 256 on gfx950
+   (`Bits / 8` before, CDNA4's rate). gfx950 is unchanged: `Bits * 32 / 256 == Bits / 8`.
+2. **#12218 removes the ScalarizePackedFOps LLVM pass.** It ran only with
+   `AMDGCN_SCALARIZE_PACKED_FOPS` set, which the tutorial never sets.
+3. The rest does not touch codegen for these kernels: an NFC tidy-up of the AMD backend
+   (#12220), Proton hardware-register reads (#12216), and `triton_kernels` (#12204).
+
+### gfx950: `v3.1` builds the same binaries
+
+Cross-compiled for gfx950 on both pins (compile only), these are **byte-identical** between
+`v3.0` and `v3.1`: the 13 `intra_wave` GEMMs that use the MFMA scheduler (a16w16 v5–v9 in fp16
+and bf16, a8w8, a4w4 v0 and v1) and `fmha_v3` / `fmha_v4`, each with and without the
+co-execution plugin. The `inter_wave` GEMMs and `intra_wave` a16w16 v0–v4 were not compared.
+So a `v3.1` build also serves the MI355X kernels above; their documentation keeps `v3.0` because
+that is where they were measured, and they were not re-measured on `v3.1`.
+
+### gfx942 (MI300X): re-measured
+
+Everything in [`kernels/gemm/gfx942/`](kernels/gemm/gfx942/README.md) was re-measured on
+`v3.1`, on the fastest of the node's eight MI300X (by median of three sweeps; spread 5.8%), with
+the protocol in its §3: prepared launch, last 100 of 1000 dispatches, medians of interleaved
+rounds, ATT medians for cycles.
+
+- **The 4-wave kernel is scheduled upstream.** Over the unscheduled build it gains +9.0% to
+  +10.4% TFLOPS in fp16 and +10.2% to +12.4% in bf16, and in-loop per-SIMD MFMA efficiency goes
+  from 67.5–69.5% to 88.0–90.5%, about 1% fewer cycles per iteration than the out-of-tree
+  plugin reached on `v1.1`. The plugin's opt 2 (surplus MFMAs parked between the last LDS read
+  and the first write) is not in Triton: under the in-tree pass it costs 2.1% cycles.
+- **Headline (TFLOPS, fp16 / bf16, K = 2112–16448):** `inter_wave` 626.9–660.1 / 657.7–705.7
+  at 96.7–99.4% per-SIMD, `intra_wave` 604.6–649.3 / 634.4–688.9 at 88.0–90.5%, hipBLASLt
+  (`torch.matmul`) 596.0–606.4 / 622.2–644.7. `inter_wave` wins 7 of 8 points and ties at
+  K=8256; it beats hipBLASLt everywhere.
+- **The conflict-free LDS layout now matters most to the 4-wave kernel**: −16.1% loop cycles
+  (−1.0% on `v1.1`), against −10.8% for the 8-wave one. On `v1.1` the plugin's parked MFMAs
+  absorbed the bank-conflict replays; measured with the parking added back, the conflicting
+  layout drops from 5466 to 4636 cycles per iteration while the conflict-free one rises from
+  4580 to 4678.
+- **The power cap explains the K=8256 tie.** The 8-wave kernel runs 7.5% fewer cycles but
+  settles at 1.19 GHz against the 4-wave kernel's 1.27–1.29 (Triton's `BlockPingpong`, with
+  the denser `32x32x8` MFMA, at 1.07). The same cap shrinks the N=4864 effect: 256 workgroups
+  on 304 CUs sustain 1.36 GHz against 1.24 for the full grid.
+- **The `ds_write` ceiling stands.** Removing the 16 in-loop `ds_write`s takes the 4-wave loop
+  from 89.4% to 96.6%: 341 cycles per iteration, against 320 that one 16-cycle MFMA per
+  20-cycle write cannot hide.
+- A few development-time experiments on kernel variants that are not in the repository
+  (`BLOCK_K=32`, the op-by-op ablation) are kept as `v1.1` measurements and labeled so.
+
+---
+
 ## 2026-10-10 — Re-pin to `gfx950-tutorial-v3.0`
 
 [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0)
