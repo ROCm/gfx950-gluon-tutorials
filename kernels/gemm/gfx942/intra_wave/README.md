@@ -30,13 +30,13 @@ Two things are **required** for this kernel, unlike
   Without it they compete with the 192 VGPRs of operands and staging.
 * Triton's MFMA scheduler, which is what interleaves the memory ops through the
   MFMA stream: `matmul()` passes `schedule_hint="mfma-schedule"`, and the tools
-  take `--schedule-hint ""` to turn it off. **Upstream Triton runs it on gfx950
-  only**, so on gfx942 it needs the Triton change described in
-  [`../README.md`](../README.md) §5; without it the hint compiles nothing different.
+  take `--schedule-hint ""` to turn it off. It runs on gfx942 since the `v3.1` pin
+  ([triton-lang/triton#12229](https://github.com/triton-lang/triton/pull/12229),
+  [`../README.md`](../README.md) §5).
 
-Codegen: **256 arch VGPR + 256 AGPR, 1 wave/SIMD** (LDS-bound), 1–2 VGPRs of
-spill outside the loop on `v3.0`,
-65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly **0**.
+Codegen: **256 arch VGPR + 256 AGPR, 1 wave/SIMD** (LDS-bound), 2 VGPRs (12 B) of
+spill outside the loop, 65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly
+**0**.
 
 ## Design
 
@@ -66,7 +66,8 @@ is a full K-step (~4096 cycles) of global-latency hiding, and `LR(k+1) → DOT(k
 is one region (~1024 cycles) of LDS-latency hiding.
 
 **Why not `BLOCK_K=32` + double buffering?** It fits (8 × 8 KB = 64 KB) and looks
-like the obvious answer. It is measurably worse — 400 vs 476 TFLOPS — and the
+like the obvious answer. It is measurably worse — 400 vs 476 TFLOPS, measured
+during the port on `v1.1` — and the
 reason is global, not LDS: at `BLOCK_K=64` a tile row is 128 B and one
 `buffer_load_dwordx4` touches 8 back-to-back cache lines; at `BLOCK_K=32` a row is
 64 B, the same instruction touches 16 lines, and TCP pressure roughly doubles.
@@ -96,11 +97,12 @@ one unified 512-register file and AGPRs buy nothing.
 
 `SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4
 together with the global-load lane remapping it requires. Making it conflict-free
-is worth only **−1.0% loop cycles** here, against −9.9% in
-[`../inter_wave`](../inter_wave/): at 1 wave/SIMD the LDS duty cycle is low enough
-that a 40% saving in LDS *cycles* barely surfaces in loop cycles. That asymmetry
-is itself the diagnosis — this kernel is not LDS-throughput-bound, it is bound by
-the `ds_write` **issue** cost, below.
+is worth **−16.1% loop cycles** here (−10.8% in [`../inter_wave`](../inter_wave/)).
+On `v1.1` it looked almost free here, −1.0%, because the plugin parked surplus
+MFMAs between the last LDS read and the first write and that slack absorbed the
+replays; Triton's MFMA scheduler leaves no such slack, so a replayed access costs
+loop cycles directly ([`../README.md`](../README.md) §4.4). With the layout right,
+what bounds this kernel is the `ds_write` **issue** cost, below.
 
 ## Differences from the gfx950 kernel
 
@@ -116,7 +118,7 @@ level is smaller than that list suggests:
 | LDS pipelining | `nBuffers = 2`, double-buffered | **half-tile slot recycling**, 1 buffer |
 | mfma / K-step / wave | 128 | **256** |
 | loop | 2× unrolled | not unrolled |
-| MFMA scheduler | required, runs upstream | required, **upstream runs it on gfx950 only** |
+| MFMA scheduler | required, upstream since `v3.0` | required, upstream since `v3.1`, **with CDNA3's LDS bandwidth** |
 | `amdgcnas` peephole | used (worth the last 97% → 98%) | **not tried** |
 
 Several things are deliberately *the same* and worth noting because they are easy
@@ -131,10 +133,11 @@ to assume differ:
   `amdgpu-agpr-alloc=0,0`.
 * **Both need the MFMA scheduler.** The stock machine scheduler leaves memory
   clumped on gfx950 too; that is why the scheduler exists (v5 introduces it, and it
-  takes v9's MFMA efficiency from 58% to 80%). The difference is that on gfx942 it
-  is a **silent no-op** upstream, because Triton runs it for gfx950 only, and that
-  once run it needs CDNA3's LDS bandwidth. See [`../README.md`](../README.md) §5;
-  the plugin era of the same story is [`note.md`](note.md) §1.
+  takes v9's MFMA efficiency from 58% to 80%). The difference is the LDS cost: CDNA3
+  serves 128 B/clk against CDNA4's 256, so a `ds_read_b128` needs twice the MFMA
+  cover here. Until `v3.1` the scheduler ran on gfx950 only and was a silent no-op on
+  gfx942. See [`../README.md`](../README.md) §5; the plugin era of the same story is
+  [`note.md`](note.md) §1.
 
 The one tooling gap is `amdgcnas`, the post-assembly peephole that packs the
 scattered SALU at iteration boundaries and is worth gfx950's last 97% → 98%. It
@@ -146,8 +149,8 @@ section.
 
 ## Where the time goes, and the ceiling
 
-Ablating the hot loop op-by-op (4096²×8192 fp16, the shape used while developing)
-isolates the cost:
+Ablating the hot loop op-by-op (4096²×8192 fp16, the shape used while developing,
+on `v1.1` with the plugin schedule) isolates the cost:
 
 | in-loop ops | ms | vs MFMA-only |
 |---|---|---|
@@ -171,27 +174,28 @@ everything else constant. The result is numerically wrong — it is a timing pro
 
 | | cyc/iter | MFMA eff |
 |---|---|---|
-| as shipped | 4621.5 | 88.63% |
-| `ds_write` removed | 4255.0 | **96.26%** |
+| as shipped | 4580.0 | 89.43% |
+| `ds_write` removed | 4238.8 | **96.63%** |
 
 `ds_write` is **~two thirds of all remaining inefficiency**, and it is not
 bandwidth: a `ds_write_b128` issues in ~20 cycles (4 for the address, 16 for the
 data) while a `v_mfma_f32_16x16x16_f16` covers only 16, so **one MFMA cannot hide
-one LDS write**. 16 × 20 = 320 unhideable cycles per iteration, against 366.5
-measured. Full analysis in [`note.md`](note.md) §6.
+one LDS write**. 16 × 20 = 320 unhideable cycles per iteration, against 341.2
+measured (fp16 K=4160, median of 3 traces each). Full analysis in [`note.md`](note.md) §6.
 
 **This is the limit of the intra_wave design on MI300.** Closing it means writing
 *less* to LDS — a different pipeline, not a tuning knob — or not paying the cost in
 this instruction stream at all. The latter is exactly what
 [`../inter_wave`](../inter_wave/) does, by handing the writes to the other wave
 group while this one is on the matrix unit, and it is why that kernel reaches ~98%
-per-SIMD instead of 89%.
+per-SIMD instead of ~90%.
 
 **Next:** [`../inter_wave/README.md`](../inter_wave/README.md).
 
 ## Optimization history
 
-Detailed in [`note.md`](note.md); summarised:
+Detailed in [`note.md`](note.md); summarised at fp16 K=8256 (every row up to
+"+ swizzle" on `v1.1` with the LLIR scheduler plugin):
 
 | | cyc/iter | MFMA eff | what changed |
 |---|---|---|---|
@@ -201,8 +205,8 @@ Detailed in [`note.md`](note.md); summarised:
 | opt 3 | 4601 | 89.0% | prologue LDS reads drained before the loop: 3→2 barriers, 3→1 `lgkmcnt(0)` |
 | opt 4 | — | — | **rejected** — register-form change, 1.1% slower |
 | opt 5 | 4622 | 88.4% | prologue load order pinned; `vmcnt(3)/(1)/(0)` → `(15)/(13)/(12)` |
-| **+ swizzle** | **4588** | **89.3%** | conflict-free LDS layout |
-| `v3.0` rebase | 4572 | 89.6% | Triton's MFMA scheduler, run on gfx942 with the CDNA3 LDS model; opt 2 dropped ([`../README.md`](../README.md) §5) |
+| + swizzle | 4588 | 89.3% | conflict-free LDS layout |
+| **`v3.1`** | **4543.5** | **90.2%** | Triton's MFMA scheduler, upstream on gfx942 with CDNA3's LDS cost ([#12229](https://github.com/triton-lang/triton/pull/12229)); opt 2 dropped ([`../README.md`](../README.md) §5) |
 
 Opt 4 and opt 5 are worth reading together: chasing a conservative `vmcnt` led
 first to a wrong conclusion (an LLVM register-form flag) and then to the real

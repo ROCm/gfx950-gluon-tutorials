@@ -16,7 +16,7 @@ global loads, LDS reads and LDS writes.
 MFMA cannot cover a ~20-cycle `ds_write`. Here two wave groups run one region out
 of phase, so the group on the matrix unit is covered by the group in memory, and
 the same traffic costs almost nothing: **~98% per-SIMD MFMA efficiency against
-89%.**
+~90%.**
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
@@ -136,10 +136,11 @@ written in 6; B is read in 2 (and in 6, for *k+1*) and written in 4.
 ### LDS layout
 
 `SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4.
-It matters far more here than in [`../intra_wave`](../intra_wave/): the same
-conflict-free layout is worth **−9.9% loop cycles** against −1.0% there, because
-two resident waves per SIMD keep the LDS port roughly twice as busy. It was the
-single largest win in this kernel — larger than halving the region count.
+The conflict-free layout is worth **−10.8% loop cycles** here: two resident waves
+per SIMD keep the LDS port roughly twice as busy, so every replay shows. It was the
+single largest win in this kernel — larger than halving the region count. (In
+[`../intra_wave`](../intra_wave/) it is worth −16.1% under Triton's MFMA scheduler,
+though under the old plugin schedule it looked almost free there; §4.4 has why.)
 
 ## Differences from the gfx950 kernel
 

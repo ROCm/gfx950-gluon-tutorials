@@ -49,17 +49,20 @@ only its own design:
 Same Triton pin as the rest of the repository (see [`SUPPORT.md`](../../../SUPPORT.md)):
 
 ```bash
-git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v3.0 /path/to/triton
+git clone https://github.com/triton-lang/triton -b gfx950-tutorial-v3.1 /path/to/triton
 pip uninstall -y triton
 cd /path/to/triton && TRITON_EXT_ENABLED=1 pip install -e .
 ```
 
-`gfx950-tutorial-v3.0` is the annotated tag the tutorial pins; it reports itself
-as Triton 3.9.0 and declares Python >= 3.11 (on a 3.10 environment, add
-`--ignore-requires-python`: the floor is metadata only, and nothing in Triton's
-Python needs 3.11). Neither kernel loads a plugin. **The 4-wave kernel needs a
-change to Triton to be scheduled on gfx942** — upstream runs the MFMA scheduler on
-gfx950 only; see §5.
+`gfx950-tutorial-v3.1` is the annotated tag these gfx942 kernels pin (the MI355X
+kernels in the rest of the repository stay on `gfx950-tutorial-v3.0`): plain upstream
+`main` at `b575c0c38`, the merge of
+[triton-lang/triton#12229](https://github.com/triton-lang/triton/pull/12229), which
+runs the MFMA scheduler on gfx942 (§5). It reports itself as Triton 3.9.0 and
+declares Python >= 3.11 (on a 3.10 environment, add `--ignore-requires-python`: the
+floor is metadata only, and nothing in Triton's Python needs 3.11). Neither kernel
+loads a plugin, and `TRITON_EXT_ENABLED=1` is only for the gfx950 attention
+kernels' plugin.
 
 ## 2. Running
 
@@ -78,107 +81,119 @@ external `rocprofv3 --kernel-trace` timing.
 
 ## 3. Results
 
-MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v1.1`.
-
-> [!NOTE]
-> These tables were measured on the `v1.1` pin with the gfx942-extended LLIR
-> scheduler plugin. On `v3.0` the 8-wave kernel's hot loop is identical, so its
-> rows stand. The 4-wave kernel matches its rows only with the Triton change of §5
-> (about 1% fewer cycles per iteration than below); on stock `v3.0` it is
-> unscheduled, at 68–70% in-loop MFMA efficiency.
+MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v3.1`.
 
 **One methodology for every number below**, so the tables are comparable with
 each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family), on
-**GPU 3** — the fastest of the node's eight, by median over three sweeps, spread
-4.0%. TFLOPS come from [`tools/bench_prepared.py`](tools/bench_prepared.py):
+**GPU 2** — the fastest of the node's eight, by median over three sweeps, spread
+5.8%. TFLOPS come from [`tools/bench_prepared.py`](tools/bench_prepared.py):
 prepared launch (compile once, arguments pre-bound, launch stub entered
 directly), 3 rotating tensor sets so no dispatch reads its predecessor's
 cache-resident operands, 1000 dispatches, **mean of the last 100** kernel
-durations from `rocprofv3 --kernel-trace`. `torch` is hipBLASLt via
-`torch.matmul` through the *same* harness. Per-SIMD MFMA efficiency is from ATT.
+durations from `rocprofv3 --kernel-trace`. Each cell is the median of 3 rounds (5
+at K=8256), and a round runs all configurations of one shape back to back.
+`torch` is hipBLASLt via `torch.matmul` through the *same* harness. Per-SIMD MFMA
+efficiency is from ATT, the median of 3 traces (7 at K=8256).
 
 **fp16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 586.4 | 87.10% | **620.0** | 96.71% | 583.4 |
-| 4160 | 603.9 | 88.57% | **618.5** | 98.25% | 581.9 |
-| 8256 | **614.3** | 89.28% | 598.3 | 97.81% | 579.6 |
-| 16448 | 629.0 | 89.63% | **641.1** | 99.42% | 589.8 |
+| 2112 | 604.6 | 87.96% | **626.9** | 96.69% | 605.0 |
+| 4160 | 622.6 | 89.43% | **635.4** | 98.25% | 604.9 |
+| 8256 | 633.5 | 90.15% | **635.6** | 97.45% | 596.0 |
+| 16448 | 649.3 | 90.51% | **660.1** | 99.42% | 606.4 |
 
 **bf16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 612.7 | 87.10% | **644.4** | 96.71% | 618.7 |
-| 4160 | 642.5 | 88.56% | **658.3** | 98.26% | 626.6 |
-| 8256 | 638.4 | 89.30% | **647.3** | 97.78% | 620.8 |
-| 16448 | 678.6 | 89.63% | **689.9** | 99.42% | 627.2 |
+| 2112 | 634.4 | 87.96% | **657.7** | 96.69% | 622.2 |
+| 4160 | 651.1 | 89.43% | **676.5** | 98.25% | 636.3 |
+| 8256 | **669.2** | 90.15% | 667.6 | 97.51% | 633.2 |
+| 16448 | 688.9 | 90.51% | **705.7** | 99.42% | 644.7 |
 
 `eff` is in-loop **per-SIMD** MFMA efficiency, the comparable figure: the matrix
 unit is a per-SIMD resource, so the 8-wave kernel's per-wave fraction doubles for
 its two co-resident waves. At 96.7–99.4% the 8-wave loop is essentially at the
-matrix-unit ceiling; the 4-wave one sits ~10 points back, and
+matrix-unit ceiling; the 4-wave one sits 7–9 points back, and
 [`intra_wave/README.md`](intra_wave/README.md) shows via ablation that almost all
 of that gap is `ds_write` the MFMA stream cannot hide.
 
-Efficiency barely moves with dtype (fp16 and bf16 agree to three digits — the
-codegen is identical) but does move with K, from 96.7% at K=2112 to 99.4% at
-K=16448: a longer K means more loop iterations per prologue and better L2 reuse
-on the global loads.
+Efficiency does not move with dtype (fp16 and bf16 compile to the same loop and
+trace to within 0.1% of each other) but does move with K, from 96.7% at K=2112 to 99.4%
+at K=16448 for the 8-wave kernel: a longer K means more loop iterations per
+prologue and better L2 reuse on the global loads.
 
-**inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8. intra_wave beats
-hipBLASLt on 7 of 8 — it loses bf16 K=2112 (612.7 vs 618.7).
+**inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8, by 3.6% to 9.5%.
+At K=8256 the two kernels tie (+0.3% fp16, −0.2% bf16), for the power reason in
+§3.5. intra_wave beats hipBLASLt on 7 of 8, by up to 7.1%, and ties fp16 K=2112
+(604.6 vs 605.0).
 
 For scale, Triton's own `BlockPingpong` schedule at 4096×4864×8256
 (`python/tutorials/03-matrix-multiplication.py`, tile 256×256×64, `num_warps=8`,
-with the loop-variant K mask removed so the pass fires) reaches 4273.8 cyc/iter
-and 95.84% per-SIMD at 543.0 TFLOPS. It uses `v_mfma_f32_32x32x8_f16`, which is
-more power-dense than the `16x16x16` used here and clocks down to 1.023 GHz for
-it — so inter_wave is ahead on cycles, on efficiency, and by a wider margin on
-wall clock. See §3.5.
+with the loop-variant K mask removed so the pass fires) reaches 4228.2 cyc/iter
+and 96.87% per-SIMD at 550.3 TFLOPS, through the same harness. It uses
+`v_mfma_f32_32x32x8_f16`, which is more power-dense than the `16x16x16` used here
+and settles at 1.07 GHz under the cap against inter_wave's 1.19 — so inter_wave is
+ahead on cycles (4203.4), on efficiency, and by 15.5% on wall clock. See §3.5.
 
 Cycles per iteration per wave behind the efficiency column, for reference:
 
 | K | intra_wave | inter_wave |
 |---|---|---|
-| 2112 | 4702.5 | 4235.5 |
-| 4160 | 4624.8 | 4168.8 |
-| 8256 | 4587.7 | 4187.7 |
-| 16448 | 4569.8 | 4120.0 |
+| 2112 | 4656.9 | 4236.3 |
+| 4160 | 4580.0 | 4169.1 |
+| 8256 | 4543.5 | 4203.4 |
+| 16448 | 4525.6 | 4120.1 |
 
-Codegen: intra_wave 256 VGPR + 256 AGPR, 0 spills on `v1.1` (1–2 outside the
-loop on `v3.0`, §5), 1 wave/SIMD; inter_wave 240
-VGPR, 0 AGPR, 0 spills, **2 waves/SIMD**. Both use exactly 65536 B of LDS, and
-both measure `SQ_LDS_BANK_CONFLICT` = **0**.
+Codegen: intra_wave 256 VGPR + 256 AGPR, 1 wave/SIMD, with 2 VGPRs spilled outside
+the loop (12 B of scratch, §5); inter_wave 240 VGPR, 0 AGPR, 0 spills, **2
+waves/SIMD**. Both use exactly 65536 B of LDS, and both measure
+`SQ_LDS_BANK_CONFLICT` = **0**.
 
 > [!NOTE]
 > `bench.py` reports `do_bench` medians on the *default* device instead, so its
-> numbers will not match these: a different GPU (up to 4% across the node), a
+> numbers will not match these: a different GPU (up to 6% across the node), a
 > timer that includes the Python launch path and inter-dispatch gaps rather than
 > kernel duration alone, and a shorter, cooler run. Use it for correctness
 > checking and quick iteration; use the tables above for reporting.
 
 ### 3.1 Why these shapes
 
-Both dimensions of the benchmark are chosen for gfx942 specifically, and both
-matter a lot — the same kernels measured 460-540 TFLOPS on 4096x4096xPOW2.
+Both dimensions of the benchmark are chosen for gfx942 specifically. Same harness,
+fp16, median of 3 rounds:
+
+| M×N×K | intra_wave TF | inter_wave TF |
+|---|---|---|
+| 4096×4096×4096 | 594.4 | 553.6 |
+| 4096×4864×4096 | 616.8 | 617.8 |
+| 4096×4864×4160 | 622.9 | 633.7 |
+| 4096×4096×8192 | 603.9 | 581.1 |
+| 4096×4864×8192 | 637.0 | 628.7 |
+| 4096×4864×8256 | 614.9 | 640.1 |
 
 **N = 4864, not 4096.** With a 256x256 tile, 4096x4864 is a 16 x 19 = **304
 workgroup** grid, exactly the MI300X CU count: one workgroup per CU and no tail
 wave. 4096x4096 gives 256 workgroups, so 48 of 304 CUs sit idle for the whole
-kernel — a hard 16% ceiling that has nothing to do with the pipeline. (LDS is
-full at 64 KB, so occupancy is 1 workgroup/CU and the grid must match the machine
-exactly.)
+kernel. (LDS is full at 64 KB, so occupancy is 1 workgroup/CU and the grid must
+match the machine exactly.) N = 4864 is worth +3.8% / +5.5% to intra_wave and
++11.6% / +8.2% to inter_wave (K = 4096 / 8192) — less than the 19% more work per
+pass, because the 48 idle CUs leave power under the 750 W cap and the busy ones
+clock higher: inter_wave at 4096×4096×8192 sustains 1.36 GHz, at 4096×4864×8192
+1.24 GHz.
 
 **K = 4160 or 8256, not 4096 or 8192.** A power-of-two K makes A's row stride a
 power of two (K=4096 -> 8192 B), so every row of a tile lands in the same L1 set
 and the loads hotspot. `4160 = 65 x 64` and `8256 = 129 x 64` are still multiples
 of `BLOCK_K` but make the stride an *odd* multiple of the 128 B line, spreading
-the rows across sets.
+the rows across sets. The effect is small and only consistent for inter_wave:
++2.6% at K ≈ 4096 and +1.8% at K ≈ 8192. On intra_wave it is +1.0% at K ≈ 4096 and
+reverses at K ≈ 8192 (637.0 at 8192 against 614.9 at 8256, the noisiest shape,
+§3.3).
 
-Together these are worth ~20-30%: inter_wave goes from 510 TFLOPS at
-4096x4096x8192 to 622 at 4096x4864x4160.
+Together, inter_wave goes from 553.6 TFLOPS at 4096×4096×4096 to 633.7 at
+4096×4864×4160 (+14.5%), and intra_wave from 594.4 to 622.9 (+4.8%).
 
 ### 3.2 GROUP_SIZE_M
 
@@ -189,26 +204,30 @@ behind at 14 and GM = 1/2/16 far worse at 39/21/19. Measured with
 
 | GM | f(GM) | intra_wave | inter_wave |
 |---|---|---|---|
-| 1 | 39 | 558 | 619 |
-| 2 | 21 | 568 | 616 |
-| 4 | 14 | 569 | 626 |
-| 5 | 13 | 569 | 622 |
-| 6 | 13 | 570 | 625 |
-| 8 | 13 | 570 | 625 |
-| 16 | 19 | 569 | 622 |
+| 1 | 39 | 648.6 | 671.8 |
+| 2 | 21 | 648.8 | 672.7 |
+| 4 | 14 | 657.7 | 681.6 |
+| 5 | 13 | 655.5 | 678.2 |
+| 6 | 13 | 657.5 | 683.3 |
+| 8 | 13 | 656.5 | 681.6 |
+| 16 | 19 | 650.1 | 673.7 |
 
-The model separates the bad choices correctly — GM = 1 and 2 cost 2-4% — but
-GM = 4 through 8 are indistinguishable, with run-to-run spreads that overlap
-completely. **`GROUP_SIZE_M = 4` is kept**; anything in 4-8 is equivalent here.
+The model separates the bad choices correctly — GM = 1, 2 and 16 cost 1.2-1.7% —
+but GM = 4 through 8 are within 0.8% of each other. **`GROUP_SIZE_M = 4` is
+kept**; anything in 4-8 is equivalent here. (These are `do_bench` numbers, which
+read higher than §3's; see the note above.)
 
 ### 3.3 Reading the numbers
 
-Sustained MFMA pushes this part into its 750 W cap and the clock falls from
-~2.03 GHz to ~1.52 GHz; a `do_bench` burst runs near 2.0 GHz while a long loop
-settles at ~1.55 GHz, so the same kernel measures 622 TFLOPS in one and ~470 in
-the other. `--show-clock` prints the clock next to each row, and the torch column
-is measured in the same loop as a same-conditions reference. K = 8256 is also
-the noisiest point (±5% run to run); the tables above are medians of 3.
+Sustained MFMA pushes this part into its 750 W cap within a fraction of a second.
+In a 20000-dispatch loop the clock settles at 1.19 GHz for inter_wave (fp16, K =
+4160 and 8256) and 1.27-1.29 GHz for intra_wave (fp16, K = 8256), against a 2.10 GHz
+peak, and the last 100 of those 20000 dispatches read 0.7-4.6% below the tables'
+last 100 of 1000: the tables already measure a part on its cap. `bench.py`'s
+`do_bench` reads higher — 653.4 TFLOPS for inter_wave at fp16 K=4160 against
+635.4 in the table — because its timer is not kernel duration. K = 8256 is the
+noisiest point: rounds there spread by up to 5.5%, and about one ATT trace in
+seven lands 12-29% high, which is why that row takes 5 rounds and 7 traces.
 
 ### 3.4 ATT traces
 
@@ -253,36 +272,36 @@ At K=8256 (all four K values are in §3):
 
 | | mfma/iter/wave | cycles/iter/wave | per-wave | **per-SIMD** |
 |---|---|---|---|---|
-| intra_wave, as first ported | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
-| intra_wave, current | 256 | 4587.7 | 89.3% | **89.3%** |
-| inter_wave, as first ported | 128 | 4770.6 | 42.9% | **85.9%** (2 waves/SIMD) |
-| inter_wave, current | 128 | **4187.7** | 48.9% | **97.8%** |
+| intra_wave, as first ported (`v1.1`) | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
+| intra_wave, current | 256 | 4543.5 | 90.2% | **90.2%** |
+| inter_wave, as first ported (`v1.1`) | 128 | 4770.6 | 42.9% | **85.9%** (2 waves/SIMD) |
+| inter_wave, current | 128 | **4203.4** | 48.7% | **97.5%** |
 
 Both kernels moved a long way from the initial port: intra_wave through the
-opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md), inter_wave
-through the 8-region redesign in [`inter_wave/README.md`](inter_wave/README.md).
-The LDS bank-conflict fix in §4.4 is common to both and was worth -9.9% loop
-cycles on the 8-wave kernel.
+opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md) and then Triton's
+MFMA scheduler (§5), inter_wave through the 8-region redesign in
+[`inter_wave/README.md`](inter_wave/README.md). The LDS bank-conflict fix in §4.4
+is common to both and is worth −16.1% loop cycles on the 4-wave kernel and −10.8%
+on the 8-wave one.
 
 ### 3.5 Why TFLOPS understates the 8-wave kernel
 
-The clearest case is fp16 K=8256 in §3: the 8-wave kernel runs **8.7% fewer
-cycles per K-step** (4187.7 vs 4587.7) at **8.5 points** higher per-SIMD MFMA
-efficiency, and still measures **lower** TFLOPS — 598.3 against 614.3. The 750 W
-cap is why. A first capture pair taken
-back-to-back without a cooldown recorded:
+The clearest case is K=8256 in §3: the 8-wave kernel runs **7.5% fewer cycles per
+K-step** (4203.4 vs 4543.5) at **7.3 points** higher per-SIMD MFMA efficiency, and
+only ties on TFLOPS — 635.6 against 633.5 in fp16, 667.6 against 669.2 in bf16.
+The 750 W cap is why. Sustained over 20000 dispatches, fp16 K=8256, both kernels
+pinned at 750 W:
 
-| | cycles | wall | clock |
-|---|---|---|---|
-| intra_wave (ran first, cool) | 901,420 | 581.7 us | 1.55 GHz |
-| inter_wave (ran second, hot) | 707,824 | 568.6 us | **1.24 GHz** |
+| fp16, K=8256 | cycles/iter | per-SIMD eff | sustained clock | TFLOPS (§3) |
+|---|---|---|---|---|
+| intra_wave | 4543.5 | 90.15% | 1.27-1.29 GHz | 633.5 |
+| inter_wave | **4203.4** | **97.45%** | 1.19 GHz | 635.6 |
+| Triton `BlockPingpong` | 4228.2 | 96.87% | 1.07 GHz | 550.3 |
 
-a 27% cycle advantage almost exactly cancelled by a 20% clock deficit.
-Reversing the run order moved the deficit to the other kernel, so it tracks
-thermal history rather than the kernel -- but the effect is real and it is what
-the do_bench numbers are measuring: **the better pipeline draws more power and
-gets clocked down for it**, which is the same DIDT dynamic the tutorial's v7
-describes.
+The 7.5% cycle advantage is cancelled by a 6-8% clock deficit: **the better
+pipeline draws more power and gets clocked down for it**, the same DIDT dynamic the
+tutorial's v7 describes. `BlockPingpong`'s `32x32x8` MFMA is denser still, and pays
+for it with the lowest clock of the three.
 
 So read §3 as "what you get on a hot part in a benchmark loop" and §3.4 as "how
 good the pipeline actually is". Cycle counts and MFMA efficiency are the stable
@@ -378,9 +397,22 @@ which reads `SQ_LDS_BANK_CONFLICT` and `SQ_LDS_IDX_ACTIVE`:
 | `(8, 2, 8)` | 0.667 / 0.750 | 13.33 / 14.00 | 2.510e9 | 3.514e9 |
 | **`(8, 1, 8)`** | **0.000** | **8.00** | **1.506e9** | **2.008e9** |
 
-8.00 cyc/instr is the floor (1024 B at 128 B/clk). Worth −1.0% loop cycles on the
-4-wave kernel but **−9.9%** on the 8-wave one, whose LDS duty cycle is far higher
-at 2 waves/SIMD.
+8.00 cyc/instr is the floor (1024 B at 128 B/clk). In loop cycles (ATT, fp16
+K=4160) the fix is worth **−16.1%** on the 4-wave kernel (5458.1 → 4580.0) and
+**−10.8%** on the 8-wave one (4672.0 → 4169.1). The 4-wave figure was only −1.0%
+under the `v1.1` plugin, because the plugin parked ~25 surplus MFMAs between each
+region's last LDS read and its first LDS write, and that slack absorbed the replays.
+Triton's MFMA scheduler leaves no such slack. Measured on a build with the parking
+added back (fp16 K=4160, cycles per iteration):
+
+| | in-tree schedule | + parking (`v1.1` opt 2) |
+|---|---|---|
+| `(8, 2, 8)` | 5466.1 | 4636.1 |
+| **`(8, 1, 8)`** | **4580.0** | 4677.5 |
+
+With the conflicting layout, parking recovers most of the loss; with the
+conflict-free one it costs 2.1%. The right layout plus the plain schedule is the
+fastest of the four, which is why the parking was not carried into Triton.
 
 Getting the `local_store` side conflict-free also required **changing the
 global-load layout** away from the tutorial's. The gfx950 layout has lanes 0–7
@@ -420,61 +452,57 @@ kernel. Both READMEs assume this section.
 
 ## 5. The MFMA scheduler and accumulator pins on gfx942
 
-Since `gfx950-tutorial-v3.0` the MFMA <-> memory interleave that the 4-wave kernel
-depends on is a pass in Triton itself,
-[triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209),
-enabled per launch with `schedule_hint="mfma-schedule"`. `intra_wave`'s `matmul()`
-passes it by default; the tutorial's `llirSched` plugin now carries only the
-attention co-execution model and is not used here. Accumulators are pinned to
-AGPRs in the kernel with `cd_regclass="a"`, which replaces `TRITON_FORCE_MFMA_AGPR`.
+The MFMA <-> memory interleave that the 4-wave kernel depends on is a pass in Triton
+itself ([triton-lang/triton#12209](https://github.com/triton-lang/triton/pull/12209),
+`v3.0`), enabled per launch with `schedule_hint="mfma-schedule"`, and since `v3.1`
+it runs on gfx942 too
+([triton-lang/triton#12229](https://github.com/triton-lang/triton/pull/12229)).
+`intra_wave`'s `matmul()` passes the hint by default and the tools take
+`--schedule-hint ""` to turn it off; the tutorial's `llirSched` plugin now carries
+only the attention co-execution model and is not used here. Accumulators are pinned
+to AGPRs in the kernel with `cd_regclass="a"`, which replaces `TRITON_FORCE_MFMA_AGPR`.
 
-**Upstream Triton runs the pass only for gfx950.** `make_llir` checks
-`options.arch == "gfx950"`, so on gfx942 the hint is a **silent no-op**: the hsaco is
-byte-identical with and without it, and the LLIR has no `sched.barrier`. The pass
-itself already knows the CDNA3 MFMA shapes (`mfma.f32.16x16x16f16`,
-`16x16x16bf16.1k`); what it lacks for gfx942 is the LDS bandwidth. It prices an LDS
-access at `Bits / 8` cycles, CDNA4's 256 B/clk. CDNA3 has 128 B/clk, so with
-all four SIMDs issuing it a `ds_read_b128` needs 32 cycles of MFMA cover, not 16.
+**What gfx942 needed from the pass.** Until `v3.1`, `make_llir` ran it only when
+`options.arch == "gfx950"`, so on gfx942 the hint was a **silent no-op**: the hsaco
+was byte-identical with and without it. The pass already knew the CDNA3 MFMA shapes
+(`mfma.f32.16x16x16f16`, `16x16x16bf16.1k`); what it lacked was the LDS bandwidth. It
+priced an LDS access at `Bits / 8` cycles, CDNA4's 256 B/clk; CDNA3 serves 128 B/clk,
+so with all four SIMDs issuing it a `ds_read_b128` needs 32 cycles of MFMA cover, not
+16. #12229 runs the pass on gfx942 and prices LDS by the target's bandwidth. On the
+4-wave kernel (ATT cycles per K-iteration / per-SIMD in-loop MFMA efficiency):
 
-Two changes to Triton make it work here, measured on the 4-wave kernel, bf16
-(ATT cycles per K-iteration and per-SIMD in-loop MFMA efficiency; prepared-launch
-TFLOPS, mean over interleaved rounds on one GPU):
+| | K=2112 | K=4160 | K=8256 | K=16448 |
+|---|---|---|---|---|
+| scheduler off (`--schedule-hint ""`) | 6065.4 / 67.5% | 5966.6 / 68.7% | 5920.0 / 69.2% | 5896.6 / 69.5% |
+| pass run on gfx942 with CDNA4's LDS cost | 5327 / 76.9% | 5242 / 78.1% | 5372 / 76.2% | 5180 / 79.1% |
+| **`v3.1`: CDNA3's LDS cost** | **4656.9 / 88.0%** | **4580.0 / 89.4%** | **4543.5 / 90.2%** | **4525.6 / 90.5%** |
 
-| Triton | K=2112 | K=4160 | K=8256 | K=16448 | TFLOPS, K=16448 |
-|---|---|---|---|---|---|
-| upstream `v3.0` (pass not run) | 6065 / 67.5% | 5967 / 68.7% | 5920 / 69.2% | 5897 / 69.5% | 611 |
-| + run it on gfx942 (CDNA4 LDS model) | 5327 / 76.9% | 5242 / 78.1% | 5372 / 76.2% | 5180 / 79.1% | 650 |
-| + CDNA3 LDS model, 128 B/clk | **4657 / 88.0%** | **4580 / 89.4%** | **4572 / 89.6%** | **4526 / 90.5%** | **690** |
-
-One trace per cell. At K=8256 repeated traces of one binary vary by up to 15% on
-this GPU (4544 / 4546 / 5213 for the last row), so read that column loosely; the
-other three repeat to within a few cycles.
-
-Together the two changes are worth +8.8% to +12.9% TFLOPS in bf16 and +4.1% to
-+10.8% in fp16 over the unscheduled build, and the result runs about 1% fewer
-cycles per iteration than the v1.1 plugin did (§3's last table). Both changes are
-on a local Triton branch, `gfx942-mfma-schedule`, which compiles every gfx950
-tutorial GEMM that uses the pass (a16w16 v5–v9, a8w8, a4w4 v0/v1) byte-identically.
+The middle row was measured on an ablation build while #12229 was prepared (one
+trace per cell; read its K=8256 cell loosely, §3.3); the other two are `v3.1`,
+and they reproduce the cycle counts of that build exactly. Over the unscheduled
+build, the scheduler is worth +9.0% to +10.4% TFLOPS in fp16 and +10.2% to +12.4% in
+bf16 (paired within each round of §3), and it runs about 1% fewer cycles per
+iteration than the `v1.1` plugin did.
 
 The plugin's other gfx942 change, parking surplus MFMAs between a region's last
 `local_load` and first `local_store` (opt 2 in [`intra_wave/note.md`](intra_wave/note.md)),
-is **not** needed and is not ported: under the in-tree pass, which already fences
-every memory op, it costs 2.1% more cycles per iteration at every K, and
-TFLOPS at 15 of 16 shape/dtype points (by 0.5–2.4%; the 16th, fp16 K=8256, is
-+0.3% within that shape's noise).
+is **not** in Triton: under the in-tree pass, which fences every memory op, it costs
+2.1% more cycles per iteration at every K. It only paid while the LDS layout had
+bank conflicts (§4.4).
 
 The in-tree pass also fences each pinned MFMA, so it keeps the MFMAs in program
 order: four-deep dependent chains on one accumulator, with an `s_nop 0` at each
 chain switch (the plugin's loop round-robined accumulators instead). The nops sit
 inside the MFMA shadow, and the cycle counts above already include them.
 
-The pins cost 1–2 VGPRs of spill outside the loop (8–12 B of scratch, stored in the
-prologue and reloaded in the epilogue; no scratch access in the loop). Adding
-`amdgpu-agpr-alloc=256` does not change the binary.
+The pins cost a little spill outside the loop: 2 VGPRs (12 B of scratch) in the
+scheduled build, 1 (8 B) unscheduled, stored in the prologue and reloaded in the
+epilogue, with no scratch access in the loop. Adding `amdgpu-agpr-alloc=256` does
+not change the binary.
 
 The 8-wave kernel uses neither the scheduler nor AGPRs: its schedule is expressed
-directly with `warp_pipeline_stage`, and its hot loop on `v3.0` is
-instruction-for-instruction the loop of `v1.1` (compared on the bf16 build). `amdgcnas` remains untried on gfx942.
+directly with `warp_pipeline_stage`, and its hot loop is instruction-for-instruction
+the loop it had on `v1.1` (compared on the bf16 build). `amdgcnas` remains untried on gfx942.
 
 ## 6. Layout
 

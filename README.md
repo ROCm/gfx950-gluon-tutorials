@@ -34,10 +34,11 @@ Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 │   │   │   ├── a16w16/       #   FP16 GEMM, v0 → v9 (start here)
 │   │   │   ├── a8w8/         #   BF8 GEMM — same design, adapted for 8-bit
 │   │   │   └── a4w4/         #   MXFP4 GEMM with per-group microscaling
-│   │   └── inter_wave/       # 8-wave: 2 waves/SIMD ping-pong, no compiler plugins needed
-│   │       ├── a16w16/       #   FP16/BF16 warp-pipeline GEMM
-│   │       ├── a8w8/         #   BF8
-│   │       └── a4w4/         #   MXFP4
+│   │   ├── inter_wave/       # 8-wave: 2 waves/SIMD ping-pong, no compiler plugins needed
+│   │   │   ├── a16w16/       #   FP16/BF16 warp-pipeline GEMM
+│   │   │   ├── a8w8/         #   BF8
+│   │   │   └── a4w4/         #   MXFP4
+│   │   └── gfx942/           # MI300X (CDNA3) port of the a16w16 kernels, intra_wave + inter_wave
 │   └── attention/            # Flash Attention forward (fmha_v3, fmha_v4) — MFMA ↔ VALU co-execution
 ├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
@@ -55,6 +56,7 @@ Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Apply the same design to BF8                             | `kernels/gemm/intra_wave/a8w8/`        |
 | Understand microscaling (MXFP4) and scale pipelines      | `kernels/gemm/intra_wave/a4w4/`        |
 | Compare the 8-wave ping-pong design (2 waves/SIMD, no plugins) | `kernels/gemm/inter_wave/` |
+| See what CDNA3 (MI300X, gfx942) changes in both designs  | `kernels/gemm/gfx942/`      |
 | Optimize Flash Attention, where vector math competes with the MFMA | `kernels/attention/`        |
 | Understand the block-level design philosophy             | `docs/performance_philosophy.md` |
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |

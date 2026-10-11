@@ -5,9 +5,10 @@ was measured, what it means, what to do next.
 
 > [!NOTE]
 > This log was written on `gfx950-tutorial-v1.1`, with `TRITON_FORCE_MFMA_AGPR` and
-> the out-of-tree LLIR scheduler plugin. Both are gone on `v3.0`: the kernel pins
-> its accumulators with `cd_regclass="a"` and uses Triton's MFMA scheduler. What
-> carried over, and what did not (opt 2), is in [`../README.md`](../README.md) §5.
+> the out-of-tree LLIR scheduler plugin. Both are gone since `v3.0`: the kernel pins
+> its accumulators with `cd_regclass="a"` and uses Triton's MFMA scheduler, which
+> runs on gfx942 since `v3.1`. What carried over, and what did not (opt 2), is in
+> [`../README.md`](../README.md) §5.
 
 ---
 
