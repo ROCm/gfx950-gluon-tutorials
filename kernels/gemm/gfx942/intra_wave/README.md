@@ -41,6 +41,16 @@ spill outside the loop, 65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly
 
 ## Design
 
+![intra_wave pipeline design](images/intra_wave_design.svg)
+
+Top left: the tile split, the same as [`../inter_wave`](../inter_wave/)'s: A split along
+M into `A_top` / `A_bot`, B along N into `B_left` / `B_right`, and four 128×128
+quadrants. Bottom: one K-step, four regions in a single instruction stream, each an
+MFMA dot on one quadrant with that region's LDS read, LDS write and global load spread
+through it; and below it, what each of the four 16 KB LDS slots does in each region.
+The two kernels differ from here on: inter_wave alternates memory and dot regions
+across two wave groups, this kernel interleaves them inside each region.
+
 ### Half-tile LDS recycling
 
 64 KB of LDS is *exactly one* 256×256×64 stage, so double buffering is

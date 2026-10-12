@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 660" width="1040" height="660" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <style>
+    .h    { font-size: 13px; font-weight: 600; fill: #555; }
+    .sub  { font-size: 12px; font-weight: 600; fill: #767676; }
+    .lbl  { font-size: 12px; fill: #767676; }
+    .dim  { font-size: 10.5px; fill: #8a8a8a; }
+    .tile { font-size: 12px; font-weight: 600; }
+    .in   { font-size: 11px; fill: #1a1a1a; }
+    .rn   { font-size: 9.5px; fill: #767676; }
+    .note { font-size: 11.5px; fill: #767676; }
+    .em   { font-size: 11.5px; font-weight: 600; fill: #555; }
+    .bar  { stroke: #b9b9b9; stroke-width: 1; stroke-dasharray: 2 3; }
+  </style>
+  <text class="h" x="16" y="24" xml:space="preserve">intra_wave on gfx942 — 256×256×64 tile, 4 waves (1 per SIMD), one instruction stream</text>
+  <text class="sub" x="16" y="54" xml:space="preserve">Tile split</text>
+  <text class="dim" x="140.0" y="72" text-anchor="middle" xml:space="preserve">128</text>
+  <text class="dim" x="212.0" y="72" text-anchor="middle" xml:space="preserve">128</text>
+  <text class="dim" x="96" y="100" text-anchor="end" xml:space="preserve">64</text>
+  <text class="dim" x="70" y="124" text-anchor="middle" xml:space="preserve">64</text>
+  <text class="dim" x="44" y="170.0" text-anchor="end" xml:space="preserve">128</text>
+  <text class="dim" x="44" y="242.0" text-anchor="end" xml:space="preserve">128</text>
+  <rect x="104" y="78" width="72" height="36" fill="#ece0f4" stroke="#8a5aa8"/><text class="tile" x="140.0" y="100.0" text-anchor="middle" xml:space="preserve" fill="#8a5aa8">B_left</text>
+  <rect x="176" y="78" width="72" height="36" fill="#d8efec" stroke="#3f8f87"/><text class="tile" x="212.0" y="100.0" text-anchor="middle" xml:space="preserve" fill="#3f8f87">B_right</text>
+  <rect x="52" y="130" width="36" height="72" fill="#f6dbe2" stroke="#b8556b"/><text class="tile" x="70.0" y="170.0" text-anchor="middle" xml:space="preserve" fill="#b8556b" transform="rotate(-90 70.0 166.0)">A_top</text>
+  <rect x="52" y="202" width="36" height="72" fill="#d9e6f6" stroke="#4d7cb8"/><text class="tile" x="70.0" y="242.0" text-anchor="middle" xml:space="preserve" fill="#4d7cb8" transform="rotate(-90 70.0 238.0)">A_bot</text>
+  <rect x="104" y="130" width="72" height="72" fill="#fafafa" stroke="#9a9a9a"/><text class="tile" x="140.0" y="166.0" text-anchor="middle" xml:space="preserve" fill="#444">C_tl</text><text class="rn" x="140.0" y="181.0" text-anchor="middle" xml:space="preserve">region 0</text>
+  <rect x="176" y="130" width="72" height="72" fill="#fafafa" stroke="#9a9a9a"/><text class="tile" x="212.0" y="166.0" text-anchor="middle" xml:space="preserve" fill="#444">C_tr</text><text class="rn" x="212.0" y="181.0" text-anchor="middle" xml:space="preserve">region 2</text>
+  <rect x="104" y="202" width="72" height="72" fill="#fafafa" stroke="#9a9a9a"/><text class="tile" x="140.0" y="238.0" text-anchor="middle" xml:space="preserve" fill="#444">C_bl</text><text class="rn" x="140.0" y="253.0" text-anchor="middle" xml:space="preserve">region 1</text>
+  <rect x="176" y="202" width="72" height="72" fill="#fafafa" stroke="#9a9a9a"/><text class="tile" x="212.0" y="238.0" text-anchor="middle" xml:space="preserve" fill="#444">C_br</text><text class="rn" x="212.0" y="253.0" text-anchor="middle" xml:space="preserve">region 3</text>
+  <text class="sub" x="330" y="54" xml:space="preserve">Key</text>
+  <rect x="330" y="66" width="26" height="16" fill="#cde8d3" stroke="#4c9a5a"/><text class="lbl" x="364" y="79" xml:space="preserve">MFMA (64 per region, ~1024 cycles)</text>
+  <rect x="600" y="66" width="8" height="16" fill="#d4a72c"/><text class="lbl" x="616" y="79" xml:space="preserve">memory op, interleaved into the MFMA stream</text>
+  <text class="note" x="330" y="108" xml:space="preserve">GR global read (buffer_load) · LR LDS read (local_load) · LW LDS write (local_store)</text>
+  <text class="note" x="330" y="128" xml:space="preserve">LDS = four 16 KB half-tile slots (<tspan fill="#b8556b">A_top</tspan>, <tspan fill="#4d7cb8">A_bot</tspan>, <tspan fill="#8a5aa8">B_left</tspan>, <tspan fill="#3f8f87">B_right</tspan>): exactly 64 KB, one stage</text>
+  <text class="note" x="330" y="148" xml:space="preserve">Each slot is rewritten one region after its last read and read again one region later,</text>
+  <text class="note" x="330" y="168" xml:space="preserve">so no slot needs a second buffer; two barriers per K-step keep the reads and writes ordered.</text>
+  <text class="em" x="330" y="196" xml:space="preserve">Pipeline depth equals a double buffer:</text>
+  <text class="note" x="330" y="216" xml:space="preserve">GR (k+2) → LW (k+1) is one K-step of global-latency hiding,</text>
+  <text class="note" x="330" y="234" xml:space="preserve">LR (k+1) → DOT (k+1) one region of LDS-latency hiding.</text>
+  <text class="sub" x="16" y="296" xml:space="preserve">One K-step (time →), iteration k</text>
+  <rect x="16" y="318" width="156" height="128" fill="#f4f4f4" stroke="#b9b9b9"/>
+  <text class="rn" x="24" y="333" xml:space="preserve">prologue</text>
+  <text class="in" x="26" y="360" xml:space="preserve">GR all four (k = 0)</text>
+  <text class="in" x="26" y="379" xml:space="preserve">LW all four</text>
+  <text class="in" x="26" y="398" xml:space="preserve">GR all four (k = 1)</text>
+  <text class="in" x="26" y="417" xml:space="preserve">LR <tspan fill="#8a5aa8">B_left</tspan>(0), <tspan fill="#b8556b">A_top</tspan>(0)</text>
+  <line class="bar" x1="178" y1="312" x2="178" y2="614"/>
+  <line class="bar" x1="390" y1="312" x2="390" y2="614"/>
+  <line class="bar" x1="602" y1="312" x2="602" y2="614"/>
+  <line class="bar" x1="814" y1="312" x2="814" y2="614"/>
+  <line class="bar" x1="1026" y1="312" x2="1026" y2="614"/>
+  <rect x="182" y="318" width="204" height="128" rx="2" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="rn" x="190" y="333" xml:space="preserve">region 0</text>
+  <text class="in" x="192" y="354" xml:space="preserve">C_tl += <tspan fill="#b8556b">A_top</tspan> · <tspan fill="#8a5aa8">B_left</tspan></text>
+  <rect x="192" y="366" width="184" height="12" rx="2" fill="#b6dcc0"/>
+  <rect x="213.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="236.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="259.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="282.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="305.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="328.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="351.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <text class="in" x="192" y="402" xml:space="preserve">LR <tspan fill="#4d7cb8">A_bot</tspan>(k)</text>
+  <text class="in" x="192" y="418" xml:space="preserve">LW <tspan fill="#8a5aa8">B_left</tspan>(k+1)</text>
+  <text class="in" x="192" y="434" xml:space="preserve">GR <tspan fill="#8a5aa8">B_left</tspan>(k+2)</text>
+  <rect x="394" y="318" width="204" height="128" rx="2" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="rn" x="402" y="333" xml:space="preserve">region 1</text>
+  <text class="in" x="404" y="354" xml:space="preserve">C_bl += <tspan fill="#4d7cb8">A_bot</tspan> · <tspan fill="#8a5aa8">B_left</tspan></text>
+  <rect x="404" y="366" width="184" height="12" rx="2" fill="#b6dcc0"/>
+  <rect x="425.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="448.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="471.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="494.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="517.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="540.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="563.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <text class="in" x="404" y="402" xml:space="preserve">LR <tspan fill="#3f8f87">B_right</tspan>(k)</text>
+  <text class="in" x="404" y="418" xml:space="preserve">LW <tspan fill="#b8556b">A_top</tspan>(k+1)</text>
+  <text class="in" x="404" y="434" xml:space="preserve">GR <tspan fill="#b8556b">A_top</tspan>(k+2)</text>
+  <rect x="606" y="318" width="204" height="128" rx="2" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="rn" x="614" y="333" xml:space="preserve">region 2</text>
+  <text class="in" x="616" y="354" xml:space="preserve">C_tr += <tspan fill="#b8556b">A_top</tspan> · <tspan fill="#3f8f87">B_right</tspan></text>
+  <rect x="616" y="366" width="184" height="12" rx="2" fill="#b6dcc0"/>
+  <rect x="637.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="660.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="683.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="706.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="729.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="752.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="775.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <text class="in" x="616" y="402" xml:space="preserve">LR <tspan fill="#8a5aa8">B_left</tspan>(k+1)</text>
+  <text class="in" x="616" y="418" xml:space="preserve">LW <tspan fill="#4d7cb8">A_bot</tspan>(k+1)</text>
+  <text class="in" x="616" y="434" xml:space="preserve">GR <tspan fill="#4d7cb8">A_bot</tspan>(k+2)</text>
+  <rect x="818" y="318" width="204" height="128" rx="2" fill="#cde8d3" stroke="#4c9a5a"/>
+  <text class="rn" x="826" y="333" xml:space="preserve">region 3</text>
+  <text class="in" x="828" y="354" xml:space="preserve">C_br += <tspan fill="#4d7cb8">A_bot</tspan> · <tspan fill="#3f8f87">B_right</tspan></text>
+  <rect x="828" y="366" width="184" height="12" rx="2" fill="#b6dcc0"/>
+  <rect x="849.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="872.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="895.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="918.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="941.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="964.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <rect x="987.0" y="364" width="4" height="16" fill="#d4a72c"/>
+  <text class="in" x="828" y="402" xml:space="preserve">LR <tspan fill="#b8556b">A_top</tspan>(k+1)</text>
+  <text class="in" x="828" y="418" xml:space="preserve">LW <tspan fill="#3f8f87">B_right</tspan>(k+1)</text>
+  <text class="in" x="828" y="434" xml:space="preserve">GR <tspan fill="#3f8f87">B_right</tspan>(k+2)</text>
+  <text class="sub" x="16" y="474" xml:space="preserve">LDS slots in iteration k</text>
+  <rect x="16" y="486" width="156" height="24" rx="2" fill="#f6dbe2" stroke="#b8556b"/><text class="in" x="26" y="502" xml:space="preserve"><tspan fill="#b8556b" font-weight="600">A_top</tspan>  16 KB</text>
+  <line x1="182" y1="498" x2="386" y2="498" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="394" y1="498" x2="598" y2="498" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="452.0" y="488" width="88" height="20" rx="10" fill="#f7eec6" stroke="#d4a72c"/><text class="rn" x="496.0" y="501.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">write k+1</text>
+  <line x1="606" y1="498" x2="810" y2="498" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="818" y1="498" x2="1022" y2="498" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="876.0" y="488" width="88" height="20" rx="10" fill="#ffffff" stroke="#9a9a9a"/><text class="rn" x="920.0" y="501.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">read k+1</text>
+  <rect x="16" y="518" width="156" height="24" rx="2" fill="#d9e6f6" stroke="#4d7cb8"/><text class="in" x="26" y="534" xml:space="preserve"><tspan fill="#4d7cb8" font-weight="600">A_bot</tspan>  16 KB</text>
+  <line x1="182" y1="530" x2="386" y2="530" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="240.0" y="520" width="88" height="20" rx="10" fill="#ffffff" stroke="#9a9a9a"/><text class="rn" x="284.0" y="533.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">read k</text>
+  <line x1="394" y1="530" x2="598" y2="530" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="606" y1="530" x2="810" y2="530" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="664.0" y="520" width="88" height="20" rx="10" fill="#f7eec6" stroke="#d4a72c"/><text class="rn" x="708.0" y="533.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">write k+1</text>
+  <line x1="818" y1="530" x2="1022" y2="530" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="16" y="550" width="156" height="24" rx="2" fill="#ece0f4" stroke="#8a5aa8"/><text class="in" x="26" y="566" xml:space="preserve"><tspan fill="#8a5aa8" font-weight="600">B_left</tspan>  16 KB</text>
+  <line x1="182" y1="562" x2="386" y2="562" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="240.0" y="552" width="88" height="20" rx="10" fill="#f7eec6" stroke="#d4a72c"/><text class="rn" x="284.0" y="565.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">write k+1</text>
+  <line x1="394" y1="562" x2="598" y2="562" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="606" y1="562" x2="810" y2="562" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="664.0" y="552" width="88" height="20" rx="10" fill="#ffffff" stroke="#9a9a9a"/><text class="rn" x="708.0" y="565.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">read k+1</text>
+  <line x1="818" y1="562" x2="1022" y2="562" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="16" y="582" width="156" height="24" rx="2" fill="#d8efec" stroke="#3f8f87"/><text class="in" x="26" y="598" xml:space="preserve"><tspan fill="#3f8f87" font-weight="600">B_right</tspan>  16 KB</text>
+  <line x1="182" y1="594" x2="386" y2="594" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="394" y1="594" x2="598" y2="594" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="452.0" y="584" width="88" height="20" rx="10" fill="#ffffff" stroke="#9a9a9a"/><text class="rn" x="496.0" y="597.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">read k</text>
+  <line x1="606" y1="594" x2="810" y2="594" stroke="#dedcd6" stroke-width="1"/>
+  <line x1="818" y1="594" x2="1022" y2="594" stroke="#dedcd6" stroke-width="1"/>
+  <rect x="876.0" y="584" width="88" height="20" rx="10" fill="#f7eec6" stroke="#d4a72c"/><text class="rn" x="920.0" y="597.5" text-anchor="middle" xml:space="preserve" fill="#1a1a1a">write k+1</text>
+  <text class="note" x="178" y="636" xml:space="preserve">Dashed lines: region boundaries. Triton's membar pass places the two barriers per K-step that the slot recycling</text>
+  <text class="note" x="178" y="654" xml:space="preserve">needs, and Triton's MFMA scheduler spreads each region's memory ops through its 64 MFMAs to hide them.</text>
+</svg>
