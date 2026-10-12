@@ -125,7 +125,7 @@ KERNEL_NAME = "a16w16_inter_wave_gfx942"
 # and every access replays: measured SQ_LDS_BANK_CONFLICT ratio 0.75, i.e. 14
 # cycles per LDS instruction against a conflict-free 8.  per_phase=1 advances
 # the phase every row and measures exactly 0 conflicts.  vec=8 keeps the 16 B
-# ds_read_b128 / ds_write_b128 width.  See tools/lds_conflict.py --sweep.
+# ds_read_b128 / ds_write_b128 width.  See ../README.md section 4.4.
 #
 # Overridable (and gl.constexpr instances, since a @gluon.jit body may only read
 # globals that are already constexpr) so the sweep can drive them.

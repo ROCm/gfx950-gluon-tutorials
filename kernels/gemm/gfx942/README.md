@@ -93,37 +93,38 @@ cache-resident operands, 1000 dispatches, **mean of the last 100** kernel
 durations from `rocprofv3 --kernel-trace`. Each cell is the median of 3 rounds (5
 at K=8256), and a round runs all configurations of one shape back to back.
 `torch` is hipBLASLt via `torch.matmul` through the *same* harness. Per-SIMD MFMA
-efficiency is from ATT, the median of 3 traces (7 at K=8256).
+efficiency is from ATT, decoded with the repo's [`scripts/process_json.py`](../../../scripts/process_json.py),
+the median of 3 traces (7 at K=8256).
 
 **fp16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 604.6 | 87.96% | **626.9** | 96.69% | 605.0 |
-| 4160 | 622.6 | 89.43% | **635.4** | 98.25% | 604.9 |
-| 8256 | 633.5 | 90.15% | **635.6** | 97.45% | 596.0 |
-| 16448 | 649.3 | 90.51% | **660.1** | 99.42% | 606.4 |
+| 2112 | 604.6 | 90.89% | **626.9** | 99.63% | 605.0 |
+| 4160 | 622.6 | 90.88% | **635.4** | 99.72% | 604.9 |
+| 8256 | 633.5 | 90.84% | **635.6** | 98.07% | 596.0 |
+| 16448 | 649.3 | 90.86% | **660.1** | 99.78% | 606.4 |
 
 **bf16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 634.4 | 87.96% | **657.7** | 96.69% | 622.2 |
-| 4160 | 651.1 | 89.43% | **676.5** | 98.25% | 636.3 |
-| 8256 | **669.2** | 90.15% | 667.6 | 97.51% | 633.2 |
-| 16448 | 688.9 | 90.51% | **705.7** | 99.42% | 644.7 |
+| 2112 | 634.4 | 90.89% | **657.7** | 99.63% | 622.2 |
+| 4160 | 651.1 | 90.88% | **676.5** | 99.72% | 636.3 |
+| 8256 | **669.2** | 90.87% | 667.6 | 98.63% | 633.2 |
+| 16448 | 688.9 | 90.86% | **705.7** | 99.78% | 644.7 |
 
 `eff` is in-loop **per-SIMD** MFMA efficiency, the comparable figure: the matrix
 unit is a per-SIMD resource, so the 8-wave kernel's per-wave fraction doubles for
-its two co-resident waves. At 96.7–99.4% the 8-wave loop is essentially at the
-matrix-unit ceiling; the 4-wave one sits 7–9 points back, and
+its two co-resident waves. At 98.1–99.8% the 8-wave loop is essentially at the
+matrix-unit ceiling; the 4-wave one sits 7–9 points back, at 90.8–90.9%, and
 [`intra_wave/README.md`](intra_wave/README.md) shows via ablation that almost all
 of that gap is `ds_write` the MFMA stream cannot hide.
 
-Efficiency does not move with dtype (fp16 and bf16 compile to the same loop and
-trace to within 0.1% of each other) but does move with K, from 96.7% at K=2112 to 99.4%
-at K=16448 for the 8-wave kernel: a longer K means more loop iterations per
-prologue and better L2 reuse on the global loads.
+Efficiency moves with neither dtype nor K: fp16 and bf16 compile to the same loop,
+and both kernels run the same cycles per iteration at every K — 4506–4509 for the
+4-wave loop, 4105–4111 for the 8-wave one — except K=8256, where the 8-wave loop
+runs 1–2% slower (4153–4177) and the traces vary most (§3.3).
 
 **inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8, by 3.6% to 9.5%.
 At K=8256 the two kernels tie (+0.3% fp16, −0.2% bf16), for the power reason in
@@ -132,20 +133,21 @@ At K=8256 the two kernels tie (+0.3% fp16, −0.2% bf16), for the power reason i
 
 For scale, Triton's own `BlockPingpong` schedule at 4096×4864×8256
 (`python/tutorials/03-matrix-multiplication.py`, tile 256×256×64, `num_warps=8`,
-with the loop-variant K mask removed so the pass fires) reaches 4228.2 cyc/iter
-and 96.87% per-SIMD at 550.3 TFLOPS, through the same harness. It uses
+with the loop-variant K mask removed so the pass fires) reaches 4207.5 cyc/iter
+and 97.35% per-SIMD at 550.3 TFLOPS, through the same harness. It uses
 `v_mfma_f32_32x32x8_f16`, which is more power-dense than the `16x16x16` used here
 and settles at 1.07 GHz under the cap against inter_wave's 1.19 — so inter_wave is
-ahead on cycles (4203.4), on efficiency, and by 15.5% on wall clock. See §3.5.
+ahead on cycles (4176.6), on efficiency, and by 15.5% on wall clock. See §3.5.
 
-Cycles per iteration per wave behind the efficiency column, for reference:
+Cycles per iteration per wave behind the efficiency column (fp16; bf16 within 0.6%),
+for reference:
 
 | K | intra_wave | inter_wave |
 |---|---|---|
-| 2112 | 4656.9 | 4236.3 |
-| 4160 | 4580.0 | 4169.1 |
-| 8256 | 4543.5 | 4203.4 |
-| 16448 | 4525.6 | 4120.1 |
+| 2112 | 4506.5 | 4111.2 |
+| 4160 | 4507.2 | 4107.6 |
+| 8256 | 4509.1 | 4176.6 |
+| 16448 | 4507.8 | 4104.9 |
 
 Codegen: intra_wave 256 VGPR + 256 AGPR, 1 wave/SIMD, with 2 VGPRs spilled outside
 the loop (12 B of scratch, §5); inter_wave 240 VGPR, 0 AGPR, 0 spills, **2
@@ -226,8 +228,8 @@ peak, and the last 100 of those 20000 dispatches read 0.7-4.6% below the tables'
 last 100 of 1000: the tables already measure a part on its cap. `bench.py`'s
 `do_bench` reads higher — 653.4 TFLOPS for inter_wave at fp16 K=4160 against
 635.4 in the table — because its timer is not kernel duration. K = 8256 is the
-noisiest point: rounds there spread by up to 5.5%, and about one ATT trace in
-seven lands 12-29% high, which is why that row takes 5 rounds and 7 traces.
+noisiest point: rounds there spread by up to 5.5%, and an occasional ATT trace (2
+of 28) lands 15-18% high, which is why that row takes 5 rounds and 7 traces.
 
 ### 3.4 ATT traces
 
@@ -273,32 +275,32 @@ At K=8256 (all four K values are in §3):
 | | mfma/iter/wave | cycles/iter/wave | per-wave | **per-SIMD** |
 |---|---|---|---|---|
 | intra_wave, as first ported (`v1.1`) | 256 | 5877 | 69.7% | **69.7%** (1 wave/SIMD) |
-| intra_wave, current | 256 | 4543.5 | 90.2% | **90.2%** |
+| intra_wave, current | 256 | 4509.1 | 90.8% | **90.8%** |
 | inter_wave, as first ported (`v1.1`) | 128 | 4770.6 | 42.9% | **85.9%** (2 waves/SIMD) |
-| inter_wave, current | 128 | **4203.4** | 48.7% | **97.5%** |
+| inter_wave, current | 128 | **4176.6** | 49.0% | **98.1%** |
 
 Both kernels moved a long way from the initial port: intra_wave through the
-opt1-opt5 sequence in [`intra_wave/note.md`](intra_wave/note.md) and then Triton's
+opt1-opt5 sequence in [`intra_wave/README.md`](intra_wave/README.md#optimization-history) and then Triton's
 MFMA scheduler (§5), inter_wave through the 8-region redesign in
 [`inter_wave/README.md`](inter_wave/README.md). The LDS bank-conflict fix in §4.4
-is common to both and is worth −16.1% loop cycles on the 4-wave kernel and −10.8%
+is common to both and is worth −16.2% loop cycles on the 4-wave kernel and −10.8%
 on the 8-wave one.
 
 ### 3.5 Why TFLOPS understates the 8-wave kernel
 
-The clearest case is K=8256 in §3: the 8-wave kernel runs **7.5% fewer cycles per
-K-step** (4203.4 vs 4543.5) at **7.3 points** higher per-SIMD MFMA efficiency, and
+The clearest case is K=8256 in §3: the 8-wave kernel runs **7.4% fewer cycles per
+K-step** (4176.6 vs 4509.1) at **7.2 points** higher per-SIMD MFMA efficiency, and
 only ties on TFLOPS — 635.6 against 633.5 in fp16, 667.6 against 669.2 in bf16.
 The 750 W cap is why. Sustained over 20000 dispatches, fp16 K=8256, both kernels
 pinned at 750 W:
 
 | fp16, K=8256 | cycles/iter | per-SIMD eff | sustained clock | TFLOPS (§3) |
 |---|---|---|---|---|
-| intra_wave | 4543.5 | 90.15% | 1.27-1.29 GHz | 633.5 |
-| inter_wave | **4203.4** | **97.45%** | 1.19 GHz | 635.6 |
-| Triton `BlockPingpong` | 4228.2 | 96.87% | 1.07 GHz | 550.3 |
+| intra_wave | 4509.1 | 90.84% | 1.27-1.29 GHz | 633.5 |
+| inter_wave | **4176.6** | **98.07%** | 1.19 GHz | 635.6 |
+| Triton `BlockPingpong` | 4207.5 | 97.35% | 1.07 GHz | 550.3 |
 
-The 7.5% cycle advantage is cancelled by a 6-8% clock deficit: **the better
+The 7.4% cycle advantage is cancelled by a 6-8% clock deficit: **the better
 pipeline draws more power and gets clocked down for it**, the same DIDT dynamic the
 tutorial's v7 describes. `BlockPingpong`'s `32x32x8` MFMA is denser still, and pays
 for it with the lowest clock of the three.
@@ -389,17 +391,28 @@ The parameters place element `(r, c)` at column
 **`per_phase = 1`, not 2.** The global-load layout has consecutive lanes walking
 consecutive rows, so lanes 0–15 of a `b128` access cover *two adjacent rows*. With
 `per_phase = 2` those two rows share a phase, land on the same 32 banks, and every
-access replays. Measured with [`tools/lds_conflict.py`](tools/lds_conflict.py),
-which reads `SQ_LDS_BANK_CONFLICT` and `SQ_LDS_IDX_ACTIVE`:
+access replays. Measured with three hardware counters, fp16 K=8256, per dispatch:
+
+```bash
+rocprofv3 --pmc SQ_LDS_BANK_CONFLICT SQ_LDS_IDX_ACTIVE SQ_INSTS_LDS --output-format csv -d lds \
+    -- python bench.py --rocprof -k inter_wave --K 8256 --dtype fp16
+```
+
+conflict ratio = `SQ_LDS_BANK_CONFLICT / (SQ_LDS_IDX_ACTIVE - SQ_LDS_BANK_CONFLICT)`
+(replay cycles per useful cycle) and cycles per LDS instruction =
+`SQ_LDS_IDX_ACTIVE / SQ_INSTS_LDS`. Both kernels take the layout from
+`GFX942_SWZ_VEC` / `GFX942_SWZ_PER_PHASE` / `GFX942_SWZ_MAX_PHASE`, so
+`GFX942_SWZ_PER_PHASE=2` measures `(8, 2, 8)`; give each layout its own
+`TRITON_CACHE_DIR`, because the swizzle is not part of Triton's cache key.
 
 | | conflict ratio | cyc / LDS instr | intra_wave `IDX_ACTIVE` | inter_wave `IDX_ACTIVE` |
 |---|---|---|---|---|
-| `(8, 2, 8)` | 0.667 / 0.750 | 13.33 / 14.00 | 2.510e9 | 3.514e9 |
-| **`(8, 1, 8)`** | **0.000** | **8.00** | **1.506e9** | **2.008e9** |
+| `(8, 2, 8)` | 0.667 / 0.750 | 13.33 / 14.00 | 1.004e8 | 1.406e8 |
+| **`(8, 1, 8)`** | **0.000** | **8.00** | **6.02e7** | **8.03e7** |
 
 8.00 cyc/instr is the floor (1024 B at 128 B/clk). In loop cycles (ATT, fp16
-K=4160) the fix is worth **−16.1%** on the 4-wave kernel (5458.1 → 4580.0) and
-**−10.8%** on the 8-wave one (4672.0 → 4169.1). The 4-wave figure was only −1.0%
+K=4160) the fix is worth **−16.2%** on the 4-wave kernel (5375.3 → 4507.2) and
+**−10.8%** on the 8-wave one (4603.6 → 4107.6). The 4-wave figure was only −1.0%
 under the `v1.1` plugin, because the plugin parked ~25 surplus MFMAs between each
 region's last LDS read and its first LDS write, and that slack absorbed the replays.
 Triton's MFMA scheduler leaves no such slack. Measured on a build with the parking
@@ -407,8 +420,8 @@ added back (fp16 K=4160, cycles per iteration):
 
 | | in-tree schedule | + parking (`v1.1` opt 2) |
 |---|---|---|
-| `(8, 2, 8)` | 5466.1 | 4636.1 |
-| **`(8, 1, 8)`** | **4580.0** | 4677.5 |
+| `(8, 2, 8)` | 5379.3 | 4559.6 |
+| **`(8, 1, 8)`** | **4507.3** | 4603.2 |
 
 With the conflicting layout, parking recovers most of the loss; with the
 conflict-free one it costs 2.1%. The right layout plus the plain schedule is the
@@ -423,17 +436,6 @@ consecutive rows makes lanes 0–15 cover two adjacent 128 B rows = 256 B = all 
 banks exactly once, and improves the global side too (one instruction now reads
 1024 contiguous bytes).
 
-> [!WARNING]
-> Earlier versions of this port used `(8, 2, 8)` and described it as
-> "bank-conflict free in both directions", on the strength of
-> [`tools/layout_check.py`](tools/layout_check.py)'s analytical model. **The model
-> is wrong** and still reports `(8, 2, 8)` as clean. Use
-> [`tools/lds_conflict.py`](tools/lds_conflict.py), which measures the hardware
-> counter and can sweep `(vec, per_phase, max_phase)`:
-> ```bash
-> python tools/lds_conflict.py --kernel inter_wave --sweep
-> ```
-
 ### 4.5 Where the two kernels diverge
 
 Given §4.1–4.4, the remaining question is *who hides the barriers and the LDS
@@ -445,7 +447,7 @@ writes*, and that is the whole difference between the two kernels:
 | needs | Triton's MFMA scheduler to interleave (§5) | `warp_pipeline_stage` and a barrier per region |
 | accumulators | AGPR — separate capacity at 1 wave/SIMD | VGPR — 2 waves split one 512-register file |
 | LDS refill | per half-tile, one region after its last read | whole tensors, late in the body |
-| ceiling | `ds_write` issue cost the MFMA stream cannot absorb | ~98% per-SIMD; barriers and write turnaround |
+| ceiling | `ds_write` issue cost the MFMA stream cannot absorb | ~99.7% per-SIMD; barriers and write turnaround |
 
 The 4-wave kernel is the more instructive read and the 8-wave one is the faster
 kernel. Both READMEs assume this section.
@@ -469,13 +471,13 @@ was byte-identical with and without it. The pass already knew the CDNA3 MFMA sha
 priced an LDS access at `Bits / 8` cycles, CDNA4's 256 B/clk; CDNA3 serves 128 B/clk,
 so with all four SIMDs issuing it a `ds_read_b128` needs 32 cycles of MFMA cover, not
 16. #12229 runs the pass on gfx942 and prices LDS by the target's bandwidth. On the
-4-wave kernel (ATT cycles per K-iteration / per-SIMD in-loop MFMA efficiency):
+4-wave kernel (bf16; ATT cycles per K-iteration / per-SIMD in-loop MFMA efficiency):
 
 | | K=2112 | K=4160 | K=8256 | K=16448 |
 |---|---|---|---|---|
-| scheduler off (`--schedule-hint ""`) | 6065.4 / 67.5% | 5966.6 / 68.7% | 5920.0 / 69.2% | 5896.6 / 69.5% |
-| pass run on gfx942 with CDNA4's LDS cost | 5327 / 76.9% | 5242 / 78.1% | 5372 / 76.2% | 5180 / 79.1% |
-| **`v3.1`: CDNA3's LDS cost** | **4656.9 / 88.0%** | **4580.0 / 89.4%** | **4543.5 / 90.2%** | **4525.6 / 90.5%** |
+| scheduler off (`--schedule-hint ""`) | 5867.2 / 69.8% | 5870.9 / 69.8% | 5872.6 / 69.7% | 5873.2 / 69.7% |
+| pass run on gfx942 with CDNA4's LDS cost | 5156.1 / 79.4% | 5159.1 / 79.4% | 5319.2 / 77.0% | 5159.8 / 79.4% |
+| **`v3.1`: CDNA3's LDS cost** | **4506.4 / 90.9%** | **4507.3 / 90.9%** | **4507.6 / 90.9%** | **4507.8 / 90.9%** |
 
 The middle row was measured on an ablation build while #12229 was prepared (one
 trace per cell; read its K=8256 cell loosely, §3.3); the other two are `v3.1`,
@@ -485,7 +487,7 @@ bf16 (paired within each round of §3), and it runs about 1% fewer cycles per
 iteration than the `v1.1` plugin did.
 
 The plugin's other gfx942 change, parking surplus MFMAs between a region's last
-`local_load` and first `local_store` (opt 2 in [`intra_wave/note.md`](intra_wave/note.md)),
+`local_load` and first `local_store` (opt 2 in [`intra_wave/README.md`](intra_wave/README.md#optimization-history)),
 is **not** in Triton: under the in-tree pass, which fences every memory op, it costs
 2.1% more cycles per iteration at every K. It only paid while the LDS layout had
 bank conflicts (§4.4).
@@ -513,13 +515,9 @@ kernels/gemm/gfx942/
                                 --sweep-gm, --rocprof
   intra_wave/matmul_kernel.py   4-wave kernel
              README.md          its design + differences from gfx950 v9
-             note.md            the opt1-opt5 optimization log
   inter_wave/matmul_kernel.py   8-wave kernel
              README.md          its design + differences from gfx950
              images/            the pipeline diagram used by that README
-  tools/layout_check.py         analytical LDS layout sweep (model is unreliable,
-                                see 4.3 -- prefer lds_conflict.py)
-  tools/lds_conflict.py         SQ_LDS_BANK_CONFLICT counter + swizzle sweep
   tools/run_att.py              rocprofv3 --att capture, verifies the ui_* dir
   tools/bench_prepared.py       prepared-launch rocprofv3 timing, multi-GPU sweep
 ```

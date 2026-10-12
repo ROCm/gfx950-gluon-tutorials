@@ -77,7 +77,7 @@ Two things are genuinely different on CDNA3, and they drive the whole design:
    two rows the same swizzle phase -- they hit the same 32 banks and every
    access replays.  Measured with SQ_LDS_BANK_CONFLICT: (8,2,8) is 0.667 replay
    cycles per useful cycle (13.33 cyc/LDS instr), (8,1,8) is exactly 0
-   (8.00 cyc).  See tools/lds_conflict.py --sweep.
+   (8.00 cyc).  See ../README.md section 4.4.
 
 Register budget (per lane, 1 wave/SIMD so 256 VGPR + 256 AGPR are available):
     C accumulators   4 x [128x128] f32  = 256   -> AGPR (cd_regclass="a")
@@ -111,7 +111,7 @@ GROUP_SIZE_M = 4
 MIN_K = 4 * BLOCK_K
 KERNEL_NAME = "a16w16_intra_wave_gfx942"
 
-# SwizzledSharedLayout(vec, per_phase, max_phase); see tools/lds_conflict.py.
+# SwizzledSharedLayout(vec, per_phase, max_phase); see ../README.md section 4.4.
 # gl.constexpr instances because a @gluon.jit body may only read globals that
 # are already constexpr.
 SWZ_VEC = gl.constexpr(int(os.environ.get("GFX942_SWZ_VEC", 8)))
@@ -171,7 +171,7 @@ def a16w16_intra_wave_gfx942(
     # swizzle(vec=8, per_phase=1, max_phase=8): the 16 B chunk index inside a
     # 128 B row is xored with row % 8.  Measured conflict-free in both
     # directions; per_phase=2 (which an earlier version of this kernel used, and
-    # which tools/layout_check.py's model wrongly reports as clean) costs 67%
+    # which an analytical bank model wrongly reports as clean) costs 67%
     # extra LDS cycles.  Costs no LDS unlike padding, which matters because the
     # four slots below are exactly 64 KB.
     sharedLayoutA: gl.constexpr = gl.SwizzledSharedLayout(
@@ -254,7 +254,7 @@ def a16w16_intra_wave_gfx942(
     ## four youngest -- collapsing region 0's waits from vmcnt(15)/(13)/(12) to
     ## vmcnt(3)/(1)/(0), i.e. draining the whole 16-deep queue built to hide HBM
     ## latency.  s_barrier has unmodeled side effects, so it fences the
-    ## scheduler; Gluon exposes no sched.barrier.  See note.md Opt 5.
+    ## scheduler; Gluon exposes no sched.barrier.  See README.md, opt 5.
     gl.barrier()
 
     gA_top = buffer_load(ptr=a_base, offsets=a_top_offsets)
@@ -277,7 +277,7 @@ def a16w16_intra_wave_gfx942(
     ##
     ## Draining here costs one barrier in the prologue and removes one from
     ## every K-step: 3 barriers/iteration -> 2, and 3 `s_waitcnt lgkmcnt(0)`
-    ## -> 1. See note.md Opt 3.
+    ## -> 1. See README.md, opt 3.
     gl.barrier()
 
     ## ------------------------------------------------------------------

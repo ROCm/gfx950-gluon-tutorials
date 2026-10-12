@@ -15,14 +15,13 @@ global loads, LDS reads and LDS writes.
 `local_store` and every barrier inside a single instruction stream, and a 16-cycle
 MFMA cannot cover a ~20-cycle `ds_write`. Here two wave groups run one region out
 of phase, so the group on the matrix unit is covered by the group in memory, and
-the same traffic costs almost nothing: **~98% per-SIMD MFMA efficiency against
-~90%.**
+the same traffic costs almost nothing: **~99.7% per-SIMD MFMA efficiency against
+~91%.**
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
 python bench.py -k inter_wave                      # correctness + TFLOPS
 python tools/bench_prepared.py --kernel inter_wave --gpus all   # sustained timing
-python tools/lds_conflict.py  --kernel inter_wave              # LDS bank conflicts
 python tools/run_att.py inter_wave --K 8256 --out att_inter     # ATT trace
 ```
 
@@ -36,13 +35,14 @@ Codegen: **240 VGPR, 0 AGPR, 0 spills, 2 waves/SIMD, 64 KB LDS**, and
 
 ## The pipeline
 
-![inter_wave pipeline design](images/mi300_inter-wave_design.png)
+![inter_wave pipeline design](images/inter_wave_design.svg)
 
-Left: the 256×256 output tile as four 128×128 quadrants, with A split along M
-into `A_t` / `A_b` and B split along N into `B_l` / `B_r`. Right: the schedule,
-with the two wave groups (waves 0–3 and waves 4–7) offset by exactly one region.
-That phase shift is what `warp_pipeline_stage` sets up, and it is the whole point
-— one group is always on the matrix unit while the other is in memory.
+Top left: the 256×256 output tile as four 128×128 quadrants, with A split along M
+into `A_t` / `A_b` and B split along N into `B_l` / `B_r`. Bottom: one K-step of
+the schedule, time running left to right, with the two wave groups (waves 0–3 and
+waves 4–7) offset by exactly one region. That phase shift is what
+`warp_pipeline_stage` sets up, and it is the whole point — one group is always on
+the matrix unit while the other is in memory.
 
 ### Whole-tensor global and LDS writes, sliced LDS reads
 
@@ -88,7 +88,7 @@ Region *k* processes tile *k* and prefetches tile *k+1*:
 Memory-region cycles are LDS-port time with 4 of the 8 waves in the memory phase
 at 128 B/clk. **Every memory region fits inside the dot region it ping-pongs
 against** (256/128/384/256 against 512) — that is the property which keeps the
-matrix unit fed, and the reason this schedule reaches ~98% per-SIMD MFMA
+matrix unit fed, and the reason this schedule reaches ~99.7% per-SIMD MFMA
 efficiency.
 
 ### Why this order
@@ -139,7 +139,7 @@ written in 6; B is read in 2 (and in 6, for *k+1*) and written in 4.
 The conflict-free layout is worth **−10.8% loop cycles** here: two resident waves
 per SIMD keep the LDS port roughly twice as busy, so every replay shows. It was the
 single largest win in this kernel — larger than halving the region count. (In
-[`../intra_wave`](../intra_wave/) it is worth −16.1% under Triton's MFMA scheduler,
+[`../intra_wave`](../intra_wave/) it is worth −16.2% under Triton's MFMA scheduler,
 though under the old plugin schedule it looked almost free there; §4.4 has why.)
 
 ## Differences from the gfx950 kernel
@@ -202,6 +202,6 @@ groups swap; it only doubles the instruction count inside each region.
 
 That is the end of the reading path. To go further:
 [`../README.md`](../README.md) §3 for the numbers,
-[`../intra_wave/note.md`](../intra_wave/note.md) for the optimization log of the
-4-wave kernel (much of which — the LDS swizzle, the prologue load ordering —
+[`../intra_wave/README.md`](../intra_wave/README.md#optimization-history) for the
+optimization history of the 4-wave kernel (much of which — the LDS swizzle, the prologue load ordering —
 applies here too), and `tools/` for the measurement harnesses.

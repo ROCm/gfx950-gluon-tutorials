@@ -19,7 +19,6 @@ the problems that are visible here.
 cd ..                                              # kernels/gemm/gfx942
 python bench.py -k intra_wave                      # correctness + TFLOPS
 python tools/bench_prepared.py --kernel intra_wave --gpus all   # sustained timing
-python tools/lds_conflict.py  --kernel intra_wave              # LDS bank conflicts
 python tools/run_att.py intra_wave --K 8256 --out att_intra     # ATT trace
 ```
 
@@ -97,7 +96,7 @@ one unified 512-register file and AGPRs buy nothing.
 
 `SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4
 together with the global-load lane remapping it requires. Making it conflict-free
-is worth **−16.1% loop cycles** here (−10.8% in [`../inter_wave`](../inter_wave/)).
+is worth **−16.2% loop cycles** here (−10.8% in [`../inter_wave`](../inter_wave/)).
 On `v1.1` it looked almost free here, −1.0%, because the plugin parked surplus
 MFMAs between the last LDS read and the first write and that slack absorbed the
 replays; Triton's MFMA scheduler leaves no such slack, so a replayed access costs
@@ -136,8 +135,7 @@ to assume differ:
   takes v9's MFMA efficiency from 58% to 80%). The difference is the LDS cost: CDNA3
   serves 128 B/clk against CDNA4's 256, so a `ds_read_b128` needs twice the MFMA
   cover here. Until `v3.1` the scheduler ran on gfx950 only and was a silent no-op on
-  gfx942. See [`../README.md`](../README.md) §5; the plugin era of the same story is
-  [`note.md`](note.md) §1.
+  gfx942. See [`../README.md`](../README.md) §5.
 
 The one tooling gap is `amdgcnas`, the post-assembly peephole that packs the
 scattered SALU at iteration boundaries and is worth gfx950's last 97% → 98%. It
@@ -174,28 +172,29 @@ everything else constant. The result is numerically wrong — it is a timing pro
 
 | | cyc/iter | MFMA eff |
 |---|---|---|
-| as shipped | 4580.0 | 89.43% |
-| `ds_write` removed | 4238.8 | **96.63%** |
+| as shipped | 4507.2 | 90.88% |
+| `ds_write` removed | 4173.5 | **98.14%** |
 
-`ds_write` is **~two thirds of all remaining inefficiency**, and it is not
+`ds_write` is **~80% of all remaining inefficiency**, and it is not
 bandwidth: a `ds_write_b128` issues in ~20 cycles (4 for the address, 16 for the
 data) while a `v_mfma_f32_16x16x16_f16` covers only 16, so **one MFMA cannot hide
-one LDS write**. 16 × 20 = 320 unhideable cycles per iteration, against 341.2
-measured (fp16 K=4160, median of 3 traces each). Full analysis in [`note.md`](note.md) §6.
+one LDS write**. 16 × 20 = 320 unhideable cycles per iteration, against 333.7
+measured (fp16 K=4160, median of 3 traces each).
 
 **This is the limit of the intra_wave design on MI300.** Closing it means writing
 *less* to LDS — a different pipeline, not a tuning knob — or not paying the cost in
 this instruction stream at all. The latter is exactly what
 [`../inter_wave`](../inter_wave/) does, by handing the writes to the other wave
-group while this one is on the matrix unit, and it is why that kernel reaches ~98%
-per-SIMD instead of ~90%.
+group while this one is on the matrix unit, and it is why that kernel reaches ~99.7%
+per-SIMD instead of ~91%.
 
 **Next:** [`../inter_wave/README.md`](../inter_wave/README.md).
 
 ## Optimization history
 
-Detailed in [`note.md`](note.md); summarised at fp16 K=8256 (every row up to
-"+ swizzle" on `v1.1` with the LLIR scheduler plugin):
+At fp16 K=8256, decoded with `scripts/process_json.py` (every row up to "+ swizzle"
+on `v1.1` with the LLIR scheduler plugin; that row is the final `v1.1` build at
+K=4160, whose K=8256 traces scatter too much to use):
 
 | | cyc/iter | MFMA eff | what changed |
 |---|---|---|---|
@@ -205,8 +204,8 @@ Detailed in [`note.md`](note.md); summarised at fp16 K=8256 (every row up to
 | opt 3 | 4601 | 89.0% | prologue LDS reads drained before the loop: 3→2 barriers, 3→1 `lgkmcnt(0)` |
 | opt 4 | — | — | **rejected** — register-form change, 1.1% slower |
 | opt 5 | 4622 | 88.4% | prologue load order pinned; `vmcnt(3)/(1)/(0)` → `(15)/(13)/(12)` |
-| + swizzle | 4588 | 89.3% | conflict-free LDS layout |
-| **`v3.1`** | **4543.5** | **90.2%** | Triton's MFMA scheduler, upstream on gfx942 with CDNA3's LDS cost ([#12229](https://github.com/triton-lang/triton/pull/12229)); opt 2 dropped ([`../README.md`](../README.md) §5) |
+| + swizzle | 4551 | 90.0% | conflict-free LDS layout |
+| **`v3.1`** | **4509.1** | **90.8%** | Triton's MFMA scheduler, upstream on gfx942 with CDNA3's LDS cost ([#12229](https://github.com/triton-lang/triton/pull/12229)); opt 2 dropped ([`../README.md`](../README.md) §5) |
 
 Opt 4 and opt 5 are worth reading together: chasing a conservative `vmcnt` led
 first to a wrong conclusion (an LLVM register-form flag) and then to the real
