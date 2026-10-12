@@ -303,7 +303,7 @@ During the run, fp16 K=16448:
 
 Both kernels sit on the cap, and the 8.9% cycle advantage is almost cancelled by an
 8.0% clock deficit: **the better pipeline draws more power per cycle and gets
-clocked down for it**, the same DIDT dynamic the tutorial's v7 describes.
+clocked down for it**.
 `BlockPingpong`'s `32x32x8` MFMA is denser still, and runs lower still: 1.10 GHz at
 K=8256 against inter_wave's 1.33.
 
