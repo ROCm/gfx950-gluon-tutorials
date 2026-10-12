@@ -21,7 +21,7 @@ python bench.py -k intra_wave                      # correctness + TFLOPS (do_be
 AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
     -- python bench.py --rocprof -k intra_wave --K 8256 --dtype fp16       # timing, ../README.md §3
 python ../../../scripts/run_att.py --att-output att \
-    python bench.py -k intra_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.4
+    python bench.py -k intra_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.3
 ```
 
 Two things are **required** for this kernel, unlike
@@ -207,7 +207,7 @@ K=4160, whose K=8256 traces scatter too much to use):
 | opt 4 | — | — | **rejected** — register-form change, 1.1% slower |
 | opt 5 | 4622 | 88.4% | prologue load order pinned; `vmcnt(3)/(1)/(0)` → `(15)/(13)/(12)` |
 | + swizzle | 4551 | 90.0% | conflict-free LDS layout |
-| **`v3.1`** | **4509.1** | **90.8%** | Triton's MFMA scheduler, upstream on gfx942 with CDNA3's LDS cost ([#12229](https://github.com/triton-lang/triton/pull/12229)); opt 2 dropped ([`../README.md`](../README.md) §5) |
+| **`v3.1`** | **4509.1** | **90.8%** | Triton's MFMA scheduler, upstream on gfx942 with CDNA3's LDS cost ([#12229](https://github.com/triton-lang/triton/pull/12229)); opt 2 dropped |
 
 Opt 4 and opt 5 are worth reading together: chasing a conservative `vmcnt` led
 first to a wrong conclusion (an LLVM register-form flag) and then to the real

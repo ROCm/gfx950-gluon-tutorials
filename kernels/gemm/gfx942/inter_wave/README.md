@@ -24,7 +24,7 @@ python bench.py -k inter_wave                      # correctness + TFLOPS (do_be
 AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
     -- python bench.py --rocprof -k inter_wave --K 8256 --dtype fp16       # timing, ../README.md §3
 python ../../../scripts/run_att.py --att-output att \
-    python bench.py -k inter_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.4
+    python bench.py -k inter_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.3
 ```
 
 No environment variables needed — the no-AGPR setting is baked into the launch,

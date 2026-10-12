@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0.5" y="0.5" width="759" height="379" rx="8" fill="#fcfcfb" stroke="#e4e3df"/>
+  <text x="24" y="32" font-size="15" font-weight="600" fill="#0b0b0b">bf16 GEMM on MI300X, 4096 × 4864 × K</text>
+  <text x="24" y="52" font-size="12" fill="#52514e">TFLOPS, higher is better · kernel time from rocprofv3, median of interleaved rounds</text>
+  <rect x="24" y="68" width="12" height="12" rx="2" fill="#2a78d6"/><text x="42" y="78.5" font-size="12" fill="#52514e">Gluon intra_wave (4 waves)</text>
+  <rect x="235.6" y="68" width="12" height="12" rx="2" fill="#eb6834"/><text x="253.6" y="78.5" font-size="12" fill="#52514e">Gluon inter_wave (8 waves)</text>
+  <rect x="447.2" y="68" width="12" height="12" rx="2" fill="#1baf7a"/><text x="465.2" y="78.5" font-size="12" fill="#52514e">hipBLASLt (torch.matmul)</text>
+  <line x1="64" y1="328.0" x2="736" y2="328.0" stroke="#c9c8c3" stroke-width="1"/><text x="56" y="332.0" font-size="11" fill="#6b6a66" text-anchor="end">0</text>
+  <line x1="64" y1="274.0" x2="736" y2="274.0" stroke="#e8e7e3" stroke-width="1"/><text x="56" y="278.0" font-size="11" fill="#6b6a66" text-anchor="end">200</text>
+  <line x1="64" y1="220.0" x2="736" y2="220.0" stroke="#e8e7e3" stroke-width="1"/><text x="56" y="224.0" font-size="11" fill="#6b6a66" text-anchor="end">400</text>
+  <line x1="64" y1="166.0" x2="736" y2="166.0" stroke="#e8e7e3" stroke-width="1"/><text x="56" y="170.0" font-size="11" fill="#6b6a66" text-anchor="end">600</text>
+  <line x1="64" y1="112.0" x2="736" y2="112.0" stroke="#e8e7e3" stroke-width="1"/><text x="56" y="116.0" font-size="11" fill="#6b6a66" text-anchor="end">800</text>
+  <path d="M110.0,328 V168.4 Q110.0,164.4 114.0,164.4 H130.0 Q134.0,164.4 134.0,168.4 V328 Z" fill="#2a78d6"/><text x="122.0" y="159.4" font-size="10.5" fill="#52514e" text-anchor="middle">606</text>
+  <path d="M136.0,328 V160.1 Q136.0,156.1 140.0,156.1 H156.0 Q160.0,156.1 160.0,160.1 V328 Z" fill="#eb6834"/><text x="148.0" y="151.1" font-size="10.5" fill="#52514e" text-anchor="middle">637</text>
+  <path d="M162.0,328 V165.2 Q162.0,161.2 166.0,161.2 H182.0 Q186.0,161.2 186.0,165.2 V328 Z" fill="#1baf7a"/><text x="174.0" y="156.2" font-size="10.5" fill="#52514e" text-anchor="middle">618</text>
+  <text x="148.0" y="348" font-size="12" fill="#52514e" text-anchor="middle">K = 2112</text>
+  <path d="M278.0,328 V145.1 Q278.0,141.1 282.0,141.1 H298.0 Q302.0,141.1 302.0,145.1 V328 Z" fill="#2a78d6"/><text x="290.0" y="136.1" font-size="10.5" fill="#52514e" text-anchor="middle">692</text>
+  <path d="M304.0,328 V139.4 Q304.0,135.4 308.0,135.4 H324.0 Q328.0,135.4 328.0,139.4 V328 Z" fill="#eb6834"/><text x="316.0" y="130.4" font-size="10.5" fill="#52514e" text-anchor="middle">714</text>
+  <path d="M330.0,328 V160.8 Q330.0,156.8 334.0,156.8 H350.0 Q354.0,156.8 354.0,160.8 V328 Z" fill="#1baf7a"/><text x="342.0" y="151.8" font-size="10.5" fill="#52514e" text-anchor="middle">634</text>
+  <text x="316.0" y="348" font-size="12" fill="#52514e" text-anchor="middle">K = 4160</text>
+  <path d="M446.0,328 V144.6 Q446.0,140.6 450.0,140.6 H466.0 Q470.0,140.6 470.0,144.6 V328 Z" fill="#2a78d6"/><text x="458.0" y="135.6" font-size="10.5" fill="#52514e" text-anchor="middle">694</text>
+  <path d="M472.0,328 V142.7 Q472.0,138.7 476.0,138.7 H492.0 Q496.0,138.7 496.0,142.7 V328 Z" fill="#eb6834"/><text x="484.0" y="133.7" font-size="10.5" fill="#52514e" text-anchor="middle">701</text>
+  <path d="M498.0,328 V158.9 Q498.0,154.9 502.0,154.9 H518.0 Q522.0,154.9 522.0,158.9 V328 Z" fill="#1baf7a"/><text x="510.0" y="149.9" font-size="10.5" fill="#52514e" text-anchor="middle">641</text>
+  <text x="484.0" y="348" font-size="12" fill="#52514e" text-anchor="middle">K = 8256</text>
+  <path d="M614.0,328 V143.4 Q614.0,139.4 618.0,139.4 H634.0 Q638.0,139.4 638.0,143.4 V328 Z" fill="#2a78d6"/><text x="626.0" y="134.4" font-size="10.5" fill="#52514e" text-anchor="middle">698</text>
+  <path d="M640.0,328 V141.5 Q640.0,137.5 644.0,137.5 H660.0 Q664.0,137.5 664.0,141.5 V328 Z" fill="#eb6834"/><text x="652.0" y="132.5" font-size="10.5" fill="#52514e" text-anchor="middle">706</text>
+  <path d="M666.0,328 V157.6 Q666.0,153.6 670.0,153.6 H686.0 Q690.0,153.6 690.0,157.6 V328 Z" fill="#1baf7a"/><text x="678.0" y="148.6" font-size="10.5" fill="#52514e" text-anchor="middle">646</text>
+  <text x="652.0" y="348" font-size="12" fill="#52514e" text-anchor="middle">K = 16448</text>
+</svg>
