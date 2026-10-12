@@ -319,7 +319,7 @@ def a16w16_inter_wave_gfx942(
 
 
 def compile_options() -> dict:
-    """Compile options of this kernel; tools/bench_prepared.py uses them too.
+    """Compile options of this kernel's launch.
 
     Forbid AGPRs: with 2 waves/SIMD the unified 512-register file is split
     between the resident waves, so AGPRs add no capacity and only cost

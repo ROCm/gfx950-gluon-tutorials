@@ -390,7 +390,7 @@ def a16w16_intra_wave_gfx942(
 
 
 def compile_options(schedule_hint: str = "mfma-schedule") -> dict:
-    """Compile options of this kernel; tools/bench_prepared.py uses them too.
+    """Compile options of this kernel's launch.
 
     `schedule_hint="mfma-schedule"` runs Triton's MFMA scheduler
     (triton-lang/triton#12209) on the LLVM IR; "" turns it off.  The

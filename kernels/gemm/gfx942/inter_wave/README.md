@@ -20,9 +20,11 @@ the same traffic costs almost nothing: **~99.7% per-SIMD MFMA efficiency against
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
-python bench.py -k inter_wave                      # correctness + TFLOPS
-python tools/bench_prepared.py --kernel inter_wave --gpus all   # sustained timing
-python tools/run_att.py inter_wave --K 8256 --out att_inter     # ATT trace
+python bench.py -k inter_wave                      # correctness + TFLOPS (do_bench)
+AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
+    -- python bench.py --rocprof -k inter_wave --K 8256 --dtype fp16       # timing, ../README.md §3
+python ../../../scripts/run_att.py --att-output att \
+    python bench.py -k inter_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.4
 ```
 
 No environment variables needed — the no-AGPR setting is baked into the launch,
@@ -204,4 +206,5 @@ That is the end of the reading path. To go further:
 [`../README.md`](../README.md) §3 for the numbers,
 [`../intra_wave/README.md`](../intra_wave/README.md#optimization-history) for the
 optimization history of the 4-wave kernel (much of which — the LDS swizzle, the prologue load ordering —
-applies here too), and `tools/` for the measurement harnesses.
+applies here too), and the repository's [`scripts/`](../../../../scripts/README.md) for the
+measurement harnesses.

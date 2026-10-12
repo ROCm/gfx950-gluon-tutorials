@@ -146,7 +146,7 @@ def gen_rotating_tensors(M, N, K, torch_dtype, mb=512):
     )
 
 
-def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512):
+def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512, with_torch=False):
     for name, mod in mods.items():
         for dtype in dtypes:
             td = NAME_TO_TORCH_TYPE[dtype]
@@ -162,6 +162,23 @@ def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512):
                     mod.matmul_kernel_only(a_l[j], b_l[j], c_l[j])
                 torch.cuda.synchronize()
                 print(f"[{name}] {M}x{N}x{K} {dtype}: {n_iters} iterations done")
+    if not with_torch:
+        return
+    # hipBLASLt through torch.matmul on the kernels' own operands (B as the K-contiguous
+    # view of b_t), so the reference reads exactly what the kernels read.
+    for dtype in dtypes:
+        td = NAME_TO_TORCH_TYPE[dtype]
+        for M, N, K in sizes:
+            a_l, b_l, c_l, n = gen_rotating_tensors(M, N, K, td, mb)
+            bt_l = [b.t() for b in b_l]
+            print(f"[torch] {M}x{N}x{K} {dtype}: {n} rotating copies")
+            torch.matmul(a_l[0], bt_l[0], out=c_l[0])
+            torch.cuda.synchronize()
+            for i in range(n_iters):
+                j = i % n
+                torch.matmul(a_l[j], bt_l[j], out=c_l[j])
+            torch.cuda.synchronize()
+            print(f"[torch] {M}x{N}x{K} {dtype}: {n_iters} iterations done")
 
 
 def run_bench(mods, dtypes, sizes, reps, with_torch, show_clock):
@@ -253,8 +270,17 @@ def run_sweep_gm(mods, dtype, sizes, gms, reps):
 
 def main():
     p = argparse.ArgumentParser(description="gfx942 a16w16 GEMM correctness + benchmark")
-    p.add_argument("-k", "--kernel", nargs="+", choices=[*KERNELS, "both"], default=["both"])
+    p.add_argument(
+        "-k",
+        "--kernel",
+        nargs="+",
+        choices=[*KERNELS, "both", "torch"],
+        default=["both"],
+        help='"torch" (with --rocprof only) times torch.matmul on the same operands',
+    )
     p.add_argument("--K", type=int, default=None, help="only the size with this K")
+    p.add_argument("--M", type=int, default=None, help="with --K: run M x N x K instead")
+    p.add_argument("--N", type=int, default=None, help="with --K: run M x N x K instead")
     p.add_argument("--dtype", nargs="+", choices=["fp16", "bf16"], default=["fp16", "bf16"])
     p.add_argument("--reps", type=int, default=1, help="do_bench repeats, reported as median")
     p.add_argument("--no-torch", action="store_true", help="skip the torch/hipBLASLt column")
@@ -283,7 +309,10 @@ def main():
     )
     args = p.parse_args()
 
-    which = KERNELS if "both" in args.kernel else tuple(args.kernel)
+    with_torch = "torch" in args.kernel
+    if with_torch and not args.rocprof:
+        p.error("-k torch needs --rocprof; the do_bench table has its own torch column")
+    which = KERNELS if "both" in args.kernel else tuple(k for k in args.kernel if k != "torch")
     mods = {n: load_kernel(n) for n in which}
     if args.schedule_hint is not None:
         for name, mod in mods.items():
@@ -295,13 +324,17 @@ def main():
                 print(f"[{name}] takes no schedule_hint; --schedule-hint ignored")
 
     sizes = get_x_vals()
-    if args.K is not None:
+    if args.M is not None or args.N is not None:
+        if args.K is None:
+            p.error("--M / --N need --K")
+        sizes = [(args.M or 4096, args.N or 4864, args.K)]
+    elif args.K is not None:
         sizes = [s for s in sizes if s[2] == args.K]
         if not sizes:
             p.error(f"no shape with K={args.K}; have {sorted({k for _, _, k in get_x_vals()})}")
 
     if args.rocprof:
-        run_rocprof(mods, args.dtype, sizes, mb=args.rotating_buffer_size)
+        run_rocprof(mods, args.dtype, sizes, mb=args.rotating_buffer_size, with_torch=with_torch)
         return 0
     if args.sweep_gm:
         run_sweep_gm(mods, args.dtype[0], sizes, args.gm, args.reps)

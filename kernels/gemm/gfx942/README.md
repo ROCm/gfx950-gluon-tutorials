@@ -85,34 +85,43 @@ MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v3.1`.
 
 **One methodology for every number below**, so the tables are comparable with
 each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family), on
-**GPU 2** — the fastest of the node's eight, by median over three sweeps, spread
-5.8%. TFLOPS come from [`tools/bench_prepared.py`](tools/bench_prepared.py):
-prepared launch (compile once, arguments pre-bound, launch stub entered
-directly), 3 rotating tensor sets so no dispatch reads its predecessor's
-cache-resident operands, 1000 dispatches, **mean of the last 100** kernel
-durations from `rocprofv3 --kernel-trace`. Each cell is the median of 3 rounds (5
-at K=8256), and a round runs all configurations of one shape back to back.
-`torch` is hipBLASLt via `torch.matmul` through the *same* harness. Per-SIMD MFMA
-efficiency is from ATT, decoded with the repo's [`scripts/process_json.py`](../../../scripts/process_json.py),
-the median of 3 traces (7 at K=8256).
+**GPU 3** — the fastest of the node's eight, by median over three sweeps, spread
+3.8%. TFLOPS come from the repository's plain timing path, as for the gfx950
+tables: `bench.py --rocprof` runs 1000 dispatches over 512 MB of rotating buffers
+under `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, and
+[`scripts/calc_kernel_time.py`](../../../scripts/calc_kernel_time.py) averages the
+kernel duration over every dispatch:
+
+```bash
+AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
+    -- python bench.py --rocprof -k inter_wave --K 8256 --dtype fp16
+python ../../../scripts/calc_kernel_time.py trace/*/*_kernel_trace.csv a16w16_inter_wave_gfx942
+```
+
+`torch` is hipBLASLt through `torch.matmul` on the same operands (`-k torch`; its
+kernel names start with `Cijk`). Each cell is the median of 3 rounds (5 at
+K=8256), and a round runs all configurations of one shape back to back. Per-SIMD
+MFMA efficiency is from ATT, decoded with the repo's
+[`scripts/process_json.py`](../../../scripts/process_json.py), the median of 3
+traces (7 at K=8256).
 
 **fp16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 604.6 | 90.89% | **626.9** | 99.63% | 605.0 |
-| 4160 | 622.6 | 90.88% | **635.4** | 99.72% | 604.9 |
-| 8256 | 633.5 | 90.84% | **635.6** | 98.07% | 596.0 |
-| 16448 | 649.3 | 90.86% | **660.1** | 99.78% | 606.4 |
+| 2112 | 587.7 | 90.89% | **609.0** | 99.63% | 593.6 |
+| 4160 | 655.6 | 90.88% | **679.5** | 99.72% | 609.3 |
+| 8256 | **653.7** | 90.84% | 637.8 | 98.07% | 589.3 |
+| 16448 | 654.8 | 90.86% | **662.6** | 99.78% | 608.6 |
 
 **bf16**
 
 | K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
 |---|---|---|---|---|---|
-| 2112 | 634.4 | 90.89% | **657.7** | 99.63% | 622.2 |
-| 4160 | 651.1 | 90.88% | **676.5** | 99.72% | 636.3 |
-| 8256 | **669.2** | 90.87% | 667.6 | 98.63% | 633.2 |
-| 16448 | 688.9 | 90.86% | **705.7** | 99.78% | 644.7 |
+| 2112 | 605.8 | 90.89% | **636.7** | 99.63% | 617.9 |
+| 4160 | 692.4 | 90.88% | **713.5** | 99.72% | 634.0 |
+| 8256 | 694.1 | 90.87% | **701.2** | 98.63% | 641.0 |
+| 16448 | 698.5 | 90.86% | **705.5** | 99.78% | 646.0 |
 
 `eff` is in-loop **per-SIMD** MFMA efficiency, the comparable figure: the matrix
 unit is a per-SIMD resource, so the 8-wave kernel's per-wave fraction doubles for
@@ -126,18 +135,18 @@ and both kernels run the same cycles per iteration at every K — 4506–4509 fo
 4-wave loop, 4105–4111 for the 8-wave one — except K=8256, where the 8-wave loop
 runs 1–2% slower (4153–4177) and the traces vary most (§3.3).
 
-**inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8, by 3.6% to 9.5%.
-At K=8256 the two kernels tie (+0.3% fp16, −0.2% bf16), for the power reason in
-§3.5. intra_wave beats hipBLASLt on 7 of 8, by up to 7.1%, and ties fp16 K=2112
-(604.6 vs 605.0).
+**inter_wave wins 7 of 8 points** and beats hipBLASLt on all 8, by 2.1% to 12.4%;
+it loses fp16 K=8256 (637.8 vs 653.7), the noisiest shape (§3.3). intra_wave beats
+hipBLASLt on 6 of 8, by up to 10.8%, and loses at K=2112 (by 1.4% in fp16 and 2.4%
+in bf16).
 
 For scale, Triton's own `BlockPingpong` schedule at 4096×4864×8256
 (`python/tutorials/03-matrix-multiplication.py`, tile 256×256×64, `num_warps=8`,
 with the loop-variant K mask removed so the pass fires) reaches 4207.5 cyc/iter
-and 97.35% per-SIMD at 550.3 TFLOPS, through the same harness. It uses
+and 97.35% per-SIMD at 560.5 TFLOPS, through the same timing path. It uses
 `v_mfma_f32_32x32x8_f16`, which is more power-dense than the `16x16x16` used here
-and settles at 1.07 GHz under the cap against inter_wave's 1.19 — so inter_wave is
-ahead on cycles (4176.6), on efficiency, and by 15.5% on wall clock. See §3.5.
+and runs at 1.10 GHz against inter_wave's 1.33 (fp16, K=8256) — so inter_wave is
+ahead on cycles (4176.6), on efficiency, and by 13.8% on wall clock. See §3.5.
 
 Cycles per iteration per wave behind the efficiency column (fp16; bf16 within 0.6%),
 for reference:
@@ -155,11 +164,11 @@ waves/SIMD**. Both use exactly 65536 B of LDS, and both measure
 `SQ_LDS_BANK_CONFLICT` = **0**.
 
 > [!NOTE]
-> `bench.py` reports `do_bench` medians on the *default* device instead, so its
-> numbers will not match these: a different GPU (up to 6% across the node), a
-> timer that includes the Python launch path and inter-dispatch gaps rather than
-> kernel duration alone, and a shorter, cooler run. Use it for correctness
-> checking and quick iteration; use the tables above for reporting.
+> `bench.py` without `--rocprof` reports `do_bench` medians on the *default* device
+> instead, so its numbers will not match these: a different GPU (up to 4% across
+> the node) and a timer that includes the Python launch path rather than kernel
+> duration alone. Use it for correctness checking and quick iteration; use the
+> rocprofv3 path above for reporting.
 
 ### 3.1 Why these shapes
 
@@ -168,34 +177,33 @@ fp16, median of 3 rounds:
 
 | M×N×K | intra_wave TF | inter_wave TF |
 |---|---|---|
-| 4096×4096×4096 | 594.4 | 553.6 |
-| 4096×4864×4096 | 616.8 | 617.8 |
-| 4096×4864×4160 | 622.9 | 633.7 |
-| 4096×4096×8192 | 603.9 | 581.1 |
-| 4096×4864×8192 | 637.0 | 628.7 |
-| 4096×4864×8256 | 614.9 | 640.1 |
+| 4096×4096×4096 | 598.7 | 572.7 |
+| 4096×4864×4096 | 649.3 | 643.0 |
+| 4096×4864×4160 | 656.4 | 677.4 |
+| 4096×4096×8192 | 614.3 | 591.1 |
+| 4096×4864×8192 | 654.5 | 639.9 |
+| 4096×4864×8256 | 615.9 | 614.8 |
 
 **N = 4864, not 4096.** With a 256x256 tile, 4096x4864 is a 16 x 19 = **304
 workgroup** grid, exactly the MI300X CU count: one workgroup per CU and no tail
 wave. 4096x4096 gives 256 workgroups, so 48 of 304 CUs sit idle for the whole
 kernel. (LDS is full at 64 KB, so occupancy is 1 workgroup/CU and the grid must
-match the machine exactly.) N = 4864 is worth +3.8% / +5.5% to intra_wave and
-+11.6% / +8.2% to inter_wave (K = 4096 / 8192) — less than the 19% more work per
+match the machine exactly.) N = 4864 is worth +8.5% / +6.5% to intra_wave and
++12.3% / +8.3% to inter_wave (K = 4096 / 8192) — less than the 19% more work per
 pass, because the 48 idle CUs leave power under the 750 W cap and the busy ones
-clock higher: inter_wave at 4096×4096×8192 sustains 1.36 GHz, at 4096×4864×8192
-1.24 GHz.
+clock higher: inter_wave runs at 1.48 GHz at 4096×4096×8192 and 1.34 GHz at
+4096×4864×8192.
 
 **K = 4160 or 8256, not 4096 or 8192.** A power-of-two K makes A's row stride a
 power of two (K=4096 -> 8192 B), so every row of a tile lands in the same L1 set
 and the loads hotspot. `4160 = 65 x 64` and `8256 = 129 x 64` are still multiples
 of `BLOCK_K` but make the stride an *odd* multiple of the 128 B line, spreading
-the rows across sets. The effect is small and only consistent for inter_wave:
-+2.6% at K ≈ 4096 and +1.8% at K ≈ 8192. On intra_wave it is +1.0% at K ≈ 4096 and
-reverses at K ≈ 8192 (637.0 at 8192 against 614.9 at 8256, the noisiest shape,
-§3.3).
+the rows across sets. The effect is clear only at K ≈ 4096: +5.3% for inter_wave
+and +1.1% for intra_wave. At K ≈ 8192 it is inside K = 8256's noise (§3.3): these
+rounds read 615-616 for both kernels at K = 8256, against 638-654 in §3's.
 
-Together, inter_wave goes from 553.6 TFLOPS at 4096×4096×4096 to 633.7 at
-4096×4864×4160 (+14.5%), and intra_wave from 594.4 to 622.9 (+4.8%).
+Together, inter_wave goes from 572.7 TFLOPS at 4096×4096×4096 to 677.4 at
+4096×4864×4160 (+18.3%), and intra_wave from 598.7 to 656.4 (+9.6%).
 
 ### 3.2 GROUP_SIZE_M
 
@@ -221,43 +229,39 @@ read higher than §3's; see the note above.)
 
 ### 3.3 Reading the numbers
 
-Sustained MFMA pushes this part into its 750 W cap within a fraction of a second.
-In a 20000-dispatch loop the clock settles at 1.19 GHz for inter_wave (fp16, K =
-4160 and 8256) and 1.27-1.29 GHz for intra_wave (fp16, K = 8256), against a 2.10 GHz
-peak, and the last 100 of those 20000 dispatches read 0.7-4.6% below the tables'
-last 100 of 1000: the tables already measure a part on its cap. `bench.py`'s
-`do_bench` reads higher — 653.4 TFLOPS for inter_wave at fp16 K=4160 against
-635.4 in the table — because its timer is not kernel duration. K = 8256 is the
-noisiest point: rounds there spread by up to 5.5%, and an occasional ATT trace (2
-of 28) lands 15-18% high, which is why that row takes 5 rounds and 7 traces.
+The timing path leaves a short gap between dispatches (`AMD_SERIALIZE_KERNEL=3` and
+a Python launch per call), so how close the part runs to its 750 W cap depends on
+how long each kernel is. During the GEMM, inter_wave (fp16) draws ~610 W at 1.48
+GHz at K = 4160, ~705 W at 1.33 GHz at K = 8256, and the full 746 W at 1.16 GHz at
+K = 16448, against a 2.1 GHz peak. Launching back to back with no gaps (a prepared
+launch: arguments bound once, the launch stub entered directly) pins the part at
+750 W and reads 1.9-10.1% lower, the most at short K; the ranking of the kernels
+is the same either way. K = 8256 is the noisiest point: rounds there spread by up
+to 5.7%, and an occasional ATT trace (2 of 28) lands 15-18% high, which is why
+that row takes 5 rounds and 7 traces.
 
 ### 3.4 ATT traces
 
-[`tools/run_att.py`](tools/run_att.py) wraps `rocprofv3 --att` and checks that the decoder produced
-the `ui_*` directory ATTViewer needs:
+The repository's shared [`scripts/run_att.py`](../../../scripts/run_att.py) runs a command under
+`rocprofv3 --att` and decodes the trace with
+[`scripts/process_json.py`](../../../scripts/process_json.py), as for the gfx950 kernels. It reads
+the trace configuration from an `att_matmul.json` in the working directory; this one matches
+either gfx942 kernel:
 
 ```bash
-bash scripts/install_att_decoder.sh   # once, from the repo root
-cd tools
-python run_att.py inter_wave --K 8256 --out att_inter_wave
+bash ../../../scripts/install_att_decoder.sh       # once
+cat > att_matmul.json <<'EOF'
+{"jobs": [{"kernel_include_regex": "a16w16_.*_gfx942", "kernel_exclude_regex": "",
+           "kernel_iteration_range": "[15]", "advanced_thread_trace": true,
+           "att_target_cu": 0, "att_shader_engine_mask": "0xF", "att_simd_select": "0xF",
+           "att_buffer_size": "0x60000000"}]}
+EOF
+python ../../../scripts/run_att.py --att-output att_inter \
+    python bench.py -k inter_wave --K 8256 --dtype fp16 --no-torch
 ```
 
-### Sustained timing
-
-[`tools/bench_prepared.py`](tools/bench_prepared.py) is the low-overhead timing path. It reuses the
-tutorial's generic `scripts/prepared_kernel.py` to compile once and pre-bind every argument, so
-`rocprofv3 --kernel-trace` sees back-to-back dispatches with no Python binding in the gap. It
-rotates tensor sets so no dispatch reads its predecessor's cache-resident operands, and averages
-the **last** 100 of 1000 dispatches, by which point the clock has settled under the 750 W cap.
-
-It verifies the kernel's output before reporting any timing. The Triton cache key does not include
-`TRITON_KERNEL_OVERRIDE`, so a hand-edited kernel from an ablation run can otherwise persist in
-`~/.triton/cache` and every number will silently describe the wrong build.
-
-```bash
-python bench_prepared.py --gpus all      # sweep every GPU, report the fastest
-python bench_prepared.py --gpus 3 --dtype bf16
-```
+`process_json.py` reports in-loop MFMA efficiency per wave; for the 8-wave kernel the per-SIMD
+figure is twice that, for its two co-resident waves.
 
 Point ATTViewer at the `ui_output_agent_*_dispatch_*` directory it produces.
 Two things the traces settle:
@@ -288,22 +292,22 @@ on the 8-wave one.
 
 ### 3.5 Why TFLOPS understates the 8-wave kernel
 
-The clearest case is K=8256 in §3: the 8-wave kernel runs **7.4% fewer cycles per
-K-step** (4176.6 vs 4509.1) at **7.2 points** higher per-SIMD MFMA efficiency, and
-only ties on TFLOPS — 635.6 against 633.5 in fp16, 667.6 against 669.2 in bf16.
-The 750 W cap is why. Sustained over 20000 dispatches, fp16 K=8256, both kernels
-pinned at 750 W:
+The clearest case is K=16448, the longest kernel and the steadiest measurement: the
+8-wave kernel runs **8.9% fewer cycles per K-step** (4104.9 vs 4507.8) at **8.9
+points** higher per-SIMD MFMA efficiency, and is only **1.2% faster** — 662.6
+against 654.8 TFLOPS in fp16, 705.5 against 698.5 in bf16. The 750 W cap is why.
+During the run, fp16 K=16448:
 
-| fp16, K=8256 | cycles/iter | per-SIMD eff | sustained clock | TFLOPS (§3) |
-|---|---|---|---|---|
-| intra_wave | 4509.1 | 90.84% | 1.27-1.29 GHz | 633.5 |
-| inter_wave | **4176.6** | **98.07%** | 1.19 GHz | 635.6 |
-| Triton `BlockPingpong` | 4207.5 | 97.35% | 1.07 GHz | 550.3 |
+| fp16, K=16448 | cycles/iter | per-SIMD eff | clock | power | TFLOPS (§3) |
+|---|---|---|---|---|---|
+| intra_wave | 4507.8 | 90.86% | 1.26 GHz | 746 W | 654.8 |
+| inter_wave | **4104.9** | **99.78%** | 1.16 GHz | 746 W | 662.6 |
 
-The 7.4% cycle advantage is cancelled by a 6-8% clock deficit: **the better
-pipeline draws more power and gets clocked down for it**, the same DIDT dynamic the
-tutorial's v7 describes. `BlockPingpong`'s `32x32x8` MFMA is denser still, and pays
-for it with the lowest clock of the three.
+Both kernels sit on the cap, and the 8.9% cycle advantage is almost cancelled by an
+8.0% clock deficit: **the better pipeline draws more power per cycle and gets
+clocked down for it**, the same DIDT dynamic the tutorial's v7 describes.
+`BlockPingpong`'s `32x32x8` MFMA is denser still, and runs lower still: 1.10 GHz at
+K=8256 against inter_wave's 1.33.
 
 So read §3 as "what you get on a hot part in a benchmark loop" and §3.4 as "how
 good the pipeline actually is". Cycle counts and MFMA efficiency are the stable
@@ -482,7 +486,7 @@ so with all four SIMDs issuing it a `ds_read_b128` needs 32 cycles of MFMA cover
 The middle row was measured on an ablation build while #12229 was prepared (one
 trace per cell; read its K=8256 cell loosely, §3.3); the other two are `v3.1`,
 and they reproduce the cycle counts of that build exactly. Over the unscheduled
-build, the scheduler is worth +9.0% to +10.4% TFLOPS in fp16 and +10.2% to +12.4% in
+build, the scheduler is worth +11.1% to +12.2% TFLOPS in fp16 and +12.8% to +14.1% in
 bf16 (paired within each round of §3), and it runs about 1% fewer cycles per
 iteration than the `v1.1` plugin did.
 
@@ -512,14 +516,12 @@ the loop it had on `v1.1` (compared on the bf16 build). `amdgcnas` remains untri
 kernels/gemm/gfx942/
   README.md                     this file
   bench.py                      correctness + TFLOPS for both kernels,
-                                --sweep-gm, --rocprof
+                                --sweep-gm, --rocprof (also -k torch)
   intra_wave/matmul_kernel.py   4-wave kernel
              README.md          its design + differences from gfx950 v9
   inter_wave/matmul_kernel.py   8-wave kernel
              README.md          its design + differences from gfx950
              images/            the pipeline diagram used by that README
-  tools/run_att.py              rocprofv3 --att capture, verifies the ui_* dir
-  tools/bench_prepared.py       prepared-launch rocprofv3 timing, multi-GPU sweep
 ```
 
 `get_pids` (XCD remap + `GROUP_SIZE_M` swizzle) is reused unchanged from the

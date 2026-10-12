@@ -17,9 +17,11 @@ the problems that are visible here.
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
-python bench.py -k intra_wave                      # correctness + TFLOPS
-python tools/bench_prepared.py --kernel intra_wave --gpus all   # sustained timing
-python tools/run_att.py intra_wave --K 8256 --out att_intra     # ATT trace
+python bench.py -k intra_wave                      # correctness + TFLOPS (do_bench)
+AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
+    -- python bench.py --rocprof -k intra_wave --K 8256 --dtype fp16       # timing, ../README.md §3
+python ../../../scripts/run_att.py --att-output att \
+    python bench.py -k intra_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.4
 ```
 
 Two things are **required** for this kernel, unlike
