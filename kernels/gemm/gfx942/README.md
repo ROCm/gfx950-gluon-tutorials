@@ -84,9 +84,8 @@ external `rocprofv3 --kernel-trace` timing.
 MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v3.1`.
 
 **One methodology for every number below**, so the tables are comparable with
-each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family), on
-**GPU 3** — the fastest of the node's eight, by median over three sweeps, spread
-3.8%. TFLOPS come from the repository's plain timing path, as for the gfx950
+each other: M=4096, N=4864 with K swept (see §3.1 for why that shape family).
+TFLOPS come from the repository's plain timing path, as for the gfx950
 tables: `bench.py --rocprof` runs 1000 dispatches over 512 MB of rotating buffers
 under `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, and
 [`scripts/calc_kernel_time.py`](../../../scripts/calc_kernel_time.py) averages the
@@ -164,11 +163,10 @@ waves/SIMD**. Both use exactly 65536 B of LDS, and both measure
 `SQ_LDS_BANK_CONFLICT` = **0**.
 
 > [!NOTE]
-> `bench.py` without `--rocprof` reports `do_bench` medians on the *default* device
-> instead, so its numbers will not match these: a different GPU (up to 4% across
-> the node) and a timer that includes the Python launch path rather than kernel
-> duration alone. Use it for correctness checking and quick iteration; use the
-> rocprofv3 path above for reporting.
+> `bench.py` without `--rocprof` reports `do_bench` medians instead, so its numbers
+> will not match these: its timer includes the Python launch path rather than
+> kernel duration alone. Use it for correctness checking and quick iteration; use
+> the rocprofv3 path above for reporting.
 
 ### 3.1 Why these shapes
 
