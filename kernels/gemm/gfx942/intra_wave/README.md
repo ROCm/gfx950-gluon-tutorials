@@ -39,7 +39,7 @@ Codegen: **256 arch VGPR + 256 AGPR, 1 wave/SIMD** (LDS-bound), 2 VGPRs (12 B) o
 spill outside the loop, 65536 B LDS, and `SQ_LDS_BANK_CONFLICT` measures exactly
 **0**.
 
-## Design
+## 1. Design
 
 ![intra_wave pipeline design](images/intra_wave_design.svg)
 
@@ -51,7 +51,7 @@ through it; and below it, what each of the four 16 KB LDS slots does in each reg
 The two kernels differ from here on: inter_wave alternates memory and dot regions
 across two wave groups, this kernel interleaves them inside each region.
 
-### Half-tile LDS recycling
+### 1.1 Half-tile LDS recycling
 
 64 KB of LDS is *exactly one* 256×256×64 stage, so double buffering is
 impossible. Rather than shrink `BLOCK_K` to 32 — which would halve the contiguous
@@ -83,28 +83,28 @@ reason is global, not LDS: at `BLOCK_K=64` a tile row is 128 B and one
 `buffer_load_dwordx4` touches 8 back-to-back cache lines; at `BLOCK_K=32` a row is
 64 B, the same instruction touches 16 lines, and TCP pressure roughly doubles.
 
-### MFMA shape and register budget
+### 1.2 MFMA shape and register budget
 
 CDNA3's widest f16/bf16 16×16 intrinsic is `v_mfma_f32_16x16x16_f16` (K=16, 16
 cycles) rather than CDNA4's `..._16x16x32`. `k_width=8` still yields
 `ds_read_b128`: the dot-operand K tile is 8 × (64/16) = 32, which Triton splits
 into two K=16 mfmas.
 
-Per lane, with 1 wave/SIMD so 256 VGPR **and** 256 AGPR are available:
+At 1 wave/SIMD each lane has two separate 256-register files, AGPR and VGPR. Per
+lane (4 waves × 64 lanes = 256 lanes per CTA; a register holds one f32 or two f16):
 
-```
-C accumulators   4 x [128x128] f32   = 256   -> AGPR (cd_regclass="a")
-dot operands     4 x half-tile f16   = 128   -> VGPR
-global staging   4 x half-tile f16   =  64   -> VGPR
-                                       ----
-                                       448
-```
+| register file | holds | registers | how |
+|---|---|---|---|
+| **AGPR** (256) | C accumulators, all four quadrants | **256, full** | 256×256 f32 ÷ 256 lanes |
+| **VGPR** (256) | dot operands `A_top`, `A_bot`, `B_left`, `B_right` | 128 | each half-tile is split over 2 waves: 64×64 f16 per wave = 32 each |
+| | global staging, the same four half-tiles in flight | 64 | 128×64 f16 ÷ 256 lanes = 16 each |
+| | addresses, offsets, loop state | the rest | the compiled kernel uses all 256, with 2 spilled outside the loop |
 
 The accumulators only fit because AGPRs are separate capacity at 1 wave/SIMD —
 the opposite of [`../inter_wave`](../inter_wave/), where two resident waves split
 one unified 512-register file and AGPRs buy nothing.
 
-### LDS layout
+### 1.3 LDS layout
 
 `SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4
 together with the global-load lane remapping it requires. Making it conflict-free
@@ -115,7 +115,7 @@ replays; Triton's MFMA scheduler leaves no such slack, so a replayed access cost
 loop cycles directly ([`../README.md`](../README.md) §4.4). With the layout right,
 what bounds this kernel is the `ds_write` **issue** cost, below.
 
-## Differences from the gfx950 kernel
+## 2. Differences from the gfx950 kernel
 
 The 2×2 quadrant slicing, the `B_left → A_top → A_bot → B_right` region order and
 the XCD-aware PID remap are all inherited unchanged from
@@ -157,7 +157,7 @@ rather than anything CDNA3-specific.
 The difference that cannot be scheduled or tooled away is the subject of the next
 section.
 
-## Where the time goes, and the ceiling
+## 3. Where the time goes, and the ceiling
 
 Ablating the hot loop op-by-op (4096²×8192 fp16, the shape used while developing,
 on `v1.1` with the plugin schedule) isolates the cost:
@@ -202,7 +202,7 @@ per-SIMD instead of ~91%.
 
 **Next:** [`../inter_wave/README.md`](../inter_wave/README.md).
 
-## Optimization history
+## 4. Optimization history
 
 At fp16 K=8256, decoded with `scripts/process_json.py` (every row up to "+ swizzle"
 on `v1.1` with the LLIR scheduler plugin; that row is the final `v1.1` build at

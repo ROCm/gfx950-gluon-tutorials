@@ -79,12 +79,17 @@ Two things are genuinely different on CDNA3, and they drive the whole design:
    cycles per useful cycle (13.33 cyc/LDS instr), (8,1,8) is exactly 0
    (8.00 cyc).  See ../README.md section 4.4.
 
-Register budget (per lane, 1 wave/SIMD so 256 VGPR + 256 AGPR are available):
-    C accumulators   4 x [128x128] f32  = 256   -> AGPR (cd_regclass="a")
-    dot operands     4 x half-tile f16  = 128   -> VGPR
-    global staging   4 x half-tile f16  =  64   -> VGPR
-                                          ----
-                                          448
+Register budget per lane (256 lanes per CTA; a register holds one f32 or two f16).
+At 1 wave/SIMD the AGPR and VGPR files are separate, 256 registers each:
+
+    AGPR file (256)
+      C accumulators   256x256 f32 / 256 lanes                    256  full
+    VGPR file (256)
+      dot operands     4 half-tiles, 64x64 f16 per wave            128  (32 each)
+      global staging   4 half-tiles, 128x64 f16 / 256 lanes         64  (16 each)
+      addresses, offsets, loop state                              rest (all 256 used,
+                                                                        2 spill outside
+                                                                        the loop)
 """
 
 import os

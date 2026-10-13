@@ -35,7 +35,7 @@ it passes no `schedule_hint`.
 Codegen: **240 VGPR, 0 AGPR, 0 spills, 2 waves/SIMD, 64 KB LDS**, and
 `SQ_LDS_BANK_CONFLICT` measures exactly **0**.
 
-## The pipeline
+## 1. The pipeline
 
 ![inter_wave pipeline design](images/inter_wave_design.svg)
 
@@ -46,7 +46,7 @@ waves 4–7) offset by exactly one region. That phase shift is what
 `warp_pipeline_stage` sets up, and it is the whole point — one group is always on
 the matrix unit while the other is in memory.
 
-### Whole-tensor global and LDS writes, sliced LDS reads
+### 1.1 Whole-tensor global and LDS writes, sliced LDS reads
 
 Global loads and LDS stores move whole tensors; reads and dots work on half-tiles
 sliced out of the same buffers:
@@ -61,7 +61,7 @@ A_t = A[0:128, :]   A_b = A[128:256, :]   B_l = B[:, 0:128]   B_r = B[:, 128:256
 The slice is along M (for A) or N (for B) — never along K, the swizzled dimension
 — so the shared layout is undisturbed by slicing.
 
-### One LDS buffer; the registers are the pipeline
+### 1.2 One LDS buffer; the registers are the pipeline
 
 ```
 A[256 x 64] x 2 B  +  B[64 x 256] x 2 B  =  32 KB + 32 KB  =  64 KB
@@ -72,7 +72,7 @@ pipelining buffer is the registers holding the in-flight global loads, not LDS.*
 LDS holds tile *k* while tile *k+1* is in flight from HBM; the `local_store` of
 *k+1* lands only after the last `local_load` of *k*.
 
-### The eight regions
+### 1.3 The eight regions
 
 Region *k* processes tile *k* and prefetches tile *k+1*:
 
@@ -93,7 +93,7 @@ against** (256/128/384/256 against 512) — that is the property which keeps the
 matrix unit fed, and the reason this schedule reaches ~99.7% per-SIMD MFMA
 efficiency.
 
-### Why this order
+### 1.4 Why this order
 
 **Dot order** `C_tl → C_tr → C_bl → C_br` together with **read order**
 `B_l → A_t → B_r → A_b` halves the operand registers. A_t is live only across
@@ -135,7 +135,7 @@ first because `LR B_l[k+1]` in region 6 needs it.
 **Hazards** are all closed by region boundaries: A is read in regions 0 and 4 and
 written in 6; B is read in 2 (and in 6, for *k+1*) and written in 4.
 
-### LDS layout
+### 1.5 LDS layout
 
 `SwizzledSharedLayout(8, 1, 8)`, derived in [`../README.md`](../README.md) §4.4.
 The conflict-free layout is worth **−10.8% loop cycles** here: two resident waves
@@ -144,7 +144,7 @@ single largest win in this kernel — larger than halving the region count. (In
 [`../intra_wave`](../intra_wave/) it is worth −16.2% under Triton's MFMA scheduler,
 though under the old plugin schedule it looked almost free there; §4.4 has why.)
 
-## Differences from the gfx950 kernel
+## 2. Differences from the gfx950 kernel
 
 Same tile, same 8 warps, same `warps_per_cta`, same quadrant decomposition, same
 `warp_pipeline_stage` phase shift as
@@ -204,7 +204,7 @@ groups swap; it only doubles the instruction count inside each region.
 
 That is the end of the reading path. To go further:
 [`../README.md`](../README.md) §3 for the numbers,
-[`../intra_wave/README.md`](../intra_wave/README.md#optimization-history) for the
+[`../intra_wave/README.md`](../intra_wave/README.md#4-optimization-history) for the
 optimization history of the 4-wave kernel (much of which — the LDS swizzle, the prologue load ordering —
 applies here too), and the repository's [`scripts/`](../../../../scripts/README.md) for the
 measurement harnesses.
