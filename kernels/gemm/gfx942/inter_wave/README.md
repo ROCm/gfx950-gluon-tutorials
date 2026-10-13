@@ -155,9 +155,25 @@ The difference is which stream issues them. In intra_wave they sit between a wav
 own MFMAs, and an MFMA cannot cover one. Here they sit in a memory region, while the
 *other* group's dot region holds the matrix unit, so a memory region only has to
 finish inside 512 cycles. Every one does: 256 / 128 / 384 / 256 cycles of LDS-port
-time, regions 4 and 6 with their writes included. This is the gfx942 counterpart of
-gfx950's `buffer_load_to_shared`: the writes are not removed from the instruction
-stream, but moved to a stream that is not on the matrix unit.
+time, regions 4 and 6 with their writes included.
+
+![ds_write stalls overlapped by the partner wave's MFMAs](images/mi300_ds_write.png)
+
+*ATT trace of fp16 4096×4864×4160: the eight waves of one workgroup, two rows per
+SIMD. Orange is LDS instructions, green MFMA, grey `s_waitcnt` and `s_barrier`.*
+
+Up to cycle ~128000, the top wave of each pair is in region 4 — 8 `ds_read_b128`,
+then 4 `ds_write_b128` — while its partner is in a dot region; then they swap. The
+writes are the long orange bars. In the trace they take 48–124 cycles each, of which
+24–92 are stalls behind the region's reads, and the whole region needs 470–500 cycles
+rather than its 384 of port time. None of it reaches the matrix unit: on every SIMD
+the region, stalls and final wait included, ends (cycle 127988–128016) before the
+partner's 32 MFMAs do (128016–128020). Over the whole trace, 99% of the time the
+waves spend in a `ds_write` overlaps the partner's MFMAs.
+
+This is the gfx942 counterpart of gfx950's `buffer_load_to_shared`: the writes are not
+removed from the instruction stream, but moved to a stream that is not on the matrix
+unit.
 
 With the loop at the matrix-unit ceiling, the remaining gaps are outside it: the
 grid against the CU count, the prologue and epilogue at small K, and the clock under
