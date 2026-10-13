@@ -42,9 +42,9 @@ LDS *reads* and the dots work on half-tiles, sliced out of the same buffers:
     A_t = A[0:128, :]   A_b = A[128:256, :]     B_l = B[:, 0:128]   B_r = B[:, 128:256]
 
 The slice is along M (for A) or N (for B) -- never along K, which is the
-swizzled dimension -- so `SwizzledSharedLayout(8, 2, 8)` is undisturbed: the
-swizzle xors the 16 B chunk index within a row by (row / 2) % 8, a period of 16
-rows, and both 128 and the N-half boundary are multiples of it.
+swizzled dimension -- so `SwizzledSharedLayout(8, 1, 8)` is undisturbed: the
+swizzle xors the 16 B chunk index within a row by row % 8, a period of 8 rows,
+and the 128-row / 128-column half boundary is a multiple of it.
 
 ONE LDS BUFFER
 --------------
@@ -79,12 +79,11 @@ whole body and need their own.  Per lane, replicated across the warp grid:
     A,B staging whole tiles / 8 waves     = 32 VGPR
 
 Loading all four half-tiles with independent registers would cost 96 instead of
-64 and spills; that is what the earlier K=32-sliced version worked around, at
-the price of twice as many regions.
+64, and with the 32 VGPRs of staging the kernel spills.
 
 *GR/LW order* is B before A on both sides.  B[k+1] is stored in region 4 and A
-in region 6, each 2 dot regions (~1024 cycles) after its load, which is the
-global latency cover.  B is stored first because `LR B_l[k+1]` in region 6 needs
+in region 6, each four regions after its load, with two dot regions in between
+to cover global latency.  B is stored first because `LR B_l[k+1]` in region 6 needs
 it: B_l for the *next* iteration is read one region after B's own store, which
 is what lets region 1 start on a dot with no preceding read.
 
