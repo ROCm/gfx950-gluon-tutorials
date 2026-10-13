@@ -5,6 +5,42 @@ compiler / Triton evolution.
 
 ---
 
+## 2026-10-11 — `gfx950-tutorial-v3.1` for the MI300X (gfx942) kernels
+
+[`gfx950-tutorial-v3.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.1)
+is upstream Triton `main` at `b575c0c38`, the merge of
+[triton-lang/triton#12229](https://github.com/triton-lang/triton/pull/12229): **the MFMA
+scheduler runs on gfx942 (MI300X) too**, with each target's LDS bandwidth in its cost model.
+**It is the pin for [`kernels/gemm/gfx942/`](kernels/gemm/gfx942/README.md) only; the MI355X
+kernels stay on `v3.0`**, where their numbers were measured. Nothing is carried on top, and the
+two LLVM pins are unchanged from `v3.0` (core `b010a18d`, AMD codegen `6bc4aaf6`). Every pin
+since `v2.3` is a plain upstream commit, so the `gfx950-tutorial` development branch on
+`triton-lang/triton` is no longer used; the tags are all there is to build.
+
+GEMM performance on MI300X, M=4096, N=4864, TFLOPS and in-loop per-SIMD MFMA efficiency
+(protocol in [`kernels/gemm/gfx942/README.md`](kernels/gemm/gfx942/README.md) §3; `torch` is
+hipBLASLt through the same harness):
+
+**fp16**
+
+| K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
+|---|---|---|---|---|---|
+| 2112 | 587.7 | 90.89% | **609.0** | 99.63% | 593.6 |
+| 4160 | 655.6 | 90.88% | **679.5** | 99.72% | 609.3 |
+| 8256 | **653.7** | 90.84% | 637.8 | 98.07% | 589.3 |
+| 16448 | 654.8 | 90.86% | **662.6** | 99.78% | 608.6 |
+
+**bf16**
+
+| K | intra_wave TF | eff | inter_wave TF | eff | torch TF |
+|---|---|---|---|---|---|
+| 2112 | 605.8 | 90.89% | **636.7** | 99.63% | 617.9 |
+| 4160 | 692.4 | 90.88% | **713.5** | 99.72% | 634.0 |
+| 8256 | 694.1 | 90.87% | **701.2** | 98.63% | 641.0 |
+| 16448 | 698.5 | 90.86% | **705.5** | 99.78% | 646.0 |
+
+---
+
 ## 2026-10-10 — Re-pin to `gfx950-tutorial-v3.0`
 
 [`gfx950-tutorial-v3.0`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.0)
