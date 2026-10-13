@@ -1,6 +1,6 @@
 # High-Performance Gluon Kernels on AMD GFX9
 
-A hands-on tutorial for writing **high-performance Gluon kernels** on AMD **MI350 / MI355** GPUs (gfx950).
+A hands-on tutorial for writing **high-performance Gluon kernels** on AMD **MI350 / MI355** GPUs (gfx950), with the FP16/BF16 GEMMs also ported to **MI300X** (gfx942, CDNA3).
 
 **Why Gluon, not Triton?** Triton's strength is hardware-portable productivity: kernel authors describe what to compute and the compiler decides scheduling, register allocation, and layout. That abstraction is the right call for most kernels. For peak-performance kernels on a specific architecture, the compiler has to rediscover pipeline structure from generic IR, and the last 10–20% of performance is hard to reach. Gluon is a Triton dialect that closes that gap: a **block-level programming model** where you engineer pipelines, budget registers, and design layouts explicitly. The compiler's job narrows to faithful lowering and throughput-aware interleaving; the hard parts of traditional GPU compilation (NP-hard scheduling, graph-coloring register allocation) become design problems the kernel author owns. Triton remains the right tool for portable code; Gluon is the tool when you need to extract every last percent on a target GPU. See [`docs/performance_philosophy.md`](docs/performance_philosophy.md) for the full argument.
 
@@ -18,6 +18,8 @@ python bench.py --version 0 --K 8192 --dtype fp16
 ```
 
 Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show how the same design transfers to 8-bit and 4-bit compute with microscaling. Then [`kernels/attention/`](kernels/attention/README.md) takes the same reasoning to Flash Attention, where a third kind of instruction — the softmax's vector math — has to share a SIMD with the matrix pipe.
+
+**On an MI300X (gfx942)?** The kernels above target gfx950. [`kernels/gemm/gfx942/`](kernels/gemm/gfx942/README.md) ports the two a16w16 GEMM designs, `intra_wave` and `inter_wave`, to MI300X and walks through what CDNA3 changes in each; it reads best after `v9_beyond_hotloop`.
 
 > [!TIP]
 > Every version README follows the same shape: **Motivation → Design → Performance Analysis → What Comes Next.** If you only want the fastest FP16 kernel, jump to `v9_beyond_hotloop`. If you want to understand *why* it's fast, start from `v0_naive`.
