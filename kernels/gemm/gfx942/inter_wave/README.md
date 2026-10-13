@@ -156,13 +156,13 @@ are in [`../README.md`](../README.md) §4; at the **kernel** level:
 | LDS slots | 4 half-tiles × 2 buffers | **2 whole tensors** (A, B), 1 buffer |
 | what LDS holds | the pipeline (tile *k+1* streams in) | tile *k* only — registers pipeline |
 | mfma / K-step / wave | 64 | **128** |
-| loop | 2× unrolled, 4 regions per K-step | **8 regions**, no unroll |
+| loop | 2× unrolled, 8 regions per K-step (4 dot + 4 memory) | **not unrolled**, 8 regions per K-step (4 memory + 4 dot) |
 | dot order | `C_tl → C_bl → C_tr → C_br` | **`C_tl → C_tr → C_bl → C_br`** |
 | memory stage contains | `local_load` + async copy | `local_load` + **`local_store`** + `buffer_load` |
 
 Four consequences worth spelling out.
 
-**1. There is no async copy, so LDS writes are real instructions in the
+**1. No direct-to-LDS load, so LDS writes are real instructions in the
 schedule.** On gfx950 a region's memory stage is a `local_load` plus an
 `async_copy` that costs only an address computation — the HBM→LDS traffic never
 occupies the LDS port from the wave's point of view. On gfx942 that same traffic
@@ -170,11 +170,9 @@ becomes 4 `ds_write_b128` per tensor competing with `ds_read` for the port. It i
 why regions 4 and 6 are the expensive ones, and why *where* the writes go is a
 design decision rather than a detail.
 
-**2. Synchronisation is barriers, not a counter.** `wait_group(n)` is a per-wave,
-ordered wait on outstanding async copies: cheap, and it does not serialise the two
-wave groups. `s_barrier` does. That is the largest structural cost CDNA3 adds, and
-it is why the region *count* matters here in a way it does not on gfx950 — going
-from 16 regions to 8 removed 8 barriers per K-step.
+**2. The same barriers as gfx950.** `warp_pipeline_stage` puts an `s_barrier` at
+every region boundary on either arch, and both compiled loops have 8 per K-step.
+Synchronisation is not what CDNA3 adds; the `ds_write`s of point 1 are.
 
 **3. Single buffering inverts what LDS is for.** gfx950 double-buffers, so LDS
 *is* the pipeline: tile *k+1* streams into buffer 1 while tile *k* is read out of
@@ -204,7 +202,6 @@ groups swap; it only doubles the instruction count inside each region.
 
 That is the end of the reading path. To go further:
 [`../README.md`](../README.md) §3 for the numbers,
-[`../intra_wave/README.md`](../intra_wave/README.md#4-optimization-history) for the
-optimization history of the 4-wave kernel (much of which — the LDS swizzle, the prologue load ordering —
-applies here too), and the repository's [`scripts/`](../../../../scripts/README.md) for the
+[`../intra_wave/README.md`](../intra_wave/README.md) for the same design at 1 wave/SIMD
+and where its `ds_write`s cost it, and the repository's [`scripts/`](../../../../scripts/README.md) for the
 measurement harnesses.

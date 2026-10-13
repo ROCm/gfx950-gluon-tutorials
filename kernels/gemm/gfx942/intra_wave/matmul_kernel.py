@@ -31,12 +31,13 @@ B_right region order, same XCD-aware PID remap + GROUP_SIZE_M swizzle.
 
 Two things are genuinely different on CDNA3, and they drive the whole design:
 
-1. NO `buffer_load_to_shared`.  gfx950 streams HBM -> LDS with an async copy and
-   synchronises with `async_wait(n)`.  gfx942 has to go
+1. THE REGISTER ROUND TRIP.  gfx950 streams HBM -> LDS with an async copy
+   (`buffer_load_to_shared`) and synchronises with `async_wait(n)`.  CDNA3's
+   direct-to-LDS load moves only 4 B/lane, so the faster path on gfx942 is
    `buffer_load` (HBM -> VGPR) -> `local_store` (VGPR -> LDS) ->
    `local_load` (LDS -> VGPR).  The register round-trip costs 4 x 16 = 64 VGPRs
-   of staging, and the LDS producer/consumer hazard is now closed by real
-   `s_barrier`s (inserted by Triton's membar pass) instead of an async counter.
+   of staging, and every LDS write is now a `ds_write_b128` in this wave's own
+   instruction stream (16 per K-step) that the async copy never issued.
 
 2. HALF THE LDS.  gfx950 has 160 KB/CU and double-buffers a 256x256x64 stage
    (2 x 64 KB).  gfx942 has 64 KB, which is *exactly one* stage -- double
@@ -55,9 +56,10 @@ Two things are genuinely different on CDNA3, and they drive the whole design:
        region 3:  DOT C_br  |  LR A_top(k+1)   |  LW B_right(k+1)  |  GR B_right(k+2)
 
    Every slot's write lands strictly between its previous read and its next
-   read, one region apart on both sides, so a single barrier per region is
-   sufficient -- and one region is 256 mfma/4 = 64 x 16 = ~1024 cycles, which is
-   plenty to absorb the barrier plus the LDS traffic.
+   read, one region apart on both sides, so no slot needs a second copy; membar
+   orders them with two barriers per K-step, and one region is
+   256 mfma/4 = 64 x 16 = ~1024 cycles, plenty to absorb a barrier plus the LDS
+   traffic.
 
    The pipeline depth this buys is the same as gfx950's double buffer:
    GR(k+2) -> LW(k+1) is one full K-step (~4096 cycles) of global latency
@@ -259,7 +261,7 @@ def a16w16_intra_wave_gfx942(
     ## four youngest -- collapsing region 0's waits from vmcnt(15)/(13)/(12) to
     ## vmcnt(3)/(1)/(0), i.e. draining the whole 16-deep queue built to hide HBM
     ## latency.  s_barrier has unmodeled side effects, so it fences the
-    ## scheduler; Gluon exposes no sched.barrier.  See README.md, opt 5.
+    ## scheduler; Gluon exposes no sched.barrier.
     gl.barrier()
 
     gA_top = buffer_load(ptr=a_base, offsets=a_top_offsets)
@@ -282,7 +284,7 @@ def a16w16_intra_wave_gfx942(
     ##
     ## Draining here costs one barrier in the prologue and removes one from
     ## every K-step: 3 barriers/iteration -> 2, and 3 `s_waitcnt lgkmcnt(0)`
-    ## -> 1. See README.md, opt 3.
+    ## -> 1.
     gl.barrier()
 
     ## ------------------------------------------------------------------

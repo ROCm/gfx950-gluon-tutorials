@@ -213,11 +213,12 @@ Two consequences, and they drive both kernels:
 
 1. **32–64 VGPRs of staging** that gfx950 does not pay, which is what makes the
    register budget tight enough to shape the schedule.
-2. **The LDS producer/consumer hazard is closed by real `s_barrier`s** inserted by
-   Triton's membar pass, rather than by an async counter. `wait_group(n)` is a
-   per-wave ordered wait and does not serialise anything; `s_barrier` stops every
-   wave in the CTA. This is the single largest cost CDNA3 adds, and the two
-   kernels differ mainly in how they hide it.
+2. **Every LDS write is a `ds_write_b128` in the wave's own instruction stream.**
+   The async copy writes LDS without one; the round trip issues one per 16 bytes
+   per lane, ~20 cycles each against a 16-cycle MFMA. This is the single largest
+   cost CDNA3 adds, and the two kernels differ mainly in how they hide it.
+   Barriers are not the difference: the compiled loops have as many `s_barrier`s
+   per K-step as their gfx950 counterparts, or fewer.
 
 ### 4.2 Half the LDS — 64 KB is exactly one stage
 
@@ -248,7 +249,7 @@ CDNA3's widest 16×16 f16/bf16 intrinsic is `v_mfma_f32_16x16x16_f16`
 K tile is `8 × (64/16) = 32`, which Triton lowers to two K=16 MFMAs.
 
 Same total matrix work, twice the instructions — which matters less than it
-sounds. A K-step is ~2048 cycles of MFMA per wave either way, so the *rate* at
+sounds. A K-step is ~4096 cycles of MFMA per SIMD either way, so the *rate* at
 which a schedule must feed the matrix unit is unchanged; only the instruction
 count inside each region doubles.
 
@@ -309,8 +310,8 @@ banks exactly once, and improves the global side too (one instruction now reads
 
 ### 4.5 Where the two kernels diverge
 
-Given §4.1–4.4, the remaining question is *who hides the barriers and the LDS
-writes*, and that is the whole difference between the two kernels:
+Given §4.1–4.4, the remaining question is *who hides the LDS writes*, and that is
+the whole difference between the two kernels:
 
 | | [`intra_wave`](intra_wave/) (4 waves, 1/SIMD) | [`inter_wave`](inter_wave/) (8 waves, 2/SIMD) |
 |---|---|---|
