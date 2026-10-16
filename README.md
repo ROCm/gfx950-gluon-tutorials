@@ -42,7 +42,7 @@ Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 │   │   │   └── a4w4/         #   MXFP4
 │   │   └── gfx942/           # MI300X (CDNA3) port of the a16w16 kernels, intra_wave + inter_wave
 │   └── attention/            # Flash Attention forward (fmha_v3, fmha_v4) — MFMA ↔ VALU co-execution
-├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, MFMA efficiency
+├── docs/                 # Performance philosophy, LDS throughput, memory bandwidth, TCP-bound tile test, MFMA efficiency
 ├── layout_plot/          # LaTeX-based layout visualization (blocked, dot, LDS)
 ├── scripts/              # Benchmarks, rocprof + ATT automation, counter collection, perf tables
 ├── experiments/          # Standalone validations referenced from kernel READMEs
@@ -64,6 +64,7 @@ Once you're comfortable there, the BF8 and MXFP4 kernels (`a8w8`, `a4w4`) show h
 | Understand warp-pipelining (the 8-wave kernels' theory)  | `docs/warp_pipelining.md`   |
 | Visualize a blocked / dot operand / LDS layout as a PDF  | `layout_plot/`              |
 | Build a mental model for LDS or HBM throughput           | `docs/`                     |
+| Tell whether a tile is compute-, bandwidth- or latency-bound | `docs/tcp_bound_tile_model.md` |
 | Automate rocprof, collect counters, generate perf tables | `scripts/`                  |
 | See what changed with a Triton or compiler bump          | `CHANGELOG.md`              |
 | Know what's planned next                                 | `ROADMAP.md`                |
