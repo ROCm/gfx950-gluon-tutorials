@@ -52,7 +52,7 @@ a8w8's.
 ## 3. Running
 
 ```bash
-# v2 (recommended, bench.py's default): correctness + do_bench TFLOPS (from this kernel dir)
+# v2 (recommended, bench.py's default): correctness + TFLOPS, docs/benchmarking.md protocol (from this kernel dir)
 python bench.py --version 2 --K 8192
 
 # rocprof cold-rotating TFLOPS + ATT MFMA efficiency + VGPR/spill (from the repo root)
@@ -74,7 +74,7 @@ Inputs are packed MXFP4 (uint8) with e8m0 scales; the output is bf16. Clear
 ## 4. Files
 
 - `get_pids` is imported from the shared [`kernels/gemm/utils/common.py`](../../utils/common.py).
-- `bench.py` — correctness (vs dequantized `torch.mm`) + do_bench TFLOPS + `--rocprof`
+- `bench.py` — correctness (vs dequantized `torch.mm`) + TFLOPS (graph-replay protocol) + `--rocprof`
   rotating-tensor mode, with the MXFP4 input generation from the 4-wave `a4w4/bench.py`.
 - Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
   (`--kernel a4w4 --version N`).

@@ -31,8 +31,8 @@ TRITON_AMDGCNAS_PLUGIN=1 python bench.py --version 1 --K 32768
 ```
 
 This runs correctness against a dequantized `torch.matmul` reference and reports
-TFLOPS. The MFMA scheduler is on by default (`--schedule-hint ""` turns it off). Use `--version 0|1` to select the kernel and `--rocprof` for accurate
-timing + MFMA efficiency. For the full version × config table:
+TFLOPS measured with the tutorial's timing protocol ([`docs/benchmarking.md`](../../../../docs/benchmarking.md)). The MFMA scheduler is on by default (`--schedule-hint ""` turns it off). Use `--version 0|1` to select the kernel. For the full version × config table
+(TFLOPS, MFMA efficiency, VGPRs; `--rocprof` adds a kernel-trace cross-check):
 
 ```bash
 python ../../../scripts/run_perf_table.py --kernel a4w4 --versions 0 1 \

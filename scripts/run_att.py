@@ -50,6 +50,14 @@ def get_git_root():
         )
 
 
+# rocprofiler-sdk 1.4 and later create the thread-trace queue directly through KFD and need the
+# driver to report the queue's context-save sizes (KFD ABI 1.20). Older amdgpu drivers do not, and
+# the queue is rejected with "AMDKFD_IOC_CREATE_QUEUE failed: Invalid argument". The SDK's HSA path
+# (what ROCm 7.2 used) works there; ROCPROFILER_SQTT_FORCE_HSA=1 selects it.
+KFD_QUEUE_ERROR = "AMDKFD_IOC_CREATE_QUEUE failed"
+FORCE_HSA = "ROCPROFILER_SQTT_FORCE_HSA"
+
+
 def run_rocprof_att(att_output_dir, python_cmd):
     env = os.environ.copy()
     # Allow user override via the standard env var. If not set, fall back to a
@@ -71,7 +79,19 @@ def run_rocprof_att(att_output_dir, python_cmd):
     print("Running rocprofv3 command:")
     print(" ".join(cmd))
 
-    subprocess.run(cmd, env=env, check=True)
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    output = proc.stdout + proc.stderr
+    if proc.returncode != 0 and KFD_QUEUE_ERROR in output and FORCE_HSA not in env:
+        print(
+            f"rocprofv3 could not create its KFD thread-trace queue (driver older than KFD ABI "
+            f"1.20); retrying with {FORCE_HSA}=1 (the HSA path)"
+        )
+        env[FORCE_HSA] = "1"
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        output = proc.stdout + proc.stderr
+    print(output)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=output)
 
 
 def find_ui_output_dir(att_output_dir):

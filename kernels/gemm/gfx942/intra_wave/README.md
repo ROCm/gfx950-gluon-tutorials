@@ -12,9 +12,8 @@ also where the cost of MI300's LDS writes is easiest to see (§3).
 
 ```bash
 cd ..                                              # kernels/gemm/gfx942
-python bench.py -k intra_wave                      # correctness + TFLOPS (do_bench)
-AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
-    -- python bench.py --rocprof -k intra_wave --K 8256 --dtype fp16       # timing, ../README.md §3
+python bench.py -k intra_wave                      # correctness + TFLOPS (docs/benchmarking.md)
+python bench.py -k intra_wave --K 8256 --dtype fp16 --protocol sustained   # timing, ../README.md §3
 python ../../../scripts/run_att.py --att-output att \
     python bench.py -k intra_wave --K 8256 --dtype fp16 --no-torch         # ATT, ../README.md §3.3
 ```

@@ -28,11 +28,14 @@ Collect TFLOPS + MFMA efficiency for the 8-wave warp-pipeline (inter_wave) GEMM
 kernels using rocprof. One tool for all three inter_wave kernels; the 4-wave
 (intra_wave) kernels use scripts/run_perf_table.py instead.
 
-  * TFLOPS  — rocprofv3 --kernel-trace around `bench.py --rocprof` (rotating
-              tensors / cold cache), averaging the last 100 kernel dispatches.
-  * MFMA eff — rocprofv3 --att via scripts/run_att.py, decoded by
+  * TFLOPS  — bench.py's timing protocol (scripts/graph_timer.py: graph replay of
+              back-to-back dispatches over rotating inputs, warm-up, measurement
+              window; see docs/benchmarking.md). --rocprof adds a kernel-trace
+              cross-check over the same window.
+  * MFMA eff — rocprofv3 --att via scripts/run_att.py on one dispatch taken after
+              --att-warmup-s of back-to-back dispatches, decoded by
               scripts/process_json.py, then scaled x2 for 2 waves/SIMD.
-  * VGPRs/spills — parsed from the kernel's .amdgcn in the triton cache.
+  * VGPRs/spills — parsed from the kernel's .amdgcn in a private Triton cache.
 
 The inter_wave kernels schedule themselves via warp_pipeline_stage and run
 "base" (no schedule_hint, no amdgcnas), so no env vars.
@@ -43,6 +46,7 @@ Usage:
     python scripts/collect_perf.py --kernel a4w4 --version 1 --K 32768 \
         --rotating-buffer-size 2048
     python scripts/collect_perf.py --kernel a16w16 --K 8192 --skip-att  # TFLOPS only
+    python scripts/collect_perf.py --kernel a16w16 --K 8192 --protocol sustained  # published
 """
 
 import argparse
@@ -55,16 +59,15 @@ GIT_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text
 SCRIPTS_DIR = os.path.join(GIT_ROOT, "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 
+import graph_timer  # noqa: E402
 from run_perf_table import (  # noqa: E402
-    avg_kernel_time_ns,
+    ATT_WARMUP_S,
     clean_caches,
-    find_kernel_trace_csv,
     parse_amdgcn_metadata,
-    parse_mfma_efficiency,
-    write_att_config,
+    private_triton_env,
+    run_att_steady,
+    run_timing,
 )
-
-RUN_ATT = os.path.join(SCRIPTS_DIR, "run_att.py")
 
 # 8 waves across a CU's 4 SIMDs => 2 waves/SIMD. process_json.py measures a
 # SINGLE wave's MFMA-cycle fraction; with 2 co-resident waves interleaving MFMA
@@ -117,9 +120,33 @@ def parse_args():
         "--dtype", default="fp16", choices=["fp16", "bf16"], help="a16w16 only (default: fp16)"
     )
     p.add_argument("--version", type=int, default=0, help="version (a4w4 only): 0/1/2")
-    p.add_argument("--rotating-buffer-size", type=int, default=512, help="MB (default: 512)")
-    p.add_argument("--skip-trace", action="store_true", help="Skip rocprof kernel-trace (TFLOPS)")
+    p.add_argument(
+        "--rotating-buffer-size",
+        type=int,
+        default=graph_timer.COLD_INPUT_MIB,
+        help="MiB of inputs to rotate through (default: %(default)s)",
+    )
+    p.add_argument("--skip-timing", action="store_true", help="Skip the timing run (TFLOPS)")
     p.add_argument("--skip-att", action="store_true", help="Skip ATT (MFMA efficiency)")
+    p.add_argument(
+        "--rocprof",
+        action="store_true",
+        help="also time the window with rocprofv3 --kernel-trace (no serialization)",
+    )
+    p.add_argument(
+        "--protocol",
+        choices=sorted(graph_timer.PROTOCOLS),
+        default=graph_timer.DEFAULT_PROTOCOL,
+        help="timing protocol: quick (1 s + 4 s) or sustained (60 s + 30 s). Default: %(default)s",
+    )
+    p.add_argument("--warmup-s", type=float, default=None, help="override the warm-up time")
+    p.add_argument("--window-s", type=float, default=None, help="override the window length")
+    p.add_argument(
+        "--att-warmup-s",
+        type=float,
+        default=ATT_WARMUP_S,
+        help="seconds of back-to-back dispatches before the ATT-traced one (default: %(default)s)",
+    )
     args = p.parse_args()
     cfg = KERNELS[args.kernel]
     if cfg["versions"] is not None and args.version not in cfg["versions"]:
@@ -143,86 +170,13 @@ def resolve(args):
     return work_dir, kernel_name, dtype_label, tail
 
 
-def run_kernel_trace(args, work_dir, kernel_name, tail):
-    """rocprofv3 --kernel-trace -> average kernel time -> TFLOPS."""
-    trace_dir = os.path.join(work_dir, "rocprof_trace")
-    if os.path.isdir(trace_dir):
-        shutil.rmtree(trace_dir)
-
-    cmd = [
-        "rocprofv3",
-        "--kernel-trace",
-        "-f",
-        "csv",
-        "--kernel-include-regex",
-        kernel_name,
-        "-d",
-        trace_dir,
-        "--",
-        "python",
-        "bench.py",
-        "--rocprof",
-        "--K",
-        str(args.K),
-        "--rotating-buffer-size",
-        str(args.rotating_buffer_size),
-        *tail,
-    ]
-    print(f"  rocprofv3 --kernel-trace: {kernel_name} K={args.K} ...")
-    proc = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
-    if proc.returncode != 0:
-        print("  kernel-trace FAILED:")
-        for line in (proc.stdout + "\n" + proc.stderr).strip().splitlines()[-8:]:
-            print("    " + line)
-        return None
-
-    csv_path = find_kernel_trace_csv(trace_dir)
-    if csv_path is None:
-        print(f"  no kernel_trace.csv under {trace_dir}")
-        return None
-
-    avg_ns, count = avg_kernel_time_ns(csv_path, kernel_name)
-    if avg_ns is None:
-        print(f"  no rows matched kernel '{kernel_name}' in {csv_path}")
-        return None
-
-    tflops = 2 * args.M * args.N * args.K * 1e-12 / (avg_ns * 1e-9)
-    print(f"  rocprofv3: {count} dispatches, avg={avg_ns/1e3:.2f} us, tflops={tflops:.1f}")
-    return tflops
-
-
-def run_att(args, work_dir, kernel_name, att_type, tail):
-    """rocprofv3 --att (via run_att.py) -> process_json.py -> MFMA efficiency."""
-    write_att_config(kernel_name, work_dir, kernel_type=att_type)
-
-    cmd = [
-        sys.executable,
-        RUN_ATT,
-        "--att-output",
-        "tmp",
-        "python",
-        "bench.py",
-        "--K",
-        str(args.K),
-        *tail,
-    ]
-    print(f"  rocprofv3 --att (MFMA eff): {kernel_name} K={args.K} ...")
-    env = os.environ.copy()
-    env.setdefault("ROCPROF_ATT_LIBRARY_PATH", "/opt/rocm/lib/")
-    proc = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True, env=env)
-    combined = proc.stdout + "\n" + proc.stderr
-    if proc.returncode != 0:
-        print("  ATT FAILED:")
-        for line in combined.strip().splitlines()[-8:]:
-            print("    " + line)
-        return None
-
-    mfma_eff = parse_mfma_efficiency(combined)
-    if mfma_eff is None:
-        print("  could not parse MFMA efficiency from ATT output")
-        for line in combined.strip().splitlines()[-8:]:
-            print("    " + line)
-    return mfma_eff
+def timing_cli(args):
+    cli = ["--protocol", args.protocol, "--rotating-buffer-size", str(args.rotating_buffer_size)]
+    if args.warmup_s is not None:
+        cli += ["--warmup-s", str(args.warmup_s)]
+    if args.window_s is not None:
+        cli += ["--window-s", str(args.window_s)]
+    return cli
 
 
 def main():
@@ -238,20 +192,44 @@ def main():
     print("=" * 64)
 
     clean_caches(work_dir)
-
-    tflops = None if args.skip_trace else run_kernel_trace(args, work_dir, kernel_name, tail)
-    mfma_eff_raw = (
-        None if args.skip_att else run_att(args, work_dir, kernel_name, cfg["att_type"], tail)
-    )
+    env, cache_dir = private_triton_env(os.environ)
+    bench_args = ["--K", str(args.K), *tail]
+    timing, trace_us, mfma_eff_raw = None, None, None
+    try:
+        if not args.skip_timing:
+            timing, trace_us = run_timing(
+                work_dir,
+                bench_args,
+                env,
+                timing_cli(args),
+                trace_kernel=kernel_name if args.rocprof else None,
+                trace_dir=os.path.join(work_dir, "rocprof_trace"),
+            )
+        if not args.skip_att:
+            if timing is None:
+                print("  ATT skipped: it needs the timing run's dispatch time for its warm-up")
+            else:
+                mfma_eff_raw = run_att_steady(
+                    work_dir,
+                    kernel_name,
+                    bench_args,
+                    env,
+                    timing["median_us"],
+                    cfg["att_type"],
+                    args.att_warmup_s,
+                )
+        vgprs, spills = parse_amdgcn_metadata(kernel_name, cache_dir)
+    finally:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+    tflops = timing["tflops"] if timing else None
     mfma_eff_raw, mfma_eff = scale_eff(mfma_eff_raw, WAVES_PER_SIMD)
-    vgprs, spills = parse_amdgcn_metadata(kernel_name)
 
     def fmt(v, suffix=""):
         return f"{v}{suffix}" if v is not None else "N/A"
 
     print()
     print("=" * 64)
-    print("RESULTS (rocprof)")
+    print("RESULTS")
     print("=" * 64)
     print(
         f"| {'M':>5} | {'N':>5} | {'K':>6} | {'dtype':>5} | {'TFLOPS':>8} | "
@@ -265,6 +243,17 @@ def main():
     )
     if mfma_eff is not None:
         print(f"\nMFMA Eff = {mfma_eff} (per-wave {mfma_eff_raw} x {WAVES_PER_SIMD} waves/SIMD)")
+    if timing is not None:
+        gpu = timing["gpu"]
+        cond = (
+            f"{timing['median_us']:.2f} us/dispatch, protocol {timing['protocol']}, "
+            f"GPU {gpu['bdf']}"
+        )
+        if timing["power_w"] is not None:
+            cond += f", {timing['power_w']:.0f} W, {timing['clock_mhz']:.0f} MHz in the window"
+        print(f"TFLOPS measured under: {cond}")
+        if trace_us:
+            print(f"Kernel trace over the window: {timing['flops'] / trace_us * 1e-6:.1f} TFLOPS")
 
 
 if __name__ == "__main__":

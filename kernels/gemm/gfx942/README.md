@@ -68,23 +68,25 @@ python bench.py --sweep-gm --K 4160               # GROUP_SIZE_M sweep
 `bench.py` checks against an **fp32** reference (the kernels accumulate in fp32
 and round once, so they are strictly more accurate than a half-precision
 reference) and requires the error to be within 4 ulps of the peak output
-magnitude. `--rocprof` switches to the tutorial's rotating-buffer mode for
-external `rocprofv3 --kernel-trace` timing.
+magnitude. TFLOPS come from the tutorial's timing protocol
+([`docs/benchmarking.md`](../../../docs/benchmarking.md): graph replay of back-to-back dispatches
+over rotating inputs, warm-up, measurement window); `--rocprof` is the profiler mode, which issues
+dispatches for an external `rocprofv3` (counters, thread trace) without timing them.
 
 ## 3. Results
 
 MI300X (gfx942), 304 CUs, ROCm 7.2, Triton `gfx950-tutorial-v3.1`. M=4096, N=4864
-with K swept (§3.1 discusses how the shape matters). TFLOPS come from the
-repository's plain timing path, as for the gfx950 tables: `bench.py --rocprof` runs
+with K swept (§3.1 discusses how the shape matters). TFLOPS in this section were taken with the
+repository's earlier timing path, as were the gfx950 tables: `bench.py --rocprof` ran
 1000 dispatches over 512 MB of rotating buffers under `rocprofv3 --kernel-trace`
 with `AMD_SERIALIZE_KERNEL=3`, and
-[`scripts/calc_kernel_time.py`](../../../scripts/calc_kernel_time.py) averages the
-kernel duration over every dispatch:
+[`scripts/calc_kernel_time.py`](../../../scripts/calc_kernel_time.py) averaged the
+kernel duration over every dispatch. `bench.py` now times with the tutorial's protocol
+([`docs/benchmarking.md`](../../../docs/benchmarking.md), which explains why serialized,
+short runs read differently); to repeat a row:
 
 ```bash
-AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace --output-format csv -d trace \
-    -- python bench.py --rocprof -k inter_wave --K 8256 --dtype fp16
-python ../../../scripts/calc_kernel_time.py trace/*/*_kernel_trace.csv a16w16_inter_wave_gfx942
+python bench.py -k inter_wave --K 8256 --dtype fp16 --protocol sustained
 ```
 
 hipBLASLt is timed the same way through `torch.matmul` on the same operands
@@ -166,7 +168,8 @@ behind at 14 and GM = 1/2/16 far worse at 39/21/19. Measured with
 
 The model separates the bad choices correctly — GM = 1, 2 and 16 cost 1.2-1.7% —
 but GM = 4 through 8 are within 0.8% of each other. **`GROUP_SIZE_M = 4` is
-kept**; anything in 4-8 is equivalent here. (These are `do_bench` numbers.)
+kept**; anything in 4-8 is equivalent here. (These are `triton.testing.do_bench` numbers, taken
+before `bench.py` moved to the graph-replay protocol.)
 
 ### 3.3 ATT traces
 

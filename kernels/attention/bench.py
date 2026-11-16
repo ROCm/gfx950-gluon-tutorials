@@ -24,9 +24,10 @@
 """Baseline benchmark for the FMHA (rotated 4-cluster) Gluon flash-attention
 kernel, ported from AMD-Triton/gluon-kernels (kernels/cdna4/fa).
 
-Mirrors the GEMM tutorial bench.py: correctness vs a torch reference, do_bench
-TFLOPS, a --rocprof iteration mode, and the out-of-tree plugin hooks so the same
-harness can later measure base / llir / llir+plugins configs.
+Mirrors the GEMM tutorial bench.py: correctness vs a torch reference, TFLOPS from the
+tutorial's timing protocol (scripts/graph_timer.py: graph replay of back-to-back dispatches
+over rotating inputs, a warm-up time, then a measurement window), a --rocprof profiler mode,
+and the out-of-tree plugin hooks so the same harness can measure base / llir / llir+plugins.
 """
 
 import argparse
@@ -59,10 +60,13 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 
 # Ported FMHA kernel + shared helpers live alongside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# scripts/graph_timer.py: the tutorial's timing protocol (graph replay, warm-up, rotating sets).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
 # Select the kernel implementation: FA_MODULE=fmha_v3 (default, eager rescale) or
 # fmha_v4 (lazy-rescale variant). Both expose run_gluon_attention.
 import importlib  # noqa: E402
 
+import graph_timer  # noqa: E402
 from common import (
     _check_output,
     compute_flops,
@@ -115,7 +119,8 @@ def parse_args():
     p.add_argument(
         "--rocprof",
         action="store_true",
-        help="run the kernel n_iters times (no do_bench); wrap with rocprofv3 --kernel-trace",
+        help="profiler mode: instead of timing, issue --n-warmup + --n-iters dispatches back to "
+        "back for an external profiler (rocprofv3 --kernel-trace / --pmc / --att)",
     )
     p.add_argument("--n-iters", type=int, default=1000)
     p.add_argument(
@@ -125,7 +130,7 @@ def parse_args():
         "instead of the JIT wrapper, removing per-dispatch Python argument binding",
     )
     p.add_argument(
-        "--n-warmup", type=int, default=10, help="prepared mode: unmeasured warmup dispatches"
+        "--n-warmup", type=int, default=10, help="profiler mode: dispatches before --n-iters"
     )
     p.add_argument(
         "--rotating-sets",
@@ -147,10 +152,11 @@ def parse_args():
         "--rotating-buffer-size",
         type=int,
         default=512,
-        help="rocprof mode: total working set (MB) to spread across rotating sets, so it exceeds "
-        "the GPU cache (L2 + 256MB MALL) and dispatches see cold data. Matches the GEMM bench "
-        "default. Large FA shapes already exceed it with one set (default: 512)",
+        help="total working set (MB) to spread across rotating sets, so it exceeds the GPU cache "
+        "(L2 + 256MB MALL) and dispatches see cold data. Matches the GEMM bench default. Large FA "
+        "shapes already exceed it with one set (default: 512)",
     )
+    graph_timer.add_timing_args(p)
     return p.parse_args()
 
 
@@ -209,11 +215,13 @@ def run_rocprof_iterations(args, torch_dtype, seqlens):
         q, k, v, o, md = sets[0]
         launch_attention(q, k, v, o, md)  # warmup + autotune
         torch.cuda.synchronize()
-        for i in range(args.n_iters):
-            q, k, v, o, md = sets[i % len(sets)]
-            launch_attention(q, k, v, o, md)
-        torch.cuda.synchronize()
-        print(f"[FMHA] N={N_CTX}: {args.n_iters} iterations done ({n_sets} rotating set(s))")
+        graph_timer.profile_loop(
+            lambda i: launch_attention(*sets[i]), n_sets, args.n_warmup, args.n_iters
+        )
+        print(
+            f"[FMHA] N={N_CTX}: {args.n_warmup} + {args.n_iters} dispatches done "
+            f"({n_sets} rotating set(s))"
+        )
 
 
 def make_prepared_kernel(N_CTX, args, torch_dtype, n_sets):
@@ -327,40 +335,39 @@ def main():
             run_rocprof_iterations(args, torch_dtype, seqlens)
         return
 
-    # 3) do_bench TFLOPS sweep (non-causal).
-    configs = [
-        triton.testing.Benchmark(
-            x_names=["N_CTX"],
-            x_vals=seqlens,
-            line_arg="provider",
-            line_vals=["gluon"],
-            line_names=["non-causal"],
-            styles=[("blue", "-")],
-            ylabel="TFLOPS",
-            plot_name=(
-                f"fmha_v3-attn-B{args.batch}-HQ{args.hq}-HK{args.hk}"
-                f"-D{args.d}-{args.layout}-{args.dtype}"
-            ),
-            args={},
-        )
-    ]
-
-    @triton.testing.perf_report(configs)
-    def benchmark(N_CTX, provider):
-        q, k, v, o, md = make_inputs(
-            args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout
-        )
-        fn = lambda: launch_attention(q, k, v, o, md)  # noqa: E731
-        fn()  # trigger autotune + warm compile before timing
-        torch.cuda.synchronize()
-        ms = triton.testing.do_bench(fn, warmup=25, rep=100, return_mode="median")
-        return compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, False) / ms * 1e-9
-
+    # 3) Timing (non-causal): graph replay, warm-up, measurement window.
+    protocol = graph_timer.protocol_from_args(args)
     print(
-        f"\nFMHA rotated-4cluster attention | B={args.batch} HQ={args.hq} HK={args.hk} "
-        f"D={args.d} layout={args.layout} dtype={args.dtype} non-causal"
+        f"\nFMHA rotated-4cluster attention | module={_FA_MODULE} B={args.batch} HQ={args.hq} "
+        f"HK={args.hk} D={args.d} layout={args.layout} dtype={args.dtype} non-causal"
     )
-    benchmark.run(show_plots=False, print_data=True)
+    for N_CTX in seqlens:
+        n_sets = rotating_set_count(args, torch_dtype, N_CTX)
+        sets = [
+            make_inputs(args.batch, args.hq, args.hk, N_CTX, args.d, torch_dtype, args.layout)
+            for _ in range(n_sets)
+        ]
+        result = graph_timer.time_dispatches(
+            lambda i: launch_attention(*sets[i]),
+            n_sets,
+            protocol,
+            flops=compute_flops(args.batch, args.hq, N_CTX, N_CTX, args.d, False),
+            label=f"{_FA_MODULE} N={N_CTX}",
+        )
+        result.update(
+            kernel="gluon_attn_fwd",
+            module=_FA_MODULE,
+            batch=args.batch,
+            hq=args.hq,
+            hk=args.hk,
+            seqlen=N_CTX,
+            d=args.d,
+            dtype=args.dtype,
+            layout=args.layout,
+        )
+        graph_timer.print_result(result, args.result_json)
+        sets = None  # free the sets
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

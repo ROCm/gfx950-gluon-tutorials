@@ -153,10 +153,10 @@ via the two different scheduling models (wave-level ping-pong vs compiler interl
 ## 4. Running
 
 ```bash
-# correctness + do_bench TFLOPS (from this kernel dir)
+# correctness + TFLOPS, docs/benchmarking.md protocol (from this kernel dir)
 python bench.py --K 8192 --dtype fp16
 
-# rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill (from the repo root)
+# TFLOPS + MFMA efficiency (ATT, after a warm-up) + VGPR/spill (from the repo root)
 python scripts/collect_perf.py --kernel a16w16 --K 8192 --dtype fp16
 
 # large K needs a bigger rotating buffer to stay cold (≥3 copies)
@@ -176,7 +176,7 @@ patch needed, and it survives a Triton rebuild.
   `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
 - `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) is imported from the shared
   [`kernels/gemm/utils/common.py`](../../utils/common.py) (`bench.py` puts it on the path).
-- `bench.py` — correctness + do_bench TFLOPS + `--rocprof` rotating-tensor mode.
+- `bench.py` — correctness + TFLOPS (graph-replay protocol, `scripts/graph_timer.py`) + `--rocprof` profiler mode.
 - Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
   (`--kernel a16w16`); VMEM-latency counters with
   [`scripts/collect_counters.py`](../../../../scripts/collect_counters.py).

@@ -5,6 +5,22 @@ compiler / Triton evolution.
 
 ---
 
+## Unreleased — one timing protocol for every `bench.py`
+
+Every `bench.py`, `run_perf_table.py`, `collect_perf.py` and `fa_kernel_time.py` now times with
+[`scripts/graph_timer.py`](scripts/graph_timer.py): graph replay of back-to-back dispatches over
+rotating inputs (cold caches), a warm-up time, then a measurement window, reported as the median
+replay time per dispatch with the window's power and clock (`--protocol quick`, 1 s + 4 s, or
+`sustained`, 60 s + 30 s). It replaces `triton.testing.do_bench` (whose first-call estimate put
+its timed runs in the start-up dip, 6-9% low here) and serialized `rocprofv3` timing of the last
+100 of 1000 dispatches (`AMD_SERIALIZE_KERNEL=3` changes the power state the kernel runs in).
+ATT now traces a dispatch after a 1 s warm-up instead of dispatch 15, and TFLOPS no longer come
+from the ATT-profiled process. The scripts no longer delete `~/.triton/cache`; each run compiles
+into a private cache. The kernel READMEs' tables are unchanged and were measured with the earlier
+protocol. Why, with measurements: [`docs/benchmarking.md`](docs/benchmarking.md).
+
+---
+
 ## 2026-10-11 — `gfx950-tutorial-v3.1` for the MI300X (gfx942) kernels
 
 [`gfx950-tutorial-v3.1`](https://github.com/triton-lang/triton/releases/tag/gfx950-tutorial-v3.1)

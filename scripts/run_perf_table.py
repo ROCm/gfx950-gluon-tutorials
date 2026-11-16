@@ -40,15 +40,20 @@ Usage:
     # a4w4 kernel (run from anywhere):
     python scripts/run_perf_table.py --kernel a4w4 --versions 0 1 --configs llir+amdgcnas --K 8192
 
-    # Use rocprofv3 for TFLOPS timing instead of do_bench:
+    # Published numbers: the sustained protocol (60 s warm-up + 30 s window per row):
+    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 9 --K 8192 --dtype fp16 --protocol sustained
+
+    # Cross-check the event timing with rocprofv3 --kernel-trace over the same window:
     python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 7 --K 8192 --dtype fp16 --rocprof
 
-    # Compile/bind once and use the cached launcher for the rocprof timing loop:
-    python scripts/run_perf_table.py --kernel a16w16 --configs llir+amdgcnas --versions 9 --K 8192 --dtype bf16 --rocprof --prepared
+Each row: TFLOPS from bench.py's timing protocol (scripts/graph_timer.py: graph replay of
+back-to-back dispatches over rotating inputs, warm-up, then a measurement window; see
+docs/benchmarking.md); MFMA efficiency from rocprofv3 --att on one dispatch taken after a
+warm-up of --att-warmup-s seconds of back-to-back dispatches; VGPRs/spills from the kernel the
+run compiled into a private Triton cache (the user's cache is never touched).
 """
 
 import argparse
-import csv
 import glob
 import json
 import os
@@ -56,6 +61,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import graph_timer  # noqa: E402  (stdlib-only at import time)
 
 # Duplicated from bench.py to avoid importing it (it pulls in torch/triton).
 VERSION_MAP = {
@@ -130,14 +139,18 @@ def is_reported(kernel, config, version):
     return version in REPORTED_COMBINATIONS.get(kernel, {}).get(config, set())
 
 
-TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
+# Each run compiles into a fresh private Triton cache (TRITON_CACHE_DIR in the subprocess env):
+# the configs differ only in compile-time hooks that Triton's cache key does not see, so a shared
+# cache could hand one config another config's binary, and deleting the user's cache instead
+# (as this script used to) destroys other jobs' compiled kernels.
+ATT_WARMUP_S = 1.0
 
 ATT_MATMUL_TEMPLATE = {
     "jobs": [
         {
             "kernel_include_regex": "",
             "kernel_exclude_regex": "",
-            "kernel_iteration_range": "[15]",
+            "kernel_iteration_range": "[1]",  # set per run by write_att_config
             "advanced_thread_trace": True,
             "att_target_cu": 0,
             "att_shader_engine_mask": "0xF",
@@ -165,10 +178,11 @@ def get_git_root():
     return result.stdout.strip()
 
 
-def write_att_config(version_dir, work_dir=None, kernel_type="a16w16"):
-    """Write att_matmul.json with kernel_include_regex set to the version dir name."""
+def write_att_config(version_dir, work_dir=None, kernel_type="a16w16", iteration=1):
+    """Write att_matmul.json: trace dispatch number ``iteration`` of the kernel ``version_dir``."""
     cfg = json.loads(json.dumps(ATT_MATMUL_TEMPLATE))
     cfg["jobs"][0]["kernel_include_regex"] = version_dir
+    cfg["jobs"][0]["kernel_iteration_range"] = f"[{iteration}]"
     if kernel_type in ATT_BUFFER_SIZE_OVERRIDES:
         cfg["jobs"][0]["att_buffer_size"] = ATT_BUFFER_SIZE_OVERRIDES[kernel_type]
     att_path = os.path.join(work_dir, "att_matmul.json") if work_dir else "att_matmul.json"
@@ -177,30 +191,112 @@ def write_att_config(version_dir, work_dir=None, kernel_type="a16w16"):
 
 
 def clean_caches(work_dir=None):
-    """Remove triton cache and local tmp/ directory."""
-    if os.path.isdir(TRITON_CACHE):
-        shutil.rmtree(TRITON_CACHE)
+    """Remove the local ATT output directory (tmp/). Triton's cache is left alone."""
     tmp_dir = os.path.join(work_dir, "tmp") if work_dir else "tmp"
     if os.path.isdir(tmp_dir):
         shutil.rmtree(tmp_dir)
 
 
-def parse_tflops(output):
-    """Parse TFLOPS from bench.py output.
+def private_triton_env(env):
+    """A copy of ``env`` with TRITON_CACHE_DIR set to a fresh directory; returns (env, dir)."""
+    cache_dir = tempfile.mkdtemp(prefix="perf_table_triton_cache_")
+    env = dict(env)
+    env["TRITON_CACHE_DIR"] = cache_dir
+    return env, cache_dir
 
-    The benchmark table (pandas-style) has lines like:
-        0  4096.0  4096.0  4096.0    123.456
-    We grab the last float on the last such data row.
+
+def timing_cli(args):
+    """bench.py timing flags for the chosen protocol."""
+    cli = ["--protocol", args.protocol]
+    if args.warmup_s is not None:
+        cli += ["--warmup-s", str(args.warmup_s)]
+    if args.window_s is not None:
+        cli += ["--window-s", str(args.window_s)]
+    return cli
+
+
+def run_timing(
+    work_dir, bench_args, env, protocol_cli, trace_kernel=None, trace_dir=None, keep_trace=False
+):
+    """Run bench.py's timing protocol; return (result dict or None, kernel-trace median us or None).
+
+    With ``trace_kernel``, the run happens under ``rocprofv3 --kernel-trace`` (no serialization)
+    and the dispatches that start inside the measurement window give a kernel-trace median.
     """
-    tflops = None
-    for line in output.splitlines():
-        # Match pandas-style data rows: index followed by M, N, K floats and TFLOPS
-        m = re.match(r"\s*\d+\s+([\d.]+\s+[\d.]+\s+[\d.]+\s+.+)", line)
-        if m:
-            nums = re.findall(r"[\d.]+", m.group(1))
-            if nums:
-                tflops = float(nums[-1])
-    return tflops
+    cmd = [sys.executable, "bench.py", *bench_args, *protocol_cli]
+    if trace_kernel:
+        if os.path.isdir(trace_dir):
+            shutil.rmtree(trace_dir)
+        cmd = [
+            "rocprofv3",
+            "--kernel-trace",
+            "-f",
+            "csv",
+            "--kernel-include-regex",
+            trace_kernel,
+            "-d",
+            trace_dir,
+            "--",
+        ] + cmd
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=work_dir)
+    results = graph_timer.parse_results(proc.stdout)
+    if proc.returncode != 0 or not results:
+        print(f"  timing FAILED (exit code {proc.returncode})")
+        for line in (proc.stdout + "\n" + proc.stderr).strip().splitlines()[-5:]:
+            print(f"    {line}")
+        return None, None
+    for line in proc.stdout.splitlines():
+        if "match" in line or "differ" in line or line.startswith("[") and "us/dispatch" in line:
+            print(f"  {line.strip()}")
+    result = results[-1]
+    trace_us = None
+    if trace_kernel:
+        csv_path = find_kernel_trace_csv(trace_dir)
+        if csv_path:
+            trace_us, n = graph_timer.trace_window_median(
+                csv_path, trace_kernel, *result["window_monotonic_ns"]
+            )
+            if trace_us:
+                print(f"  kernel trace: median {trace_us:.2f} us over the window's {n} dispatches")
+        if not keep_trace:
+            shutil.rmtree(trace_dir, ignore_errors=True)
+    return result, trace_us
+
+
+def run_att_steady(work_dir, kernel_name, bench_args, env, dispatch_us, kernel_type, warmup_s):
+    """MFMA efficiency from ATT on one dispatch that follows ``warmup_s`` of back-to-back ones.
+
+    bench.py's profiler mode issues 1 correctness-check dispatch, then W warm-up dispatches, then
+    a few more; the ATT config names dispatch 1 + W + 1, so the traced dispatch runs in the
+    back-to-back state rather than in the start-up transient (dispatch 15, ~3 ms after the start,
+    where this script used to trace). ATT serializes only the traced dispatch.
+    """
+    warmup = graph_timer.warmup_dispatches_for(warmup_s, dispatch_us)
+    write_att_config(kernel_name, work_dir, kernel_type=kernel_type, iteration=1 + warmup + 1)
+    cmd = [
+        sys.executable,
+        os.path.join(_REPO_ROOT, "scripts", "run_att.py"),
+        "--att-output",
+        "tmp",
+        sys.executable,
+        "bench.py",
+        *bench_args,
+        "--rocprof",
+        "--warmup-dispatches",
+        str(warmup),
+        "--iters",
+        "3",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=work_dir)
+    combined = proc.stdout + "\n" + proc.stderr
+    if proc.returncode != 0:
+        print(f"  ATT FAILED (exit code {proc.returncode})")
+        for line in combined.strip().splitlines()[-5:]:
+            print(f"    {line}")
+        return None
+    eff = parse_mfma_efficiency(combined)
+    print(f"  ATT: dispatch {1 + warmup + 1} ({warmup_s:g} s of warm-up), MFMA efficiency {eff}")
+    return eff
 
 
 def parse_mfma_efficiency(output):
@@ -211,9 +307,9 @@ def parse_mfma_efficiency(output):
     return None
 
 
-def parse_amdgcn_metadata(version_dir):
-    """Parse VGPRs and spills from the .amdgcn file in triton cache."""
-    pattern = os.path.join(TRITON_CACHE, "*", f"{version_dir}*.amdgcn")
+def parse_amdgcn_metadata(version_dir, cache_dir):
+    """Parse VGPRs and spills from the kernel's .amdgcn in the Triton cache ``cache_dir``."""
+    pattern = os.path.join(cache_dir, "*", f"{version_dir}*.amdgcn")
     files = glob.glob(pattern)
     if not files:
         return None, None
@@ -251,158 +347,10 @@ def find_kernel_trace_csv(trace_dir):
     return max(files, key=os.path.getmtime)
 
 
-def avg_kernel_time_ns(csv_path, kernel_name, last_n=100):
-    """Return the average elapsed time in nanoseconds for the last_n matching rows.
+def run_benchmark(version, config, K, dtype, args, kernel="a16w16"):
+    """Run one (version, config): timing, then ATT, then VGPR/spill parsing.
 
-    Early dispatches may have inflated times due to warmup effects.
-    Averaging only the last_n dispatches gives steady-state timing.
-    """
-    dispatches = []
-    with open(csv_path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if kernel_name in row["Kernel_Name"]:
-                start = int(row["Start_Timestamp"])
-                end = int(row["End_Timestamp"])
-                dispatches.append((int(row["Dispatch_Id"]), end - start))
-    if not dispatches:
-        return None, 0
-    dispatches.sort(key=lambda item: item[0])
-    durations = [duration for _, duration in dispatches]
-    tail = durations[-last_n:]
-    return sum(tail) / len(tail), len(durations)
-
-
-def run_rocprof_trace(
-    version_dir,
-    K,
-    dtype,
-    version,
-    work_dir,
-    env,
-    kernel_type="a16w16",
-    prepared=False,
-    warmup=10,
-    iters=1000,
-    rotating_sets=3,
-    last_n=100,
-    config="base",
-):
-    """Run rocprofv3 --kernel-trace to collect kernel timestamps.
-
-    Returns TFLOPS computed from the average kernel time, or None on failure.
-    """
-    M, N = 4096, 4096
-    trace_dir = os.path.join(work_dir, f"{version_dir}_rocprof_trace")
-    if os.path.isdir(trace_dir):
-        shutil.rmtree(trace_dir)
-
-    cmd = [
-        "rocprofv3",
-        "--kernel-trace",
-        "-f",
-        "csv",
-        "--kernel-include-regex",
-        version_dir,
-        "-d",
-        trace_dir,
-        "--",
-    ]
-    if prepared and CONFIGS[config]["args"]:
-        raise ValueError(
-            "--prepared times the kernel as bench.py compiles it by default (the kernel's own "
-            f"schedule_hint); config {config!r} would need bench.py arguments, use llir or llir+amdgcnas"
-        )
-    if prepared:
-        prepared_driver = os.path.join(_REPO_ROOT, "scripts", "benchmark_prepared.py")
-        cmd.extend(
-            [
-                sys.executable,
-                prepared_driver,
-                "--route",
-                "intra",
-                "--kernel",
-                kernel_type,
-                "--K",
-                str(K),
-                "--sets",
-                str(rotating_sets),
-                "--warmup",
-                str(warmup),
-                "--iters",
-                str(iters),
-            ]
-        )
-        if kernel_type == "a16w16":
-            cmd.extend(["--dtype", dtype, "--version", str(version)])
-        elif kernel_type == "a4w4":
-            cmd.extend(["--version", str(version)])
-    else:
-        cmd.extend([sys.executable, "bench.py", "--rocprof", "--K", str(K)])
-        if kernel_type == "a16w16":
-            cmd.extend(["--dtype", dtype, "--version", str(version)])
-        elif kernel_type == "a4w4":
-            cmd.extend(["--version", str(version)])
-        cmd.extend(CONFIGS[config]["args"])
-
-    rocprof_env = env.copy()
-    rocprof_env["AMD_SERIALIZE_KERNEL"] = "3"
-
-    print(f"  rocprofv3: collecting kernel trace for {version_dir} ...")
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=rocprof_env,
-            cwd=work_dir,
-        )
-        if proc.returncode != 0:
-            print(f"  rocprofv3 FAILED (exit code {proc.returncode})")
-            lines = (proc.stdout + "\n" + proc.stderr).strip().splitlines()
-            for line in lines[-5:]:
-                print(f"    {line}")
-            return None
-    except Exception as e:
-        print(f"  rocprofv3 FAILED: {e}")
-        return None
-
-    csv_path = find_kernel_trace_csv(trace_dir)
-    if csv_path is None:
-        print(f"  rocprofv3: no kernel_trace.csv found in {trace_dir}")
-        return None
-
-    avg_ns, count = avg_kernel_time_ns(csv_path, version_dir, last_n=last_n)
-    if avg_ns is None:
-        print(f"  rocprofv3: no rows matched kernel '{version_dir}' in {csv_path}")
-        return None
-
-    avg_us = avg_ns / 1e3
-    tflops = 2 * M * N * K * 1e-12 / (avg_ns * 1e-9)
-    tail_count = min(last_n, count)
-    print(
-        f"  rocprofv3: {count} dispatches, final-{tail_count} avg={avg_us:.2f} us, "
-        f"tflops={tflops:.1f}"
-    )
-    return tflops
-
-
-def run_benchmark(
-    version,
-    config,
-    K,
-    dtype,
-    kernel="a16w16",
-    use_rocprof=False,
-    prepared=False,
-    warmup=10,
-    iters=1000,
-    rotating_sets=3,
-    last_n=100,
-):
-    """Run a single benchmark for the given version, config, and kernel type.
-
-    Returns a dict with keys: tflops, vgprs, spills, mfma_eff, or None values on failure.
+    Returns a dict with keys: tflops, us, power_w, clock_mhz, trace_tflops, vgprs, spills, mfma_eff.
     """
     git_root = get_git_root()
 
@@ -416,100 +364,64 @@ def run_benchmark(
         version_dir = VERSION_MAP[version]
         work_dir = os.path.join(git_root, "kernels", "gemm", "intra_wave", "a16w16")
 
-    result = {
-        "version_dir": version_dir,
-        "tflops": None,
-        "vgprs": None,
-        "spills": None,
-        "mfma_eff": None,
-    }
+    result = dict(version_dir=version_dir, tflops=None, us=None, power_w=None, clock_mhz=None)
+    result.update(trace_tflops=None, vgprs=None, spills=None, mfma_eff=None)
 
     clean_caches(work_dir)
-    write_att_config(version_dir, work_dir, kernel_type=kernel)
-
-    run_att_path = os.path.join(git_root, "scripts", "run_att.py")
-
     env = os.environ.copy()
-    # Clear any previous config env vars
+    # Clear any previous config env vars, then set this config's
     for key in (
         "TRITON_AMDGCNAS_PLUGIN",
         "TRITON_ENABLE_AMDGCN_AS",
     ):
         env.pop(key, None)
-    # Set config-specific env vars
     env.update(CONFIGS[config]["env"])
+    env, cache_dir = private_triton_env(env)
 
-    cmd = [
-        sys.executable,
-        run_att_path,
-        "--att-output",
-        "tmp",
-        sys.executable,
-        "bench.py",
-        "--K",
-        str(K),
-    ]
+    bench_args = ["--K", str(K)]
     if kernel == "a16w16":
-        cmd.extend(["--dtype", dtype, "--version", str(version)])
+        bench_args += ["--dtype", dtype, "--version", str(version)]
     elif kernel == "a4w4":
-        cmd.extend(["--version", str(version)])
-    cmd.extend(CONFIGS[config]["args"])
+        bench_args += ["--version", str(version)]
+    bench_args += CONFIGS[config]["args"]
 
     if kernel == "a8w8":
         print(f"  Running: {kernel} config={config}")
     else:
         print(f"  Running: v{version} ({version_dir}) config={config}")
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=work_dir,
-        )
-        combined = proc.stdout + "\n" + proc.stderr
-
-        if proc.returncode != 0:
-            print(f"  FAILED (exit code {proc.returncode})")
-            # Print last few lines of output for debugging
-            lines = combined.strip().splitlines()
-            for line in lines[-5:]:
-                print(f"    {line}")
-            if not use_rocprof:
-                return result
-        else:
-            if not use_rocprof:
-                result["tflops"] = parse_tflops(combined)
-            result["mfma_eff"] = parse_mfma_efficiency(combined)
-
-    except Exception as e:
-        print(f"  FAILED: {e}")
-        if not use_rocprof:
-            return result
-
-    vgprs, spills = parse_amdgcn_metadata(version_dir)
-    result["vgprs"] = vgprs
-    result["spills"] = spills
-
-    # Run rocprofv3 to get TFLOPS from kernel timestamps
-    if use_rocprof:
-        tflops = run_rocprof_trace(
-            version_dir,
-            K,
-            dtype,
-            version,
+        timing, trace_us = run_timing(
             work_dir,
+            bench_args,
             env,
-            kernel_type=kernel,
-            config=config,
-            prepared=prepared,
-            warmup=warmup,
-            iters=iters,
-            rotating_sets=rotating_sets,
-            last_n=last_n,
+            timing_cli(args),
+            trace_kernel=version_dir if args.rocprof else None,
+            trace_dir=os.path.join(work_dir, f"{version_dir}_rocprof_trace"),
         )
-        result["tflops"] = tflops
-
+        if timing is not None:
+            result.update(
+                tflops=timing["tflops"],
+                us=timing["median_us"],
+                power_w=timing["power_w"],
+                clock_mhz=timing["clock_mhz"],
+                protocol=timing["protocol"],
+                gpu=timing["gpu"],
+            )
+            if trace_us:
+                result["trace_tflops"] = timing["flops"] / (trace_us * 1e-6) / 1e12
+            if not args.skip_att:
+                result["mfma_eff"] = run_att_steady(
+                    work_dir,
+                    version_dir,
+                    bench_args,
+                    env,
+                    timing["median_us"],
+                    kernel,
+                    args.att_warmup_s,
+                )
+        result["vgprs"], result["spills"] = parse_amdgcn_metadata(version_dir, cache_dir)
+    finally:
+        shutil.rmtree(cache_dir, ignore_errors=True)
     return result
 
 
@@ -522,23 +434,37 @@ def format_val(val, fmt=None):
     return str(val)
 
 
-def print_table(config, rows):
+def print_table(config, rows, with_trace=False):
     """Print a markdown table for one config."""
     print(f"\nConfig: {config}")
-    print("| Version              | TFLOPS | VGPRs | Spills | MFMA Eff. |")
-    print("|----------------------|--------|-------|--------|-----------|")
+    trace_h, trace_d = (" Trace TF |", "----------|") if with_trace else ("", "")
+    print(f"| Version              | TFLOPS |{trace_h} VGPRs | Spills | MFMA Eff. |")
+    print(f"|----------------------|--------|{trace_d}-------|--------|-----------|")
     for row in rows:
         version_dir = row["version_dir"]
-        tflops = (
-            format_val(row["tflops"], "{:.0f}")
-            if isinstance(row["tflops"], float)
-            else format_val(row["tflops"])
-        )
+        tflops = format_val(row["tflops"], "{:.0f}")
+        trace = f" {format_val(row['trace_tflops'], '{:.0f}'):>8} |" if with_trace else ""
         vgprs = format_val(row["vgprs"])
         spills = format_val(row["spills"])
         mfma_eff = format_val(row["mfma_eff"])
-        print(f"| {version_dir:<20} | {tflops:>6} | {vgprs:>5} | {spills:>6} | {mfma_eff:>9} |")
+        print(
+            f"| {version_dir:<20} | {tflops:>6} |{trace} {vgprs:>5} | {spills:>6} | {mfma_eff:>9} |"
+        )
     print()
+
+
+def print_conditions(rows):
+    """One line per row: what the TFLOPS were measured under."""
+    for row in rows:
+        if row.get("us") is None:
+            continue
+        gpu = row.get("gpu") or {}
+        cond = f"{row['us']:.2f} us/dispatch, protocol {row.get('protocol')}, GPU {gpu.get('bdf')}"
+        if gpu.get("power_cap_w"):
+            cond += f" (cap {gpu['power_cap_w']:.0f} W)"
+        if row.get("power_w") is not None:
+            cond += f", {row['power_w']:.0f} W, {row['clock_mhz']:.0f} MHz in the window"
+        print(f"  {row['version_dir']}: {cond}")
 
 
 def parse_args():
@@ -581,37 +507,25 @@ def parse_args():
     parser.add_argument(
         "--rocprof",
         action="store_true",
-        help="Use rocprofv3 kernel-trace for TFLOPS instead of do_bench.",
+        help="Also time the window with rocprofv3 --kernel-trace (no serialization) and report "
+        "the kernel-trace TFLOPS next to the event-timed ones.",
     )
     parser.add_argument(
-        "--prepared",
-        action="store_true",
-        help="With --rocprof, compile and bind once, then use the cached compiled launcher.",
+        "--protocol",
+        choices=sorted(graph_timer.PROTOCOLS),
+        default=graph_timer.DEFAULT_PROTOCOL,
+        help="bench.py timing protocol: quick (1 s warm-up + 4 s window) or sustained (60 s + 30 s, "
+        "for published numbers). Default: %(default)s",
     )
+    parser.add_argument("--warmup-s", type=float, default=None, help="override the warm-up time")
+    parser.add_argument("--window-s", type=float, default=None, help="override the window length")
     parser.add_argument(
-        "--warmup",
-        type=int,
-        default=10,
-        help="Prepared-mode warmup dispatches (default: 10).",
+        "--att-warmup-s",
+        type=float,
+        default=ATT_WARMUP_S,
+        help="seconds of back-to-back dispatches before the ATT-traced one (default: %(default)s)",
     )
-    parser.add_argument(
-        "--iters",
-        type=int,
-        default=1000,
-        help="Prepared-mode measured dispatches (default: 1000).",
-    )
-    parser.add_argument(
-        "--rotating-sets",
-        type=int,
-        default=3,
-        help="Complete tensor sets used by prepared mode (default: 3).",
-    )
-    parser.add_argument(
-        "--last-n",
-        type=int,
-        default=100,
-        help="Final matching rocprof dispatches averaged for timing (default: 100).",
-    )
+    parser.add_argument("--skip-att", action="store_true", help="skip ATT (MFMA efficiency)")
     parser.add_argument(
         "--allow-unreported",
         action="store_true",
@@ -626,11 +540,8 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.prepared and not args.rocprof:
-        print("Error: --prepared requires --rocprof")
-        sys.exit(2)
-    if min(args.warmup, args.iters, args.rotating_sets, args.last_n) <= 0:
-        print("Error: --warmup, --iters, --rotating-sets, and --last-n must be positive")
+    if args.att_warmup_s < 0:
+        print("Error: --att-warmup-s must be >= 0")
         sys.exit(2)
 
     if args.kernel == "a8w8":
@@ -689,19 +600,7 @@ def main():
         print(f"Config: {config}")
         print(f"{'='*60}")
         for version in active_versions:
-            row = run_benchmark(
-                version,
-                config,
-                args.K,
-                args.dtype,
-                kernel=args.kernel,
-                use_rocprof=args.rocprof,
-                prepared=args.prepared,
-                warmup=args.warmup,
-                iters=args.iters,
-                rotating_sets=args.rotating_sets,
-                last_n=args.last_n,
-            )
+            row = run_benchmark(version, config, args.K, args.dtype, args, kernel=args.kernel)
             results[config].append(row)
 
     # Print summary tables
@@ -710,7 +609,10 @@ def main():
     print(f"{'='*60}")
     for config in args.configs:
         if results[config]:
-            print_table(config, results[config])
+            print_table(config, results[config], with_trace=args.rocprof)
+    print("Measured under:")
+    for config in args.configs:
+        print_conditions(results[config])
 
 
 if __name__ == "__main__":
