@@ -36,12 +36,14 @@ Usage:
 """
 
 import argparse
+import atexit
 import csv
 import glob
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 # Duplicated from bench.py to avoid importing it (it pulls in torch/triton).
 VERSION_MAP = {
@@ -80,7 +82,8 @@ CONFIGS = {
     "llir+amdgcnas": {"env": {"TRITON_AMDGCNAS_PLUGIN": "1"}, "args": []},
 }
 
-TRITON_CACHE = os.environ.get("TRITON_CACHE_DIR", os.path.expanduser("~/.triton/cache"))
+# Each run compiles into a fresh private Triton cache (TRITON_CACHE_DIR in the subprocess env), so
+# every config is recompiled with its own hooks without deleting the user's cache.
 
 
 def get_git_root():
@@ -102,12 +105,6 @@ def write_counters_yaml(counters, path):
         f.write("  - pmc:\n")
         for counter in counters:
             f.write(f"      - {counter}\n")
-
-
-def clean_triton_cache():
-    """Remove triton cache so the kernel is recompiled."""
-    if os.path.isdir(TRITON_CACHE):
-        shutil.rmtree(TRITON_CACHE)
 
 
 def find_counter_csv(trace_dir):
@@ -169,8 +166,6 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
         "n_dispatches": 0,
     }
 
-    clean_triton_cache()
-
     # Write counters.yaml
     counters_yaml = os.path.join(work_dir, "counters.yaml")
     write_counters_yaml(counters, counters_yaml)
@@ -190,6 +185,9 @@ def run_collection(version, config, counters, K, dtype, kernel="a16w16"):
     ):
         env.pop(key, None)
     env.update(CONFIGS[config]["env"])
+    cache_dir = tempfile.mkdtemp(prefix="counter_triton_cache_")
+    atexit.register(shutil.rmtree, cache_dir, True)
+    env["TRITON_CACHE_DIR"] = cache_dir
 
     # Build benchmark command
     bench_cmd = [sys.executable, "bench.py", "--rocprof", "--K", str(K)]

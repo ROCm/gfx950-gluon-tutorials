@@ -29,9 +29,13 @@ The comparison in `kernels/attention/README.md` §8 is only meaningful if both s
 measured the same way, and the default FlyDSL benchmark is not: a shallower averaging
 window leaves the kernel in its thermal transient, so the reported number depends on how
 hot the die was when the run started. Six consecutive runs of one config measured 1236.9,
-1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. This script instead does what
-`fa_kernel_time.py` does -- `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, and
-the mean of the **last 100 of 1000** dispatches -- so the window sits in steady state.
+1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. This script instead uses the tutorial's
+protocol (`scripts/graph_timer.py`, `docs/benchmarking.md`): back-to-back dispatches over
+rotating inputs for a warm-up time, then a measurement window, quick (1 s + 4 s) or
+sustained (60 s + 30 s). FlyDSL's launcher is not known to be capturable in a CUDA graph, so
+the dispatches are issued eagerly (at ~ms per FA dispatch the launch is hidden by the queue)
+and timed by `rocprofv3 --kernel-trace`, without serialization: the result is the median
+kernel time of the dispatches that start inside the window.
 
 Needs a FlyDSL checkout; pass `--flydsl-root` or set `FLYDSL_ROOT`. Numbers in the README
 were taken at ROCm/FlyDSL `63eb891` (v0.2.4-26-g63eb891).
@@ -52,6 +56,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KERNEL = "flash_attn_dualwave_swp"
+sys.path.insert(0, HERE)
+import graph_timer  # noqa: E402
 
 
 def parse_args():
@@ -64,9 +70,6 @@ def parse_args():
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--seqlen", type=int, default=16384)
     p.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
-    p.add_argument("--iters", type=int, default=1000)
-    p.add_argument("--last-n", type=int, default=100)
-    p.add_argument("--warmup", type=int, default=10)
     p.add_argument("--rotating-buffer-size", type=int, default=512)
     p.add_argument("--causal", type=int, default=0)
     p.add_argument(
@@ -79,6 +82,7 @@ def parse_args():
     p.add_argument("--waves-per-eu", type=int, default=2)
     p.add_argument("--daz", type=int, default=1)
     p.add_argument("--_inner", action="store_true", help=argparse.SUPPRESS)
+    graph_timer.add_timing_args(p)
     return p.parse_args()
 
 
@@ -132,14 +136,33 @@ def dispatch_loop(a):
     del ref, qr, kr, vr
     torch.cuda.empty_cache()
 
-    for i in range(a.warmup):
+    # Back to back for the warm-up, then the window; the host stays a few dispatches ahead so
+    # the queue never drains. The window's host-clock bounds select its dispatches in the trace.
+    import time
+
+    protocol = graph_timer.protocol_from_args(a)
+    pending, i = [], 0
+
+    def issue():
+        nonlocal i
         q, k, v, o = sets[i % n_sets]
         launch(q, k, v, o, a.batch, a.seqlen)
+        ev = torch.cuda.Event()
+        ev.record()
+        pending.append(ev)
+        if len(pending) > 4:
+            pending.pop(0).synchronize()
+        i += 1
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < protocol.warmup_s:
+        issue()
+    w0 = time.monotonic_ns()
+    while (time.monotonic_ns() - w0) / 1e9 < protocol.window_s:
+        issue()
+    w1 = time.monotonic_ns()
     torch.cuda.synchronize()
-    for i in range(a.iters):
-        q, k, v, o = sets[i % n_sets]
-        launch(q, k, v, o, a.batch, a.seqlen)
-    torch.cuda.synchronize()
+    print(f"WINDOW {w0} {w1} {protocol.name} {protocol.warmup_s} {protocol.window_s}", flush=True)
 
 
 def main():
@@ -148,8 +171,7 @@ def main():
         dispatch_loop(a)
         return
 
-    sys.path.insert(0, HERE)
-    from run_perf_table import avg_kernel_time_ns, find_kernel_trace_csv
+    from run_perf_table import find_kernel_trace_csv
 
     trace = os.path.join(HERE, f".fly_kt_{os.getpid()}")
     shutil.rmtree(trace, ignore_errors=True)
@@ -168,9 +190,7 @@ def main():
         "--_inner",
     ]
     cmd += [x for x in sys.argv[1:] if x != "--_inner"]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, env={**os.environ, "AMD_SERIALIZE_KERNEL": "3"}
-    )
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     for line in proc.stdout.splitlines():
         if "[FlyDSL]" in line:
             print("   ", line.strip())
@@ -179,17 +199,56 @@ def main():
     if not csv:
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-5:]
         sys.exit("fly_kernel_time: no kernel trace produced:\n  " + "\n  ".join(tail))
-    avg_ns, count = avg_kernel_time_ns(csv, KERNEL, last_n=a.last_n)
+    window = [line.split() for line in proc.stdout.splitlines() if line.startswith("WINDOW ")]
+    if not window:
+        sys.exit("fly_kernel_time: the dispatch loop reported no window")
+    _, _, _, name, warmup_s, window_s = window[-1]
+    # The window on the GPU's own timeline: from warmup_s after the first dispatch starts, for
+    # window_s. (FlyDSL may launch on a stream the loop's events do not throttle, so the host
+    # clock need not track the GPU's.)
+    import csv as csv_mod
+
+    with open(csv) as f:
+        starts = [
+            int(r["Start_Timestamp"]) for r in csv_mod.DictReader(f) if KERNEL in r["Kernel_Name"]
+        ]
+    w0 = min(starts) + int(float(warmup_s) * 1e9)
+    w1 = w0 + int(float(window_s) * 1e9)
+    med_us, count = graph_timer.trace_window_median(csv, KERNEL, w0, w1)
     shutil.rmtree(trace, ignore_errors=True)
+    if med_us is None:
+        sys.exit("fly_kernel_time: no dispatch inside the measurement window")
 
     # Causal skips roughly half the tiles, so charge it half the FLOPs.
     flops = 2 * (2.0 * a.batch * a.hq * a.seqlen * a.seqlen * a.d)
     if a.causal:
         flops *= 0.5
+    tflops = flops / med_us * 1e-6
     print(
-        f"    {count} dispatches, final-{a.last_n} avg={avg_ns / 1e3:.2f} us "
-        f"-> {flops / avg_ns * 1e-3:.1f} TFLOPS"
+        f"    median {med_us:.2f} us over the {count} dispatches of a {float(window_s):g} s window "
+        f"after {float(warmup_s):g} s warm-up ({name}) -> {tflops:.1f} TFLOPS"
     )
+    if a.result_json:
+        import json
+
+        with open(a.result_json, "a") as f:
+            f.write(
+                json.dumps(
+                    dict(
+                        label=KERNEL,
+                        protocol=name,
+                        warmup_s=float(warmup_s),
+                        window_s=float(window_s),
+                        median_us=med_us,
+                        dispatches=count,
+                        flops=flops,
+                        tflops=tflops,
+                        causal=bool(a.causal),
+                        seqlen=a.seqlen,
+                    )
+                )
+                + "\n"
+            )
 
 
 if __name__ == "__main__":

@@ -38,9 +38,12 @@ relative to the peak output magnitude.
 
 MI300X caveat: sustained MFMA drives the part into its 750 W cap and the clock
 drops from ~2.03 GHz to ~1.52 GHz, so absolute TFLOPS depend heavily on how long
-the benchmark has been running.  `--show-clock` samples rocm-smi so the number
-can be read against the clock that produced it, and the torch/hipBLASLt column
-is measured in the same loop as a same-conditions reference.
+the benchmark has been running.  Timing therefore uses the tutorial's protocol
+(scripts/graph_timer.py): graph replay of back-to-back dispatches over rotating
+inputs, a warm-up time, then a measurement window (--protocol quick: 1 s + 4 s;
+sustained: 60 s + 30 s).  `--show-clock` samples rocm-smi so the number can be read
+against the clock that produced it, and the torch/hipBLASLt column is measured
+under the same protocol as a same-conditions reference.
 """
 
 import argparse
@@ -59,6 +62,9 @@ import triton  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 # get_pids (XCD remap + GROUP_SIZE_M swizzle) is shared with the gfx950 kernels
 sys.path.insert(0, os.path.join(HERE, "..", "utils"))
+# scripts/graph_timer.py: the tutorial's timing protocol (graph replay, warm-up, rotating sets).
+sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "scripts"))
+import graph_timer  # noqa: E402
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 KERNELS = ("intra_wave", "inter_wave")
@@ -133,11 +139,11 @@ def check(mod, a, b_t, c, dtype):
     return rel <= TOL[dtype], rel
 
 
-def gen_rotating_tensors(M, N, K, torch_dtype, mb=512):
-    """Several copies of (a, b_t, c) so consecutive iterations read different
-    addresses and the caches stay cold, as in the gfx950 bench.py."""
+def gen_rotating_tensors(M, N, K, torch_dtype, mb=graph_timer.COLD_INPUT_MIB):
+    """Rotating (a, b_t, c) sets: enough that the inputs in rotation exceed ``mb`` MiB, so
+    consecutive dispatches read different addresses and the caches stay cold."""
     elem = torch.tensor([], dtype=torch_dtype).element_size()
-    n = max(1, mb * 1024 * 1024 // ((M * K + K * N + M * N) * elem))
+    n = graph_timer.rotating_sets((M * K + K * N) * elem, mb)
     return (
         [torch.randn((M, K), device=DEVICE, dtype=torch_dtype) for _ in range(n)],
         [torch.randn((N, K), device=DEVICE, dtype=torch_dtype) for _ in range(n)],
@@ -146,7 +152,30 @@ def gen_rotating_tensors(M, N, K, torch_dtype, mb=512):
     )
 
 
-def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512, with_torch=False):
+def time_kernel(launch_with, M, N, K, td, protocol, mb, label, reps=1, result_json=None):
+    """Median TFLOPS over ``reps`` timings of ``launch_with(a, b_t, c)`` under ``protocol``."""
+    a_l, b_l, c_l, n = gen_rotating_tensors(M, N, K, td, mb)
+    tfs = []
+    for _ in range(reps):
+        r = graph_timer.time_dispatches(
+            lambda j: launch_with(a_l[j], b_l[j], c_l[j]),
+            n,
+            protocol,
+            flops=2 * M * N * K,
+            label=label,
+        )
+        r.update(M=M, N=N, K=K)
+        graph_timer.print_result(r, result_json)
+        tfs.append(r["tflops"])
+    a_l = b_l = c_l = None  # free the sets
+    torch.cuda.empty_cache()
+    return statistics.median(tfs)
+
+
+def run_rocprof(
+    mods, dtypes, sizes, warmup, iters, mb=graph_timer.COLD_INPUT_MIB, with_torch=False
+):
+    """Profiler mode: warmup + iters eager dispatches per kernel, no timing (graph_timer.profile_loop)."""
     for name, mod in mods.items():
         for dtype in dtypes:
             td = NAME_TO_TORCH_TYPE[dtype]
@@ -154,14 +183,10 @@ def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512, with_torch=False):
                 if K < mod.MIN_K:
                     continue
                 a_l, b_l, c_l, n = gen_rotating_tensors(M, N, K, td, mb)
-                print(f"[{name}] {M}x{N}x{K} {dtype}: {n} rotating copies")
-                mod.matmul_kernel_only(a_l[0], b_l[0], c_l[0])
-                torch.cuda.synchronize()
-                for i in range(n_iters):
-                    j = i % n
-                    mod.matmul_kernel_only(a_l[j], b_l[j], c_l[j])
-                torch.cuda.synchronize()
-                print(f"[{name}] {M}x{N}x{K} {dtype}: {n_iters} iterations done")
+                graph_timer.profile_loop(
+                    lambda j: mod.matmul_kernel_only(a_l[j], b_l[j], c_l[j]), n, warmup, iters
+                )
+                print(f"[{name}] {M}x{N}x{K} {dtype}: {warmup} + {iters} dispatches, {n} sets")
     if not with_torch:
         return
     # hipBLASLt through torch.matmul on the kernels' own operands (B as the K-contiguous
@@ -170,18 +195,13 @@ def run_rocprof(mods, dtypes, sizes, n_iters=1000, mb=512, with_torch=False):
         td = NAME_TO_TORCH_TYPE[dtype]
         for M, N, K in sizes:
             a_l, b_l, c_l, n = gen_rotating_tensors(M, N, K, td, mb)
-            bt_l = [b.t() for b in b_l]
-            print(f"[torch] {M}x{N}x{K} {dtype}: {n} rotating copies")
-            torch.matmul(a_l[0], bt_l[0], out=c_l[0])
-            torch.cuda.synchronize()
-            for i in range(n_iters):
-                j = i % n
-                torch.matmul(a_l[j], bt_l[j], out=c_l[j])
-            torch.cuda.synchronize()
-            print(f"[torch] {M}x{N}x{K} {dtype}: {n_iters} iterations done")
+            graph_timer.profile_loop(
+                lambda j: torch.matmul(a_l[j], b_l[j].t(), out=c_l[j]), n, warmup, iters
+            )
+            print(f"[torch] {M}x{N}x{K} {dtype}: {warmup} + {iters} dispatches, {n} sets")
 
 
-def run_bench(mods, dtypes, sizes, reps, with_torch, show_clock):
+def run_bench(mods, dtypes, sizes, reps, with_torch, show_clock, protocol, mb, result_json):
     names = list(mods)
     hdr = f"{'M':>6} {'N':>6} {'K':>7} {'dtype':>6}"
     for n in names:
@@ -190,15 +210,13 @@ def run_bench(mods, dtypes, sizes, reps, with_torch, show_clock):
         hdr += f" {'torch TF':>10}"
     if show_clock:
         hdr += f" {'MHz':>6}"
-    print(f"\nTFLOPS, do_bench median of {reps}   (correctness vs fp32 shown as ok/BAD)")
-    print(hdr)
+    rows = []
 
     ok_all = True
     for dtype in dtypes:
         td = NAME_TO_TORCH_TYPE[dtype]
         for M, N, K in sizes:
             a, b_t, c = make_inputs(M, N, K, td)
-            flops = 2 * M * N * K
             row = f"{M:>6} {N:>6} {K:>7} {dtype:>6}"
             for n in names:
                 mod = mods[n]
@@ -207,28 +225,49 @@ def run_bench(mods, dtypes, sizes, reps, with_torch, show_clock):
                     continue
                 ok, _ = check(mod, a, b_t, c, dtype)
                 ok_all &= ok
-                tf = [
-                    flops
-                    * 1e-12
-                    / (triton.testing.do_bench(lambda: mod.matmul_kernel_only(a, b_t, c)) * 1e-3)
-                    for _ in range(reps)
-                ]
-                row += f" {statistics.median(tf):>14.1f} {'ok' if ok else 'BAD':>3}"
+                tf = time_kernel(
+                    mod.matmul_kernel_only,
+                    M,
+                    N,
+                    K,
+                    td,
+                    protocol,
+                    mb,
+                    f"{n} {M}x{N}x{K} {dtype}",
+                    reps,
+                    result_json,
+                )
+                row += f" {tf:>14.1f} {'ok' if ok else 'BAD':>3}"
             if with_torch:
-                bt = b_t.t()
-                tf = [
-                    flops * 1e-12 / (triton.testing.do_bench(lambda: torch.matmul(a, bt)) * 1e-3)
-                    for _ in range(reps)
-                ]
-                row += f" {statistics.median(tf):>10.1f}"
+                tf = time_kernel(
+                    lambda a_, b_, c_: torch.matmul(a_, b_.t(), out=c_),
+                    M,
+                    N,
+                    K,
+                    td,
+                    protocol,
+                    mb,
+                    f"torch {M}x{N}x{K} {dtype}",
+                    reps,
+                    result_json,
+                )
+                row += f" {tf:>10.1f}"
             if show_clock:
                 clk = gpu_clock_mhz()
                 row += f" {clk if clk else '?':>6}"
-            print(row)
+            rows.append(row)
+    print(
+        f"\nTFLOPS, median of {reps} timing(s), protocol {protocol.name} "
+        f"({protocol.warmup_s:g} s warm-up + {protocol.window_s:g} s window)   "
+        "(correctness vs fp32 shown as ok/BAD)"
+    )
+    print(hdr)
+    for row in rows:
+        print(row)
     return ok_all
 
 
-def run_sweep_gm(mods, dtype, sizes, gms, reps):
+def run_sweep_gm(mods, dtype, sizes, gms, reps, protocol, mb, result_json):
     """Sweep GROUP_SIZE_M against the v9_beyond_hotloop model: each XCD gets
     P = GRID_MN / NUM_XCDS workgroups laid out GM x ceil(P/GM), so it reads GM
     row-strips of A and ceil(P/GM) column-strips of B -- minimise
@@ -237,32 +276,40 @@ def run_sweep_gm(mods, dtype, sizes, gms, reps):
     names = list(mods)
     for M, N, K in sizes:
         a, b_t, c = make_inputs(M, N, K, td)
-        flops = 2 * M * N * K
         any_mod = mods[names[0]]
         grid = triton.cdiv(M, any_mod.BLOCK_M) * triton.cdiv(N, any_mod.BLOCK_N)
         per_xcd = grid / any_mod.NUM_XCDS
         print(
             f"\n{M}x{N}x{K} {dtype}  grid={grid} workgroups, "
             f"{per_xcd:.1f} per XCD over {any_mod.NUM_XCDS} XCDs  "
-            f"(median of {reps})"
+            f"(median of {reps}, protocol {protocol.name})"
         )
         hdr = f"{'GM':>4} {'f(GM)':>6}"
         for n in names:
             hdr += f" {n + ' TF':>18}"
-        print(hdr)
+        rows = []
         for gm in gms:
             row = f"{gm:>4} {gm + math.ceil(per_xcd / gm):>6}"
             for n in names:
                 mod = mods[n]
                 mod.GROUP_SIZE_M = gm
                 ok, _ = check(mod, a, b_t, c, dtype)
-                tf = [
-                    flops
-                    * 1e-12
-                    / (triton.testing.do_bench(lambda: mod.matmul_kernel_only(a, b_t, c)) * 1e-3)
-                    for _ in range(reps)
-                ]
-                row += f" {statistics.median(tf):>14.1f} {'ok' if ok else 'BAD':>3}"
+                tf = time_kernel(
+                    mod.matmul_kernel_only,
+                    M,
+                    N,
+                    K,
+                    td,
+                    protocol,
+                    mb,
+                    f"{n} {M}x{N}x{K} {dtype} GM={gm}",
+                    reps,
+                    result_json,
+                )
+                row += f" {tf:>14.1f} {'ok' if ok else 'BAD':>3}"
+            rows.append(row)
+        print(hdr)
+        for row in rows:
             print(row)
         for n in names:  # restore the shipped default
             mods[n].GROUP_SIZE_M = 4
@@ -282,7 +329,7 @@ def main():
     p.add_argument("--M", type=int, default=None, help="with --K: run M x N x K instead")
     p.add_argument("--N", type=int, default=None, help="with --K: run M x N x K instead")
     p.add_argument("--dtype", nargs="+", choices=["fp16", "bf16"], default=["fp16", "bf16"])
-    p.add_argument("--reps", type=int, default=1, help="do_bench repeats, reported as median")
+    p.add_argument("--reps", type=int, default=1, help="timings per cell, reported as median")
     p.add_argument("--no-torch", action="store_true", help="skip the torch/hipBLASLt column")
     p.add_argument(
         "--show-clock", action="store_true", help="sample rocm-smi per row (MI300X power-throttles)"
@@ -292,14 +339,18 @@ def main():
     p.add_argument(
         "--rocprof",
         action="store_true",
-        help="1000 iterations with rotating buffers, no do_bench, for "
-        "external `rocprofv3 --kernel-trace` timing",
+        help="profiler mode: --warmup-dispatches + --iters eager dispatches with rotating inputs, "
+        "no timing, for an external profiler (rocprofv3 --kernel-trace / --pmc / --att)",
+    )
+    p.add_argument("--iters", type=int, default=1000, help="profiler mode: dispatches")
+    p.add_argument(
+        "--warmup-dispatches", type=int, default=0, help="profiler mode: dispatches before --iters"
     )
     p.add_argument(
         "--rotating-buffer-size",
         type=int,
-        default=512,
-        help="total MB of rotating copies in --rocprof mode",
+        default=graph_timer.COLD_INPUT_MIB,
+        help="MiB of inputs to rotate through (at least 2 sets)",
     )
     p.add_argument(
         "--schedule-hint",
@@ -307,11 +358,13 @@ def main():
         help="Triton schedule_hint for the kernels that take one (intra_wave; its default is "
         '"mfma-schedule", "" turns the MFMA scheduler off)',
     )
+    graph_timer.add_timing_args(p)
     args = p.parse_args()
+    protocol = graph_timer.protocol_from_args(args)
 
     with_torch = "torch" in args.kernel
     if with_torch and not args.rocprof:
-        p.error("-k torch needs --rocprof; the do_bench table has its own torch column")
+        p.error("-k torch needs --rocprof; the timing table has its own torch column")
     which = KERNELS if "both" in args.kernel else tuple(k for k in args.kernel if k != "torch")
     mods = {n: load_kernel(n) for n in which}
     if args.schedule_hint is not None:
@@ -334,13 +387,40 @@ def main():
             p.error(f"no shape with K={args.K}; have {sorted({k for _, _, k in get_x_vals()})}")
 
     if args.rocprof:
-        run_rocprof(mods, args.dtype, sizes, mb=args.rotating_buffer_size, with_torch=with_torch)
+        run_rocprof(
+            mods,
+            args.dtype,
+            sizes,
+            args.warmup_dispatches,
+            args.iters,
+            mb=args.rotating_buffer_size,
+            with_torch=with_torch,
+        )
         return 0
     if args.sweep_gm:
-        run_sweep_gm(mods, args.dtype[0], sizes, args.gm, args.reps)
+        run_sweep_gm(
+            mods,
+            args.dtype[0],
+            sizes,
+            args.gm,
+            args.reps,
+            protocol,
+            args.rotating_buffer_size,
+            args.result_json,
+        )
         return 0
 
-    ok = run_bench(mods, args.dtype, sizes, args.reps, not args.no_torch, args.show_clock)
+    ok = run_bench(
+        mods,
+        args.dtype,
+        sizes,
+        args.reps,
+        not args.no_torch,
+        args.show_clock,
+        protocol,
+        args.rotating_buffer_size,
+        args.result_json,
+    )
     print("\nall correctness checks passed" if ok else "\nSOME CORRECTNESS CHECKS FAILED")
     return 0 if ok else 1
 

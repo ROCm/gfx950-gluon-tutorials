@@ -23,18 +23,22 @@
 # THE SOFTWARE.
 ##############################################################################
 
-"""Prepared-launch driver for kernel-only rocprofv3 timing.
+"""Prepared-launch dispatch driver for external profilers.
 
 This driver supports the final intra- and inter-wave a16w16, a8w8, and a4w4
 GEMMs.  It allocates complete rotating tensor sets, compiles once without a
-dispatch, and then enters the cached compiled launcher directly.  Use it under
-``rocprofv3 --kernel-trace`` and compute time from the final matching records.
+dispatch, and then enters the cached compiled launcher directly for
+``--warmup + --iters`` back-to-back dispatches.  It times nothing: run it under
+``rocprofv3 --pmc`` / ``--att`` / ``--kernel-trace``.  A kernel's performance comes
+from its ``bench.py`` (the protocol in ``docs/benchmarking.md``); do not set
+``AMD_SERIALIZE_KERNEL``, which changes the power state the kernel runs in.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import os
 import pathlib
 import sys
@@ -230,9 +234,24 @@ def launch_configuration(args, jit_kernel):
     return (grid_mn, 1), constexprs, compiler_options
 
 
+def kernel_compiler_defaults(module):
+    """Compile options the kernel's own matmul() passes by default.
+
+    The MFMA scheduler is a compile option each kernel's matmul() passes itself
+    (schedule_hint="mfma-schedule" by default, since gfx950-tutorial-v3.0). A launch that
+    bypasses matmul() takes the same default from matmul()'s signature; without it the
+    intra_wave kernels compile with the scheduler off.
+    """
+    matmul_fn = getattr(module, "matmul", None)
+    hint = inspect.signature(matmul_fn).parameters.get("schedule_hint") if matmul_fn else None
+    if hint is not None and hint.default:
+        return {"schedule_hint": hint.default}
+    return {}
+
+
 def main():
     args = parse_args()
-    _module, jit_kernel, kernel_label = load_kernel(args)
+    module, jit_kernel, kernel_label = load_kernel(args)
 
     import triton  # Imported after the bench module installs optional hooks.
     from prepared_kernel import PreparedKernel
@@ -241,6 +260,7 @@ def main():
     torch.manual_seed(0)
     runtime_sets, bytes_per_set = make_runtime_arguments(args, device)
     grid, constexprs, compiler_options = launch_configuration(args, jit_kernel)
+    compiler_options.update(kernel_compiler_defaults(module))
     prepared = PreparedKernel.create(
         jit_kernel,
         grid,

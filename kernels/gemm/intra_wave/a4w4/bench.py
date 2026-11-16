@@ -54,6 +54,11 @@ if os.environ.get("TRITON_AMDGCNAS_PLUGIN"):
 # Put the shared kernels/gemm/utils/ on the path so each version's
 # `from common import get_pids` resolves to the shared helper.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+# scripts/graph_timer.py: the tutorial's timing protocol (graph replay, warm-up, rotating sets).
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "scripts")
+)
+import graph_timer  # noqa: E402
 
 # Map --version flag to subdirectory name. Each version directory exports a
 # `matmul(a_fp4, b_fp4, a_scales, b_scales)` callable from `matmul_kernel`.
@@ -198,15 +203,24 @@ def parse_args():
     parser.add_argument(
         "--rocprof",
         action="store_true",
-        help="Rocprof mode: run kernel 1000 times without do_bench. "
-        "Use with rocprofv3 --kernel-trace to measure timing externally.",
+        help="Profiler mode: instead of timing, issue --warmup-dispatches + --iters eager dispatches "
+        "back to back for an external profiler (rocprofv3 --pmc / --att / --kernel-trace).",
+    )
+    parser.add_argument(
+        "--iters", type=int, default=1000, help="profiler mode: dispatches after the warm-up"
+    )
+    parser.add_argument(
+        "--warmup-dispatches",
+        type=int,
+        default=0,
+        help="profiler mode: dispatches before the --iters ones (see graph_timer.profile_loop)",
     )
     parser.add_argument(
         "--rotating-buffer-size",
         type=int,
-        default=512,
-        help="Total size (MB) of rotating tensors for rocprof mode. "
-        "Should exceed GPU cache (L2+MALL) size. (default: 512)",
+        default=graph_timer.COLD_INPUT_MIB,
+        help="MiB of input tensors to rotate through (at least 2 sets), so every dispatch reads "
+        f"its inputs from HBM (default: {graph_timer.COLD_INPUT_MIB}, twice the 256 MiB MALL)",
     )
     parser.add_argument(
         "--schedule-hint",
@@ -214,6 +228,7 @@ def parse_args():
         help='Triton schedule_hint compile option for the kernel ("" turns the MFMA scheduler '
         "off; default: the kernel's own choice, see matmul() in matmul_kernel.py)",
     )
+    graph_timer.add_timing_args(parser)
     return parser.parse_args()
 
 
@@ -236,51 +251,23 @@ def test_correctness(matmul, gemm_sizes, version_dir):
             )
 
 
-def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=512):
-    """Allocate multiple copies of tensors to exceed GPU cache size."""
-    elem_bytes = 1  # uint8
-    # a: M*K//2, b: K//2*N, a_scales: M*K//32, b_scales: N*K//32
-    a_size = M * (K // 2) * elem_bytes
-    b_size = (K // 2) * N * elem_bytes
-    as_size = M * (K // 32) * elem_bytes
-    bs_size = N * (K // 32) * elem_bytes
-    total_size = a_size + b_size + as_size + bs_size
+def gen_rotating_tensors(M, N, K, rotating_buffer_size_mb=graph_timer.COLD_INPUT_MIB):
+    """Rotating input sets: enough that the inputs in rotation exceed rotating_buffer_size_mb.
 
-    block_count = max(1, rotating_buffer_size_mb * 1024 * 1024 // total_size)
-
+    Dispatch i uses set i % count, so the data the previous dispatches left in L2 and the MALL is
+    useless and every dispatch reads its inputs from HBM, as a kernel in a real model would.
+    """
+    # uint8 storage: a M*K/2, b N*K/2, scales (M+N)*K/32
+    input_bytes = M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32)
+    count = graph_timer.rotating_sets(input_bytes, rotating_buffer_size_mb)
     a_list, b_list, as_list, bs_list = [], [], [], []
-    for _ in range(block_count):
+    for _ in range(count):
         a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
         a_list.append(a_fp4)
         b_list.append(b_fp4)  # (N, K//2) K-contiguous layout for kernel
         as_list.append(a_scales)
         bs_list.append(b_scales)
-
-    return a_list, b_list, as_list, bs_list, block_count
-
-
-def run_rocprof_iterations(
-    matmul, gemm_sizes, version_dir, n_iters=1000, rotating_buffer_size_mb=512
-):
-    """Run kernel n_iters times with rotating tensors for cache-cold profiling."""
-    for M, N, K in gemm_sizes:
-        a_list, b_list, as_list, bs_list, block_count = gen_rotating_tensors(
-            M, N, K, rotating_buffer_size_mb
-        )
-        total_bytes = block_count * (M * (K // 2) + (K // 2) * N + M * (K // 32) + N * (K // 32))
-        print(
-            f"[{version_dir}] {M=} {N=} {K=}: "
-            f"rotating tensors: {block_count} copies, "
-            f"{total_bytes / 1024**2:.0f} MB"
-        )
-        # Warmup
-        matmul(a_list[0], b_list[0], as_list[0], bs_list[0])
-        torch.cuda.synchronize()
-        for i in range(n_iters):
-            idx = i % block_count
-            matmul(a_list[idx], b_list[idx], as_list[idx], bs_list[idx])
-        torch.cuda.synchronize()
-        print(f"[{version_dir}] {M=} {N=} {K=}: {n_iters} iterations done")
+    return a_list, b_list, as_list, bs_list, count
 
 
 def main():
@@ -296,45 +283,28 @@ def main():
 
     test_correctness(matmul, gemm_sizes, version_dir)
 
-    if args.rocprof:
-        run_rocprof_iterations(
-            matmul,
-            gemm_sizes,
-            version_dir,
-            rotating_buffer_size_mb=args.rotating_buffer_size,
+    protocol = graph_timer.protocol_from_args(args)
+    for M, N, K in gemm_sizes:
+        a_l, b_l, as_l, bs_l, n_sets = gen_rotating_tensors(M, N, K, args.rotating_buffer_size)
+
+        def launch(slot):
+            matmul(a_l[slot], b_l[slot], as_l[slot], bs_l[slot])
+
+        label = f"{version_dir} {M}x{N}x{K} mxfp4"
+        if args.rocprof:
+            graph_timer.profile_loop(launch, n_sets, args.warmup_dispatches, args.iters)
+            print(
+                f"[{label}] profiler mode: {args.warmup_dispatches} + {args.iters} dispatches "
+                f"over {n_sets} rotating sets done"
+            )
+            continue
+        result = graph_timer.time_dispatches(
+            launch, n_sets, protocol, flops=2 * M * N * K, label=label
         )
-        return
-
-    configs = [
-        triton.testing.Benchmark(
-            x_names=["M", "N", "K"],
-            x_vals=gemm_sizes,
-            line_arg="dtype",
-            line_vals=["mxfp4"],
-            line_names=["mxfp4"],
-            styles=[("green", "-")],
-            ylabel="TFLOPS",
-            plot_name="matmul-performance",
-            args={},
-        )
-    ]
-
-    @triton.testing.perf_report(configs)
-    def benchmark(M, N, K, dtype):
-        a_fp4, b_fp4, a_scales, b_scales = generate_mxfp4_inputs(M, N, K)
-        quantiles = [0.5, 0.2, 0.8]
-        ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: matmul(a_fp4, b_fp4, a_scales, b_scales),
-            quantiles=quantiles,
-        )
-
-        def perf(ms):
-            return 2 * M * N * K * 1e-12 / (ms * 1e-3)
-
-        return perf(ms), perf(max_ms), perf(min_ms)
-
-    print(f"\na4w4_kernel ({version_dir}):")
-    benchmark.run(show_plots=False, print_data=True)
+        result.update(kernel=version_dir, M=M, N=N, K=K, dtype="mxfp4")
+        graph_timer.print_result(result, args.result_json)
+        a_l = b_l = as_l = bs_l = None  # free the sets
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
