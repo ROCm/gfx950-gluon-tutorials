@@ -250,9 +250,6 @@ python bench.py --K 32768
 TRITON_AMDGCNAS_PLUGIN=1 python bench.py --K 32768
 ```
 
-For accurate performance measurement with rocprof:
-
-```bash
-TRITON_AMDGCNAS_PLUGIN=1 \
-    rocprofv3 --kernel-trace -d out -- python bench.py --K 32768 --rocprof
-```
+`bench.py` reports TFLOPS with the tutorial's timing protocol
+([`docs/benchmarking.md`](../../../../../docs/benchmarking.md)); add `--protocol sustained` for
+numbers you publish.

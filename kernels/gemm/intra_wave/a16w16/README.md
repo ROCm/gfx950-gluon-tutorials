@@ -35,7 +35,7 @@ From the `a16w16` directory:
 python bench.py --version 9 --K 8192 --dtype fp16
 ```
 
-This runs correctness checks against `torch.matmul` and reports TFLOPS. Use `--version` to select a kernel version (0–9) and `--rocprof` for accurate performance measurement.
+This runs correctness checks against `torch.matmul` and reports TFLOPS measured with the tutorial's timing protocol ([`docs/benchmarking.md`](../../../../docs/benchmarking.md); `--protocol sustained` for published numbers). Use `--version` to select a kernel version (0–9).
 
 ## 3. The Optimization Journey
 

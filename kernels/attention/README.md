@@ -754,15 +754,17 @@ python bench.py --batch 32 --hq 8 --hk 8 --seqlen 8192
 Those variables are not tuning knobs — they are what [§6](#6-making-the-compiler-co-operate) is about, and dropping
 them measures the stock-LLVM bars of the chart above instead. The two settings the table names are
 already the defaults: `SCALE_ON_Q` is on unless you pass `--scale-on-q 0`, and the plugin paces the
-mem stages with two `s_nop`s on its own (built in, not configurable). `bench.py` reports `do_bench` wall time;
-`scripts/fa_kernel_time.py` takes the same environment and reports the rocprofv3 kernel-time TFLOPS
-the table quotes — **pass `--launch jit`**, since its default is `prepared` and every number in
-[§9](#9-results) and [§8](#8-applying-this-to-your-own-kernel) was taken with the plain (jit) launch:
+mem stages with two `s_nop`s on its own (built in, not configurable). `bench.py` and
+`scripts/fa_kernel_time.py` (same environment) report TFLOPS with the tutorial's timing protocol
+([`docs/benchmarking.md`](../../docs/benchmarking.md)): graph replay of back-to-back dispatches,
+a warm-up, then a measurement window. The numbers in [§9](#9-results) and
+[§8](#8-applying-this-to-your-own-kernel) were taken earlier with serialized `rocprofv3` timing
+(last 100 of 1000 dispatches); to measure under the current protocol:
 
 ```bash
 FA_MODULE=fmha_v4 DISABLE_LLVM_OPT=disable-machine-sink \
 LLVM_PASS_PLUGIN_PATH=$PWD/../../plugins/llir_scheduler/libLlirSched.so \
-python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --launch jit
+python ../../scripts/fa_kernel_time.py --batch 32 --hq 8 --hk 8 --seqlen 8192 --protocol sustained
 ```
 
 ## 10. Where to go deeper

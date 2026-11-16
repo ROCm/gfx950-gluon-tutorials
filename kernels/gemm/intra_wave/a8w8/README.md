@@ -156,12 +156,7 @@ From the `a8w8` directory:
 python bench.py --K 16384
 ```
 
-This runs correctness checks against `torch.matmul` and reports TFLOPS.
-
-For accurate performance measurement with rocprof:
-
-```bash
-rocprofv3 --kernel-trace -d out -- python bench.py --K 16384 --rocprof
-```
-
-The `--rocprof` flag runs the kernel 1000 times with rotating buffers to avoid GPU cache effects, producing cold-cache timings representative of real workloads.
+This runs correctness checks against `torch.matmul` and reports TFLOPS measured with the
+tutorial's timing protocol ([`docs/benchmarking.md`](../../../../docs/benchmarking.md)): graph
+replay of back-to-back dispatches over rotating inputs (cold caches), a warm-up, then a
+measurement window. Use `--protocol sustained` for published numbers.

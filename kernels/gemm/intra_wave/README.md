@@ -124,20 +124,24 @@ python bench.py --version 1 --K 32768
 python bench.py --version 9 --K 8192 --dtype fp16 --schedule-hint ""
 ```
 
-For accurate performance measurement, the `--rocprof` flag runs the kernel 1000 times with rotating buffers but does not print performance numbers. To collect measurements:
+`bench.py` times the kernel with the tutorial's protocol ([`docs/benchmarking.md`](../../../docs/benchmarking.md)):
+a CUDA graph of back-to-back dispatches over rotating inputs (cold caches) is replayed for a
+warm-up time and then a measurement window, and the median replay time per dispatch is reported
+with the window's power and clock. `--protocol quick` (default, 1 s + 4 s) is for A/B work;
+`--protocol sustained` (60 s + 30 s) gives the level a kernel holds indefinitely and is what
+published numbers should use.
 
-1. Collect the kernel trace (`-d` specifies the output directory; `-f csv`
-   selects CSV output, which `calc_kernel_time.py` reads — rocprofv3 on
-   ROCm 7.0+ defaults to a binary `.db` format):
-   ```bash
-   # with TRITON_AMDGCNAS_PLUGIN from §2.3 still exported
-   rocprofv3 --kernel-trace -f csv -d out -- python bench.py --version 8 --K 8192 --dtype fp16 --rocprof
-   ```
+`--rocprof` is the profiler mode: no timing, just `--warmup-dispatches` + `--iters` dispatches
+back to back for an external tool (counters with `rocprofv3 --pmc`, a thread trace with
+`--att`). To cross-check the timing with kernel timestamps, run the timing itself under the
+kernel trace (no `AMD_SERIALIZE_KERNEL`) and take the dispatches of the measurement window, which
+`run_perf_table.py --rocprof` does for you:
 
-2. Calculate kernel time from the trace. The CSV file may be in a nested directory under the output directory—locate it first. Output is in microseconds by default:
-   ```bash
-   python ../../../scripts/calc_kernel_time.py [trace_csv_file] [kernel_name]
-   ```
+```bash
+# with TRITON_AMDGCNAS_PLUGIN from §2.3 still exported
+python ../../../scripts/run_perf_table.py --kernel a16w16 --versions 8 --configs llir+amdgcnas \
+  --K 8192 --dtype fp16 --rocprof
+```
 
 3. Convert to TFLOPS: `TFLOPS = 2 × M × N × K / (time_in_us × 10^6)`
 

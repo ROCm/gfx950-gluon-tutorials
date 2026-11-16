@@ -64,7 +64,7 @@ Codegen (K=8192): B-scale `v_perm` **11 → 0**, `ds_read_u8` **16 → 0**; VGPR
 **256 / 26 → 256 / 12**.
 
 ```bash
-# correctness + do_bench TFLOPS (from this v1_combineBsc dir)
+# correctness + TFLOPS, docs/benchmarking.md protocol (from this v1_combineBsc dir)
 python ../bench.py --version 1 --K 8192
 
 # rocprof cold-rotating TFLOPS + MFMA eff + VGPR/spill (from the repo root)

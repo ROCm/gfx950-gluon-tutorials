@@ -77,7 +77,7 @@ efficiency, and the only spill-free version of the three. On wall-clock the cloc
 part of it, so v2 leads v1 by 3–7% on this GPU rather than by the ~18% its efficiency gain would suggest.
 
 ```bash
-# correctness + do_bench TFLOPS (from this v2_mfma32x32x64 dir)
+# correctness + TFLOPS, docs/benchmarking.md protocol (from this v2_mfma32x32x64 dir)
 python ../bench.py --version 2 --K 8192
 
 # rocprof cold-rotating TFLOPS + MFMA eff + VGPR/spill (from the repo root)

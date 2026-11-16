@@ -67,10 +67,10 @@ The 4-wave kernel leads at K ≤ 16384 (+10.7% and +9.1%); at K=32768 the 8-wave
 ## 3. Running
 
 ```bash
-# correctness + do_bench TFLOPS (from this kernel dir)
+# correctness + TFLOPS, docs/benchmarking.md protocol (from this kernel dir)
 python bench.py --K 8192
 
-# rocprof cold-rotating TFLOPS + MFMA efficiency (ATT) + VGPR/spill (from the repo root)
+# TFLOPS + MFMA efficiency (ATT, after a warm-up) + VGPR/spill (from the repo root)
 python scripts/collect_perf.py --kernel a8w8 --K 8192
 
 # large K needs a bigger rotating buffer to stay cold
@@ -86,7 +86,7 @@ Inputs are BF8 (`float8_e5m2`); the output is fp16. Drop `--K` to sweep all size
   `matmul_kernel_only` / `matmul` (launch wrappers), `MIN_K`, `KERNEL_NAME`.
 - `get_pids` (XCD-aware PID remap + `GROUP_SIZE_M` swizzle) is imported from the shared
   [`kernels/gemm/utils/common.py`](../../utils/common.py).
-- `bench.py` — correctness (vs dequantized `torch.matmul`) + do_bench TFLOPS + `--rocprof`
+- `bench.py` — correctness (vs dequantized `torch.matmul`) + TFLOPS (graph-replay protocol) + `--rocprof`
   rotating-tensor mode.
 - Perf is collected with the shared [`scripts/collect_perf.py`](../../../../scripts/collect_perf.py)
   (`--kernel a8w8`).

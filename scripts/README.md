@@ -2,6 +2,14 @@
 
 Helper scripts for profiling and benchmarking the tutorial's Triton/Gluon kernels.
 
+Every `bench.py` times its kernel with one protocol, implemented in
+[`graph_timer.py`](graph_timer.py) and explained, with the measurements behind it, in
+[`docs/benchmarking.md`](../docs/benchmarking.md): a CUDA graph of back-to-back dispatches over
+rotating inputs (cold caches) is replayed for a warm-up time and then a measurement window, and
+the median replay time per dispatch is reported with the window's socket power and GFX clock.
+`--protocol quick` (default, 1 s + 4 s) is for A/B work; `--protocol sustained` (60 s + 30 s) is
+the level a kernel holds indefinitely and is what published numbers should use.
+
 The first group drives the GEMM kernels; the second belongs to
 [`kernels/attention/`](../kernels/attention/README.md).
 
@@ -9,8 +17,9 @@ The first group drives the GEMM kernels; the second belongs to
 
 | script | what it does |
 |---|---|
+| [`graph_timer.py`](#graph_timerpy) | the timing protocol every `bench.py` uses (library) |
 | [`run_perf_table.py`](#run_perf_tablepy) | the 4-wave (`intra_wave`) perf table — TFLOPS, VGPRs, spills, MFMA efficiency, per compiler config |
-| [`collect_perf.py`](#collect_perfpy) | the 8-wave (`inter_wave`) equivalent — rocprof TFLOPS + ATT per-SIMD MFMA efficiency + VGPR/spill |
+| [`collect_perf.py`](#collect_perfpy) | the 8-wave (`inter_wave`) equivalent — TFLOPS + ATT per-SIMD MFMA efficiency + VGPR/spill |
 | [`calc_kernel_time.py`](#calc_kernel_timepy) | kernel time from a `rocprofv3 --kernel-trace` CSV |
 | [`process_json.py`](#process_jsonpy) | MFMA efficiency (**per wave**) from a decoded ATT trace |
 | [`run_att.py`](#run_attpy) | drive `rocprofv3` ATT collection and decode |
@@ -26,10 +35,25 @@ The first group drives the GEMM kernels; the second belongs to
 | script | what it does |
 |---|---|
 | **Measurement** | |
-| [`fa_kernel_time.py`](#fa_kernel_timepy) | the reported FA metric — `rocprofv3` kernel time with a prepared launch |
+| [`fa_kernel_time.py`](#fa_kernel_timepy) | the reported FA metric — `bench.py`'s timing protocol at the FA shape |
 | [`fly_kernel_time.py`](#fly_kernel_timepy) | times ROCm/FlyDSL under *our* protocol, so the two can share a table |
 | **Figures** | |
 | [`plot_fmha_summary.py`](#plot_fmha_summarypy) | regenerate the attention README's summary chart |
+
+## graph_timer.py
+
+The timing protocol, as a library: `time_dispatches(launch, n_sets, protocol, flops=...)` captures
+`d` dispatches of `launch(slot)` (slot = rotating set) in a CUDA graph, with `d` chosen so a replay
+lasts about 20 ms, and replays it back to back (at most two replays queued, so the GPU never
+idles) for the warm-up time and then the window. It returns the median, 10th and 90th percentile
+of replay time / `d`, the drift between the window's halves, and, where the driver exposes the
+firmware metrics table (MI350), the window's average socket power and GFX clock.
+`rotating_sets(input_bytes_per_set)` sizes the rotation so the inputs in flight exceed 512 MiB
+(twice the 256 MiB MALL; at least two sets). `profile_loop()` is the `--rocprof` profiler mode.
+
+Every `bench.py` takes `--protocol {quick,sustained}`, `--warmup-s`, `--window-s` and
+`--result-json FILE` (one JSON line per result); each result is also printed as a `RESULT {...}`
+line for scripts.
 
 ## collect_perf.py
 
@@ -37,12 +61,14 @@ TFLOPS + per-SIMD MFMA efficiency for the **8-wave** (`inter_wave`) GEMM kernels
 all three; the 4-wave (`intra_wave`) kernels use [`run_perf_table.py`](#run_perf_tablepy)
 instead.
 
-- **TFLOPS** — `rocprofv3 --kernel-trace` around `bench.py --rocprof` (rotating tensors, cold
-  cache), averaging the last 100 dispatches.
-- **MFMA efficiency** — `rocprofv3 --att` via [`run_att.py`](#run_attpy), decoded by
+- **TFLOPS** — `bench.py`'s timing protocol (above); `--rocprof` adds a `rocprofv3
+  --kernel-trace` cross-check over the same window (no serialization).
+- **MFMA efficiency** — `rocprofv3 --att` via [`run_att.py`](#run_attpy) on one dispatch taken
+  after `--att-warmup-s` (default 1 s) of back-to-back dispatches, decoded by
   [`process_json.py`](#process_jsonpy), then **scaled x2** for 2 waves/SIMD so the reported
   figure is per-SIMD (see [`docs/mfma_efficiency.md`](../docs/mfma_efficiency.md)).
-- **VGPR / spills** from the compiled kernel.
+- **VGPR / spills** from the kernel the run compiled into a private Triton cache (the user's
+  cache is never touched).
 
 Run from the repo root, with no compiler-plugin env vars set:
 
@@ -50,12 +76,13 @@ Run from the repo root, with no compiler-plugin env vars set:
 python scripts/collect_perf.py --kernel a16w16 --K 8192  --dtype fp16
 python scripts/collect_perf.py --kernel a8w8   --K 16384
 python scripts/collect_perf.py --kernel a4w4   --version 1 --K 32768
-# large K needs a bigger rotating buffer to stay cold
-python scripts/collect_perf.py --kernel a16w16 --K 32768 --dtype fp16 --rotating-buffer-size 2048
+# published numbers: the sustained protocol (60 s warm-up + 30 s window)
+python scripts/collect_perf.py --kernel a16w16 --K 8192 --dtype fp16 --protocol sustained
 ```
 
-Options: `--kernel {a16w16,a8w8,a4w4}`, `--M/--N/--K`, `--version`,
-`--rotating-buffer-size`, `--skip-trace`, `--skip-att`.
+Options: `--kernel {a16w16,a8w8,a4w4}`, `--M/--N/--K`, `--version`, `--protocol`,
+`--warmup-s`, `--window-s`, `--rotating-buffer-size` (MiB of inputs in rotation),
+`--att-warmup-s`, `--rocprof`, `--skip-timing`, `--skip-att`.
 
 ## occ.sh
 
@@ -120,11 +147,20 @@ The default `0.1.6` release is the version this tutorial is tested against.
 
 ## run_perf_table.py
 
-Automates running benchmarks across kernel versions and scheduler configs, collecting TFLOPS, VGPR count, spills, and MFMA efficiency, then printing a markdown performance table.
+Runs `bench.py` across kernel versions and scheduler configs, collecting TFLOPS, VGPR count,
+spills, and MFMA efficiency, then prints a markdown performance table and the conditions each row
+was measured under (us/dispatch, protocol, GPU, power cap, window power and clock).
+
+Per row: a timing run (`bench.py`'s protocol); an ATT run whose traced dispatch follows
+`--att-warmup-s` of back-to-back dispatches, so the MFMA efficiency describes the kernel in the
+same state as the TFLOPS; VGPRs and spills from the kernel that run compiled. Each row compiles
+into a fresh private Triton cache (`TRITON_CACHE_DIR` in the subprocess environment): the configs
+differ only in compile-time hooks that Triton's cache key does not see, and the user's own cache
+is left alone.
 
 ### Prerequisites
 
-- Requires `rocprofv3` and the ATT decoder library
+- Requires `rocprofv3` and the ATT decoder library (for MFMA efficiency; `--skip-att` without)
 
 ### Usage
 
@@ -135,8 +171,8 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 5 6 7 8 --configs ba
 # a8w8 kernel (run from anywhere):
 python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
 
-# Final-100 kernel timing with a prepared launcher and three rotating tensor sets:
-python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype bf16 --rocprof --prepared
+# Published numbers: the sustained protocol, plus a kernel-trace cross-check of every row:
+python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+amdgcnas --K 8192 --dtype bf16 --protocol sustained --rocprof
 ```
 
 ### Options
@@ -148,12 +184,12 @@ python scripts/run_perf_table.py --kernel a16w16 --versions 9 --configs llir+amd
 | `--configs` | `base llir llir+amdgcnas` | Scheduler configs to test |
 | `--K` | `4096` | K dimension for the GEMM problem |
 | `--dtype` | `fp16` | Data type (`fp16` or `bf16`, ignored for a8w8) |
-| `--rocprof` | off | Derive TFLOP/s from `rocprofv3 --kernel-trace` instead of `do_bench` |
-| `--prepared` | off | With `--rocprof`, compile and bind once and enter the cached launcher directly |
-| `--warmup` | `10` | Warmup dispatches in prepared mode |
-| `--iters` | `1000` | Measured dispatches in prepared mode |
-| `--rotating-sets` | `3` | Complete input/output tensor sets in prepared mode |
-| `--last-n` | `100` | Final matching dispatches averaged from the kernel trace |
+| `--protocol` | `quick` | `quick` (1 s warm-up + 4 s window) or `sustained` (60 s + 30 s) |
+| `--warmup-s` / `--window-s` | protocol's | Override the warm-up time / window length |
+| `--rocprof` | off | Also time the window with `rocprofv3 --kernel-trace` (no serialization) and add a "Trace TF" column |
+| `--att-warmup-s` | `1.0` | Seconds of back-to-back dispatches before the ATT-traced one |
+| `--skip-att` | off | Skip the ATT run (no MFMA efficiency) |
+| `--allow-unreported` | off | Run (version, config) pairs without a published number |
 
 ### Configs
 
@@ -186,15 +222,9 @@ Run a single version with a specific K and dtype:
 python scripts/run_perf_table.py --versions 8 --configs base --K 8192 --dtype bf16
 ```
 
-Run a8w8 kernel benchmark:
-
-```bash
-python scripts/run_perf_table.py --kernel a8w8 --configs llir+amdgcnas --K 8192
-```
-
 ### Output
 
-The script prints a markdown table grouped by config:
+The script prints a markdown table grouped by config, then one line per row with the conditions:
 
 ```
 Config: base
@@ -203,35 +233,32 @@ Config: base
 | v5_local_prefetch    |   1001 |   452 |      0 |    57.98% |
 | v6_loop_unroll       |   1022 |   444 |      0 |    59.50% |
 ...
+Measured under:
+  v5_local_prefetch: 274.61 us/dispatch, protocol quick, GPU 0000:xx:00.0 (cap 1400 W), 1400 W, 1702 MHz in the window
 ```
 
 If a run fails (e.g. an assertion in the scheduler), the row shows `FAIL` for the affected columns.
 
-### Prepared kernel timing
+### Driving a profiler directly
 
-`--prepared` removes repeated Python argument binding and specialization lookup from the dispatch loop. The driver calls Triton/Gluon's public `warmup(..., grid=...)` interface to compile without launching, binds the cached `CompiledKernel` to each rotating tensor set, and constructs launch metadata once. It then issues exactly `--warmup + --iters` kernel dispatches through the compiled launch stub. This requires no Triton compiler changes.
+`bench.py --rocprof` is the profiler mode: it skips the timing and issues `--warmup-dispatches`
+(default 0) + `--iters` (default 1000) dispatches back to back over the rotating sets, for
+`rocprofv3 --pmc` or `--att`. With the correctness check in front, the first dispatch after the
+warm-up is dispatch number `--warmup-dispatches + 2` of the kernel, which is the
+`kernel_iteration_range` an ATT config names to trace a dispatch in the back-to-back state.
+Do not set `AMD_SERIALIZE_KERNEL`: it puts a host round trip before every dispatch and changes the
+power state the kernel runs in ([`docs/benchmarking.md`](../docs/benchmarking.md)).
 
-The reported value remains **kernel time**, not host-to-host sustained throughput: `run_perf_table.py` sorts matching CSV records by numeric dispatch ID and computes `2*M*N*K/time` from the final `--last-n` durations. Preparing the launcher is still useful because it removes artificial host gaps that can alter device duty cycle and frequency during a long profiler run. `AMD_SERIALIZE_KERNEL=3` is set for the rocprof subprocess so each dispatch has an unambiguous serialized timing interval.
-
-The standalone driver also covers the final inter-wave kernels, which are not part of `run_perf_table.py`:
+[`benchmark_prepared.py`](benchmark_prepared.py) is the same kind of dispatch driver for the
+final intra- and inter-wave kernels through a pre-bound launcher
+([`prepared_kernel.py`](prepared_kernel.py)); it issues `--warmup + --iters` dispatches and times
+nothing:
 
 ```bash
-# Intra-wave BF16 v9; enable the compiler stack in the environment first.
-AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
-  --kernel-include-regex v9_beyond_hotloop -d trace_intra_bf16 -- \
-  python scripts/benchmark_prepared.py --route intra --kernel a16w16 \
-  --version 9 --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
-
-# Inter-wave BF16; all optional compiler-plugin variables must be unset.
-env -u LLVM_PASS_PLUGIN_PATH \
-  -u TRITON_AMDGCNAS_PLUGIN \
-  AMD_SERIALIZE_KERNEL=3 rocprofv3 --kernel-trace -f csv \
-  --kernel-include-regex a16w16_kernel -d trace_inter_bf16 -- \
-  python scripts/benchmark_prepared.py --route inter --kernel a16w16 \
-  --dtype bf16 --K 8192 --sets 3 --warmup 10 --iters 1000
+rocprofv3 --pmc SQ_INSTS_VALU SQ_INSTS_MFMA -f csv -d counters -- \
+  python scripts/benchmark_prepared.py --route intra --kernel a16w16 --version 9 --dtype bf16 \
+  --K 8192 --sets 3 --warmup 10 --iters 100
 ```
-
-Use `--kernel a8w8 --K 16384` for BF8 and `--kernel a4w4 --version 1 --K 32768` for MXFP4. The a16w16 driver accepts `--dtype fp16` or `--dtype bf16`; the lower-precision kernels have their fixed tutorial contracts. Run the corresponding directory's `bench.py` once outside the profiler for the PyTorch correctness check before collecting a final timing trace.
 
 ## run_counter_collection.py
 
@@ -281,6 +308,19 @@ Config: base
 
 Runs `rocprofv3` with Advanced Thread Trace (ATT) on a Python command, then automatically post-processes the trace with `process_json.py` to extract MFMA efficiency and timing breakdowns.
 
+The `kernel_iteration_range` in `att_matmul.json` picks the dispatch that is traced; ATT
+serializes that dispatch (not the others, unless `--att-serialize-all`). `run_perf_table.py` and
+`collect_perf.py` write the config themselves and name a dispatch that follows a 1 s warm-up
+(`--att-warmup-s`), because the early dispatches of a run (the old default traced dispatch 15)
+fall inside the power-management start-up transient.
+
+If `rocprofv3` fails with `AMDKFD_IOC_CREATE_QUEUE failed: Invalid argument`, the
+rocprofiler-sdk (1.4 and later) is creating its thread-trace queue through KFD on a driver too old
+to report the queue's context-save sizes (KFD ABI 1.20). `run_att.py` then retries with
+`ROCPROFILER_SQTT_FORCE_HSA=1`, which selects the SDK's HSA path (the one ROCm 7.2 uses); export
+it yourself when calling `rocprofv3 --att` directly. The decoder library is not the problem in
+that case.
+
 ### Prerequisites
 
 - Requires `rocprofv3` and the ATT decoder library
@@ -304,11 +344,15 @@ python scripts/run_att.py --att-output <output_dir> <python_command>
 
 ### Examples
 
-Profile a16w16 kernel v8:
+Profile a16w16 kernel v8 on a dispatch in the back-to-back state: a v8 dispatch at K=4096 takes
+about 0.1 ms, so 10,000 warm-up dispatches are about 1 s; with the correctness check in front, the
+first dispatch after them is number 10,002, which `att_matmul.json` must name
+(`"kernel_iteration_range": "[10002]"`, `"kernel_include_regex": "v8_sliceMN"`):
 
 ```bash
 cd kernels/gemm/intra_wave/a16w16
-python ../../../../scripts/run_att.py --att-output tmp python bench.py --K 4096 --dtype fp16 --version 8
+python ../../../../scripts/run_att.py --att-output tmp \
+  python bench.py --K 4096 --dtype fp16 --version 8 --rocprof --warmup-dispatches 10000 --iters 3
 ```
 
 ### What It Does
@@ -327,7 +371,10 @@ python scripts/process_json.py path/to/ui_output_dir
 
 ## calc_kernel_time.py
 
-Calculates average kernel execution time from a rocprofv3 kernel trace CSV file.
+Calculates average kernel execution time from a rocprofv3 kernel trace CSV file. It averages
+every matching dispatch, including the start-up transient at the beginning of a run; for a
+kernel's performance use `bench.py`'s timing, or `run_perf_table.py --rocprof`, which takes the
+trace's dispatches inside the measurement window only.
 
 ### Usage
 
@@ -377,40 +424,41 @@ them want that section's environment in front of them — the llirSched plugin a
 
 ## fa_kernel_time.py
 
-The reported FA throughput metric, and the counterpart of `run_perf_table.py --rocprof` on
-the GEMM side: `rocprofv3 --kernel-trace` with `AMD_SERIALIZE_KERNEL=3`, averaging the final
-N of 1000 dispatches and dividing the FLOP count by that. Kernel timestamps rather than
-`do_bench` wall time, because wall time charges the kernel for host-side launch gaps — and
-those gaps idle the GPU, which lets the clock drift between dispatches.
+The reported FA throughput metric, and the counterpart of `run_perf_table.py` on the GEMM side:
+`kernels/attention/bench.py`'s timing protocol (graph replay of back-to-back dispatches over
+rotating (q, k, v, o) sets, warm-up, measurement window; [`docs/benchmarking.md`](../docs/benchmarking.md))
+at the FA shape, with the FA FLOP count. `--kernel-trace` adds a `rocprofv3 --kernel-trace`
+median over the same window.
 
 ```bash
 FA_MODULE=fmha_v4 python scripts/fa_kernel_time.py \
-  --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 --iters 1000 --last-n 100
+  --batch 32 --seqlen 8192 --hq 8 --hk 8 --d 128 --protocol sustained
 ```
 
 | Flag | Default | Description |
-|------|---------|-------------|
+|---|---|---|
 | `--batch` / `--seqlen` / `--hq` / `--hk` / `--d` | `1 / 16320 / 64 / 64 / 128` | problem shape; `--hq != --hk` is GQA/MQA |
 | `--dtype` | `bf16` | `bf16` or `fp16` |
 | `--layout` | `bhsd` | `bhsd` or `bshd` |
-| `--iters` / `--last-n` | `1000` / `100` | measured dispatches, and how many of the final ones to average |
-| `--launch` | `prepared` | `prepared` binds arguments once and re-enters the launch stub; `jit` / `both` attribute a delta to the launch path itself |
+| `--protocol` | `quick` | `quick` (1 s + 4 s) or `sustained` (60 s + 30 s); `--warmup-s` / `--window-s` override |
 | `--scale-on-q` | `1` | `0` applies `qk_scale` per element inside VEC1 instead of pre-scaling Q |
 | `--rotating-buffer-size` | `512` MB | working set spread across rotating tensor sets, so dispatches read cold data rather than MALL-resident data |
-| `--no-serialize` | off | leave `AMD_SERIALIZE_KERNEL` unset and let dispatches queue back to back |
+| `--kernel-trace` | off | add the kernel-trace median over the window (no serialization) |
 
 ## fly_kernel_time.py
 
 Times ROCm/FlyDSL's `flash_attn_dualwave_swp` under *this* repo's protocol, which is the only
 reason its numbers can share a table with ours. FlyDSL's own benchmark averages a shallower
 window, which leaves the kernel in its thermal transient: six consecutive runs of one config
-measured 1236.9, 1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. Same `rocprofv3`
-invocation, same serialization, same rotating-buffer rule and same averaging window as
-`fa_kernel_time.py`. Checks the output against `scaled_dot_product_attention` before timing.
+measured 1236.9, 1242.8, 1165.9, 1167.7, 1159.3 and 1157.5 TFLOPS. Same warm-up and window
+(`--protocol`), same rotating-buffer rule, no serialization; FlyDSL's launcher is not known to be
+capturable in a CUDA graph, so the dispatches are issued eagerly and the result is the median
+`rocprofv3 --kernel-trace` duration of the dispatches inside the window. Checks the output
+against `scaled_dot_product_attention` before timing.
 
 ```bash
 FLYDSL_ROOT=/path/to/FlyDSL python scripts/fly_kernel_time.py \
-  --batch 32 --seqlen 8192 --hq 8 --d 128 --iters 1000 --last-n 100
+  --batch 32 --seqlen 8192 --hq 8 --d 128 --protocol sustained
 ```
 
 Needs a [ROCm/FlyDSL](https://github.com/ROCm/FlyDSL) checkout (`pip install -e .` per its own

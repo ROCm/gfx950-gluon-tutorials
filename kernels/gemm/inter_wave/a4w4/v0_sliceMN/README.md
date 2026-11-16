@@ -79,7 +79,7 @@ byte-shuffle plus the tile/scale loads — breaking up the **green** MFMA, so th
 far more than in the a16w16 / a8w8 8-wave kernels.
 
 ```bash
-# correctness + do_bench TFLOPS (from this v0_sliceMN dir)
+# correctness + TFLOPS, docs/benchmarking.md protocol (from this v0_sliceMN dir)
 python ../bench.py --version 0 --K 8192
 
 # rocprof cold-rotating TFLOPS + MFMA eff + VGPR/spill (from the repo root)

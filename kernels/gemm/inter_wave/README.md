@@ -32,10 +32,11 @@ with rotating tensors (which carries the always-on warp-pipeline barrier, #10840
 
 ## 3. Running
 
-Run them with the shared `scripts/collect_perf.py` (from the repo root, no env vars). It always
-drives `rocprofv3` — there is **no `--rocprof` flag**: a `--kernel-trace` pass measures TFLOPS
-(around an internal `bench.py --rocprof` run) and a `--att` pass measures per-SIMD loop MFMA
-efficiency. Use `--skip-trace` / `--skip-att` to run just one.
+Run them with the shared `scripts/collect_perf.py` (from the repo root, no env vars). A timing
+pass measures TFLOPS with `bench.py`'s protocol ([`docs/benchmarking.md`](../../../docs/benchmarking.md);
+`--protocol sustained` for published numbers, `--rocprof` adds a kernel-trace cross-check), and
+a `--att` pass measures per-SIMD loop MFMA efficiency on a dispatch taken after a warm-up. Use
+`--skip-timing` / `--skip-att` to run just one.
 
 ```bash
 python scripts/collect_perf.py --kernel a16w16 --K 8192  --dtype fp16
