@@ -14,10 +14,16 @@ updates:
       - "/.github/actions/*"
     schedule:
       interval: "daily"
+      # Wait a week before adopting newly released action versions.
+    cooldown:
+      default-days: 7
+      exclude:
+        - "ROCm/rocm-security-gh*"
     commit-message:
       prefix: "chore"
       include: "scope"
     groups:
+      rocm-security-gh:
+        patterns: ["ROCm/rocm-security-gh*"]
       github-actions:
-        patterns:
-          - "*"
+        patterns: ["*"]
